@@ -1,0 +1,26 @@
+# Formamorph web app. The interface is Traditional Chinese (Taiwan).
+#
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# `docker compose up` uses ghcr.io/vibecoder9527/formamorph:latest when that
+# image is already local. The package is private until its visibility is public.
+#
+# The API address is chosen when the image is built. A runtime environment
+# variable does not change it. Set FORMAMORPH_PORT to publish a different host port.
+
+services:
+  formamorph:
+    image: ghcr.io/vibecoder9527/formamorph:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${FORMAMORPH_PORT:-8080}:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

@@ -57,12 +57,22 @@ const probeA1111: ProviderProbe = async (base, apiToken, model) => {
   return !model.trim() || a1111Has(res.body, model.trim()) ? 'ok' : 'unknownModel';
 };
 
-// Cloud keys can't be sent from a browser, so the list goes through the desktop bridge.
+// The browser reads the list directly. The desktop app uses the bridge so a server without CORS still answers.
 const probeOpenAI: ProviderProbe = async (base, apiToken, model) => {
+  const url = `${base}/v1/models`;
+  const headers = authHeaders(apiToken, 'Bearer');
   try {
-    const res = await desktopFetch({ url: `${base}/v1/models`, method: 'GET', headers: authHeaders(apiToken, 'Bearer') });
-    if (!res.ok) return 'unreachable';
-    const rows = (JSON.parse(res.body) as { data?: { id?: unknown }[] })?.data;
+    let payload: unknown;
+    if (isDesktop()) {
+      const res = await desktopFetch({ url, method: 'GET', headers });
+      if (!res.ok) return 'unreachable';
+      payload = JSON.parse(res.body);
+    } else {
+      const res = await getJson(url, headers);
+      if (!res) return 'unreachable';
+      payload = res.body;
+    }
+    const rows = (payload as { data?: { id?: unknown }[] })?.data;
     // A gateway that lists nothing proves only that it answered.
     if (!Array.isArray(rows) || !rows.length) return 'ok';
     const want = model.trim() || OPENAI_DEFAULT_MODEL;
@@ -73,18 +83,17 @@ const probeOpenAI: ProviderProbe = async (base, apiToken, model) => {
 };
 
 /** Each provider's free check. NovelAI has none. */
-const PROBES: Record<ImageProviderId, { probe: ProviderProbe; desktopOnly?: true } | null> = {
+const PROBES: Record<ImageProviderId, { probe: ProviderProbe } | null> = {
   comfyui: { probe: probeComfy },
   invokeai: { probe: probeInvoke },
   a1111: { probe: probeA1111 },
-  openai: { probe: probeOpenAI, desktopOnly: true },
+  openai: { probe: probeOpenAI },
   novelai: null,
 };
 
 /** Whether `provider` has a free check in this build. */
 export function imageProbeSupported(provider: ImageProviderId): boolean {
-  const entry = PROBES[provider];
-  return !!entry && (!entry.desktopOnly || isDesktop());
+  return !!PROBES[provider];
 }
 
 /**

@@ -26,6 +26,12 @@ describe('ImageSetupGuide', () => {
     expect(screen.queryByText(/already installed/)).not.toBeInTheDocument();
   });
 
+  it('offers OpenAI-compatible setup in the browser, with a CORS requirement', () => {
+    render(<ImageSetupGuide provider="openai" open onOpenChange={() => {}} />);
+    expect(screen.getByText(/Works in the browser and the desktop app/)).toBeInTheDocument();
+    expect(screen.queryByText(/desktop app only/)).not.toBeInTheDocument();
+  });
+
   it('renders nothing when closed', () => {
     render(<ImageSetupGuide provider="comfyui" open={false} onOpenChange={() => {}} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

@@ -77,14 +77,19 @@ describe('Settings → AI Endpoints → Image: reachability badge', () => {
     await waitFor(() => expect(underHeader()?.textContent).toContain("Didn't answer"));
   });
 
-  it('shows no badge and sends no probe for NovelAI or for OpenAI on web', async () => {
-    for (const provider of ['novelai', 'openai'] as const) {
-      seed({ provider, endpoint: 'https://cloud.test', model: 'm' });
-      const view = openImageEndpoints();
-      await screen.findByTestId('image-preset-header');
-      expect(screen.queryByRole('button', { name: 'Recheck' })).toBeNull();
-      view.unmount();
-    }
+  it('shows no badge and sends no probe for NovelAI', async () => {
+    seed({ provider: 'novelai', endpoint: 'https://cloud.test', model: 'm' });
+    openImageEndpoints();
+    await screen.findByTestId('image-preset-header');
+    expect(screen.queryByRole('button', { name: 'Recheck' })).toBeNull();
     expect(probeImageEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('probes an OpenAI-compatible endpoint on the web', async () => {
+    seed({ provider: 'openai', endpoint: 'https://cloud.test', model: 'm' });
+    probeImageEndpoint.mockResolvedValue('ok');
+    openImageEndpoints();
+    await waitFor(() => expect(underHeader()?.textContent).toContain('Reachable'));
+    expect(probeImageEndpoint).toHaveBeenCalledWith('openai', 'https://cloud.test', '', 'm');
   });
 });

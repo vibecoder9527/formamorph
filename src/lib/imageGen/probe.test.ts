@@ -191,15 +191,13 @@ describe('disabled providers', () => {
     expect(desktopFetch).not.toHaveBeenCalled();
   });
 
-  it('sends nothing for OpenAI in the web build, and enables it on desktop', async () => {
-    const fetchMock = mockFetch({});
+  it('reads the OpenAI model list through fetch in the web build', async () => {
+    const models = 'https://api.example.test/v1/models';
+    const fetchMock = mockFetch({ [models]: { body: { data: [{ id: 'dall-e-3' }] } } });
     const openai = preset({ imageProvider: 'openai', imageEndpoint: 'https://api.example.test' });
-    expect(await probeImageEndpoint('openai', 'https://api.example.test', 'sk-x', '')).toBe('unreachable');
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await probeImageEndpoint('openai', 'https://api.example.test/', 'sk-x', 'dall-e-3')).toBe('ok');
+    expect(fetchMock).toHaveBeenCalled();
     expect(desktopFetch).not.toHaveBeenCalled();
-    expect(imageProbeSupported('openai')).toBe(false);
-    expect(imageReachabilityTarget(openai).enabled).toBe(false);
-    desktop = true;
     expect(imageProbeSupported('openai')).toBe(true);
     expect(imageReachabilityTarget(openai).enabled).toBe(true);
   });

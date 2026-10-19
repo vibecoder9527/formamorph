@@ -55,6 +55,10 @@ const browserCases: { provider: ImageProviderId; message: string }[] = [
     message: `Couldn't reach InvokeAI at ${ENDPOINT}. Check that it's running, the URL is right, and the app's origin is in its allow_origins.`,
   },
   { provider: 'novelai', message: "Couldn't reach NovelAI. Check your internet connection." },
+  {
+    provider: 'openai',
+    message: `Couldn't reach ${ENDPOINT}. Check the URL and your internet connection. In a browser, the server also has to allow this page's origin (CORS).`,
+  },
 ];
 
 describe.each(browserCases)('$provider with no response', ({ provider, message }) => {

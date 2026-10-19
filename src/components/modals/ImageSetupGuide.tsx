@@ -81,7 +81,7 @@ const ImageSetupGuide = ({
 
         {provider === "openai" && (
           <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
-            <li>Available only in the <strong>Formamorph desktop app</strong> — browsers can&apos;t call these APIs directly, so the app proxies them (no CORS setup).</li>
+            <li>Works in the browser and the desktop app. In a browser the server must allow this page&apos;s origin (CORS). The desktop app sends the request itself, so it needs no CORS setup.</li>
             <li>Endpoint: your provider&apos;s base URL, e.g. <Code>https://api.openai.com</Code>.</li>
             <li>Paste your API key — it stays on your machine.</li>
           </ul>

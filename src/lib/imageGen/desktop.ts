@@ -1,6 +1,6 @@
 // Detection + bridge for desktop-only capabilities. In the Electron build, preload.cjs exposes
-// `window.formamorphDesktop`; in the plain web build it's absent. Cloud image providers (which need a
-// CORS-free proxy) route through this bridge and are disabled in the UI when it isn't present.
+// `window.formamorphDesktop`; in the plain web build it's absent. Image requests use this bridge when
+// it is present, so a server without CORS still answers. The browser calls that server directly.
 
 export interface DesktopFetchRequest {
   url: string;

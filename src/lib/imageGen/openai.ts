@@ -1,8 +1,8 @@
-// OpenAI-compatible Images provider. Cloud key APIs can't be called from a browser (CORS + key
-// exposure), so this always routes through the Electron desktop bridge (net-fetch in the main process).
+// OpenAI-compatible Images provider. The browser calls the endpoint directly, so the server must allow
+// this page's origin. The desktop app still sends the request from the main process, which needs no CORS.
 import type { ImageGenOpts, ImageGenParams, ImageProvider } from './types';
-import { desktopFetch } from './desktop';
-import { trimUrl, authHeaders, abortable, refusalDetails, imageConnectionError } from './http';
+import { desktopFetch, isDesktop } from './desktop';
+import { trimUrl, authHeaders, abortable, refusalDetails, imageConnectionError, reachFetch, readBody } from './http';
 import { DetailedError } from '../errorDetails';
 
 /** True when the desktop bridge's request got no response. IPC rethrows main-process errors as plain
@@ -41,15 +41,17 @@ export const openaiProvider: ImageProvider = async (params: ImageGenParams, opts
     n: 1,
     size: nearestOpenAISize(params.width, params.height),
   };
-  // The IPC bridge takes no AbortSignal, so Cancel unblocks the UI while the request finishes unseen —
-  // a cloud generation can't be interrupted server-side anyway.
   const url = `${trimUrl(opts.endpointUrl)}/v1/images/generations`;
-  const res = await abortable(desktopFetch({
-    url,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders(opts.apiToken, 'Bearer') },
-    body: JSON.stringify(body),
-  }), opts.signal).catch((error: unknown) => {
+  const headers = { 'Content-Type': 'application/json', ...authHeaders(opts.apiToken, 'Bearer') };
+  const payload = JSON.stringify(body);
+  // The browser can cancel the request. The desktop bridge cannot, so Cancel only unblocks the UI there.
+  if (!isDesktop()) {
+    const res = await reachFetch('openai', opts.endpointUrl, url, { method: 'POST', headers, body: payload, signal: opts.signal });
+    const text = await readBody(res);
+    if (!res.ok) throw new DetailedError(`HTTP ${res.status}`, refusalDetails('POST', url, res, text));
+    return parseOpenAIResponse(JSON.parse(text));
+  }
+  const res = await abortable(desktopFetch({ url, method: 'POST', headers, body: payload }), opts.signal).catch((error: unknown) => {
     if (isBridgeNetworkError(error)) throw imageConnectionError('openai', opts.endpointUrl, 'POST', url, error);
     throw error;
   });

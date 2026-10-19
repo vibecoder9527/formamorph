@@ -95,7 +95,7 @@ import { presetHeaderActions } from '@/lib/presetHeaderActions';
 import { OPENING_SCENE_CUE, PROMPT_TEXT_DEFAULTS } from '../game/GamePrompts';
 import { buildStyledValues } from '@/lib/sectionStyle';
 import { statTextFor } from '@/lib/statTextPrompts';
-import { isDesktop } from '@/lib/imageGen/desktop';
+
 import { fetchComfyMeta, DEFAULT_COMFY_WORKFLOW, type ComfyMeta } from '@/lib/imageGen/comfyui';
 import { fetchInvokeMeta, invokeConnectionMessage, encodersFor, vaesFor, PREFIXED_BASES, type InvokeMeta } from '@/lib/imageGen/invokeai';
 import { NOVELAI_MODELS, NOVELAI_DEFAULTS } from '@/lib/imageGen/novelai';
@@ -542,7 +542,6 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- taken on open only; the edits after it are what it is compared with
   useEffect(() => { if (isOpen) setAutosaveSlotsAtOpen(autosaveSlots); }, [isOpen]);
   const themeState = useTheme();
-  const desktop = isDesktop();
   const [connectionGuideOpen, setConnectionGuideOpen] = useState(false);
   const embeddingModel = useEmbeddingDownload(loadEmbeddingModel, disposeEmbeddingModel);
   const settingsSource: SettingsSource = { ...settings, ...themeState, embeddingModel };
@@ -1195,9 +1194,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                     <SelectItem value="invokeai">InvokeAI (local)</SelectItem>
                     <SelectItem value="a1111">Automatic1111 / Forge (local)</SelectItem>
                     <SelectItem value="novelai">NovelAI (cloud)</SelectItem>
-                    <SelectItem value="openai" disabled={!desktop}>
-                      {desktop ? 'OpenAI-compatible (cloud)' : 'OpenAI-compatible (cloud, desktop app only)'}
-                    </SelectItem>
+                    <SelectItem value="openai">OpenAI-compatible (cloud)</SelectItem>
                   </SelectContent>
                 </Select>
               </Row>

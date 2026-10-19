@@ -185,8 +185,21 @@ describe('generateImage dispatcher', () => {
     vi.unstubAllGlobals();
   });
 
-  it('rejects a cloud provider with a desktop-only message when unavailable', async () => {
-    await expect(generateImage('openai', params, { endpointUrl: 'http://x', apiToken: '' })).rejects.toThrow(/desktop app/);
+  it('calls an OpenAI-compatible endpoint from the browser', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ b64_json: 'QUJD' }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const out = await generateImage('openai', { ...params, model: 'flux' }, { endpointUrl: 'http://x/', apiToken: 'sk' });
+    expect(out).toBe('data:image/png;base64,QUJD');
+    expect(fetchMock).toHaveBeenCalledWith('http://x/v1/images/generations', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer sk' },
+      body: JSON.stringify({ model: 'flux', prompt: 'a knight', n: 1, size: '1536x1024' }),
+    }));
+    vi.unstubAllGlobals();
   });
 });
 

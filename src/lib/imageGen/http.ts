@@ -82,7 +82,10 @@ const BROWSER_CORS_STEP: Partial<Record<ImageProviderId, string>> = {
 export function imageConnectionMessage(provider: ImageProviderId, endpointUrl: string): string {
   if (provider === 'novelai') return "Couldn't reach NovelAI. Check your internet connection.";
   const base = trimUrl(endpointUrl);
-  if (provider === 'openai') return `Couldn't reach ${base}. Check the URL and your internet connection.`;
+  if (provider === 'openai') {
+    const cors = isDesktop() ? '' : " In a browser, the server also has to allow this page's origin (CORS).";
+    return `Couldn't reach ${base}. Check the URL and your internet connection.${cors}`;
+  }
   const cors = isDesktop() ? undefined : BROWSER_CORS_STEP[provider];
   const checks = cors ? `it's running, the URL is right, and ${cors}` : "it's running and the URL is right";
   return `Couldn't reach ${PROVIDER_NAMES[provider]} at ${base}. Check that ${checks}.`;

@@ -3766,5 +3766,8 @@
   "Save options": "儲存選項",
   "Save failed": "儲存失敗",
   "Save failed. Select to try again.": "儲存失敗。點一下再試一次。",
-  "Save (Ctrl+S)": "儲存（Ctrl+S）"
+  "Save (Ctrl+S)": "儲存（Ctrl+S）",
+  "OpenAI-compatible (cloud)": "相容 OpenAI（雲端）",
+  "Works in the browser and the desktop app. In a browser the server must allow this page's origin (CORS). The desktop app sends the request itself, so it needs no CORS setup.": "瀏覽器與桌面版都能用。在瀏覽器裡，伺服器必須允許這個頁面的來源（CORS）。桌面版由應用程式自己送出請求，所以不需要設定 CORS。",
+  "Works in the browser and the desktop app. In a browser the server must allow this page&apos;s origin (CORS). The desktop app sends the request itself, so it needs no CORS setup.": "瀏覽器與桌面版都能用。在瀏覽器裡，伺服器必須允許這個頁面的來源（CORS）。桌面版由應用程式自己送出請求，所以不需要設定 CORS。"
 }

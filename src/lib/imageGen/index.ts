@@ -27,7 +27,7 @@ export function resolveImageEndpoint(provider: ImageProviderId, endpoint: string
 
 const PROVIDERS: Record<ImageProviderId, ImageProvider> = {
   a1111: a1111Provider,
-  openai: openaiProvider, // cloud: desktop-only guard lives in desktopFetch
+  openai: openaiProvider, // browser fetch, or the desktop bridge when the app can proxy
   comfyui: comfyuiProvider, // local: direct fetch + WebSocket, like a1111
   invokeai: invokeaiProvider, // local: direct fetch + queue polling
   novelai: novelaiProvider, // cloud, but CORS-open: direct fetch, no desktop bridge

@@ -31,7 +31,7 @@ describe('the misspelling menu', () => {
   it('teaches the dictionary the word it flagged', () => {
     const a = actions();
     const template = contextMenuTemplate(misspelled, a);
-    template.find((i) => i.label === 'Add To Dictionary').click();
+    template.find((i) => i.label === '加入字典').click();
     expect(a.addToDictionary).toHaveBeenCalledWith('teh');
   });
 
@@ -43,7 +43,7 @@ describe('the misspelling menu', () => {
 
   it('still says something when the dictionary has no suggestions', () => {
     const template = contextMenuTemplate({ ...misspelled, dictionarySuggestions: [] }, actions());
-    expect(template[0]).toMatchObject({ label: 'No Spelling Suggestions', enabled: false });
+    expect(template[0]).toMatchObject({ label: '沒有拼字建議', enabled: false });
   });
 });
 

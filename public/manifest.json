@@ -1,8 +1,8 @@
 {
   "name": "Formamorph",
   "short_name": "Formamorph",
-  "description": "An AI text RPG that brings your world to life. Create your own characters and locations, or play any of the hundreds the community has published.",
-  "lang": "en",
+  "description": "用 AI 寫成的文字角色扮演遊戲，讓你的世界活過來。建立自己的角色與地點，或遊玩社群發布的數百個世界。",
+  "lang": "zh-Hant-TW",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

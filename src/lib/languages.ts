@@ -2,7 +2,7 @@
  *  field. NOT an allow-list: any value is passed to the model verbatim, including a style directive
  *  (e.g. "formal English", "pirate speak"). The field just interpolates the string into the prompt. */
 export const COMMON_LANGUAGES = [
-  'English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Dutch',
+  'English', '繁體中文（台灣）', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Dutch',
   'Russian', 'Polish', 'Ukrainian', 'Chinese', 'Japanese', 'Korean', 'Arabic',
   'Hindi', 'Turkish', 'Vietnamese', 'Indonesian',
 ];

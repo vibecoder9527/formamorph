@@ -200,7 +200,7 @@ export const DEFAULT_FONT_TUNINGS: FontTuningMap = {};
 export const fontShippedTuning = (value: string): Partial<FontTuning> => FONT_LIST.find((f) => f.value === value)?.tuning ?? {};
 
 // The OS sans stack: both the `system` default (in index.css `:root`) and the fallback appended to a webfont.
-export const SYSTEM_FONT_STACK = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+export const SYSTEM_FONT_STACK = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang TC', 'Noto Sans CJK TC', 'Noto Sans TC', 'Microsoft JhengHei', '微軟正黑體', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
 // Global app font: `system` = the OS stack (default, ships no font).
 export type FontChoice = 'system' | FontValue;

@@ -10,10 +10,10 @@ function confirmLeave(win, dialog) {
   return (event) => {
     const choice = dialog.showMessageBoxSync(win, {
       type: 'question',
-      title: 'Unsaved Changes',
-      message: 'Leave without saving?',
-      detail: 'Your world has changes that are not saved. If you leave, you lose them.',
-      buttons: ['Leave', 'Stay'],
+      title: '尚未儲存的變更',
+      message: '要離開且不儲存嗎？',
+      detail: '這個世界有尚未儲存的變更。離開會失去這些變更。',
+      buttons: ['離開', '留下'],
       defaultId: 1,
       cancelId: 1,
     });

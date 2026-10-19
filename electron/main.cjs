@@ -232,10 +232,10 @@ function watchRenderer(win) {
     hangPrompt?.abort();
     await dialog.showMessageBox(win, {
       type: 'error',
-      title: 'Formamorph Stopped Working',
-      message: details.reason === 'oom' ? 'Formamorph ran out of memory.' : 'The Formamorph window stopped working.',
-      detail: 'Unsaved changes are lost. Reload to continue.',
-      buttons: ['Reload'],
+      title: 'Formamorph 停止運作',
+      message: details.reason === 'oom' ? 'Formamorph 的記憶體不足。' : 'Formamorph 視窗停止運作。',
+      detail: '未儲存的變更已遺失。重新載入以繼續。',
+      buttons: ['重新載入'],
     });
     crashPrompted = false;
     if (!win.isDestroyed()) contents.reload();
@@ -247,10 +247,10 @@ function watchRenderer(win) {
     const prompt = hangPrompt;
     const { response } = await dialog.showMessageBox(win, {
       type: 'warning',
-      title: 'Formamorph Is Not Responding',
-      message: 'The Formamorph window is not responding.',
-      detail: 'Wait for it to recover, or reload now. Reloading loses unsaved changes.',
-      buttons: ['Wait', 'Reload'],
+      title: 'Formamorph 沒有回應',
+      message: 'Formamorph 視窗沒有回應。',
+      detail: '可以等待它恢復，或現在重新載入。重新載入會失去未儲存的變更。',
+      buttons: ['等待', '重新載入'],
       defaultId: 0,
       cancelId: 0,
       signal: prompt.signal,

@@ -49,6 +49,8 @@ const API_URL = process.env.E2E_API_URL;
 const VITE_ENV: Record<string, string> = {
   ...(process.env as Record<string, string>),
   BASELINE_NO_WATCH: '1',
+  // Specs assert the English source copy. The shipped UI is Traditional Chinese (Taiwan).
+  VITE_UI_LANG: process.env.VITE_UI_LANG ?? 'en',
   ...(API_URL ? { VITE_API_URL_DEV: API_URL } : {}),
 };
 

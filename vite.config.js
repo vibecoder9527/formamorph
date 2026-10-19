@@ -6,6 +6,7 @@ import path from 'path'
 import { readFileSync, realpathSync } from 'fs'
 import { createRequire } from 'module'
 import { releasedMinorChangelog } from './src/lib/docs/changelogSlice'
+import { zhTwPlugin } from './scripts/zhTw.mjs'
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
 // The ONNX runtime's dist folder, which its package exports do not expose (src/lib/embeddingWorker.ts).
@@ -84,7 +85,7 @@ const docsIndexMarkdown = {
 }
 
 export default defineConfig({
-  plugins: [react(), directSyncAppModules, holdUpdates, docsIndexMarkdown],
+  plugins: [zhTwPlugin(), react(), directSyncAppModules, holdUpdates, docsIndexMarkdown],
   cacheDir: process.env.E2E_SYNC_APP ? path.resolve(__dirname, 'node_modules/.vite-sync-app') : devCacheDir,
   base: './',
   // Expose the package.json version to the app (single source of truth for the app/world/save stamp).

@@ -5,6 +5,7 @@ import tailwindcss from 'tailwindcss'
 import autoprefixer from 'autoprefixer'
 import path from 'path'
 import { readFileSync } from 'fs'
+import { zhTwPlugin } from './scripts/zhTw.mjs'
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
 const appProxy = process.env.E2E_APP_PROXY_URL
@@ -39,7 +40,7 @@ const landingPreview = {
  * rewrites the account routes onto its index.html.
  */
 export default defineConfig(({ command }) => ({
-  plugins: [react(), landingPreview],
+  plugins: [zhTwPlugin(), react(), landingPreview],
   root: 'site',
   cacheDir: path.resolve(__dirname, 'node_modules/.vite-site'),
   // The shared API endpoints live beside both Vite configs, not under the site entry's root.

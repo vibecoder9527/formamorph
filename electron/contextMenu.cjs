@@ -19,10 +19,10 @@ function contextMenuTemplate(params, actions) {
         items.push({ label: suggestion, click: () => actions.replaceMisspelling(suggestion) });
       }
     } else {
-      items.push({ label: 'No Spelling Suggestions', enabled: false });
+      items.push({ label: '沒有拼字建議', enabled: false });
     }
     items.push({ type: 'separator' });
-    items.push({ label: 'Add To Dictionary', click: () => actions.addToDictionary(misspelledWord) });
+    items.push({ label: '加入字典', click: () => actions.addToDictionary(misspelledWord) });
     items.push({ type: 'separator' });
   }
 

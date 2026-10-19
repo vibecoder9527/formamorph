@@ -32,6 +32,6 @@ describe('the window leave prompt', () => {
     const win = {};
     const dialog = { showMessageBoxSync: vi.fn(() => 1) };
     confirmLeave(win, dialog)({ preventDefault: vi.fn() });
-    expect(dialog.showMessageBoxSync).toHaveBeenCalledWith(win, expect.objectContaining({ buttons: ['Leave', 'Stay'] }));
+    expect(dialog.showMessageBoxSync).toHaveBeenCalledWith(win, expect.objectContaining({ buttons: ['離開', '留下'] }));
   });
 });

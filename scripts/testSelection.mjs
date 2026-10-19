@@ -64,6 +64,7 @@ export const GRAPH_COVERED = {
   'scripts/copySweep.mjs': 'reads files only in its command-line sweep, which no test calls',
   'scripts/testSelection.mjs': 'runs git only in the helpers the gate scripts call',
   'vite.config.js': 'a change to it runs the full suite',
+  'scripts/zhTw.mjs': 'reads the locale file only when the Vite plugin loads; the unit test passes its own dictionary',
 };
 
 /**

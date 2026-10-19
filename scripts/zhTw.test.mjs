@@ -1,4 +1,6 @@
+// @vitest-environment node
 import { createRequire } from 'node:module'
+import { describe, expect, it } from 'vitest'
 import { translateSource, normText } from './zhTw.mjs'
 
 const ts = createRequire(import.meta.url)('typescript')
@@ -35,41 +37,27 @@ export function View({ name, mode, busy }) {
 }
 `
 
-const out = translateSource(source, 'View.tsx', dict, ts)
+describe('zh-Hant-TW UI rewrite', () => {
+  const out = translateSource(source, 'View.tsx', dict, ts)
 
-const expectIn = (text) => {
-  if (!out.includes(text)) {
-    console.error(out)
-    throw new Error('missing: ' + text)
-  }
-}
-const expectNot = (text) => {
-  if (out.includes(text)) {
-    console.error(out)
-    throw new Error('unexpected: ' + text)
-  }
-}
-
-expectIn("label: \"取消\"")
-expectIn("description: \"停止這個行動\"")
-expectIn('const keep = \'Cancel\'')
-expectIn('action: "START GAME"')
-expectIn('save: "儲存"')
-expectIn('saving: "儲存中…"')
-expectIn("const logic = mode === 'Cancel' ? 'Close' : 'Save'")
-expectIn('aria-label="關閉"')
-expectIn('>儲存<')
-expectIn('busy ? "關閉" : "取消"')
-expectIn('mode === \'Cancel\' ? "關閉" : "儲存"')
-expectIn('瀏覽器不允許這樣做。')
-expectIn('`要刪除${name}嗎？`')
-expectNot('>Save<')
-expectNot("label: 'Cancel'")
-
-if (normText('  a \n  b  ') !== 'a\nb') throw new Error('normText')
-
-const parsed = ts.createSourceFile('out.tsx', out, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-const diagnostics = parsed.parseDiagnostics ?? []
-if (diagnostics.length) throw new Error(diagnostics.map((d) => d.messageText).join('\n'))
-
-console.log('zhTw ok')
+  it('rewrites UI copy and leaves sentinels in place', () => {
+    expect(out).toContain('label: "取消"')
+    expect(out).toContain('description: "停止這個行動"')
+    expect(out).toContain("const keep = 'Cancel'")
+    expect(out).toContain('action: "START GAME"')
+    expect(out).toContain('save: "儲存"')
+    expect(out).toContain('saving: "儲存中…"')
+    expect(out).toContain("const logic = mode === 'Cancel' ? 'Close' : 'Save'")
+    expect(out).toContain('aria-label="關閉"')
+    expect(out).toContain('>儲存<')
+    expect(out).toContain('busy ? "關閉" : "取消"')
+    expect(out).toContain('mode === \'Cancel\' ? "關閉" : "儲存"')
+    expect(out).toContain('瀏覽器不允許這樣做。')
+    expect(out).toContain('`要刪除${name}嗎？`')
+    expect(out).not.toContain('>Save<')
+    expect(out).not.toContain("label: 'Cancel'")
+    expect(normText('  a \n  b  ')).toBe('a\nb')
+    const parsed = ts.createSourceFile('out.tsx', out, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    expect(parsed.parseDiagnostics ?? []).toEqual([])
+  })
+})

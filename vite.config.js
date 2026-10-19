@@ -163,6 +163,7 @@ export default defineConfig({
       'package.json',
       'package-lock.json',
       'vite.config.js',
+      'scripts/zhTw.mjs',
       'src/lib/docs/changelogSlice.ts',
       'tsconfig*.json',
       '.env*',

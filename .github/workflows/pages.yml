@@ -1,11 +1,10 @@
 name: Deploy Pages
 
-# Hosted browser build on GitHub Pages, deployed on every push to main. Built with
+# Hosted browser build on GitHub Pages. A push to main publishes the container image and does
+# not deploy Pages; run this workflow by hand when a Pages deploy is wanted. Built with
 # VITE_ENABLE_COMMUNITY=false so the community-server features (Discover, login/auth, publish) are
 # disabled — no user-uploaded content is discoverable and the site never contacts the worlds server.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

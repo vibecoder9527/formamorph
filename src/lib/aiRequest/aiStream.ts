@@ -76,9 +76,10 @@ const requestLines = (spec: AiStreamSpec): string[] =>
 export function cutThoughtFailure(spec: AiStreamSpec): AiStreamError {
   const limit = spec.body.max_tokens === undefined ? [] : [`max_tokens: ${spec.body.max_tokens}`];
   const { thinkingRoom: room } = spec;
-  const roomLines = room
-    ? [`Thinking Room: ${room.tokens}`, `Thinking Room Strength: ${reasoningLevelLabel(room.strength)}`]
-    : [];
+  const roomLines = !room ? [] : [
+    `Thinking Room: ${room.tokens === null ? 'unlimited' : room.tokens}`,
+    `Thinking Room Strength: ${reasoningLevelLabel(room.strength)}`,
+  ];
   const prompt = REQUEST_LABELS[spec.requestType] ?? spec.requestType;
   const message = room
     ? `The model used all its Thinking Room before it wrote an answer for ${prompt}`

@@ -48,7 +48,7 @@ describe('promptReasoningFieldProps', () => {
   it('offers Global plus the listed levels where the dialect takes a level', () => {
     const props = promptReasoningFieldProps(input({ reasoning: { dialect: 'openai', levels: ['low', 'high'] }, setting: { enabled: true, level: 'high' } }));
     expect(props?.level).toBe(true);
-    expect(props?.options.map((o) => o.value)).toEqual(['global', 'auto', 'low', 'high']);
+    expect(props?.options.map((o) => o.value)).toEqual(['global', 'auto', 'unlimited', 'low', 'high']);
     expect(props?.budget).toBeNull();
   });
 
@@ -93,6 +93,16 @@ describe('promptReasoningFieldProps', () => {
       localEngine: true, reasoning: { dialect: 'engine', budget: true, reasons: false }, maxTokens: undefined, setting: { enabled: true, level: 'high' },
     }));
     expect(props).toMatchObject({ level: false, budget: null, room: { tokens: 4096, strength: 'high' } });
+  });
+
+  it('replaces the budget slider with an uncapped room when the strength is Unlimited', () => {
+    const props = promptReasoningFieldProps(input({
+      reasoning: { dialect: 'lmstudio', budget: true, levels: ['low', 'high'] },
+      maxTokens: 1000,
+      setting: { enabled: true, level: 'unlimited' },
+    }));
+    expect(props?.budget).toBeNull();
+    expect(props?.room).toEqual({ tokens: null, strength: 'unlimited' });
   });
 
   it('reads no room beside a budget slider that has a Max Output to scale from', () => {

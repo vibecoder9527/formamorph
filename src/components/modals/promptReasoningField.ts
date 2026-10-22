@@ -77,9 +77,10 @@ export function promptReasoningFieldProps(input: PromptReasoningFieldInput): Omi
   const strength = resolveRequestReasoning(
     kind, { [kind]: setting.level }, resolveReasoningSetting(global), 'off', capability, { prompts: { [kind]: setting }, global },
   );
-  // A slider target with no base, or a level target with no slider; no other target shows a strength to read beside.
-  const room = strength !== 'none' && ((slider && !scalable) || (!slider && level))
-    ? thinkingRoomFor(strength, slider ? reasoningDialectBudgetFloor(capability.dialect) : 0)
+  const unlimited = strength === 'unlimited';
+  // A slider target with no base, a level target with no slider, or Unlimited, which replaces the slider.
+  const room = strength !== 'none' && (unlimited || (slider && !scalable) || (!slider && level))
+    ? thinkingRoomFor(strength, slider && !unlimited ? reasoningDialectBudgetFloor(capability.dialect) : 0)
     : null;
   return {
     setting,
@@ -87,7 +88,8 @@ export function promptReasoningFieldProps(input: PromptReasoningFieldInput): Omi
     options: promptReasoningLevelOptions(capability, setting.level),
     lockedOn: reasoningOffRefused(capability),
     // Each half follows the dialect's row and the record; the engine names no level field, so no dropdown.
-    budget: slider && scalable ? { value: budgetPct, set: onBudgetChange, tokens } : null,
+    // Unlimited sends no budget, so the percent slider would describe a cap the request does not send.
+    budget: slider && scalable && !unlimited ? { value: budgetPct, set: onBudgetChange, tokens } : null,
     room,
     level,
   };

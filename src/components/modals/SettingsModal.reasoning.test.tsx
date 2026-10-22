@@ -195,7 +195,8 @@ describe('an OpenRouter model', () => {
   });
 
   // OpenRouter's ladders have gaps: this one names Max, High and Low and skips Medium.
-  it('lists the efforts the model named, and no others', () => {
+  // Unlimited is always listed. It is an app-side choice, not a literal the model named.
+  it('lists the efforts the model named, plus Unlimited, and no other rungs', () => {
     seedCapability(openRouter({ levels: ['max', 'high', 'low'] }));
     openNarrationOptions();
     makeEditable();
@@ -203,7 +204,7 @@ describe('an OpenRouter model', () => {
     // Radix opens a Select from the keyboard; a click needs pointer capture, which jsdom has not got.
     fireEvent.keyDown(strength, { key: 'Enter' });
     const offered = screen.getAllByRole('option').map((o) => o.textContent);
-    expect(offered).toEqual(['Global', 'Model Default', 'Low', 'High', 'Max']);
+    expect(offered).toEqual(['Global', 'Model Default', 'Unlimited', 'Low', 'High', 'Max']);
   });
 
   // mandatory true: the model rejects a switched-off request, so its switch reads checked and locked.
@@ -367,7 +368,8 @@ describe('the Native Reasoning controls on a Kimi model', () => {
   };
 
   // k3's ladder skips Medium, so a player must never be offered it: the endpoint rejects the literal.
-  it('offers k3 its three rungs and no others', () => {
+  // Unlimited stays, because the request never sends it as a literal.
+  it('offers k3 its three rungs, plus Unlimited, and no others', () => {
     seedCapability(kimi('kimi-k3'));
     openNarrationOptions();
     makeEditable();
@@ -375,7 +377,7 @@ describe('the Native Reasoning controls on a Kimi model', () => {
     // Radix opens a Select from the keyboard; a click needs pointer capture, which jsdom has not got.
     fireEvent.keyDown(strength, { key: 'Enter' });
     expect(screen.getAllByRole('option').map((o) => o.textContent))
-      .toEqual(['Global', 'Model Default', 'Low', 'High', 'Max']);
+      .toEqual(['Global', 'Model Default', 'Unlimited', 'Low', 'High', 'Max']);
   });
 
   it('shows no strength dropdown on a k2 model, which takes no effort field', () => {

@@ -247,26 +247,35 @@ function resolveReasoning(snapshot: AiSettingsSnapshot, call: CapCall, target: A
   const answerCap = capFor(snapshot, call, target);
   const base = target.maxTokens;
   const floor = takesBudget ? reasoningDialectBudgetFloor(target.reasoning.dialect) : 0;
-  // With no base, a budget target's budget is the strength's room.
-  const budgetRoom = takesBudget && effort !== 'none' && base === undefined ? thinkingRoomFor(effort, floor) : null;
+  const unlimited = effort === 'unlimited';
+  // With no base, a budget target's budget is the strength's room. Unlimited sends no budget.
+  const budgetRoom = takesBudget && effort !== 'none' && !unlimited && base === undefined ? thinkingRoomFor(effort, floor) : null;
   const planned = reasoningBudget({
     effort, kind: call.requestType, budgets: snapshot.promptReasoningBudget, base, answerCap, floor,
-    ...(budgetRoom && { room: budgetRoom.tokens }),
+    ...(budgetRoom?.tokens != null && { room: budgetRoom.tokens }),
   });
   // Reasoning is engaged somewhere and this model is not ruled out, so the target may hear about it at all.
   const eligible = snapshot.reasoningEngaged && reasons;
   const level = snapshot.reasoningEngaged ? reasoningEffortValue(effort, target.reasoning) : null;
-  const budget = takesBudget ? planned.budget : null;
+  const budget = takesBudget && !unlimited ? planned.budget : null;
   const mayStateOff = eligible || (reasons && reasoningDialectOffWhenDisengaged(target.reasoning.dialect));
   const fields = reasoningDialectBody(target.reasoning.dialect, {
     budget, level, off: mayStateOff && effort === 'none', eligible,
     unbounded: target.maxTokens === undefined,
   });
   const carriesReasoning = Object.keys(fields).length > 0 || target.reasoning.reasons === true;
+  // Unlimited sets no thought cap. A separate budget field can keep the answer cap; one shared
+  // max_tokens cannot, because the thought would spend the answer's tokens and stop.
+  if (unlimited) {
+    return { fields, level, answerCap, maxTokens: takesBudget ? answerCap : undefined, room: thinkingRoomFor('unlimited') };
+  }
   const strength = roomStrength(snapshot, call.requestType, effort, carriesReasoning && budget === null);
-  if (strength !== null && answerCap !== undefined) {
+  // Inline narration sizes its own <think> block from the strength it kept. Unlimited still
+  // means no token cap: a number here would bound the thought inside the answer.
+  if (strength !== null && (answerCap !== undefined || strength === 'unlimited')) {
     const room = thinkingRoomFor(strength);
-    return { fields, level, answerCap, maxTokens: answerCap + room.tokens, room };
+    const maxTokens = room.tokens == null || answerCap === undefined ? undefined : answerCap + room.tokens;
+    return { fields, level, answerCap, maxTokens, room };
   }
   return {
     fields, level, answerCap, maxTokens: carriesReasoning ? planned.maxTokens : answerCap,

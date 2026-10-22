@@ -12,9 +12,10 @@ import {
 } from '@/lib/reasoningDialect';
 import { reasoningIdentityAnswer } from '@/lib/reasoningIdentity';
 
-/** The `reasoning_effort` values a chat-completions endpoint may accept as a passthrough hint. `auto` is
- *  deliberately absent — it isn't a wire value; the UI's "Default" maps to sending nothing. */
-export type ReasoningEffortField = Exclude<ReasoningEffort, 'auto'>;
+/** The `reasoning_effort` values a chat-completions endpoint may accept as a passthrough hint. `auto` and
+ *  `unlimited` are deliberately absent — neither is a wire value. Model Default sends no hint. Unlimited
+ *  sends no token cap. */
+export type ReasoningEffortField = Exclude<ReasoningEffort, 'auto' | 'unlimited'>;
 
 /** Every effort literal the app knows, in canonical display order (least → most thinking). Different
  *  backends accept different subsets (e.g. cloud takes `minimal`, Ollama takes `max`), so the strengths
@@ -202,8 +203,9 @@ function parseCapabilitySources(raw: unknown): ReasoningCapability['sources'] {
  *  is the resolved form of a switched-off setting. */
 export type PromptReasoning = 'global' | ReasoningEffort;
 
-/** A strength the control can pick while on. `auto` is Model Default: send no hint, the endpoint decides. */
-export type ReasoningLevel = 'auto' | Exclude<ReasoningEffortField, 'none'>;
+/** A strength the control can pick while on. `auto` is Model Default: send no hint, the endpoint decides.
+ *  `unlimited` sets no token cap on the thought. */
+export type ReasoningLevel = 'auto' | 'unlimited' | Exclude<ReasoningEffortField, 'none'>;
 /** A prompt's strength while on: its own level, or `global` to follow the endpoint-wide setting. */
 export type PromptReasoningLevel = 'global' | ReasoningLevel;
 
@@ -216,11 +218,11 @@ export interface PromptReasoningSetting { enabled: boolean; level: PromptReasoni
 /** Shipped endpoint-wide setting: on, Model Default. */
 export const DEFAULT_REASONING_SETTING: ReasoningSetting = { enabled: true, level: 'auto' };
 
-const REASONING_LEVELS: readonly ReasoningLevel[] = ['auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const REASONING_LEVELS: readonly ReasoningLevel[] = ['auto', 'unlimited', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 /** Full-word strength labels for the dropdowns, where a short tab label no longer has to fit. */
 const REASONING_LEVEL_LABELS: Record<PromptReasoningLevel, string> = {
-  global: 'Global', auto: 'Model Default', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
+  global: 'Global', auto: 'Model Default', unlimited: 'Unlimited', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
 };
 
 /** The full-word label of one strength. */
@@ -293,7 +295,7 @@ export function reasoningLevelOptions(
   current?: ReasoningLevel,
 ): { value: ReasoningLevel; label: string }[] {
   const levels = capability?.levels ?? SAFE_REASONING_EFFORTS;
-  const accepted = REASONING_LEVELS.filter((v) => v === 'auto' || v === current || levels.includes(v));
+  const accepted = REASONING_LEVELS.filter((v) => v === 'auto' || v === 'unlimited' || v === current || levels.includes(v));
   return accepted.map((v) => ({ value: v, label: REASONING_LEVEL_LABELS[v] }));
 }
 
@@ -427,29 +429,34 @@ export function promptReasoningStrength(
   return choice === 'none' ? keptReasoningLevel(kind, kept) : choice;
 }
 
-/** The tokens each strength gives a thought, after LiteLLM's effort ladder. Model Default reads as Medium. */
-const THINKING_ROOM: Readonly<Record<Exclude<ReasoningLevel, 'auto'>, number>> = {
+/** The tokens each strength gives a thought, after LiteLLM's effort ladder. Model Default reads as Medium.
+ *  Unlimited is absent: that choice sets no token cap. */
+const THINKING_ROOM: Readonly<Record<Exclude<ReasoningLevel, 'auto' | 'unlimited'>, number>> = {
   minimal: 128, low: 1024, medium: 2048, high: 4096, xhigh: 8192, max: 16384,
 };
 
-/** One strength's Thinking Room. */
-export function thinkingRoom(strength: ReasoningLevel): number {
+/** One strength's Thinking Room, or `null` for Unlimited. */
+export function thinkingRoom(strength: ReasoningLevel): number | null {
+  if (strength === 'unlimited') return null;
   return THINKING_ROOM[strength === 'auto' ? 'medium' : strength];
 }
 
-/** The Thinking Room one call holds above its Answer Cap, and the strength that sized it. */
+/** The Thinking Room one call holds above its Answer Cap, and the strength that sized it. `tokens` is
+ *  `null` where Unlimited set no cap. */
 export interface ThinkingRoom {
-  tokens: number;
+  tokens: number | null;
   strength: ReasoningLevel;
 }
 
 /** A strength's Thinking Room, raised to the dialect's budget floor where the room goes out as a budget. */
 export function thinkingRoomFor(strength: ReasoningLevel, floor = 0): ThinkingRoom {
-  return { tokens: Math.max(thinkingRoom(strength), floor), strength };
+  const tokens = thinkingRoom(strength);
+  return { tokens: tokens === null ? null : Math.max(tokens, floor), strength };
 }
 
-/** The room readout beside a strength, such as "Low · 1,024 tok". */
+/** The room readout beside a strength, such as "Low · 1,024 tok". Unlimited names itself and no count. */
 export function roomReadout(room: ThinkingRoom): string {
+  if (room.tokens === null) return reasoningLevelLabel(room.strength);
   return `${reasoningLevelLabel(room.strength)} · ${room.tokens.toLocaleString('en-US')} tok`;
 }
 
@@ -505,6 +512,9 @@ export interface ReasoningBudget {
 export function reasoningBudget(input: ReasoningBudgetInput): ReasoningBudget {
   const { effort, kind, budgets, base, answerCap, floor, room = 0 } = input;
   if (effort === 'none') return { budget: 0, maxTokens: answerCap };
+  // No budget number. The request builder decides whether the answer cap stays: a separate
+  // budget field can keep it, and one shared max_tokens cannot.
+  if (effort === 'unlimited') return { budget: null, maxTokens: undefined };
   const scaled = base === undefined ? room : Math.round((resolveReasoningBudgetPct(kind, budgets) / 100) * base);
   // 0 is the off signal, so an on prompt with a base never rounds down to it.
   const budget = Math.max(scaled, floor, base === undefined ? 0 : 1);
@@ -525,7 +535,7 @@ export function reasoningEffortValue(
   effort: ReasoningEffort,
   capability?: ReasoningCapability | null,
 ): ReasoningEffortField | null {
-  const value: ReasoningEffortField | null = effort === 'auto' ? null : effort;
+  const value: ReasoningEffortField | null = effort === 'auto' || effort === 'unlimited' ? null : effort;
   if (value === null) return null;
   if (reasoningRuledOut(capability)) return null;
   if (!capability?.levels?.includes(value)) return null;

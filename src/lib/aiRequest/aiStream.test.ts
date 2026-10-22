@@ -537,6 +537,16 @@ describe('the error for a thought the token limit cut', () => {
     expect(lines).toContain('Thinking Room Strength: Model Default');
   });
 
+  it('names an Unlimited room without a token count or a max_tokens line', () => {
+    const error = cutThoughtFailure({
+      ...roomed, body: { ...roomed.body, max_tokens: undefined }, thinkingRoom: { tokens: null, strength: 'unlimited' },
+    });
+    const lines = error.details?.split('\n');
+    expect(lines).toContain('Thinking Room: unlimited');
+    expect(lines).toContain('Thinking Room Strength: Unlimited');
+    expect(lines?.some((line) => line.startsWith('max_tokens:'))).toBe(false);
+  });
+
   it('names the token limit, and omits the room, for a call that had none', () => {
     const error = cutThoughtFailure(spec);
     expect(error.message).toBe('The model reached its token limit before it wrote an answer for Narration');

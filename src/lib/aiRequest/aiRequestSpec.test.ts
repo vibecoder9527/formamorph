@@ -683,6 +683,35 @@ describe('reasoning budget base — the thinking rides on top of the answer', ()
       .toMatchObject({ thinking_budget_tokens: 0, reasoning_effort: 'none', max_tokens: 300 });
   });
 
+  it('sends Unlimited with no thought cap and no effort literal', () => {
+    const level = buildRequestBody(snapshot(levelOnly(), { reasoningEngaged: true, reasoningEffort: 'unlimited' }), call());
+    expect(level).not.toHaveProperty('max_tokens');
+    expect(level).not.toHaveProperty('reasoning_effort');
+    expect(level).not.toHaveProperty('thinking_budget_tokens');
+    const budgeted = buildRequestBody(
+      snapshot(lmStudioReasoning({ maxTokens: 800 }), { reasoningEngaged: true, reasoningEffort: 'unlimited', promptReasoningBudget: { narration: 50 } }),
+      call(),
+    );
+    expect(budgeted).toMatchObject({ max_tokens: 800 });
+    expect(budgeted).not.toHaveProperty('thinking_budget_tokens');
+    expect(budgeted).not.toHaveProperty('reasoning_effort');
+    const engine = buildRequestBody(
+      snapshot(localEngine({ maxTokens: 1000 }), { reasoningEngaged: true, reasoningEffort: 'unlimited' }),
+      call(),
+    );
+    expect(engine).toMatchObject({ max_tokens: 1000 });
+    expect(engine).not.toHaveProperty('thinking_budget_tokens');
+    const gemini = buildRequestBody(
+      snapshot(external({
+        reasoning: { ...accepts('none', 'low', 'medium', 'high'), reasons: true, budget: true, dialect: 'google-2.5' },
+      }), { reasoningEngaged: true, promptReasoning: { milestoneSelect: 'unlimited' } }),
+      call({ requestType: 'milestoneSelect', maxTokensOverride: 300 }),
+    );
+    expect(gemini).toMatchObject({ max_tokens: 300 });
+    expect(gemini).not.toHaveProperty('google');
+    expect(outputCaps(snapshot(levelOnly(), { reasoningEngaged: true, reasoningEffort: 'unlimited' }), call()).reserve).toBeUndefined();
+  });
+
   it('gives a level-only endpoint its level and the Thought Ceiling, with no budget field', () => {
     const body = buildRequestBody(snapshot(levelOnly(), { reasoningEngaged: true, reasoningEffort: 'high' }), call());
     // High's room rides on top of the 800-token answer, whatever the prompt's percent.
@@ -792,6 +821,32 @@ describe('Thinking Room — a fixed room per strength', () => {
     expect(buildRequestBody(at(undefined), summary).max_tokens).toBe(300 + 1024);
     expect(buildRequestBody(at(800), call()).max_tokens).toBe(800 + 1024);
     expect(buildRequestBody(at(4000), call()).max_tokens).toBe(4000 + 1024);
+  });
+
+  it('gives Unlimited no token cap and no effort literal, including Planning and Inline narration', () => {
+    const summarySnap = snapshot(levelOnly(), { reasoningEngaged: true, promptReasoning: { summary: 'unlimited' } });
+    const summarySpec = buildAiRequestSpec(summarySnap, summary);
+    expect(summarySpec.body).not.toHaveProperty('max_tokens');
+    expect(summarySpec.body).not.toHaveProperty('reasoning_effort');
+    expect(summarySpec).toMatchObject({ thinkingRoom: { tokens: null, strength: 'unlimited' } });
+    expect(outputCaps(summarySnap, summary)).toEqual({ answerCap: 300, reserve: undefined });
+
+    const planning = buildAiRequestSpec(
+      snapshot(levelOnly(), { reasoningEngaged: true, promptReasoning: { thinking: 'unlimited' } }),
+      call({ requestType: 'thinking', maxTokensOverride: 256 }),
+    );
+    expect(planning.body).not.toHaveProperty('max_tokens');
+    expect(planning).toMatchObject({ answerCap: 256, thinkingRoom: { tokens: null, strength: 'unlimited' } });
+
+    const inline = buildAiRequestSpec(
+      snapshot(levelOnly(), { thinkingMode: 'inline', reasoningEngaged: true, promptReasoning: { narration: 'unlimited' } }),
+      call(),
+    );
+    // Inline still sends none, so the native scratchpad does not double the <think> block.
+    // Unlimited only lifts the token cap on that block.
+    expect(inline.body).toMatchObject({ reasoning_effort: 'none' });
+    expect(inline.body).not.toHaveProperty('max_tokens');
+    expect(inline).toMatchObject({ thinkingRoom: { tokens: null, strength: 'unlimited' } });
   });
 
   it('reserves exactly the max_tokens it sends', () => {

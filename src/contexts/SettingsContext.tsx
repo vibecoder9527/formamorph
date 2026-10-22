@@ -115,10 +115,10 @@ export type DetectStatus = 'idle' | 'detecting' | 'success' | 'error';
  *  multi-stage director/character/storyboarder `staged` pipeline. */
 export type ThinkingMode = 'off' | 'precall' | 'inline' | 'staged';
 /** Native-reasoning budget hint, sent as `reasoning_effort` under the `off`/Native mode; `auto` omits the
- *  param and lets the endpoint decide, `none` actively suppresses a reasoning model's thinking. The available
- *  levels vary by endpoint (detected at connect); `minimal`/`xhigh`/`max` are backend-specific. A no-op on
- *  models without native reasoning. */
-export type ReasoningEffort = 'auto' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+ *  param and lets the endpoint decide, `unlimited` sends no effort literal and no thought-token cap, and
+ *  `none` actively suppresses a reasoning model's thinking. The available levels vary by endpoint (detected
+ *  at connect); `minimal`/`xhigh`/`max` are backend-specific. A no-op on models without native reasoning. */
+export type ReasoningEffort = 'auto' | 'unlimited' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type { ParagraphLimit };
 
 const APP_ID = 'FORMAMORPH';

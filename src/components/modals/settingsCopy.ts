@@ -1,3 +1,5 @@
+import type { ReasoningEffort } from '@/contexts/SettingsContext';
+
 /**
  * Every user-facing string the Settings modal shows for a setting: the row label, the one-line
  * description beside its control, the optional `ⓘ` body, and the confirmation dialogs its buttons open.
@@ -183,7 +185,7 @@ Useful for world authoring and debugging.`,
     label: 'Native Reasoning',
     description: 'Sets whether reasoning models think, and how hard',
     // The caveat that used to close all eight effort levels, said once for the whole control.
-    info: 'Some models think privately before they answer. Uncheck to stop that. The dropdown sets how much effort they spend, and **Model Default** sends no hint. Every prompt set to **Global** follows this row. Models without native reasoning ignore it.',
+    info: 'Some models think privately before they answer. Uncheck to stop that. The dropdown sets how much effort they spend, and **Model Default** sends no hint. **Unlimited** sets no token cap on the thought. Every prompt set to **Global** follows this row. Models without native reasoning ignore it.',
   },
 
   // ── Output · Tools ──────────────────────────────────────────────────────────
@@ -575,7 +577,7 @@ Small steps matter: 1.05 to 1.15 is typical. High values can break names and pun
   promptNativeReasoning: {
     label: 'Native Reasoning',
     description: 'Sets whether this prompt reasons, and how hard',
-    info: 'Uncheck and this prompt does no reasoning. **Global** follows the **Native Reasoning** row under Settings → Output, its switch included. **Model Default** sends no hint. Only applies to models with native reasoning.',
+    info: 'Uncheck and this prompt does no reasoning. **Global** follows the **Native Reasoning** row under Settings → Output, its switch included. **Model Default** sends no hint. **Unlimited** sets no token cap on the thought. Only applies to models with native reasoning.',
   },
   promptEndpoint: {
     label: 'Endpoint',
@@ -800,10 +802,11 @@ export const CAPABILITY_RECHECK = {
  * Help for the native-reasoning levels, keyed by value rather than listed as options: which levels appear
  * is decided per endpoint by `reasoningTabs`, which owns their short tab labels. Held to the same rules as
  * an option's `help`. The caveat that any of this needs a reasoning model is a property of the control, so
- * it lives once in the row's `ⓘ` rather than closing all eight of these.
+ * it lives once in the row's `ⓘ` rather than closing every one of these.
  */
 export const REASONING_EFFORT_HELP = {
   auto: 'Sends no hint, so the model decides',
+  unlimited: 'Sets no token cap on the thought',
   none: 'No native reasoning',
   minimal: 'Minimal effort',
   low: 'Low effort',
@@ -811,4 +814,4 @@ export const REASONING_EFFORT_HELP = {
   high: 'High effort',
   xhigh: 'Extra-high effort',
   max: 'Maximum effort',
-} as const satisfies Record<string, string>;
+} as const satisfies Record<ReasoningEffort, string>;

@@ -22,9 +22,10 @@ describe('reasoningEffortValue', () => {
     expect(reasoningEffortValue('max', all)).toBe('max');
   });
 
-  it('sends no literal for auto (send nothing → endpoint default)', () => {
+  it('sends no literal for auto (send nothing → endpoint default) or Unlimited', () => {
     expect(reasoningEffortValue('auto', all)).toBeNull();
-      });
+    expect(reasoningEffortValue('unlimited', all)).toBeNull();
+  });
 
   it('names no value the active endpoint does not accept (a stale selection cannot 400 a turn)', () => {
     // Ollama-like: accepts max, not minimal.
@@ -228,22 +229,22 @@ describe('per-prompt reasoning', () => {
 
   it('lists a prompt\'s strengths as Global, Model Default, then the accepted levels in order, never none', () => {
     const opts = promptReasoningLevelOptions(accepts('high', 'none', 'low')); // out of order in
-    expect(opts.map((o) => o.value)).toEqual(['global', 'auto', 'low', 'high']);
-    expect(opts.map((o) => o.label)).toEqual(['Global', 'Model Default', 'Low', 'High']);
-    expect(promptReasoningLevelOptions(null).map((o) => o.value)).toEqual(['global', 'auto', 'low', 'medium', 'high']); // safe fallback
+    expect(opts.map((o) => o.value)).toEqual(['global', 'auto', 'unlimited', 'low', 'high']);
+    expect(opts.map((o) => o.label)).toEqual(['Global', 'Model Default', 'Unlimited', 'Low', 'High']);
+    expect(promptReasoningLevelOptions(null).map((o) => o.value)).toEqual(['global', 'auto', 'unlimited', 'low', 'medium', 'high']); // safe fallback
   });
 
   it('keeps the current pick listed when the record no longer accepts it, so the dropdown never renders blank', () => {
     const onOff = accepts('none'); // LM Studio's on/off models: nothing graded
-    expect(promptReasoningLevelOptions(onOff, 'low').map((o) => o.value)).toEqual(['global', 'auto', 'low']);
-    expect(promptReasoningLevelOptions(onOff, 'global').map((o) => o.value)).toEqual(['global', 'auto']);
-    expect(reasoningLevelOptions(onOff, 'high').map((o) => o.value)).toEqual(['auto', 'high']);
-    expect(reasoningLevelOptions(onOff, 'auto').map((o) => o.value)).toEqual(['auto']);
+    expect(promptReasoningLevelOptions(onOff, 'low').map((o) => o.value)).toEqual(['global', 'auto', 'unlimited', 'low']);
+    expect(promptReasoningLevelOptions(onOff, 'global').map((o) => o.value)).toEqual(['global', 'auto', 'unlimited']);
+    expect(reasoningLevelOptions(onOff, 'high').map((o) => o.value)).toEqual(['auto', 'unlimited', 'high']);
+    expect(reasoningLevelOptions(onOff, 'auto').map((o) => o.value)).toEqual(['auto', 'unlimited']);
   });
 
   it('lists the endpoint-wide strengths with full-word labels for backend-specific levels', () => {
     const cloud = reasoningLevelOptions(accepts('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'));
-    expect(cloud.map((o) => o.label)).toEqual(['Model Default', 'Minimal', 'Low', 'Medium', 'High', 'Extra High', 'Max']);
+    expect(cloud.map((o) => o.label)).toEqual(['Model Default', 'Unlimited', 'Minimal', 'Low', 'Medium', 'High', 'Extra High', 'Max']);
     expect(cloud.map((o) => o.value)).not.toContain('none');
   });
 
@@ -322,8 +323,10 @@ describe('reasoning settings (switch + strength)', () => {
     expect(parseReasoningSetting('none')).toEqual({ enabled: false, level: 'auto' });
     expect(parseReasoningSetting('auto')).toEqual({ enabled: true, level: 'auto' });
     expect(parseReasoningSetting('xhigh')).toEqual({ enabled: true, level: 'xhigh' });
+    expect(parseReasoningSetting('unlimited')).toEqual({ enabled: true, level: 'unlimited' });
     expect(parseReasoningSetting('bogus')).toBeNull();
     expect(parsePromptReasoningSetting('none')).toEqual({ enabled: false, level: 'global' });
+    expect(parsePromptReasoningSetting('unlimited')).toEqual({ enabled: true, level: 'unlimited' });
     expect(parsePromptReasoningSetting('global')).toEqual({ enabled: true, level: 'global' });
     expect(parsePromptReasoningSetting('low')).toEqual({ enabled: true, level: 'low' });
   });

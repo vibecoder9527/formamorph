@@ -131,9 +131,14 @@ describe('settings mode', () => {
     expect(screen.queryByText('Memory Summaries')).toBeNull();
     expect(screen.queryByText('Describe New Characters')).toBeNull();
     expect(screen.queryByText('Concurrent Requests')).toBeNull();
-    // The core shape of a turn stays reachable.
+    // The core shape of a turn stays reachable, including the strength menu that holds Unlimited.
     expect(screen.getByText('Thinking')).toBeTruthy();
+    expect(screen.getByText('Native Reasoning')).toBeTruthy();
     expect(screen.getByText('Continue the Story')).toBeTruthy();
+    const strength = screen.getAllByRole('combobox').find((c) => c.textContent?.includes('Model Default'));
+    expect(strength).toBeTruthy();
+    fireEvent.keyDown(strength!, { key: 'Enter' });
+    expect(screen.getByRole('option', { name: 'Unlimited' })).toBeTruthy();
     unmount();
 
     openSettings('advanced');

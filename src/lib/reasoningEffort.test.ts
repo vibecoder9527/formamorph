@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { reasoningEffortValue, reasoningLevelOptions, promptReasoningLevelOptions, defaultPromptReasoning, defaultPromptReasoningSetting, resolvePromptReasoning, resolveRequestReasoning, reasoningOffRefused, resolveReasoningSetting, resolvePromptReasoningSetting, parseReasoningSetting, parsePromptReasoningSetting, parseReasoningCapability, reasoningCapabilityFromLevels, reasoningRuledOut, defaultReasoningBudgetPct, resolveReasoningBudgetPct, isReasoningEngaged, nativeReasoningSuppressed, MIN_REASONING_BUDGET_PCT, resolveReasoningCapability, UNKNOWN_REASONING_CAPABILITY, schemaAccepted, storedAfterResolve, withSchemaRejected, type ReasoningCapability, type ReasoningEffortField, type PromptReasoning } from './reasoningEffort';
+import { reasoningEffortValue, reasoningLevelOptions, promptReasoningLevelOptions, defaultPromptReasoning, defaultPromptReasoningSetting, resolvePromptReasoning, resolveRequestReasoning, shownPromptReasoningSetting, reasoningOffRefused, resolveReasoningSetting, resolvePromptReasoningSetting, parseReasoningSetting, parsePromptReasoningSetting, parseReasoningCapability, reasoningCapabilityFromLevels, reasoningRuledOut, defaultReasoningBudgetPct, resolveReasoningBudgetPct, isReasoningEngaged, nativeReasoningSuppressed, MIN_REASONING_BUDGET_PCT, resolveReasoningCapability, UNKNOWN_REASONING_CAPABILITY, schemaAccepted, storedAfterResolve, withSchemaRejected, type ReasoningCapability, type ReasoningEffortField, type PromptReasoning } from './reasoningEffort';
 import { resetProbeMemo } from '@/lib/probeMemo';
 import type { AIRequestType } from '@/types';
 
@@ -261,6 +261,18 @@ describe('per-prompt reasoning', () => {
       expect(resolvePromptReasoning('statUpdates', { statUpdates: 'global' }, 'medium', mode)).toBe('medium');
       expect(resolvePromptReasoning('director', {}, 'high', mode)).toBe('low'); // shipped tier
     }
+  });
+
+  it('lets an untouched shipped-Low pass follow an endpoint-wide Unlimited, and keeps a stored Low', () => {
+    for (const kind of ['thinking', 'director', 'character', 'storyboard', 'milestoneSelect'] as const) {
+      expect(resolvePromptReasoning(kind, {}, 'unlimited', 'precall')).toBe('unlimited');
+    }
+    expect(resolvePromptReasoning('thinking', { thinking: 'low' }, 'unlimited', 'precall')).toBe('low');
+    expect(resolvePromptReasoning('summary', {}, 'unlimited', 'precall')).toBe('none');
+    expect(shownPromptReasoningSetting('thinking', undefined, { enabled: true, level: 'unlimited' })).toEqual({ enabled: true, level: 'unlimited' });
+    expect(shownPromptReasoningSetting('thinking', { enabled: true, level: 'low' }, { enabled: true, level: 'unlimited' })).toEqual({ enabled: true, level: 'low' });
+    expect(shownPromptReasoningSetting('director', undefined, { enabled: true, level: 'high' })).toEqual({ enabled: true, level: 'low' });
+    expect(shownPromptReasoningSetting('thinking', undefined, { enabled: false, level: 'unlimited' })).toEqual({ enabled: true, level: 'low' });
   });
 
   it('resolves Inline narration to none whatever is stored or set globally', () => {

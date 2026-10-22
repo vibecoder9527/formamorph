@@ -220,9 +220,11 @@ export const DEFAULT_REASONING_SETTING: ReasoningSetting = { enabled: true, leve
 
 const REASONING_LEVELS: readonly ReasoningLevel[] = ['auto', 'unlimited', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-/** Full-word strength labels for the dropdowns, where a short tab label no longer has to fit. */
+/** Full-word strength labels for the dropdowns, where a short tab label no longer has to fit.
+ *  Only Unlimited sits on a `label` property, so the Chinese build rewrites that one menu item. */
+const UNLIMITED_MENU_LABEL = { label: 'Unlimited' }.label;
 const REASONING_LEVEL_LABELS: Record<PromptReasoningLevel, string> = {
-  global: 'Global', auto: 'Model Default', unlimited: 'Unlimited', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
+  global: 'Global', auto: 'Model Default', unlimited: UNLIMITED_MENU_LABEL, minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
 };
 
 /** The full-word label of one strength. */
@@ -368,10 +370,27 @@ export function resolvePromptReasoning(
   return promptChoice(kind, prefs, globalEffort);
 }
 
-/** The prompt's stored choice or shipped default, with Global folding in the endpoint-wide level. */
+/** The prompt's stored choice or shipped default, with Global folding in the endpoint-wide level.
+ *  An untouched shipped-Low pass follows an endpoint-wide Unlimited. A stored Low stays Low, and any
+ *  other global level leaves that shipped tier where it is. */
 function promptChoice(kind: AIRequestType, prefs: Record<string, PromptReasoning>, globalEffort: ReasoningEffort): ReasoningEffort {
   const pref = prefs[kind] ?? defaultPromptReasoning(kind);
+  if (pref === 'low' && prefs[kind] === undefined && globalEffort === 'unlimited') return 'unlimited';
   return pref === 'global' ? globalEffort : pref;
+}
+
+/** The setting a prompt's control shows. Nothing stored uses the shipped default, except an untouched
+ *  shipped-Low pass while the endpoint-wide strength is Unlimited: the control then shows Unlimited,
+ *  which is what the request sends. */
+export function shownPromptReasoningSetting(
+  kind: AIRequestType,
+  stored: PromptReasoningSetting | undefined,
+  global: ReasoningSetting,
+): PromptReasoningSetting {
+  if (stored) return stored;
+  const shipped = defaultPromptReasoningSetting(kind);
+  if (shipped.level === 'low' && global.enabled && global.level === 'unlimited') return { enabled: true, level: 'unlimited' };
+  return shipped;
 }
 
 /** The switch-and-strength settings a request reads when the endpoint refuses off. Both are optional: a

@@ -19,7 +19,7 @@ import {
   DEFAULT_IMAGE_LANDSCAPE_WIDTH, DEFAULT_IMAGE_LANDSCAPE_HEIGHT,
 } from '@/contexts/settingsDefaults';
 import type { ParagraphLimit, ReasoningEffort } from '@/contexts/SettingsContext';
-import { reasoningRuledOut, toolsSupported, type ReasoningCapability } from '@/lib/reasoningEffort';
+import { toolsSupported, type ReasoningCapability } from '@/lib/reasoningEffort';
 import { FLAT_HOURS_PER_TURN } from '@/lib/gameClock';
 
 export interface SettingsAdvancedInput {
@@ -114,13 +114,13 @@ export function settingsUseAdvancedValues(s: Partial<SettingsAdvancedInput>): bo
 
 type SectionField =
   | 'paragraphLimit' | 'markdownOutput' | 'stripLinksAndImages' | 'showReasoning' | 'showSilentRequests'
-  | 'reasoningEffort' | 'limitActiveCharacters' | 'activeCharacterLimit' | 'toolsEnabled'
+  | 'limitActiveCharacters' | 'activeCharacterLimit' | 'toolsEnabled'
   | 'memoryDigests' | 'semanticMemory' | 'semanticBandCap' | 'semanticRehydration' | 'timeContext' | 'aiClock' | 'fixedTurnHours'
   | 'semanticLore' | 'describeCharacters' | 'characterDiaries' | 'semanticDiaries' | 'concurrentTurnRequests';
 
 /**
- * The Display and Output fields the marker compares. Native Reasoning and Tools are left out where the
- * active endpoint rules their rows out, so a stored value there promises no row.
+ * The Display and Output fields the marker compares. Native Reasoning has a row in both modes, so a
+ * change there is not hidden. Tools are left out where the active endpoint rules that row out.
  */
 export function sectionHiddenFields(
   s: Pick<SettingsAdvancedInput, SectionField> & { reasoningCapability: ReasoningCapability | null },
@@ -128,7 +128,6 @@ export function sectionHiddenFields(
   return {
     paragraphLimit: s.paragraphLimit, markdownOutput: s.markdownOutput, stripLinksAndImages: s.stripLinksAndImages,
     showReasoning: s.showReasoning, showSilentRequests: s.showSilentRequests,
-    ...(reasoningRuledOut(s.reasoningCapability) ? {} : { reasoningEffort: s.reasoningEffort }),
     limitActiveCharacters: s.limitActiveCharacters, activeCharacterLimit: s.activeCharacterLimit,
     ...(toolsSupported(s.reasoningCapability) ? { toolsEnabled: s.toolsEnabled } : {}),
     memoryDigests: s.memoryDigests, semanticMemory: s.semanticMemory, semanticBandCap: s.semanticBandCap,

@@ -69,6 +69,11 @@ describe('settingsUseAdvancedValues', () => {
     expect(fields(true)).not.toHaveProperty('fixedTurnHours');
   });
 
+  it('leaves Native Reasoning out, because that row is on Output in both modes', () => {
+    const fields = sectionHiddenFields({ ...untouched, reasoningCapability: null });
+    expect(fields).not.toHaveProperty('reasoningEffort');
+  });
+
   // Context Window is filled in on connect, so it says nothing about what the player chose.
   it('has no field for the auto-detected context window', () => {
     expect(Object.keys(HIDDEN_SETTING_DEFAULTS)).not.toContain('contextWindow');

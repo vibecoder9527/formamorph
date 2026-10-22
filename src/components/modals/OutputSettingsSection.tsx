@@ -140,9 +140,9 @@ export function OutputSettingsSection({ source, mode, nativeReasoningRuledOut }:
         </Row>
         </SubGroup>
       )}
-      {/* The endpoint-wide effort every prompt set to Global follows, in every Thinking mode. The levels
-          are whichever the active endpoint accepts (detected on connect). */}
-      {advanced && nativeReasoningRuledOut && (
+      {/* The endpoint-wide effort, in both settings modes and every Thinking mode. Unlimited lives here.
+          The levels are whichever the active endpoint accepts (detected on connect). */}
+      {nativeReasoningRuledOut && (
         <SubGroup>
         <Row muted label={SETTINGS_COPY.nativeReasoning.label}>
           <div className="pt-2">
@@ -152,7 +152,7 @@ export function OutputSettingsSection({ source, mode, nativeReasoningRuledOut }:
         </Row>
         </SubGroup>
       )}
-      {advanced && !nativeReasoningRuledOut && (
+      {!nativeReasoningRuledOut && (
         <SubGroup>
         <Row top htmlFor="nativeReasoning" {...optionRowCopy('nativeReasoning')}>
           {/* Stacks the selected level's help under the control, so the label pins to the first line. */}

@@ -60,8 +60,9 @@ const SelectContent = React.forwardRef<
         onEscapeKeyDown={guard(props.onEscapeKeyDown)}>
         <SelectPrimitive.Viewport
           // Radix injects scrollbar-width:none and a hidden ::-webkit-scrollbar; both are undone so the global thumb shows.
+          // Locking the height to the trigger shows only the selected row, so the next option is easy to miss.
           className={cn("p-1 ![scrollbar-width:thin] [&::-webkit-scrollbar]:!block", position === "popper" &&
-            "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]")}>
+            "h-auto max-h-[min(24rem,var(--radix-select-content-available-height,24rem))] w-full min-w-[var(--radix-select-trigger-width)]")}>
           {children}
         </SelectPrimitive.Viewport>
       </SelectPrimitive.Content>

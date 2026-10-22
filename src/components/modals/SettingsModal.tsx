@@ -23,7 +23,7 @@ import { formatPause } from '@/lib/formatPause';
 import { SETTINGS_COPY, SETTINGS_BUTTONS, SETTINGS_CONFIRMS, SETTINGS_NOTES } from '@/components/modals/settingsCopy';
 import { rowCopy } from '@/components/modals/settingsRowCopy';
 import TagField from '@/components/prompt/TagField';
-import { reasoningRuledOut, toolsSupported, defaultPromptReasoningSetting, resolveReasoningBudgetPct, nativeReasoningSuppressed, type PromptReasoningSetting } from '@/lib/reasoningEffort';
+import { reasoningRuledOut, toolsSupported, shownPromptReasoningSetting, resolveReasoningBudgetPct, nativeReasoningSuppressed, type PromptReasoningSetting } from '@/lib/reasoningEffort';
 import { MaxOutputControl, PromptReasoningField, type MaxOutputControlProps } from './PromptOptionFields';
 import { promptReasoningFieldProps, type PromptReasoningFieldProps } from './promptReasoningField';
 import { DisplaySettingsSection } from './DisplaySettingsSection';
@@ -1038,7 +1038,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
   const reasoningControl = promptReasoningFieldProps({
     target: promptTarget,
     kind: activeKind,
-    setting: promptReasoningSettings[activeKind] ?? defaultPromptReasoningSetting(activeKind),
+    setting: shownPromptReasoningSetting(activeKind, promptReasoningSettings[activeKind], nativeReasoning),
     budgetPct: resolveReasoningBudgetPct(activeKind, promptReasoningBudget),
     global: nativeReasoning,
     suppressed: nativeReasoningSuppressed(thinkingMode, activeKind),
@@ -1048,8 +1048,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
 
   // Only meaningful in Simple mode, where the settings it reports on are the ones out of sight. Most hidden
   // rows sit behind a switch Simple still shows (Thinking, the image Provider), so Advanced can always reach
-  // them. Native Reasoning is the exception: an endpoint that rejects every effort level has no such row to
-  // reach, so a stored level there is left out rather than promising one.
+  // them. Native Reasoning is on Output in both modes, so the marker does not count it.
   const hasHiddenValues = !advanced && settingsUseAdvancedValues({
     ...sectionHiddenFields(settings),
     maxTokens,

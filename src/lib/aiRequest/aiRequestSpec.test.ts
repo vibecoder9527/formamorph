@@ -849,6 +849,16 @@ describe('Thinking Room — a fixed room per strength', () => {
     expect(inline).toMatchObject({ thinkingRoom: { tokens: null, strength: 'unlimited' } });
   });
 
+  it('lets Planning follow an endpoint-wide Unlimited when that prompt stores nothing', () => {
+    const planning = buildAiRequestSpec(
+      snapshot(levelOnly(), { reasoningEngaged: true, reasoningEffort: 'unlimited' }),
+      call({ requestType: 'thinking', maxTokensOverride: 256 }),
+    );
+    expect(planning.body).not.toHaveProperty('max_tokens');
+    expect(planning.body).not.toHaveProperty('reasoning_effort');
+    expect(planning).toMatchObject({ answerCap: 256, thinkingRoom: { tokens: null, strength: 'unlimited' } });
+  });
+
   it('reserves exactly the max_tokens it sends', () => {
     const snap = snapshot(levelOnly(), { reasoningEngaged: true, promptReasoning: { summary: 'xhigh' } });
     expect(outputCaps(snap, summary)).toEqual({ answerCap: 300, reserve: 300 + 8192 });

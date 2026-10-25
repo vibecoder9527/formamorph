@@ -15,7 +15,9 @@ testing
 graphify-out
 models
 launcher
-electron
+# The web bundle imports electron/cacheTypes.cjs. Ignore the rest of the desktop tree.
+electron/*
+!electron/cacheTypes.cjs
 thumbnails
 build-assets
 *.log

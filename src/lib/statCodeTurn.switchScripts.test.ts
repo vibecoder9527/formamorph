@@ -9,6 +9,7 @@ import { traitSwitchEvents, type TraitSwitchEvent } from './traitRuntime';
 import type { StatCodeOwners } from './statCodeTraits';
 import { inPlayOwners } from './ownedTraitsInPlay';
 import type { Entity, OwnedTraitStates, PersonaRef, PlayerStat, Script, Trait } from '@/types';
+import { statCodeTurnOf, type FlatStatCodeTurn } from '@/test/statCodeTurnFixture';
 
 const NO_PERSONA: PersonaRef = { source: 'none' };
 
@@ -34,8 +35,8 @@ function ownerTraits({ traits = [], entities = [], acquired = [], off = [], owne
 }
 
 const turnOf = (traits: StatCodeOwners, { stats = [hp()], owners, timing, worldScripts }: {
-  stats?: PlayerStat[]; owners?: OwnerCodeTurn[]; timing?: StatCodeTurn['timing']; worldScripts?: Script[];
-} = {}): StatCodeTurn => ({
+  stats?: PlayerStat[]; owners?: OwnerCodeTurn[]; timing?: FlatStatCodeTurn['timing']; worldScripts?: Script[];
+} = {}): StatCodeTurn => statCodeTurnOf({
   ...(timing ? { timing } : {}),
   stats, enabled: {}, previous: stats, asks: [], regenApplied: {}, clock: {}, ownerTraits: traits,
   ...(owners ? { owners } : {}), ...(worldScripts ? { worldScripts } : {}),
@@ -149,6 +150,17 @@ describe('a trait’s own switch script', () => {
     const out = await runSwitchScripts(turnOf(ownerTraits({ entities: [bram], owned: { bram: { chosen: ['grim'], disabled: ['grim'] } } })), [
       { traitId: 'grim', ownerId: 'bram', enabled: false },
     ]);
+    expect(hpOf(out)).toBe(30);
+  });
+
+  it('reads self as not held when its owner left the world with the switch (ticket 03, ruling 3)', async () => {
+    const grim = trait('grim', 'Grim', { scripts: [script('stats.HP.value = self.enabled === false && self.acquired === false ? 30 : 10;')] });
+    const bram: Entity = { id: 'bram', name: 'Bram', traits: [grim] };
+    // Bram is gone from the world the switch left, so no cast entry holds his trait.
+    const { world: before } = ownerTraits({ entities: [bram], owned: { bram: { chosen: ['grim'] } } });
+    const turn = { ...turnOf(ownerTraits({})), switchedFrom: before };
+    const out = await runSwitchScripts(turn, [{ traitId: 'grim', ownerId: 'bram', enabled: false }]);
+    expect(console.error).not.toHaveBeenCalled();
     expect(hpOf(out)).toBe(30);
   });
 });

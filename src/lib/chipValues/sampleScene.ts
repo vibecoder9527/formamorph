@@ -2,6 +2,7 @@ import type { Entity, GameLocation, Placeholder, Stat, Trait, WorldOverview } fr
 import type { ResolvedPersona } from '../persona';
 import { authoredChipScene, type AuthoredWorld } from './authoredScene';
 import { ownerStatParts } from '../statContext';
+import { seedNewGameStats } from '../traitRuntime';
 import type { ChipScene } from './chipScene';
 
 // Generic on purpose, so no one takes the preview for their own world. Code-only, never in the library.
@@ -13,7 +14,6 @@ const overview: WorldOverview = {
   thumbnail: null,
   bgm: null,
   systemPrompt: 'A quiet stretch of coast where the tide leaves more behind than it takes. People here trade in salvage and rumor, and nobody asks where either came from.',
-  use3DModel: false,
   tags: [],
 };
 
@@ -84,6 +84,15 @@ const harrow: Entity = {
   stats: [stat('harrow-eagerness', 'Eagerness', 45, 'How badly he wants the next sale.', [[30, 'Idle'], [70, 'Keen'], [100, 'Desperate']])],
 };
 
+// Known In the whole town, so the Known scope lists her at the Landing while she stands on the Causeway.
+const ossery: Entity = {
+  id: 'ossery', name: 'Mother Ossery', locations: ['causeway'], knownIn: ['sample-town'],
+  aiDescription: 'The toll-keeper of the causeway, who has outlived three harbormasters and buried two of them.',
+  aiSummary: 'The causeway toll-keeper everyone in town knows of.',
+  traits: [trait('ossery-long-memory', 'Long Memory', 'Remembers every unpaid toll, and who it was owed by.')],
+  stats: [stat('ossery-temper', 'Temper', 35, 'How close she is to closing the gate.', [[30, 'Calm'], [70, 'Short'], [100, 'Furious']])],
+};
+
 /** The sample world the Settings preview renders when no game runs. */
 const SAMPLE_WORLD: AuthoredWorld = {
   worldOverview: overview,
@@ -93,7 +102,7 @@ const SAMPLE_WORLD: AuthoredWorld = {
     stat('standing', 'Standing', 15, 'How the coast reckons the traveler.', [[20, 'A stranger'], [60, 'Known'], [100, 'Trusted']]),
   ],
   locations: [boathouse, tidePools, landing, causeway, sampleTown],
-  entities: [wren, gull, bell, harrow],
+  entities: [wren, gull, bell, harrow, ossery],
   traits: [
     trait('light-sleeper', 'Light Sleeper', 'Wakes at the smallest sound, and is never quite rested.'),
     trait('salvagers-eye', "Salvager's Eye", 'Spots the worth in a heap of junk, and rarely says so out loud.'),
@@ -116,6 +125,9 @@ const SAMPLE_WORLD: AuthoredWorld = {
 /** The sample world's dictionaries, for a reader that takes them beside the scene. */
 export const sampleDictionaries = () => SAMPLE_WORLD.dictionaries ?? [];
 
+/** The sample world as authored, for a reader that builds its own state from it. */
+export const sampleWorld = (): AuthoredWorld => SAMPLE_WORLD;
+
 /** The player the sample plays: a library persona, so no known-person line. It owns one trait and one
  *  stat, so the preview shows the block as an authored persona fills it. */
 const travelerTrait = trait('false-map', 'False Map', 'Carries a chart that lies, and knows which parts.');
@@ -131,13 +143,16 @@ const persona: ResolvedPersona = {
   },
 };
 
+/** The library persona the sample plays. */
+export const samplePersona = (): Entity => persona.entity;
+
 /**
  * The sample world as a Chip Scene: its authored opening, plus the player state a world alone lacks — a
  * persona with its own trait and stat, notes, a clock, and Wren as the one character who has spoken.
  */
 export function sampleChipScene(): ChipScene {
   const authored = authoredChipScene(SAMPLE_WORLD);
-  const travelerStats = [{ ...travelerStat, value: travelerStat.value ?? travelerStat.min }];
+  const travelerStats = seedNewGameStats([travelerStat]);
   return {
     ...authored,
     persona,

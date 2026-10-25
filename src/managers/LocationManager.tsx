@@ -13,16 +13,18 @@ import AiGenerateButton from "@/components/AiGenerateButton";
 import PlaceholderField, { PlaceholderNameField } from "@/components/prompt/PlaceholderField";
 import { labelPlaceholders } from '@/lib/placementLetters';
 import { SoundUpload } from '../lib/UtilityComponents';
-import { IMAGE_CAPS } from '../lib/imageOptim';
-import ImageTagsField from './ImageTagsField';
+import { LocationImageField } from './LocationImageField';
 import LocationConnections from './LocationConnections';
+import LocationEntitiesHere from './LocationEntitiesHere';
+import LocationKnownHere from './LocationKnownHere';
 import { LocationOpenings } from './OpeningsPanel';
 import { useEditorMode } from '@/lib/editorMode';
 import { HelpButton } from '@/components/HelpButton';
 import { HintInfo } from '@/components/SettingsRows';
+import { Hint } from '@/components/ui/typography';
 import { PlaceholderPinRows } from '@/components/editor/PlaceholderPinRows';
 import { locationPanelTabsFor, locationTabForField, type LocationPanelTab } from '@/views/locationPanelTabs';
-import type { FocusFieldHint, GameLocation, PlaceholderPin } from '@/types';
+import type { Entity, FocusFieldHint, GameLocation, PlaceholderPin } from '@/types';
 import { fieldFrame } from '@/lib/historyField';
 
 /**
@@ -67,6 +69,13 @@ const LocationManager = ({ location, tab, onTabChange, focusField }: {
   // Membership is entity-owned, so location-first authoring reads the inversion and writes each changed
   // entity's own list — the same edit, expressed from the other side.
   const presentIds = entityIdsAt(location.id, entities);
+  const treeOrder = entitiesInTreeOrder(entityGroups, entities);
+  const label = (name: string) => labelPlaceholders(name, placeholders, { letters: placementLetters, owners: placeholderOwners });
+  const entityLabel = (e: Entity) => label(e.name);
+  const locationLabel = (id: string) => {
+    const found = world.locations.find((l) => l.id === id);
+    return found ? label(found.name) : 'Unknown Location';
+  };
   const handleEntitiesChange = (ids: string[]) => {
     const before = new Map(entities.map((e) => [e.id, e]));
     // Only the entities whose membership actually moved are written through.
@@ -174,30 +183,40 @@ const LocationManager = ({ location, tab, onTabChange, focusField }: {
           <Label>Entities</Label>
           <MultiSelect
             key={editingLocation.id}
-            options={entitiesInTreeOrder(entityGroups, entities).map((e) => ({ label: labelPlaceholders(e.name, placeholders, { letters: placementLetters, owners: placeholderOwners }), value: e.id }))}
+            options={treeOrder.map((e) => ({ label: entityLabel(e), value: e.id }))}
             defaultValue={presentIds}
             onValueChange={handleEntitiesChange}
             placeholder="Select entities"
           />
         </div>
-        <LocationConnections location={editingLocation} />
+        <LocationEntitiesHere
+          entities={treeOrder.filter((e) => presentIds.includes(e.id))}
+          labelOf={entityLabel}
+          onChange={updateEntity}
+        />
+        <LocationKnownHere
+          location={editingLocation}
+          locations={world.locations}
+          entities={treeOrder}
+          labelOf={entityLabel}
+          locationLabel={locationLabel}
+          onChange={updateEntity}
+        />
+        <LocationConnections location={editingLocation}>
+          <div className="flex items-center gap-2" {...fieldFrame('nearbyUsesConnections')}>
+            <Checkbox
+              id={`location-nearby-${editingLocation.id}`}
+              checked={!!editingLocation.nearbyUsesConnections}
+              onCheckedChange={(checked) => apply({ nearbyUsesConnections: checked === true ? true : undefined })}
+            />
+            <Label htmlFor={`location-nearby-${editingLocation.id}`}>Nearby Through Connections</Label>
+          </div>
+          <Hint>Adds entities one Connection away to what the AI receives as nearby</Hint>
+        </LocationConnections>
       </PanelTabContent>
 
       <PanelTabContent value="media">
-        <ImageTagsField
-          label="Background Image"
-          tourAnchor="location-image"
-          images={editingLocation.backgroundImage ? [{ data: editingLocation.backgroundImage }] : []}
-          onImagesChange={(list) => handleChange('backgroundImage', list[0]?.data ?? '')}
-          imageId={`location-image-${editingLocation.id}`}
-          cap={IMAGE_CAPS.background}
-          description={editingLocation.aiDescription || editingLocation.playerDescription}
-          kind="location"
-          fileSubject={labelPlaceholders(editingLocation.name, placeholders)}
-          tags={editingLocation.imageTags}
-          onTagsChange={(t) => handleChange('imageTags', t)}
-          placeholders={placeholders}
-        />
+        <LocationImageField location={editingLocation} onChange={handleChange} placeholders={placeholders} tourAnchor="location-image" />
         {advanced && (
           <div className="space-y-2">
             <Label>Ambient Sound</Label>

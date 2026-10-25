@@ -7,6 +7,7 @@ import { activeOwnedTraitIds, addedCharacters, inPlayLibrary, ownerPins, type Pi
 import { traitScopedPins } from '@/lib/placeholderPins';
 import { resolvePersona, withPersonaEntry, worldEntitiesOf, type ResolvedPersona } from '@/lib/persona';
 import { customPersonaEntity } from '@/lib/blueprints';
+import { entitiesInPlay } from '@/lib/entityPresence';
 import { libraryPlaceholderSet, type LibraryCarrier } from '@/lib/libraryPlaceholders';
 import { inAuthoredOrder, refreshChosenTraits, traitOrderIndex } from '@/lib/traitEffects';
 import {
@@ -36,7 +37,8 @@ import type {
  * turn's pins would stop matching them.
  */
 export interface ResolvedWorld {
-  /** The cast: the authored entities without the one the player plays (see lib/persona). */
+  /** The cast: the authored entities without the one the player plays (see lib/persona), each positioned one
+   *  listing only its position. */
   entities: Entity[];
   /** Who the player plays, or null. */
   persona: ResolvedPersona | null;
@@ -90,7 +92,7 @@ export interface ResolvedWorld {
   /** Resolve with pins not yet in state — for a string written in the same pass that applies the traits
    *  carrying them, which `resolvePH` would resolve against the pins as they stood before. */
   resolveWith: (extraPins: Record<string, string>, text: string) => string;
-  /** Resolve opening text, where the Player Name chip reads "you" with no persona. */
+  /** Resolve opening text, where the Persona Name chip reads "you" with no persona. */
   resolveOpening: (text: string, over?: OpeningOverrides) => string;
   /** Resolve an entity's own text (descriptions, summary) with that entity as the Character Name. */
   resolveEntityText: ResolveEntityText;
@@ -138,7 +140,7 @@ export interface PinSources {
  */
 export function useResolvedAuthoredWorld(
   pinSet: PinSet = NO_PIN_SET,
-  /** Who the Player Name chip names. Absent, it reads "the player". */
+  /** Who the Persona Name chip names. Absent, it reads "the player". */
   personaName: string | null = null,
 ) {
   const {
@@ -225,7 +227,7 @@ const NO_PINS: Record<string, string> = {};
 const NO_COPIES = () => undefined;
 const NO_PIN_SET: PinSet = { world: NO_PINS, of: () => NO_PINS, bind: (trait) => trait, copies: () => NO_COPIES };
 
-/** The persona's name with its chips resolved, which the Player Name chip renders. Null with no persona. */
+/** The persona's name with its chips resolved, which the Persona Name chip renders. Null with no persona. */
 export function usePersonaName(rolls: PlaceholderRolls, pins: Record<string, string>): string | null {
   const { entities } = useGameData();
   const { placeholders } = usePlaceholderSession();
@@ -245,7 +247,7 @@ export function useResolvedWorld(): ResolvedWorld {
   const {
     globalStats: rawGlobalStats, viewStats: rawViewStats, runtimeDictionary: rawDictionary,
     currentLocation: storedLocation, globalTraits, disabledTraitIds, ownedTraits, codePins,
-    personaRef, libraryPersona, personaPending, discoveredEntities,
+    personaRef, libraryPersona, personaPending, discoveredEntities, entityPositions,
   } = useGameplay();
 
   const traitOrder = useMemo(() => traitOrderIndex(rawTraits, rawTraitGroups), [rawTraits, rawTraitGroups]);
@@ -290,10 +292,12 @@ export function useResolvedWorld(): ResolvedWorld {
     () => (libraryPersona ? resolveEntityNames([libraryPersona], resolveNameOf) : []),
     [libraryPersona, resolveNameOf],
   );
-  const { persona, cast: entities, playerNames, unresolved } = useMemo(
+  const { persona, cast, playerNames, unresolved } = useMemo(
     () => resolvePersona(personaRef, worldEntities, libraryEntities),
     [personaRef, worldEntities, libraryEntities],
   );
+  // The cast as it stands in play, so every roster reads each positioned entity at its position.
+  const entities = useMemo(() => entitiesInPlay(cast, entityPositions), [cast, entityPositions]);
   const worldPersonas = useMemo(() => worldEntities.filter((e) => e.persona === true), [worldEntities]);
   const customPersona = useMemo(() => customPersonaEntity(worldEntities) ?? null, [worldEntities]);
   // The one Traits tree's entities, their owned trait names resolved as the world's are.

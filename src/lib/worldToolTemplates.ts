@@ -76,7 +76,7 @@ return name ? name + " joins the scene." : "No one to add.";`,
     name: 'Pin a Memory',
     description: 'Pin the line the AI sent as a memory. A pinned memory goes with every request.',
     code: `const line = String(args[{{line:param(string)=line}}] ?? "").trim();
-if (line) memory.pin(line);
+if (line) memories.pin(line);
 return line ? "Pinned." : "Nothing to pin.";`,
   },
   {
@@ -86,7 +86,7 @@ return line ? "Pinned." : "Nothing to pin.";`,
     name: 'Add a Diary Line',
     description: 'Add the line the AI sent to an entity’s diary, after the AI’s own entry.',
     code: `const line = String(args[{{line:param(string)=line}}] ?? "").trim();
-if (line) diary({{entity:entity}}, line);`,
+if (line) entities[{{entity:entity}}].diary(line);`,
   },
   {
     id: 'builtin-tool-highlight-name',

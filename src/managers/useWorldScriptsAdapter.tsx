@@ -11,7 +11,7 @@ import { useCodeCardNavigation } from '@/lib/codeCardNavigation';
 import { useCodeUseReveal } from '@/lib/codeUseReveal';
 import { registerScriptInsert, reportScriptInsert } from '@/lib/formaquestion/scriptInsert';
 import { newScript } from '@/lib/scriptRows';
-import { SCRIPT_TIMING_DESCRIPTION, SCRIPT_TIMING_LABEL, SCRIPT_TIMINGS } from '@/lib/scripts';
+import { patchScript, SCRIPT_TIMING_DESCRIPTION, SCRIPT_TIMING_LABEL, SCRIPT_TIMINGS, type ScriptPatch } from '@/lib/scripts';
 import { isStatOn } from '@/lib/statCodeTargets';
 import {
   editScripts, orderEdits, ownerRowId, reorderWrites, scriptEntryKey, scriptsByTiming, worldScriptEntries,
@@ -20,7 +20,7 @@ import {
 import type { Script, ScriptTiming } from '@/types';
 import { SortableTree, type SortableTreeAdapter } from './SortableTree';
 import { ScriptRow } from './ScriptsSection';
-import { useScriptEntryContext } from './useScriptEntryContext';
+import { useScriptBoxContext } from './useScriptBoxContext';
 
 /** One row of the tree: a timing's group, or a script under it. */
 interface ScriptTreeRow {
@@ -56,7 +56,10 @@ function useScriptWrites() {
     }
     changed(before.stats, next.stats).forEach(updateStat);
     changed(before.traits, next.traits).forEach(updateTrait);
-    changed(before.entities, next.entities).forEach((entity) => editEntity(entity.id, () => entity));
+    // Apply the edits to the entity as it is when the updater runs, so a same-tick entity edit survives.
+    changed(before.entities, next.entities).forEach(({ id }) => editEntity(id, (live) => (
+      editScripts({ scripts: [], stats: [], traits: [], entities: [live] }, edits).entities?.[0] ?? live
+    )));
   }, [updateStat, updateTrait, editEntity, setWorldScripts, updateWorldScript]);
 }
 
@@ -66,19 +69,18 @@ function WorldScriptDetail({ entry, onWrite, autoFocus }: {
   onWrite: (edits: ScriptEdit[]) => void;
   autoFocus: boolean;
 }) {
-  const { self, context } = useScriptEntryContext(entry);
   const { script, home } = entry;
+  const context = useScriptBoxContext(home);
   // A stat's or trait's Find All Uses row opens its owner's tab, so only a world script's lands here.
   const reveal = useCodeUseReveal(script.id, null, 'world');
-  const replace = (next: Script) => onWrite([{ home, edit: (scripts) => scripts.map((s) => (s.id === script.id ? next : s)) }]);
+  const patch = (change: ScriptPatch) => onWrite([{ home, edit: (scripts) => patchScript(scripts, script.id, change) }]);
   const remove = () => onWrite([{ home, edit: (scripts) => scripts.filter((s) => s.id !== script.id) }]);
   return (
     <ScriptRow
       script={script}
       ownerName={entry.ownerName}
-      self={self}
       context={context}
-      onChange={replace}
+      onChange={patch}
       onRemove={remove}
       reveal={home.kind === 'world' ? reveal : null}
       autoFocus={autoFocus}

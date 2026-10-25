@@ -16,11 +16,12 @@ import { rewrittenKey } from '@/lib/statCodeRename';
 import { findSlotRanges, parseTemplateSlots } from '@/lib/statCodeTemplates';
 import type { Placeholder } from '@/types';
 import {
-  nearestName, surfaceHasGlobal, surfaceKnownNames, type CodeSurface, type SurfaceEntry,
+  isMethodEntry, nearestName, readOnlyEntries, surfaceHasGlobal, surfaceKnownNames, type CodeSurface, type SurfaceEntry,
 } from '@/lib/codeSurface';
+import type { SandboxDictionaryEntry } from '@/lib/statCodeExecutor';
 import {
   clockFieldsAt, DELTA_FIELDS, DELTA_MEMBERS, PREVIOUS_FIELDS, SELF_WRITABLE_FIELDS, STAT_CODE_SURFACE, STAT_FIELDS,
-  DICTIONARY_FIELDS, ENTITY_FIELDS, PERSONA_FIELDS, SELF_TRAIT_FIELDS, SWITCHED_TRAIT_FIELDS, TRAIT_ENTRY_FIELDS, TRAIT_WRITABLE_FIELD, placeholderEntryFields,
+  DICTIONARY_ENTRY_FIELDS, DICTIONARY_FIELDS, ENTITY_FIELDS, LOCATION_ENTRY_FIELDS, MEMORY_ENTRY_FIELDS, PERSONA_FIELDS, SELF_TRAIT_FIELDS, SWITCHED_TRAIT_FIELDS, TRAIT_ENTRY_FIELDS, TRAIT_WRITABLE_FIELD, placeholderEntryFields,
 } from '@/lib/statCodeSurface';
 import {
   isIdentifier, isPlaceholderEntryMember, placeholderKeyWinner, placeholderPathLabel, placeholderPathMap,
@@ -28,7 +29,7 @@ import {
 } from '@/lib/statCodePaths';
 import {
   codeResolver, declaredNames, keyOwner, memberKey, parseCode, statLikeNames,
-  type CodeOwnerKind, type CodeValue, type EntryRef, type PlaceholderOwner, type ResolvedCodeName, type StatOwner,
+  type ArrayElement, type CodeOwnerKind, type CodeValue, type EntryRef, type PlaceholderOwner, type ResolvedCodeName, type StatOwner,
   type TraitOwner,
 } from '@/lib/statCodeResolver';
 
@@ -92,8 +93,14 @@ export interface CodeOwnerName {
 export interface CodePlaceholders {
   list: readonly Placeholder[];
   owners?: PlaceholderOwners;
-  /** Every dictionary in authored order. Absent, dictionary names are neither offered nor checked. */
-  dictionaries?: readonly CodeOwnerName[];
+  /** Every dictionary in authored order. Absent, dictionary names are neither offered nor checked. A book's
+   *  `entries`, absent, leaves its entry names neither offered nor checked. */
+  dictionaries?: readonly CodeDictionaryNames[];
+}
+
+/** A book's code name and its enabled entries under their code names. */
+export interface CodeDictionaryNames extends CodeOwnerName {
+  entries?: readonly SandboxDictionaryEntry[];
 }
 
 /** One trait as a template slot lists it, placed in its owner's tree. */
@@ -132,6 +139,8 @@ export interface AnalysisOptions {
   /** The world's entities, in authored order. Absent, entity and persona trait names are neither offered nor
    *  checked. A library entity can carry another name, so an unknown one is only a warning. */
   entities?: readonly CodeEntityNames[];
+  /** The world's location code names, in authored order. Absent, location names are not offered. */
+  locations?: readonly string[];
   /** The global stat names, in authored order: what `stats` keys in every box. Absent, stat names are neither
    *  offered nor checked. */
   statNames?: readonly string[];
@@ -420,6 +429,18 @@ function mapKeyEntries(map: CodeValue, options: AnalysisOptions, dotted: boolean
       const books = options.placeholders?.dictionaries;
       return books ? mapNameEntries(books.map((book) => book.name), 'dictionary', dotted) : null;
     }
+    case 'dictionaryEntryMap': {
+      const books = options.placeholders?.dictionaries;
+      if (!books) return null;
+      // An unknown book reads as the blank book, whose entries map is empty.
+      const book = books.findLast((each) => each.name === map.dictionary);
+      const entries = book ? book.entries : [];
+      return entries && [...new Set(entries.map((entry) => entry.name))]
+        .filter((name) => !dotted || isIdentifier(name))
+        .map((name) => ({ name, detail: 'entry', info: `The “${name}” entry in the “${map.dictionary}” dictionary` }));
+    }
+    case 'locationMap': return options.locations ? [...new Set(options.locations)].filter((name) => !dotted || isIdentifier(name))
+      .map((name) => ({ name, detail: 'location', info: `The “${name}” location in this world` })) : null;
     default: return undefined;
   }
 }
@@ -463,6 +484,9 @@ function placeholderMembersAt(
   return null;
 }
 
+/** The members of one element of each array shape. */
+const ELEMENT_FIELDS: Record<ArrayElement, readonly SurfaceEntry[]> = { memory: MEMORY_ENTRY_FIELDS, entity: ENTITY_FIELDS };
+
 /** What a resolved expression carries after its dot, or null where nothing can be shown. A wrong list would
  *  claim the sandbox holds something it doesn't. */
 function membersOf(value: CodeValue, options: SurfaceAnalysisOptions, rules: StatRules): readonly SurfaceEntry[] | null {
@@ -483,7 +507,11 @@ function membersOf(value: CodeValue, options: SurfaceAnalysisOptions, rules: Sta
     case 'entity': case 'owner': return ENTITY_FIELDS;
     case 'persona': return PERSONA_FIELDS;
     case 'dictionary': return DICTIONARY_FIELDS;
+    case 'dictionaryEntry': return DICTIONARY_ENTRY_FIELDS;
+    case 'locationEntry': return LOCATION_ENTRY_FIELDS;
     case 'clock': return clockFieldsAt(value.path);
+    case 'array': return value.path === null ? null : options.surface.members.get(value.path) ?? null;
+    case 'element': return ELEMENT_FIELDS[value.of];
     case 'listed': return options.surface.members.get(value.path) ?? null;
     default: return null;
   }
@@ -491,7 +519,16 @@ function membersOf(value: CodeValue, options: SurfaceAnalysisOptions, rules: Sta
 
 /** The members a resolved value carries, as completion offers them after its dot. */
 export const memberEntries = (value: CodeValue, options: SurfaceAnalysisOptions): readonly SurfaceEntry[] | null =>
-  membersOf(value, options, statRulesOf(options.surface));
+  surfaceMembersOf(value, options, statRulesOf(options.surface));
+
+/** `membersOf` as the surface exposes it: on a read-only surface, the sandbox's own values have no method and
+ *  every field read-only. A built-in such as `Math` keeps its members. */
+function surfaceMembersOf(value: CodeValue, options: SurfaceAnalysisOptions, rules: StatRules): readonly SurfaceEntry[] | null {
+  const members = membersOf(value, options, rules);
+  const { surface } = options;
+  const builtin = value.is === 'listed' && surface.builtins.some((entry) => entry.name === value.path.split('.')[0]);
+  return members && surface.readOnly && !builtin ? readOnlyEntries(members.filter((entry) => !isMethodEntry(entry))) : members;
+}
 
 /** Whether a map entry's key is missing from the names its map holds. False where those names are not given. */
 export function isUnknownEntry(name: ResolvedCodeName, options: SurfaceAnalysisOptions): boolean {
@@ -501,12 +538,23 @@ export function isUnknownEntry(name: ResolvedCodeName, options: SurfaceAnalysisO
       case 'trait': return mapKeyEntries({ is: 'traitMap', owner: name.owner }, options, false);
       case 'entity': return mapKeyEntries({ is: 'entityMap' }, options, false);
       case 'dictionary': return mapKeyEntries({ is: 'dictionaryMap' }, options, false);
+      case 'dictionaryEntry': return mapKeyEntries({ is: 'dictionaryEntryMap', dictionary: name.dictionary }, options, false);
       case 'placeholder': return placeholderKeysInBrackets(name.owner, name.path.slice(0, -1), options, statRulesOf(options.surface));
       default: return null;
     }
   };
   const keys = keysOf();
   return !!keys && !keys.some((entry) => entry.name === name.key);
+}
+
+/** The span of a retired global's member read at `name`, `scene.traits`, and the sentence naming its new form. */
+function retiredRead(name: SyntaxNode, code: string, surface: CodeSurface): { from: number; to: number; newForm: string } | null {
+  const members = surface.retired?.[code.slice(name.from, name.to)];
+  const read = name.parent;
+  if (!members || read?.name !== 'MemberExpression' || read.firstChild?.from !== name.from) return null;
+  const property = read.getChild('PropertyName');
+  const member = property ? code.slice(property.from, property.to) : '';
+  return Object.hasOwn(members, member) ? { from: read.from, to: read.to, newForm: members[member] } : null;
 }
 
 /** The member expression an assignment, `++` or `--` writes to, or null when it writes something else. */
@@ -1128,7 +1176,7 @@ export function codeCompletions(
   const punctuationAt = beforeWord.trimEnd().length - 1;
   if (/\.\s*$/.test(beforeWord)) {
     const value = resolver.valueBefore(punctuationAt);
-    const members = value && membersOf(value, options, rules);
+    const members = value && surfaceMembersOf(value, options, rules);
     if (!members) return null;
     return { from, to: pos, options: members.map((member) => asCompletion(member, 'property')) };
   }
@@ -1358,6 +1406,11 @@ export function codeDiagnostics(code: string, options: SurfaceAnalysisOptions): 
     const name = code.slice(from, to);
     if (declared.has(name) || known.has(name)) continue;
     if (overlapsAny(from, to, ranges)) continue;
+    const retired = retiredRead(cursor.node, code, surface);
+    if (retired) {
+      diagnostics.push({ ...retired, severity: 'error', message: `“${code.slice(retired.from, retired.to)}” isn’t available in ${surface.label}. ${retired.newForm}` });
+      continue;
+    }
     const suggestion = nearestName(name, [...known, ...declared]);
     diagnostics.push(suggested({
       from,

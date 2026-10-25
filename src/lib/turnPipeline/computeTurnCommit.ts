@@ -8,6 +8,10 @@ import { sameCharacterName } from '@/lib/entityMatch';
 import { randomUUID } from '@/lib/uuid';
 import type { parseStatUpdates } from '@/lib/statChanges';
 import { readStatResponse, statResponseChanges, type StatResponse } from '@/lib/statRequest';
+import {
+  applyAtOnce, applyEntityCodeWrites, entityMoveIntents, isEntityMove, joinEntityMoves, NO_ENTITY_OFFER, offerOf, peelIntents,
+  type EntityMoveIntents, type EntityMoveOffer, type FollowerState, type PeelOff, type PlayerMove,
+} from '@/lib/entityFollowing';
 import type { TurnPassId, TurnPlan } from './turnPlan';
 import type { TurnPassOutcome, TurnResult } from './turnRunner';
 
@@ -61,6 +65,8 @@ export interface TurnCommitContext {
   diaryNames?: Readonly<Record<string, string>>;
   /** The turn's Script World Tool calls, in call order. */
   toolCalls?: readonly TurnToolCall[];
+  /** How an Everywhere Listed entity's "come along" peels a new follower off it. Absent ⇒ none peels. */
+  peel?: PeelOff;
 }
 
 export interface TurnCommitInput {
@@ -93,10 +99,12 @@ export interface TurnCommit {
   codeMove: string | null;
   /** Every code write this commit holds, so a later batch lays over them. Null when it holds none. */
   codeWrites: WorldWrites | null;
+  /** What the entity location requests answered, by entity id. */
+  entityMoves: EntityMoveIntents;
 }
 
 /** Every outcome one pass produced, in dispatch order. A failed request is left out — it answered nothing. */
-const answers = (passes: TurnPassOutcome[], id: TurnPassId): TurnPassOutcome[] =>
+const answers = (passes: readonly TurnPassOutcome[], id: TurnPassId): TurnPassOutcome[] =>
   passes.filter((outcome) => outcome.id === id && !outcome.error);
 
 /** What a pass that runs once read, or null when it did not run or failed. */
@@ -168,6 +176,8 @@ export function computeTurnCommit({ result, plan, context }: TurnCommitInput): T
     });
   }
 
+  const entityMoves = peelIntents(entityMovesOf(passes), context.peel);
+
   const turn: AITurnResult = {
     narration,
     choices,
@@ -205,7 +215,42 @@ export function computeTurnCommit({ result, plan, context }: TurnCommitInput): T
     discoveries,
     codeMove: null,
     codeWrites: null,
+    entityMoves,
   }, context.codeWrites, context);
+}
+
+/** The entity replies that change anything, by entity id. A failed request, "stay" and "keep following"
+ *  change nothing. */
+export function entityMovesOf(passes: readonly TurnPassOutcome[]): EntityMoveIntents {
+  return entityMoveIntents([...answers(passes, 'entityLocationAuto'), ...answers(passes, 'entityLocationSuggest')]
+    .flatMap(({ subject, parsed }) => subject?.entity ? [{ entity: subject.entity, move: isEntityMove(parsed) ? parsed : null }] : []));
+}
+
+/**
+ * A committed turn's entity replies laid over `state`, once the player's move is known: `from` is where the
+ * turn began, `to` where the player stands after the router and the turn's code. While the commit offers a
+ * move the player has not taken, "stay here" and each walk apply at once and "come along" waits in `offer`
+ * for Go. The code's entity writes apply last, and an entity they name leaves the offer.
+ */
+export function commitEntityMoves<S extends FollowerState>(
+  state: S,
+  commit: Pick<TurnCommit, 'entityMoves' | 'suggestedLocation' | 'codeWrites'>,
+  move: PlayerMove,
+): { state: S; offer: EntityMoveOffer } {
+  const { entityMoves } = commit;
+  const code = commit.codeWrites?.entities;
+  const moved = move.to !== undefined && move.to !== move.from;
+  if (commit.suggestedLocation && !moved) {
+    const written = new Set(code?.map((write) => write.entity));
+    const offer = offerOf(entityMoves);
+    return {
+      state: applyEntityCodeWrites(applyAtOnce(state, entityMoves, move.from), code, move.from),
+      offer: written.size ? {
+        comeAlong: offer.comeAlong.filter((id) => !written.has(id)), comeOnce: offer.comeOnce.filter(({ id }) => !written.has(id)),
+      } : offer,
+    };
+  }
+  return { state: applyEntityCodeWrites(joinEntityMoves(state, move, entityMoves), code, move.to ?? move.from), offer: NO_ENTITY_OFFER };
 }
 
 /**
@@ -246,16 +291,27 @@ export function withCodeWrites(commit: TurnCommit, writes: WorldWrites | undefin
   }
   if (entities !== turn.entities) turn = { ...turn, entities };
 
+  turn = withCodeLines(turn, writes, context.diaryNames);
+  return { ...commit, turn, discoveries, suggestedLocation, codeMove, turnHours, clock, codeWrites };
+}
+
+/**
+ * `turn` with the memory and diary lines of `writes` after the ones it holds, diary lines keyed by the entity
+ * names `diaryNames` gives. The same turn when `writes` adds no line.
+ */
+export function withCodeLines(
+  turn: AITurnResult, writes: WorldWrites | undefined, diaryNames?: Readonly<Record<string, string>>,
+): AITurnResult {
   // Memory and diary lines go in their own fields, so the digest and diary passes still run for the turn (Q37).
-  if (codeWrites?.memory) turn = { ...turn, codeMemory: codeWrites.memory };
-  if (codeWrites?.diary) {
-    const codeDiaries: Record<string, string[]> = {};
-    for (const { entity, line } of codeWrites.diary) {
-      const name = context.diaryNames?.[entity] ?? entity;
+  let out = turn;
+  if (writes?.memory?.length) out = { ...out, codeMemory: [...turn.codeMemory ?? [], ...writes.memory] };
+  if (writes?.diary?.length) {
+    const codeDiaries: Record<string, string[]> = { ...turn.codeDiaries };
+    for (const { entity, line } of writes.diary) {
+      const name = diaryNames?.[entity] ?? entity;
       codeDiaries[name] = [...codeDiaries[name] ?? [], line];
     }
-    turn = { ...turn, codeDiaries };
+    out = { ...out, codeDiaries };
   }
-
-  return { ...commit, turn, discoveries, suggestedLocation, codeMove, turnHours, clock, codeWrites };
+  return out;
 }

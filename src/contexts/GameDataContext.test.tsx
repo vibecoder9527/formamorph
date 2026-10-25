@@ -16,7 +16,7 @@ const world = (id: string, overview: Record<string, unknown>): World => ({
   id,
   worldOverview: {
     name: id, description: '', author: '', thumbnail: null, bgm: null,
-    systemPrompt: '', use3DModel: true, tags: [], ...overview,
+    systemPrompt: '', tags: [], ...overview,
   },
   stats: [], locations: [], entities: [], traits: [], statUpdates: [],
 } as unknown as World);
@@ -519,7 +519,7 @@ describe('discardChanges', () => {
       id: 'new',
       worldOverview: {
         name: '', description: '', author: '', thumbnail: null, bgm: null,
-        systemPrompt: '', use3DModel: true, tags: [],
+        systemPrompt: '', tags: [],
       },
       stats: [], locations: [], entities: [], traits: [], statUpdates: [],
       dictionaries: [{ id: 'seed', name: 'Default', enabled: true, entries: [] }],
@@ -549,7 +549,7 @@ describe('discardChanges', () => {
       id: 'w',
       worldOverview: {
         name: 'Legacy', description: '', author: '', thumbnail: null, bgm: null,
-        systemPrompt: '', use3DModel: true, tags: [],
+        systemPrompt: '', tags: [],
       },
       stats: [], locations: [], traits: [], statUpdates: [],
       entities: [{ id: 'e1', name: 'Sedge', inGameDescription: 'Seen', detailedDescription: 'Known' }],
@@ -656,6 +656,23 @@ describe('loadWorldData', () => {
     expect(result.current.worldOverview.openings).toEqual(OPENINGS);
     expect(result.current.worldOverview.openingWeights).toEqual({ o1: 3 });
     expect(result.current.worldOverview.openingsEnabled).toBe(false);
+  });
+
+  it("carries the Map Background's images, rules, frame and opacity through an export and load", () => {
+    const { result } = renderHook(() => useGameData(), { wrapper });
+    const mapBackground = {
+      images: [
+        { data: 'data:image/webp;base64,bWFw' },
+        { data: 'https://example.com/ruin.png', requires: [{ all: [{ kind: 'stat' as const, id: 'ruin', operator: '>' as const, value: 4, unit: 'raw' as const }] }] },
+      ],
+      frame: { x: -40, y: 12, width: 900, height: 500 },
+      opacity: 0.6,
+    };
+    act(() => { result.current.loadWorldData(JSON.parse(JSON.stringify(world('a', { mapBackground })))); });
+    expect(result.current.worldOverview.mapBackground).toEqual(mapBackground);
+
+    act(() => { result.current.loadWorldData(world('b', {})); });
+    expect(result.current.worldOverview.mapBackground).toBeUndefined();
   });
 
   it('loads an old single cue as the first row of the list', () => {

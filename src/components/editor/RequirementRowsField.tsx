@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/breadcrumb-picker';
 import PlaceholderText from '@/components/prompt/PlaceholderText';
 import { StatConditionControls } from '@/components/editor/StatConditionControls';
+import { TimeConditionControls } from '@/components/editor/TimeConditionControls';
 import { labelPlaceholders } from '@/lib/placementLetters';
 import {
   requirementOwnerKey, requirementOwnerOf, flipped, sameRequirement, statTail, withRequirementOwner,
@@ -19,6 +20,9 @@ import type { RequirementStatSection } from '@/lib/requirementStatOptions';
 import { cn } from '@/lib/utils';
 import type { Placeholder, TraitRequirement, TraitRequirementRow } from '@/types';
 
+/** The picker's one time row: a time Condition starts on night alone. */
+const TIME_OPTION: RequirementOption = { requirement: { kind: 'time', dayparts: ['night'] }, label: 'Time of Day', breadcrumb: [], owners: [] };
+
 /** Where the open picker adds: a row's index for **And**, or `new` for a row of its own. */
 type AddTarget = number | 'new';
 
@@ -26,7 +30,7 @@ type AddTarget = number | 'new';
  * The Requires field over plain data: Requirement Rows, each a bordered line of chips joined by "and", the
  * rows joined by "or". **And** adds a Condition to its row, **Or Another Way** adds a row, and removing a
  * row's last chip removes the row (Q6). Picking a target opens a second page for the owner: the same
- * owner, You, or an entity that owns it. Off-world, or for a global target, it is added at once. A chip
+ * owner, Persona, or an entity that owns it. Off-world, or for a global target, it is added at once. A chip
  * opens its target, unless `opens` says the host has nowhere to open it, when it
  * reads as plain text; a chip whose target is gone reads red under its stored name. Each chip flips between
  * plain and Not; a Not chip shows a NOT mark and a dashed border.
@@ -36,11 +40,13 @@ type AddTarget = number | 'new';
  * would repeat another Condition in the row is held back. The same stat can sit in a row twice, once as a
  * floor and once as a ceiling.
  *
+ * A time Condition's chip is a toggle per daypart, at least one on, with no Not. A row holds one at most.
+ *
  * The host supplies everything the rows read: `states` the rows' evaluated state in the same order, `options`
  * the targets an author can add, `statSections` the stats by owner, and `textOf` the rule text of one Condition.
  */
 export function RequirementRowsField({
-  rows, states, options, statSections = [], textOf, placeholders, offWorld = false, onChange, onOpen, opens = () => true, label = 'Requires', labelAside,
+  rows, states, options, statSections = [], textOf, placeholders, offWorld = false, onChange, onOpen, opens = () => true, label = 'Requires', labelAside, hostName,
 }: {
   rows: TraitRequirementRow[];
   states: readonly RowState[];
@@ -55,6 +61,8 @@ export function RequirementRowsField({
   /** The field's name, for a host whose rows are not a trait's requirement. */
   label?: string;
   labelAside?: ReactNode;
+  /** Who a Condition with no owner reads, as the owner page names it. Absent, the same owner as the host. */
+  hostName?: string;
 }) {
   const [target, setTarget] = useState<AddTarget | null>(null);
   const [picked, setPicked] = useState<RequirementOption | null>(null);
@@ -91,7 +99,7 @@ export function RequirementRowsField({
   // A stat row names its owner in the section it sits in, so it needs no owner page. What a playing-as row,
   // an off-world row and a global target add at once; any other target asks which owner first.
   const atOnce = (option: RequirementOption) =>
-    (option.requirement.kind === 'playingAs' || option.requirement.kind === 'stat' || offWorld
+    (option.requirement.kind === 'playingAs' || option.requirement.kind === 'stat' || option.requirement.kind === 'time' || offWorld
       ? option.requirement : soleOwnerRequirement(option));
   const pick = (option: RequirementOption) => {
     const requirement = atOnce(option);
@@ -100,6 +108,8 @@ export function RequirementRowsField({
   };
   /** Every way the row could be added is already listed, so the row has nothing left to add. */
   const exhausted = (option: RequirementOption) => {
+    // One time Condition per row: its chip edits the dayparts.
+    if (option.requirement.kind === 'time') return taken.some((r) => r.kind === 'time');
     const requirement = atOnce(option);
     if (requirement) return [requirement, ...option.owners.map((o) => withRequirementOwner(requirement, o.owner))].some(listed);
     return listed(option.requirement) && option.owners.every((o) => listed(withRequirementOwner(option.requirement, o.owner)));
@@ -120,11 +130,12 @@ export function RequirementRowsField({
   });
   // Off-world only the entity's own stats exist to read.
   const statTargets = statSections.filter((s) => !offWorld || s.own).map((s) => targets(s.heading, s.options));
-  const searchable = joinAnd(['traits', 'groups', ...(statTargets.length ? ['stats'] : []), ...(offWorld ? [] : ['personas'])]);
+  const searchable = joinAnd(['traits', 'groups', ...(statTargets.length ? ['stats'] : []), 'time of day', ...(offWorld ? [] : ['personas'])]);
   const sections = [
     targets('Traits', options.traits),
     targets('Any Trait in a Group', options.groups),
     ...statTargets,
+    targets('Time of Day', [TIME_OPTION]),
     ...(offWorld ? [] : [targets('Playing As', options.personas)]),
   ];
 
@@ -133,8 +144,8 @@ export function RequirementRowsField({
     return {
       key: requirementOwnerKey(choice?.owner),
       value: requirement,
-      name: choice?.name ?? 'Same Owner',
-      hint: choice ? undefined : 'Whoever has the trait',
+      name: choice?.name ?? hostName ?? 'Same Owner',
+      hint: choice || hostName ? undefined : 'Whoever has the trait',
       disabled: listed(requirement),
     };
   };
@@ -174,20 +185,25 @@ export function RequirementRowsField({
     const stat = requirement.kind === 'stat' ? requirement : null;
     const tail = stat ? ` ${statTail(stat)}` : '';
     const statName = targetText.endsWith(tail) ? targetText.slice(0, targetText.length - tail.length) : targetText;
+    // A time chip is its daypart toggles; the complement is the other dayparts, so it has no Not.
+    const time = requirement.kind === 'time' ? requirement : null;
     return (
       <span
-        role={stat ? 'group' : undefined}
-        aria-label={stat ? ruleLabel : undefined}
+        role={stat || time ? 'group' : undefined}
+        aria-label={stat || time ? ruleLabel : undefined}
         data-unresolved={unresolved || undefined}
         data-not={requirement.not || undefined}
         className={cn(
           'inline-flex max-w-full items-center gap-0.5 rounded-full border bg-secondary py-0.5 pl-2.5 pr-1 text-label',
-          stat && 'flex-wrap gap-y-1',
+          (stat || time) && 'flex-wrap gap-y-1',
+          time && 'flex-nowrap rounded-2xl',
           requirement.not && 'border-dashed',
           unresolved && 'border-destructive text-destructive',
         )}
       >
-        {stat ? (
+        {time ? (
+          <TimeConditionControls requirement={time} accepts={edit.accepts} onChange={edit.replace} />
+        ) : stat ? (
           <>
             <span className="min-w-0 truncate">{mark}<PlaceholderText text={statName} placeholders={placeholders} /></span>
             <span className="ml-1.5 inline-flex items-center gap-1.5 text-foreground">
@@ -209,7 +225,7 @@ export function RequirementRowsField({
             {mark}<PlaceholderText text={targetText} placeholders={placeholders} />
           </button>
         )}
-        <Tip tip={requirement.not ? 'Require it instead' : 'Require it to be off'}>
+        {!time && <Tip tip={requirement.not ? 'Require it instead' : 'Require it to be off'}>
           <button
             type="button"
             aria-label={requirement.not ? `Require ${targetLabel} instead` : `Require ${targetLabel} to be off`}
@@ -220,7 +236,7 @@ export function RequirementRowsField({
           >
             <ArrowLeftRight className="h-3 w-3" aria-hidden />
           </button>
-        </Tip>
+        </Tip>}
         <button
           type="button"
           aria-label={`Remove ${ruleLabel}`}

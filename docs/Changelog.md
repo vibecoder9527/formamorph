@@ -2,7 +2,7 @@
 
 All notable changes to Formamorph. This fork's first line is **2.0.0** — a full TypeScript rebuild of the upstream JavaScript app ([FieryLionite's Formamorph](https://fierylion.itch.io/formamorph), ~v1.2) — with feature parity as the baseline plus new features on top.
 
-> ✅ **3.0.0 – 3.3.3 are released** (collapsed below). Releases 2.0.0 – 2.19.x are in [Changelog-v2](Changelog-v2). New work lands under **🚧 In Progress** — an unnumbered section, so changes accumulate without pinning a version. When a batch earns a release its section is marked **Released** and collapsed, and a fresh In Progress opens. `package.json` reads **3.3.3** — the latest released version.
+> ✅ **3.0.0 – 3.4.0 are released** (collapsed below). Releases 2.0.0 – 2.19.x are in [Changelog-v2](Changelog-v2). New work lands under **🚧 In Progress** — an unnumbered section, so changes accumulate without pinning a version. When a batch earns a release its section is marked **Released** and collapsed, and a fresh In Progress opens. `package.json` reads **3.4.0** — the latest released version.
 
 Each release groups changes as **Major** / **Minor**, then **Added** / **Removed** / **Fixed**, and within those by audience: 👤 user-facing · 🛠️ developer tooling · ⚙️ backend. Where two or more changes touch the same feature, they sit together under that feature's name.
 
@@ -10,19 +10,168 @@ Each release groups changes as **Major** / **Minor**, then **Added** / **Removed
 
 ## 🚧 In Progress
 
-_Unreleased — new work accumulates here until it earns a version bump. The next batch will pin its own version; `package.json` reads **3.3.3** (just released below)._
+_Unreleased — new work accumulates here until it earns a version bump. The next batch will pin its own version; `package.json` reads **3.4.0** (just released below)._
 
 ### Minor Changes
+
+#### ➕ Added
+
+- **👤 User-facing**
+  - **Entity Avatars:**
+    - **A world holds several Avatars in its Media tab, and each world entity picks one in its Avatar dropdown.** Upload or copy one from your library, then rename, replace, download or delete it. A delete names the entities that use it.
+    - **Mark one library Avatar as your default from its tile menu, and User's Default shows it.** The tile gets a **Default** badge. With no default, User's Default shows the bundled Avatar.
+    - **Library entities pick an Avatar from your Avatar library, and a library persona shows it while you play.** Adding one to a world copies its Avatar into the world once. Deleting a library Avatar names the library entities that use it, and they show no Avatar.
+    - **Enter World shows the avatar step when the persona you pick has an Avatar.** The button switches between **Continue to Avatar** and **Start Game** as you change persona. You pick a library Avatar only under User's Default, starting on your default.
+    - **In play, one entity view shows each entity's Avatar, 3D model or image, and replaces the separate Avatar tab.** It shows the Avatar first, then the model, then the image, unless you pick another with **Display by Default**. Select an entity to see it. On mobile, the **View** tab holds it.
+    - **Exported character cards and published entities carry the entity's Avatar, and importing one adds it to your Avatar library.** Importing the same Avatar twice keeps one copy. Publish counts the Avatar toward the 25 MB entity limit before upload.
+    - **The World Editor's Import Entity adds a card's Avatar to your library only when you confirm the import.** Cancel the import, and your Avatar library stays as it was.
+    - **A library entity's Avatar dropdown shows Missing Avatar when its Avatar isn't on this device, as the link review does.** Pick another option to replace it.
+    - **Each Avatar in the World Overview has a Preview button that shows it in 3D, with Export.** Export saves the file under the Avatar's name. History names the Avatar you add, rename or delete.
+  - **Local Model:**
+    - **Unified KV Cache is on by default, so parallel requests share one context.** Turn it off in **Advanced** to give every request the full Context Size.
+    - **K Cache Type, V Cache Type and KV Cache in RAM give you more control over the context's memory.** Q8_0 or Q4_0 shrink the context. KV Cache in RAM moves it out of VRAM, but replies get much slower. Find them in **Advanced**.
+    - **Local vision models see the images in your story when their projector sits beside the model.** Recommended vision models download theirs with them and show a **Vision** badge. A text-only model still drops images.
+    - **Context Overflow chooses what happens when a story is longer than Context Size.** Truncate Middle keeps the system prompt and your first message. Rolling Window keeps the system prompt and drops the oldest messages. Stop at Limit shows an error. Find it in **Advanced**.
+    - **World Tools work on the desktop engine, and the model reads each Tool's result before it answers.** Context Overflow keeps the current Tool round whole and drops an older round only as a unit.
+  - **Media Tab:**
+    - **The World Editor's new Media tab shows every image, sound, 3D Model and Avatar in the world, with sizes.** Cards sit in sections that follow your groups and locations, and an entity's images stack into one card. Select a card to preview, download or go to it.
+    - **The Media tab header shows Publish Size and lets you group, sort and filter the gallery.** Group by type, show the largest files first, or filter to linked, embedded, rule-bearing or over-budget images. An over-limit world's warning now opens this tab.
+    - **The Media tab's panel can now replace or remove a sound, 3D Model, background, thumbnail or cover image.** A replaced file keeps its slot, and each change undoes in one step.
+    - **Optimize Images moves into the World Editor's Media tab header in both modes, and now shrinks dictionary cover images.** The app bar no longer has the button. Sizes and the meter update when a run ends.
+    - **An entity's or location's image opens one Media tab panel with its gallery, and the framed image's actions sit below.** Reorder, generate, replace, download or remove images there. Each image also gets its Visibility rule editor, and an entity's links to its Avatar.
+    - **The Media tab's No Images filter lists entities, locations, the thumbnail and the Map Background with no image.** Select a blank card to add its first image. Dictionaries without a cover image stay out.
+    - **Trait requirements and image Visibility rules can check the time of day, such as evening or night.** Pick **Time of Day**, then turn on the dayparts. The game checks once per turn, after the turn's time passes.
+    - **In the World Editor, a location's background is now a gallery, and each image can take a Visibility rule.** In play the backdrop shows the first visible image. A condition with no owner reads your persona. Older worlds load with their background first.
+    - **The Locations canvas can show a Map Background image, and the in-game Map draws it behind the locations.** Right-click the canvas to set it, then drag, resize and fade it under Adjust Background. In the Media tab, add more map images with Visibility rules so the map changes in play.
+  - **Request Status Strip:**
+    - **The request status strip shows a small animated icon for each request, such as a compass for Plan.** The icon holds still when your system's reduced-motion setting is on.
+    - **The request status strip shows a quill for Narration, a forking path for Choices, and masks for Cast and Motivation.** Between turns, memory and diary passes show a book. The Thinking header shows a thought cloud in place of its pulsing dot.
+    - **The request status strip shows how long the turn has run, after 3 seconds.** The timer counts the whole turn, not each request. Background passes show no timer.
+- **🛠️ Developer tooling**
+  - **Typing `/turn test` in the action box plays a real turn on canned replies, with no model.** Its two-sentence narration keeps the choices in view. The turn lands in the story, so Rewind removes it. Add a profile such as `slow` to change the pace.
+- **⚙️ Backend**
+  - **Llama Server Engine:**
+    - **The desktop build bundles a pinned llama-server.** One llama.cpp release tag names the version, and a fetch step downloads its Windows, macOS and Linux builds.
+    - **The desktop engine now runs models through the bundled llama-server instead of node-llama-cpp.** Every engine setting maps to a server flag. A failed GPU load retries once on the CPU, and the server exits with the app, even on a crash.
+    - **The engine's proxy shapes each chat request the way node-llama-cpp read it.** It merges system messages at the top, sends the last message as a user turn, drops images a text-only model can't see, and passes the model's thoughts in a separate reasoning field.
+    - **The VRAM viewer reads the engine's share from llama-server's own load log.** The share sums the model, context and compute buffers on the GPU. The device line shows the free VRAM llama-server saw at load.
+  - **Dependencies:**
+    - **The app runs on React 19.** React, React DOM and their types move to 19.3, with next-themes 0.4.6 and react-resizable-panels 2.1.9. The code editor keeps newer keystrokes when a render lags, and surface requests reach dialogs that mount late.
+
+#### ➖ Removed
+
+- **👤 User-facing**
+  - **Entity Avatars:**
+    - **The 3D Player Avatar checkbox and the Custom Player Avatar uploader leave the World Overview.** An older world that had the checkbox on still shows the same Avatar. Its old Avatar now sits in the world's Avatars.
+    - **The Enter World avatar step no longer has a Delete button.** Delete an Avatar from its tile menu on the library's **Avatars** tab, which names the saves and entities that use it.
+- **⚙️ Backend**
+  - **Llama Server Engine:**
+    - **The desktop build no longer ships node-llama-cpp.** Its dependency, its prebuilt packages and its packaging rules are gone, and the Windows payload is 4 MB smaller.
 
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **Turning off Flash Attention in the Local Model panel now turns it off when the model loads.** A box you unchecked before stays unchecked. A quantized V Cache Type needs Flash Attention on.
+  - **The bundled model's out-of-VRAM error names your Context Size and Parallel Requests settings.** It said "sequences" before and gave no next step. Now it tells you which setting to lower.
+  - **Editing a stat's or trait's script on the Scripts tab no longer slows down per keystroke and crashes the editor.** Each edit nested the script's stat and owner inside the script, and the next edit nested that again. A long edit ran the browser out of memory.
+  - **The Hidden list in Community Creations now scrolls, so you can unhide one world from a long list.** With many hidden worlds, the list grew past the screen and you couldn't reach most of them.
+  - **Indented lists and paragraphs in narration and model thoughts now show as text, not as code blocks.** A model that indented its outline by four spaces got a code box. Fenced code still shows as code.
+  - **Unchecking Native Reasoning under Settings → Output now turns reasoning off on every prompt.** Before, only prompts set to Global followed it, so planning prompts kept reasoning at Low. Each prompt keeps its own setting for when you check it again.
+  - **Test Code on a linked stat now routes writes through `owner.stats` to the stat itself, as play does.** The stat panel and the Scripts tab now give one report for one script. A Blueprint trait's script cards and Find All Uses now list the entities that link it.
+  - **Choices now stream word by word at the end of a turn in long stories, instead of appearing at once.** Long stories re-read the whole history on each narration sentence and choice word, which froze the screen. A row that still shows late keeps its pace.
+  - **The turn's action row now slides open after the narration finishes, and the choices stream in after it.** Before, the row appeared mid-stream and pushed the choices down, and numbered choices showed all at once. **Continue the Story** now comes last.
+  - **The request status strip floats over the bottom of the narration, so the Pager and the action box stay still.** It works the same in Pages and Chat. A fade keeps the label readable over the text.
+  - **One drag of a World Editor slider or color picker now undoes in one step.** A drag that started while another field had focus used to split into many undo steps.
+
+---
+
+<details>
+<summary><strong>✅ 3.4.0 — Released 2026-10-22</strong> — Entities that follow you, move between locations and stand at random starts — entity relationships the AI reads — scripts that read locations, memories and dictionaries — NovelAI character prompts — the You pill (click to expand)</summary>
+
+### Major Changes
+
+#### ➕ Added
+
+- **👤 User-facing**
+  - **Entity Presence:**
+    - **An entity can stand at one random location from its list in each new game.** Set **One, at Random** under **Entities Here** on a location's **Presence** tab. Saves keep where it stands.
+    - **The AI can know of an entity anywhere inside the locations you pick, without placing it there.** Set it under **Known Here** on a location's **Presence** tab. **Nearby Through Connections** lets entities one Connection away reach the AI as nearby.
+    - **An entity set to Can Follow the Player comes with you when you invite it, and keeps following.** It travels with you on every move, Map travel too, until it stays behind. Each such entity adds one short AI request per turn. **Entity Movement** turns the requests off.
+    - **An entity set to Moves Between Its Locations walks between them, one Connection at a time.** The AI moves it when the story sends it to one of its locations. It comes along with you only into its own locations, and it never keeps following.
+    - **Pick an entity on the full-screen Locations Canvas to place it and set where the AI knows of it.** Click a location to add or remove it. In **Known In** mode, a pick covers every location inside it. The card also sets **Presence** and **Movement**, and warns when a moving entity can't reach one of its locations.
+    - **The Entities tab marks who follows you, and the Map shows where the entities you've met are now.** A footprints icon marks each follower. Each Map location shows a count of the met entities there, and its tip names them. Entities you haven't met never show.
+    - **Scripts can now move any entity, make it follow the player, or send it away.** Call `entities.<Entity>.move()`, `.follow()` or `.unfollow()`. The writes apply when the turn ends, after the AI's answers, and a moved **Free** entity keeps its position.
+    - **One member of an entity listed in several places can follow you, and so can entities added in play.** The original stays at every listed location. One member follows at a time; once it stays behind, another can come.
+    - **In the bundled worlds, the AI now knows who is one Connection away from you.** Every location that a Connection leaves turns on **Nearby Through Connections**.
+  - **Entity Relationships:**
+    - **Entities can list their relationships in the World Editor, and the AI reads each one as a sentence.** On an entity's **Profile** tab, pick another entity and type its role, such as mother. The AI reads "Kate is Tera's mother" once per prompt. When two entities list each other, the AI reads one: the persona's if either is.
+    - **Absent relatives of anyone in the scene join Entities Known Here, so the AI knows who they are.** When Tera is present, Entities Known Here lists her mother Kate with her summary. The AI doesn't put Kate in the scene.
+    - **Relationships can target Persona, and the AI knows the played persona's relationships in every scene.** Pick **Persona** in the list, and "Kate is Rowan's mother" uses the name of the persona the player picks. A persona the player doesn't pick sends none of its relationships.
+
+### Minor Changes
+
+#### ➕ Added
+
+- **👤 User-facing**
+  - **NovelAI Character Prompts:**
+    - **On NovelAI V4 and later, a `|` in an image prompt now starts a separate character prompt.** The first part describes the whole image. Other providers read a ` | ` with spaces as a comma, and NovelAI V3 keeps its own Prompt Mixing.
+    - **Scene images on NovelAI V4 and later now send each entity as its own prompt, so their looks don't mix.** The scene tag line under the image shows each entity's part after a `|`. Edit one part to change only that entity.
+  - **You Pill:**
+    - **Your persona now carries a You pill after its name in the side panel, the Traits tab and Enter World.** It replaces the "(You)" text and the colored "You" word, including in the Stats panel picker.
+    - **A requirement on your persona's traits now reads your persona's name with the You pill.** In the World Editor, the owner list and the condition read **Persona** instead of **You**. Worlds and saves don't change.
+  - **Scripts:**
+    - **Scripts can now read every location and who stands at each one.** `locations.<Location>.present` lists the entities there, the persona first. `location` has the same fields. Each entity reads its `location`, `following`, `description`, `summary` and `aliases`.
+    - **Scripts can now read the story's memories as the Memory panel lists them, with `memories`.** Each memory has its turn, story time, daypart, text and pins. `memory.add` and `memory.pin` are now `memories.add` and `memories.pin`, and worlds are rewritten when they load.
+    - **Scripts can now pin, forget, edit or remove a memory, as the Memory Manager does.** Call `memories[0].forget()` or another verb on an entry. The change lands when the turn ends and shows in the Memory Manager. A pin or forget on a Custom memory is ignored and listed.
+    - **Scripts now add a diary line through the entity, with `entities.Mira.diary(line)`.** A world that calls `diary("Mira", line)` is rewritten to the new form when it loads. The Variable menu inserts a one-item call, such as `discover`, directly.
+    - **Scripts can now read a dictionary's entries by name, with each entry's Trigger Keywords and Value.** Use `dictionaries.Lore.entries["Iron Crown"].keys` or `.value`. A disabled entry isn't listed. Hover cards and the Variable menu show them.
+    - **Your own Tools' scripts now read the world as a Script does, with the same names and no writes.** Use `entities`, `locations`, `memories`, `stats` and the other Script names. `world` and `scene` are gone. Scripts and Tools also read the player's notes as `notes`. Try It lists each write a Tool ignores.
+    - **Formamorph now rewrites your own Tools' scripts that read `world` or `scene` to the new names when it loads them.** It rewrites only where the result stays the same. The editor marks every other old read and names what to use instead. It rewrites imported Tool packs too.
+    - **Script hover cards now explain one memory or one entity in a list, as in `memories[0].text`.** Cards also work in `find` and `filter` callbacks and `for` loops. The Variable menu lists a memory's fields and a `present` entity's fields.
+    - **The Variable menu now lists each group's fields first and its calls last.** Entities, memories, **Clock**, **Location** and placeholders keep each set in its old order, so `move` or `pin` sits at the bottom.
+    - **The Variable menu now shows each row's type, and marks the rows that scripts can only read.** A lock marks a read-only row. A call shows its form, such as `(line) => void`. The menu is wider.
+    - **The Scripts Guide and the Tools guide now document the new script names and how old Tool scripts move.** Read the locations, memories and dictionary entries sections. Help answers from the new text.
+  - **The Stats tab in the game's side panel now lays out stats the way the Traits tab lays out traits.** Each owner's stats sit in a card that folds. Groups show as headings, with ungrouped stats first.
+  - **The Player Name chip is now called Persona Name in the World Editor and the wiki.** Type `{{user}}` or search "player name" to find it. It still reads "you" or "the player" with no persona.
+  - **A world persona's Locations are now where you can start as it, and its Starting Location dropdown is gone.** Enter World lists each of them beside the world's starting locations. It picks the first that is a starting location, else the first listed. A world that named a start loads without it.
+  - **Image presets can now keep weights and NovelAI syntax in your entity and location tags.** Turn off **Clean Up Tags** in the image preset. Scene images and AI-generated tags then keep `{tag}`, `1.5::tag ::` and `source#hug` as written.
+  - **A new tile in your library now pulses once, the first time it is on screen.** It shows a world you just downloaded or made. Tiles you already had don't pulse after the update.
+  - **A downloaded world's library tile now shows its image optimizing, and the world opens once that finishes.** You can't delete it until then either. The world's card in Community Creations shows the same bar.
+- **🛠️ Developer tooling**
+  - **A new probe measures the entity location request against the player's location request on the Emberwatch cast.** It reports reply accuracy, false and missed moves, and how long the fan-out adds to the stage.
+  - **The relationship probe measures whether narration uses an absent relative without placing them in the scene.** It runs an A/B, relationship off vs on, on the shipped prompts.
+
+#### ➖ Removed
+
+- **👤 User-facing**
+  - **Stats no longer cap the AI's change at 20 per turn.** A big reward or loss moves a wide stat, such as gold, in full. Each stat still stays inside its own minimum and maximum.
+
+#### 🔧 Fixed
+
+- **👤 User-facing**
+  - **Scripts:**
+    - **A script asks the player for typed text with `player.input`, renamed from `player.askText`.** Worlds and Tools that call the old name load with the new one.
+    - **A trait you toggle keeps the memory, pinned memory and diary lines its When a Trait Switches script writes.** They land on the latest turn, and a rewind past that turn removes them.
+    - **Script and Tool script hover cards now read in one voice.** Card lines open with their subject, the Variable menu's **Owner** line matches its card, and each memory and entity field is one sentence.
+  - **The Test Bench's Openings preview now names the persona you pick, or says no persona under None.** Code cards mark an entity you can play as **Persona: Playable**. The author-note ⓘ line in Settings says "your persona".
   - **On NanoGPT, Native Reasoning now knows which models think and which strengths they take.** Short prompts such as Choices give a thinking model room and no longer fail with "The model reached its token limit before it wrote an answer."
   - **The token-limit error now names the prompt that failed.** Error Details show it on a Prompt line. For a prompt with a Max Output setting, they also tell you to raise it.
   - **Summaries and Diary now ship with Native Reasoning off, so turns finish sooner on a thinking model.** Prompts you already set keep your setting.
   - **The status bar now names the request a turn is still waiting on.** After choices land, it shows the memory or diary pass that is still running.
   - **In the Chat layout, you can pick a choice as soon as choices land.** The pick fills your action. You can send it when the turn finishes.
   - **Narration now bolds only loud words, and thinking models spend less of each turn's thinking on formatting.** The Markdown Guidance chip now has one form. Prompts that used Definitions keep working.
+  - **The Default preset's narration prompt is shorter and states each rule once.** It no longer repeats the ban on option menus at the end, or asks for concise prose next to the length setting.
+  - **The default prompts now call their entity sections Entities and tell the AI what each section holds.** A Known Here entity reads as elsewhere right now. People in the scene may speak of it.
+  - **A stat now opens at its authored value everywhere, and an authored zero stays zero.** Play, the Test Bench, Test Code, the trait picker, code cards, new Link Base Values and older saves agree. No change shows on turn one. A value outside the range opens at the nearest edge.
+  - **Test Code and the Test Bench now check a Script against the same turn-one world as play.** They read `clock` by timing and a switched-off stat as off. Test Code's `entities` holds a new game's cast, without persona-only entities. An unknown `diary` name warns. A trait Script whose entity is gone reads `self` as not held.
+  - **Error Details and bug reports now show a server's HTML error page as one line: its title and Ray ID.** A report from **Report Bug** keeps its details in a code block, so markup in them shows as written.
+  - **The Stats panel picker now lists an absent entity only once the story has named it.** Absent entities you haven't met no longer show as Unknown.
+  - **Close buttons on dialogs and panels are now easier to tap on mobile.** A dialog's close button takes a 44-pixel tap area, and every close icon is a little larger. Nothing else moves.
+  - **Full-screen fields, panels, the Locations map and the Guide now exit from one button in the top-right corner.** The button sits in the same place as a dialog's close button and has the same 44-pixel tap area.
+  - **A new item in your library now lands after your last tile, not in a gap between your tiles.** It goes right of the last tile on the bottom row, or starts a new row when that row is full. Every tile you placed stays where it was.
+  - **A downloaded world now shows in your library even when you close Community Creations before the download finishes.** You no longer have to reopen Community Creations to see it.
+
+</details>
 
 ---
 

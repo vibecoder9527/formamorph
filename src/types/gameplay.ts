@@ -9,6 +9,8 @@ export interface DiscoveredEntity {
   locationId?: string;
   /** The turn that first materialized it, for description generation / provenance. */
   sourceTurnId: string;
+  /** The Everywhere Listed entity this follower peeled off from. */
+  peeledFrom?: string;
 }
 
 /** One image the player attached to an action, already downscaled and re-encoded. */
@@ -51,6 +53,9 @@ export type OwnedTraitStates = Record<string, OwnedTraitState>;
 
 /** Entity id → its stats during the game, in authored order. */
 export type EntityStatValues = Record<string, PlayerStat[]>;
+
+/** Entity id → the location id it stands at during the game. An absent entity is at every location it lists. */
+export type EntityPositions = Record<string, string>;
 
 /** Entity id → stat id → what one turn moved that stat's value. Unmoved stats are absent. */
 export type EntityStatChanges = Record<string, Record<string, number>>;
@@ -128,11 +133,16 @@ export interface CharacterData {
   currentHairStyle: string;
   hairLength: number;
   hairTypes?: Record<string, HairTypeDef>;
-  /**
-   * Which VRM the player picked: a local model-library id, `'default'` (bundled model),
-   * or unset/`'world'` (the world's `customPlayerVRM`, else the bundled default).
-   */
-  playerModelId?: string;
+  /** The Avatar the player chose for this save. Null = no choice. Absent only on a save made before
+   *  per-entity Avatars, which the game-load remap converts (see lib/legacyVrm). */
+  chosenVrm?: ChosenVrm | null;
+}
+
+/** A save's chosen Avatar: a world store entry or a library record. `legacy` marks a choice a save made
+ *  before per-entity Avatars, which replaces the whole played-side result. */
+export interface ChosenVrm {
+  pick: { kind: 'world' | 'library'; id: string };
+  legacy?: true;
 }
 
 /** The stored payload of a library VRM: the file itself plus what we know about it. The `id`, display name,
@@ -228,6 +238,12 @@ export interface GameState {
   ownedTraits?: OwnedTraitStates;
   /** Each entity's stat values, by entity id. Absent ⇒ none. */
   entityStats?: EntityStatValues;
+  /** Where each positioned entity stands, by entity id. Absent ⇒ none. */
+  entityPositions?: EntityPositions;
+  /** The ids of the entities following the player, in the order they joined. Absent ⇒ none. */
+  entityFollowers?: string[];
+  /** The ids of the entities the player has met, in the order they met. Absent ⇒ none. */
+  metEntities?: string[];
   /** What this turn moved each entity stat, AI, regen and code together. Absent ⇒ none. */
   entityStatChanges?: EntityStatChanges;
   /** Absent ⇒ none. */
@@ -267,9 +283,12 @@ export interface GameState {
   gameStates?: GameState[];
 }
 
-/** Which picture the player would rather open an entity on, keyed by entity id. Only meaningful for an
- *  entity carrying both an image and a 3D model; no entry means the image, as it always has. */
-export type EntityVisualPreference = Record<string, 'model' | 'image'>;
+/** One of the visuals an entity can show: its Avatar, its 3D model, or its image. */
+export type EntityVisualKind = 'avatar' | 'model' | 'image';
+
+/** Which visual the player would rather open an entity on, keyed by entity id. No entry, or a visual the
+ *  entity lacks, means the first it has of Avatar, 3D model, image. */
+export type EntityVisualPreference = Record<string, EntityVisualKind>;
 
 /**
  * How the player has the Traits tab arranged right now. Held in Gameplay rather than in the panel, because

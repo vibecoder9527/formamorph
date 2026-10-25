@@ -32,8 +32,11 @@ vi.mock('react-toastify', () => ({
 
 // The real editor arrives on its own chunk with CodeMirror; a plain box that names itself and writes back stands in.
 vi.mock('@/components/prompt/CodeArea', () => ({
-  CodeArea: (props: { value: string; ariaLabel: string; onChange: (value: string) => void }) => (
-    <textarea aria-label={props.ariaLabel} value={props.value} onChange={(e) => props.onChange(e.target.value)} />
+  CodeArea: (props: { value: string; ariaLabel: string; onChange: (value: string) => void; owner?: unknown }) => (
+    <textarea
+      aria-label={props.ariaLabel} value={props.value} onChange={(e) => props.onChange(e.target.value)}
+      data-owner={JSON.stringify(props.owner ?? null)}
+    />
   ),
 }));
 
@@ -163,6 +166,18 @@ describe('the Scripts tab', () => {
     expect(bench.ctx().entities[0].stats![0].scripts![0].code).toBe('owner.stats.Rage.value = 2;');
   });
 
+  it('keeps an entity edit queued in the same tick as a script write on that entity', () => {
+    const bench = renderWorldEditorBench(WORLD, 'advanced');
+    openScripts();
+    selectRow('Temper');
+    act(() => {
+      bench.ctx().editEntity('resident', (entity) => ({ ...entity, name: 'Odd Wick II' }));
+      fireEvent.change(codeBox('Temper'), { target: { value: 'owner.stats.Rage.value = 2;' } });
+    });
+    expect(bench.ctx().entities[0].name).toBe('Odd Wick II');
+    expect(bench.ctx().entities[0].stats![0].scripts![0].code).toBe('owner.stats.Rage.value = 2;');
+  });
+
   it('undoes a typed run in the tab in one step', async () => {
     const bench = renderWorldEditorBench(WORLD, 'advanced');
     openScripts();
@@ -227,6 +242,22 @@ describe('the Scripts tab', () => {
     act(() => bench.ctx().updateStat({ ...bench.ctx().stats[0], enabled: true }));
     expect(opacityOf('Warmth · After the AI')).toBe('1');
     expect(screen.queryByText('Off')).toBeNull();
+  });
+
+  it('runs each Blueprint box under the Owner the snapshot derives: the group’s stats, or a trait’s unchecked names', () => {
+    renderWorldEditorBench(benchEditorWorld({
+      statGroups: [{ id: 'bp', name: 'Blueprints', parentId: null, system: 'blueprints' }, { id: 'pack', name: 'Pack', parentId: 'bp' }],
+      stats: [stat('howl', 'Howl', { groupId: 'pack', scripts: [{ id: 'h-after', timing: 'after', code: 'return 1;' }] }), stat('fang', 'Fang', { groupId: 'pack' })],
+      traitGroups: [{ id: 'tbp', name: 'Blueprints', parentId: null, system: 'blueprints' }],
+      traits: [{ id: 'wild', name: 'Wild', groupId: 'tbp', statChanges: [], scripts: [{ id: 'wl-after', timing: 'after', code: 'return 0;' }] }],
+    } as Partial<World>), 'advanced');
+    openScripts();
+    const ownerOf = (label: string) => {
+      selectRow(label);
+      return JSON.parse(codeBox(label).dataset.owner!) as unknown;
+    };
+    expect(ownerOf('Howl · After the AI')).toEqual({ kind: 'blueprint', statNames: ['Howl', 'Fang'] });
+    expect(ownerOf('Wild · After the AI')).toEqual({ kind: 'blueprint', statNames: null });
   });
 
   it('is an Advanced tab', () => {

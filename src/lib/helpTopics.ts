@@ -76,7 +76,7 @@ Turn order: At Game Start, Before the AI, the AI's stat changes, Regen, After th
 
 - \`narration\` in **During AI Output**. Assign \`narration.sentence\`, or return a string, to rewrite the sentence.
 - \`trait\` in **When a Trait Switches**. It is the trait that switched, and \`trait.enabled\` is its new state.
-- \`player\` in every other timing. \`player.tell\`, \`player.toast\`, \`player.confirm\`, \`player.ask\` and \`player.askText\` show the player a message or a question. The script waits for the answer, with no \`await\`. Closing a question fails the script.
+- \`player\` in every other timing. \`player.tell\`, \`player.toast\`, \`player.confirm\`, \`player.ask\` and \`player.input\` show the player a message or a question. The script waits for the answer, with no \`await\`. Closing a question fails the script.
 
 \`\`\`js
 const health = stats.Health.value;
@@ -181,7 +181,7 @@ Memories under the **Recent** line are still fresh enough that the story has the
     title: 'Entities in Game',
     wikiPage: 'Entities',
     wikiAnchor: '-entities-in-game',
-    body: `Who the story counts as being here with you right now. The list changes as the scene does. Your persona always heads the list, marked **(You)**.
+    body: `Who the story counts as being here with you right now. The list changes as the scene does. Your persona always heads the list, marked **You**.
 
 Most of these are entities the world's author wrote. Some you added from your library under **Library Additions** at Enter World. Some the story **invented on the spot**: ask a shopkeeper for directions and it may answer with a name nobody wrote down. Those are remembered from the moment they're named, so the story can keep them consistent and offer you things to do with them.
 

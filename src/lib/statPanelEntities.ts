@@ -8,6 +8,8 @@ export interface StatPanelOption {
   id: string;
   label: string;
   present: boolean;
+  /** The played persona: the picker renders the You mark after the label. */
+  you?: boolean;
 }
 
 const UNKNOWN = 'Unknown';
@@ -39,10 +41,10 @@ function numbered(options: StatPanelOption[]): StatPanelOption[] {
 
 /**
  * The entities the panel can show: the played persona, the entities present in `scene`, then the absent ones
- * that own a stat the player can see. A present entity reads its own scene row: its name once revealed, else
- * its alias. An absent entity has no row, so it shows its name only if an earlier scene in `history` revealed
- * it, else the last alias seen. `keep` is an entity that stays listed even with nothing to show, so the
- * entity view's pick is never missing from the list.
+ * that own a stat the player can see and whose name some scene in `history` revealed. A present entity reads
+ * its own scene row: its name once revealed, else its alias. `keep` is an entity that stays listed even when
+ * absent, unrevealed or with nothing to show, so the entity view's pick is never missing from the list; an
+ * unrevealed one reads the last alias seen.
  */
 export function statPanelOptions({ entities, persona, scene, history, values, keep }: {
   /** Everyone the panel can list: the cast plus discovered characters. */
@@ -61,15 +63,15 @@ export function statPanelOptions({ entities, persona, scene, history, values, ke
     listed.add(option.id);
     out.push(option);
   };
-  if (persona) add({ id: persona.id, label: `${persona.name} (You)`, present: true });
+  if (persona) add({ id: persona.id, label: persona.name, present: true, you: true });
   for (const seen of scene) {
     const entity = resolveEntityByName(seen.name, entities);
     if (entity) add({ id: entity.id, label: seen.revealed ? entity.name : seen.alias ?? UNKNOWN, present: true });
   }
   const known = nameKnowledge(history, entities);
   for (const entity of entities) {
-    if (!shownEntityStats(values[entity.id]).length && entity.id !== keep) continue;
     const told = known.get(entity.id);
+    if ((!shownEntityStats(values[entity.id]).length || !told?.revealed) && entity.id !== keep) continue;
     add({ id: entity.id, label: told?.revealed ? entity.name : told?.alias ?? UNKNOWN, present: false });
   }
   return numbered(out);

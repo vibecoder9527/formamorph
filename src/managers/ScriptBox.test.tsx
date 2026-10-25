@@ -27,13 +27,13 @@ const world: StatCodeWorld = {
   stats: [{ id: 'h', name: 'Health', type: 'number', description: '', min: 0, max: 100, value: 50, regen: 0, descriptors: [] }],
   statGroups: [], traits: [], traitGroups: [], entities: [], entityGroups: [], placeholders: [], placeholderGroups: [], dictionaries: [],
 };
-const context: ScriptBoxContext = { owner: null, names: statCodeNames(world), ownerStats: [], selfName: '', placeholderPlaces: [] };
+const context: ScriptBoxContext = { owner: null, names: statCodeNames(world), world, ownerStats: [], selfName: '', placeholderPlaces: [], home: { kind: 'world' } };
 const LABEL = 'World · After the AI';
 
 /** A box that keeps its own code, as its panel does. */
 function Box({ initial }: { initial: Script }) {
   const [script, setScript] = useState(initial);
-  return <ScriptBox script={script} label={LABEL} self={{ kind: 'world' }} context={context} onChange={(code) => setScript({ ...script, code })} />;
+  return <ScriptBox script={script} label={LABEL} context={context} onChange={(code) => setScript({ ...script, code })} />;
 }
 
 const ran = (result: Partial<StatCodeResult>): StatCodeResult => ({ value: null, error: null, ...result });
@@ -65,15 +65,15 @@ describe('Test Code with a prompt', () => {
     expect(screen.queryByTestId('script-prompt')).toBeNull();
   });
 
-  it('answers askText, a long ask and a multiple ask through the same line', async () => {
+  it('answers input, a long ask and a multiple ask through the same line', async () => {
     executeStatCode.mockImplementation(async (_code: string, _stats: unknown, _self: unknown, options: StatCodeRunOptions) => {
-      const name = await options.prompts!.prompt({ kind: 'askText', question: 'Your name?' });
+      const name = await options.prompts!.prompt({ kind: 'input', question: 'Your name?' });
       const road = await options.prompts!.prompt({ kind: 'ask', question: 'Which road?', options: ['A', 'B', 'C', 'D', 'E'], multiple: false });
       const packed = await options.prompts!.prompt({ kind: 'ask', question: 'Pack what?', options: ['Rope', 'Lamp'], multiple: true });
       return ran({ statWrites: [{ id: 'h', name: 'Health', value: name.length * 10 + Number(road) + (packed as number[]).length }] });
     });
     const user = userEvent.setup();
-    render(<Box initial={{ id: 's', timing: 'after', code: 'player.askText("Your name?")' }} />);
+    render(<Box initial={{ id: 's', timing: 'after', code: 'player.input("Your name?")' }} />);
     await user.click(screen.getByRole('button', { name: `Test Code ${LABEL}` }));
     await user.type(await screen.findByRole('textbox', { name: 'Your name?' }), 'Ada{Enter}');
     await user.click(await screen.findByRole('combobox', { name: 'Which road?' }));

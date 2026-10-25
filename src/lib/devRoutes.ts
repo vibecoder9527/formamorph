@@ -37,7 +37,8 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  `adminPanel` the admin tools (Users/Broadcasts). All three need a signed-in session, and `adminPanel`
  *  an admin one, so they open empty otherwise rather than failing. `location` is in game (GameViewer) and
  *  opens the Change Location dialog on whichever of its two views was used last, so pair it with `fixture=…`
- *  to have a world worth traveling in. `editText` is in game (GameViewer) and
+ *  to have a world worth traveling in; `fixture=entityFollowers` puts met entities on its Map and a follower
+ *  in the Entities tab. `editText` is in game (GameViewer) and
  *  opens the narration editor on the current page's text — empty before any turn, which is enough to reach
  *  its full-screen toggle, the one editor that grows in place instead of raising a window. `changelog` opens
  *  MainMenu's What's New popout on a canned sample (`devChangelogSample.ts`) rather than the live GitHub
@@ -85,7 +86,9 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  on canned text, the question a generated image with no free slot asks, the offer to carry a rename into
  *  stat code, and the Replace All confirm. In the app each opens only partway through an edit. Every answer
  *  closes it and writes nothing. `savedElsewhere` and `deletedElsewhere` open the World Editor and raise
- *  the question another tab's save or delete of the open world asks. Either answer closes it and writes nothing. `demoAI` is in game (GameViewer) and opens the Demo AI dialog whatever the
+ *  the question another tab's save or delete of the open world asks. Either answer closes it and writes nothing.
+ *  `deleteWorldAvatar` opens the World Editor and raises an Avatar store delete on canned entities, which
+ *  writes nothing; add `tab=media` to show the Media tab's Avatars section under it. `demoAI` is in game (GameViewer) and opens the Demo AI dialog whatever the
   narration endpoint and the seen-key say, so it is reachable on a build that overrides the default endpoint.
  *  `persona` is in game (GameViewer) and opens the right panel's Change Persona picker. On mobile that panel
  *  mounts only on the Status tab, so open that tab first. `likePrompt` is in game (GameViewer) and shows the
@@ -106,7 +109,7 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  Chip Options over it, on a canned Entities chip. `scriptPrompt` is in game (GameViewer) and fires one
  *  canned `player.*` request through the live prompt store once the game has a turn; `tab=…` picks the shape
  *  (`devScriptPromptSamples.ts`). Pair it with `fixture=…`. `DEV_PANE_MODALS` follow. */
-export const DEV_MODALS = ['settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'changelog', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt', ...DEV_PANE_MODALS] as const;
+export const DEV_MODALS = ['settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'changelog', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt', ...DEV_PANE_MODALS] as const;
 export type DevModal = (typeof DEV_MODALS)[number];
 
 /** The `attach=…` value that stages sample attachments on the game view. */
@@ -127,7 +130,7 @@ export const DEV_MODAL_TABS = {
   // Settings → Endpoints opens its own tab with the same `subtab=…` (`#dev?modal=settings&tab=endpoints&subtab=image`).
   // `tagPrompt` is Advanced only and hidden while image generation is off.
   settingsEndpoints: ['text', 'image', 'tagPrompt'],
-  worldEditor: ['overview', 'entities', 'locations', 'traits', 'stats', 'dictionary', 'placeholders', 'scripts', 'tools'],
+  worldEditor: ['overview', 'media', 'entities', 'locations', 'traits', 'stats', 'dictionary', 'placeholders', 'scripts', 'tools'],
   // Community Creations browses one kind per tab, plus Contest — a view over the worlds already in the
   // catalog rather than a fourth kind (see lib/browseTabs). `tab=contest` serves canned contests, so the
   // tab is reachable whether or not one is really running.
@@ -152,10 +155,13 @@ export const DEV_MODAL_TABS = {
   // The World Editor's Locations tab shows one of two views of the same locations, switched with `subtab=…`
   // (`#dev?modal=worldEditor&tab=locations&subtab=canvas`). Adding `fullscreen=1` opens the canvas in its
   // full-screen window on arrival — the same canvas, so it is not a third view and not listed as one.
+  // `pick=<entity id>` then picks that entity on it, and `pick=<entity id>:knownIn` starts in Known In mode;
+  // `fixture=entityPresence` has a range warning on `dev-sentry`.
   worldEditorLocations: ['list', 'canvas'],
   // The World Editor's entity panel splits its fields across its own tabs, reached with the same `subtab=…`
   // slot over the Entities tab (`#dev?modal=worldEditor&tab=entities&subtab=descriptions`). It lands on the
   // panel, so pair it with a world that has an entity to select. `openings` and `placeholders` are Advanced only.
+  // `fixture=entityPresence` gives the Archivist Relationships rows on `profile`.
   worldEditorEntity: ['profile', 'descriptions', 'traits', 'stats', 'placeholders', 'openings'],
   // The library entity editor (`#dev?modal=entityEditor&tab=placeholders`). It opens on a blank draft and is
   // never in Simple mode, so every tab is reachable. `fixture=gallery` opens it on an entity whose images carry
@@ -167,6 +173,7 @@ export const DEV_MODAL_TABS = {
   // The World Editor's location panel does the same over the Locations tab
   // (`#dev?modal=worldEditor&tab=locations&subtab=presence`). It shares that tab's `subtab=…` slot with the
   // List/Canvas switch above, which is why no value may appear in both lists. `pins` is Advanced only.
+  // `fixture=entityPresence` loads a cast for the Presence tab's Entities Here rows; select The White Room.
   worldEditorLocation: ['details', 'presence', 'media', 'pins', 'openings'],
   // The World Editor's stat panel does the same over the Stats tab
   // (`#dev?modal=worldEditor&tab=stats&subtab=code`). `descriptors` and `code` are Advanced only, and
@@ -215,7 +222,7 @@ export const DEV_MODAL_TABS = {
   // The acknowledge poster renders one of an event's two phases; `tab=…` picks which the canned event is at.
   eventAck: ['start', 'end'],
   // `player.*` prompt shapes on the game view (`#dev?view=gameViewer&fixture=whiteRoom&modal=scriptPrompt&tab=askLong`).
-  scriptPrompt: ['confirm', 'ask', 'askLong', 'askMulti', 'askText', 'tell', 'toast'],
+  scriptPrompt: ['confirm', 'ask', 'askLong', 'askMulti', 'input', 'tell', 'toast'],
   // MainMenu's library card-type switcher. Not a modal: reached with `tab=…` and no `modal=…`, i.e.
   // `#dev?view=mainMenu&tab=models`. Listed here so the same drift guard covers it.
   mainMenu: ['worlds', 'entities', 'dictionaries', 'models'],
@@ -223,7 +230,7 @@ export const DEV_MODAL_TABS = {
   // A prompt whose feature is off is not in the rail, and the panel lands on Narration.
   settingsPrompts: [
     'narration', 'thinking', 'director', 'character', 'discover', 'storyboard', 'choices',
-    'statupdates', 'location', 'timepassed', 'timeopening', 'summary', 'milestone', 'diary', 'scenetags',
+    'statupdates', 'location', 'entitylocation', 'timepassed', 'timeopening', 'summary', 'milestone', 'diary', 'scenetags',
   ],
   // Settings → Prompts has a THIRD level: which surface of the open prompt is on show, reached with
   // `surface=…` (`#dev?modal=settings&tab=prompts&subtab=narration&surface=anatomy`). `anatomy` is the

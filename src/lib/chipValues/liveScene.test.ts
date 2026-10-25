@@ -130,19 +130,6 @@ describe('the live adapter', () => {
       .toMatchObject({ description: 'Porter hauls crates.', summary: 'Porter, a hauler.' });
   });
 
-  it('gives a Tool the shared placeholders, and an entity’s own under a before box’s entity resolution', () => {
-    const shade = { id: 'shade', name: 'Shade', values: [{ id: 'shade-1', text: 'gray' }] };
-    const cap = { id: 'cap', name: 'Cap', values: [{ id: 'cap-1', text: 'the cap of {{char}}' }] };
-    const capped = entities.map((e) => (e.id === 'porter' ? { ...e, placeholders: [cap] } : e));
-    const scene = liveChipScene(sources({ allEntities: capped, placeholders: [shade] }), null, {
-      activeStats: [grit], activeTraits: [], ownedTraits: {}, resolve: (text) => text, resolveTrait: (_trait, text) => text,
-      resolveEntity: (_entity, text) => `${text} [box]`,
-    });
-    const snapshot = buildToolSnapshot(scene, []);
-    expect(Object.keys(snapshot.placeholders)).toEqual(['Shade']);
-    expect(snapshot.world.entities.find((e) => e.id === 'porter')!.placeholders.Cap).toMatch(/ \[box\]$/);
-  });
-
   it('hands the character pass a blurb with no raw chip in it', () => {
     const scene = liveChipScene(sources({ location: warehouse }));
     const entity = scene.entities.find((e) => e.id === 'porter');
@@ -154,13 +141,13 @@ describe('the live adapter', () => {
     expect(diary).not.toContain('{{');
   });
 
-  it("carries the played persona's name as the Player Name, which a chip Header reads", () => {
+  it("carries the played persona's name as the Persona Name, which a chip Header reads", () => {
     const header = '<PERSONA|markdown|header="{{user}} (Player Character)">';
     const wren: Entity = { id: 'wren', name: 'Wren', persona: true, aiDescription: 'Rows the ferry.' };
     const played = chipValues(liveChipScene(sources({ persona: { source: 'world', entity: wren } })));
     expect(played('header:{{user}}')).toBe('Wren');
     expect(renderPromptTemplate(header, played)).toMatch(/^\n## Wren \(Player Character\)\n- \*\*Wren\*\*/);
-    // Prompt text never takes the Player Name.
+    // Prompt text never takes the Persona Name.
     expect(renderPromptTemplate('Speak to {{user}}.', played)).toBe('Speak to {{user}}.');
     const blank = chipValues(liveChipScene(sources({ persona: { source: 'library', entity: { ...wren, name: ' ' } } })));
     expect(blank('header:{{user}}')).toBe('');

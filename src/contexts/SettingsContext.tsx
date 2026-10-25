@@ -2,7 +2,7 @@ import { randomUUID } from "@/lib/uuid";
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { PROMPT_TEXT_DEFAULTS } from '../components/game/GamePrompts';
 import { EXPERIMENTAL_PROMPT_VALUES } from '../components/game/ExperimentalPrompts';
-import { DEFAULT_EDITOR_AUTO_SAVE_IDLE_S, clampEditorAutoSaveIdle, DEFAULT_ENDPOINT, DEFAULT_API_TOKEN, DEFAULT_MODEL_NAME, DEFAULT_MAX_TOKENS, DEFAULT_CONTEXT_WINDOW, DEFAULT_LOCAL_CONTEXT_SIZE, DEFAULT_LOCAL_GPU_LAYERS, DEFAULT_LOCAL_FLASH_ATTENTION, DEFAULT_LOCAL_PARALLEL_REQUESTS, DEFAULT_LOCAL_GPU_DEVICE, DEFAULT_LOCAL_AUTO_LOAD, DEFAULT_GEN_TEMPERATURE, DEFAULT_GEN_TOP_P, DEFAULT_GEN_REPETITION_PENALTY, DEFAULT_GEN_TOP_K, DEFAULT_GEN_MIN_P, DEFAULT_THEME_COLOR, BASE_THEME_COLOR, THEME_COLORS, DEFAULT_FONT, DEFAULT_FONT_TUNINGS, FONT_OPTIONS, SYSTEM_FONT_STACK, DEFAULT_NARRATION_FONT, DEFAULT_NARRATION_SCALE, DEFAULT_NARRATION_LINE_HEIGHT, DEFAULT_QUOTE_COLOR, DEFAULT_QUOTE_ITALIC, DEFAULT_QUOTE_COLOR_LIGHT, DEFAULT_QUOTE_COLOR_DARK, NARRATION_FONT_OPTIONS, fontStack, fontSizeAdjust, DEFAULT_UPDATE_CHANNEL, DEFAULT_SCENE_IMAGE_AUTO, DEFAULT_CONTINUE_CHOICE, DEFAULT_IMAGE_ATTACHMENTS, CONTINUE_CHOICE_MODES, DEFAULT_NARRATION_LAYOUT, NARRATION_LAYOUTS, DEFAULT_TOOLS_ENABLED, DEFAULT_EDITOR_AUTO_SAVE, type ContinueChoiceMode, type NarrationLayout, type ThemeColor, type FontChoice, type NarrationFont, type UpdateChannel } from './settingsDefaults';
+import { DEFAULT_EDITOR_AUTO_SAVE_IDLE_S, clampEditorAutoSaveIdle, DEFAULT_ENDPOINT, DEFAULT_API_TOKEN, DEFAULT_MODEL_NAME, DEFAULT_MAX_TOKENS, DEFAULT_CONTEXT_WINDOW, DEFAULT_LOCAL_CONTEXT_SIZE, DEFAULT_LOCAL_GPU_LAYERS, DEFAULT_LOCAL_FLASH_ATTENTION, DEFAULT_LOCAL_UNIFIED_KV_CACHE, DEFAULT_LOCAL_K_CACHE_TYPE, DEFAULT_LOCAL_V_CACHE_TYPE, DEFAULT_LOCAL_KV_CACHE_IN_RAM, LOCAL_CACHE_TYPES, DEFAULT_LOCAL_CONTEXT_OVERFLOW, LOCAL_CONTEXT_OVERFLOW_POLICIES, DEFAULT_LOCAL_PARALLEL_REQUESTS, DEFAULT_LOCAL_GPU_DEVICE, DEFAULT_LOCAL_AUTO_LOAD, DEFAULT_GEN_TEMPERATURE, DEFAULT_GEN_TOP_P, DEFAULT_GEN_REPETITION_PENALTY, DEFAULT_GEN_TOP_K, DEFAULT_GEN_MIN_P, DEFAULT_THEME_COLOR, BASE_THEME_COLOR, THEME_COLORS, DEFAULT_FONT, DEFAULT_FONT_TUNINGS, FONT_OPTIONS, SYSTEM_FONT_STACK, DEFAULT_NARRATION_FONT, DEFAULT_NARRATION_SCALE, DEFAULT_NARRATION_LINE_HEIGHT, DEFAULT_QUOTE_COLOR, DEFAULT_QUOTE_ITALIC, DEFAULT_QUOTE_COLOR_LIGHT, DEFAULT_QUOTE_COLOR_DARK, NARRATION_FONT_OPTIONS, fontStack, fontSizeAdjust, DEFAULT_UPDATE_CHANNEL, DEFAULT_SCENE_IMAGE_AUTO, DEFAULT_CONTINUE_CHOICE, DEFAULT_IMAGE_ATTACHMENTS, CONTINUE_CHOICE_MODES, DEFAULT_NARRATION_LAYOUT, NARRATION_LAYOUTS, DEFAULT_TOOLS_ENABLED, DEFAULT_EDITOR_AUTO_SAVE, type LocalCacheType, type LocalContextOverflow, type ContinueChoiceMode, type NarrationLayout, type ThemeColor, type FontChoice, type NarrationFont, type UpdateChannel } from './settingsDefaults';
 import { isDesktop } from '../lib/imageGen/desktop';
 import type { ImageProviderId } from '../lib/imageGen';
 import { useLocalLlmStatus } from '../lib/useLocalLlmStatus';
@@ -152,6 +152,7 @@ function seedImagePresetStore(): ImageEndpointPresetStore {
     cfg: flt('imageCfg', d.cfg),
     sampler: str('imageSampler', d.sampler),
     adetailer: d.adetailer,
+    cleanTags: d.cleanTags,
     workflow: d.workflow,
     invokeEncoder: d.invokeEncoder,
     invokeVae: d.invokeVae,
@@ -600,8 +601,21 @@ function useProvideSettings() {
   const [localContextSize, setLocalContextSize] = usePersistentState<number>(`${APP_ID}_localContextSize`, DEFAULT_LOCAL_CONTEXT_SIZE, intCodec);
   const [localGpuLayers, setLocalGpuLayers] = usePersistentState<number>(`${APP_ID}_localGpuLayers`, DEFAULT_LOCAL_GPU_LAYERS, intCodec);
   const [localFlashAttention, setLocalFlashAttention] = usePersistentState<boolean>(`${APP_ID}_localFlashAttention`, DEFAULT_LOCAL_FLASH_ATTENTION, boolCodec);
-  // Parallel decode slots for the bundled engine (context sequences); each slot gets ~localContextSize / N.
+  // Parallel decode slots for the bundled engine; they share one localContextSize pool unless the unified cache is off.
   const [localParallelRequests, setLocalParallelRequests] = usePersistentState<number>(`${APP_ID}_localParallelRequests`, DEFAULT_LOCAL_PARALLEL_REQUESTS, intCodec);
+  const [localUnifiedKvCache, setLocalUnifiedKvCache] = usePersistentState<boolean>(`${APP_ID}_localUnifiedKvCache`, DEFAULT_LOCAL_UNIFIED_KV_CACHE, boolCodec);
+  const cacheTypeCodec = {
+    parse: (r: string): LocalCacheType => (LOCAL_CACHE_TYPES.some((t) => t.value === r) ? (r as LocalCacheType) : 'f16'),
+    serialize: (v: LocalCacheType): string => v,
+  };
+  const [localKCacheType, setLocalKCacheType] = usePersistentState<LocalCacheType>(`${APP_ID}_localKCacheType`, DEFAULT_LOCAL_K_CACHE_TYPE, cacheTypeCodec);
+  const [localVCacheType, setLocalVCacheType] = usePersistentState<LocalCacheType>(`${APP_ID}_localVCacheType`, DEFAULT_LOCAL_V_CACHE_TYPE, cacheTypeCodec);
+  const [localKvCacheInRam, setLocalKvCacheInRam] = usePersistentState<boolean>(`${APP_ID}_localKvCacheInRam`, DEFAULT_LOCAL_KV_CACHE_IN_RAM, boolCodec);
+  const contextOverflowCodec = {
+    parse: (r: string): LocalContextOverflow => (LOCAL_CONTEXT_OVERFLOW_POLICIES.some((p) => p.value === r) ? (r as LocalContextOverflow) : DEFAULT_LOCAL_CONTEXT_OVERFLOW),
+    serialize: (v: LocalContextOverflow): string => v,
+  };
+  const [localContextOverflow, setLocalContextOverflow] = usePersistentState<LocalContextOverflow>(`${APP_ID}_localContextOverflow`, DEFAULT_LOCAL_CONTEXT_OVERFLOW, contextOverflowCodec);
   // Which GPU the engine is pinned to, by device name; 'auto' lets the policy pick (see engineDevice.cjs).
   const [localGpuDevice, setLocalGpuDevice] = usePersistentState<string>(`${APP_ID}_localGpuDevice`, DEFAULT_LOCAL_GPU_DEVICE, stringCodec);
   // Whether a model loads itself — on engine start-up and after a download — or waits for the Load button.
@@ -904,7 +918,7 @@ function useProvideSettings() {
   const {
     systemPrompt, narrationUserPrompt, recapUserPrompt, rehydrateUserPrompt, oocDirectivePrompt, choicesPrompt, statUpdatesPrompt, locationChangePromptText, thinkingPrompt, summaryPrompt,
     diaryPrompt, directorPrompt, directorUserPrompt, characterPrompt, storyboardPrompt,
-    choicesUserPrompt, statUpdatesUserPrompt, locationChangeUserPrompt, summaryUserPrompt, nowLinePrompt, timePassedPrompt, timePassedUserPrompt,
+    choicesUserPrompt, statUpdatesUserPrompt, locationChangeUserPrompt, entityLocationPrompt, entityLocationUserPrompt, summaryUserPrompt, nowLinePrompt, timePassedPrompt, timePassedUserPrompt,
     openingTimePrompt, openingTimeUserPrompt, sceneTagsPrompt, sceneTagsUserPrompt, discoverEntityPrompt, discoverEntityUserPrompt,
     milestoneSelectPrompt, milestoneSelectUserPrompt,
   } = promptValues;
@@ -926,6 +940,8 @@ function useProvideSettings() {
   const setChoicesUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'choicesUserPrompt', v));
   const setStatUpdatesUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'statUpdatesUserPrompt', v));
   const setLocationChangeUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'locationChangeUserPrompt', v));
+  const setEntityLocationPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'entityLocationPrompt', v));
+  const setEntityLocationUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'entityLocationUserPrompt', v));
   const setSummaryUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'summaryUserPrompt', v));
   const setMilestoneSelectPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'milestoneSelectPrompt', v));
   const setMilestoneSelectUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'milestoneSelectUserPrompt', v));
@@ -1211,6 +1227,8 @@ function useProvideSettings() {
   const [locationChangeEnabled, setLocationChangeEnabled] = usePersistentState<boolean>(`${APP_ID}_locationChangeEnabled`, true, boolCodec);
   // When on, a detected in-scope move is applied immediately instead of prompting a "Move to X?" confirmation.
   const [locationAutoApply, setLocationAutoApply] = usePersistentState<boolean>(`${APP_ID}_locationAutoApply`, false, boolCodec);
+  // Off stops only the entity location requests; the authors' movement rules and the followers still hold.
+  const [entityMovement, setEntityMovement] = usePersistentState<boolean>(`${APP_ID}_entityMovement`, true, boolCodec);
   // Staged thinking: cap how many characters the director casts (each gets its own sequential pass). When off,
   // the cast is unbounded. Drives both the hard cap (matchCastToEntities) and the <ACTIVE CHARACTER GUIDANCE> chip.
   const [limitActiveCharacters, setLimitActiveCharacters] = usePersistentState<boolean>(`${APP_ID}_limitActiveCharacters`, true, boolCodec);
@@ -1254,7 +1272,7 @@ function useProvideSettings() {
     positivePrompt: imagePositivePrompt, negativePrompt: imageNegativePrompt,
     portraitWidth: imagePortraitWidth, portraitHeight: imagePortraitHeight,
     landscapeWidth: imageLandscapeWidth, landscapeHeight: imageLandscapeHeight,
-    steps: imageSteps, cfg: imageCfg, sampler: imageSampler, adetailer: imageAdetailer,
+    steps: imageSteps, cfg: imageCfg, sampler: imageSampler, adetailer: imageAdetailer, cleanTags: imageCleanTags,
     workflow: imageWorkflow, invokeEncoder: imageInvokeEncoder, invokeVae: imageInvokeVae,
     invokeBoard: imageInvokeBoard, fileName: imageFileName,
   } = imageValues;
@@ -1274,6 +1292,7 @@ function useProvideSettings() {
   const setImageCfg = patchImage('cfg');
   const setImageSampler = patchImage('sampler');
   const setImageAdetailer = patchImage('adetailer');
+  const setImageCleanTags = patchImage('cleanTags');
   const setImageWorkflow = patchImage('workflow');
   const setImageInvokeEncoder = patchImage('invokeEncoder');
   const setImageInvokeVae = patchImage('invokeVae');
@@ -1822,6 +1841,16 @@ function useProvideSettings() {
     localFlashAttention,
     setLocalFlashAttention,
     localParallelRequests,
+    localUnifiedKvCache,
+    setLocalUnifiedKvCache,
+    localKCacheType,
+    setLocalKCacheType,
+    localVCacheType,
+    setLocalVCacheType,
+    localKvCacheInRam,
+    setLocalKvCacheInRam,
+    localContextOverflow,
+    setLocalContextOverflow,
     setLocalParallelRequests,
     localGpuDevice,
     setLocalGpuDevice,
@@ -1877,6 +1906,8 @@ function useProvideSettings() {
     setLocationChangeEnabled,
     locationAutoApply,
     setLocationAutoApply,
+    entityMovement,
+    setEntityMovement,
     limitActiveCharacters,
     setLimitActiveCharacters,
     activeCharacterLimit,
@@ -1935,6 +1966,10 @@ function useProvideSettings() {
     setStatUpdatesUserPrompt,
     locationChangeUserPrompt,
     setLocationChangeUserPrompt,
+    entityLocationPrompt,
+    setEntityLocationPrompt,
+    entityLocationUserPrompt,
+    setEntityLocationUserPrompt,
     milestoneSelectPrompt,
     setMilestoneSelectPrompt,
     milestoneSelectUserPrompt,
@@ -2021,6 +2056,8 @@ function useProvideSettings() {
     setImageSampler,
     imageAdetailer,
     setImageAdetailer,
+    imageCleanTags,
+    setImageCleanTags,
     imageWorkflow,
     setImageWorkflow,
     imageInvokeEncoder,

@@ -89,15 +89,16 @@ export function useOwnerMorphSources(owner: MorphOwner | undefined): { sources: 
 }
 
 /**
- * Body slider names available to bind in the world editor, one group per model: the world's own model
- * first (its embedded custom VRM, else the bundled default), then every other library model. Loading is
+ * Body slider names available to bind in the world editor, one group per Avatar: the world's store Avatars
+ * first, then the library Avatars with the bundled default leading. Loading is
  * lazy — call `load()` when the picker opens — and cached, so the stat editor stays fast until then.
  *
  * Names are model-agnostic (a binding is the bare morph name); the grouping is display only.
  */
 export function useBodyMorphSources(): { sources: MorphSource[]; loading: boolean; load: () => void } {
   // Off world, an owned stat's editor never opens this picker; the hook still runs.
-  const customUrl = useGameDataOptional()?.worldOverview?.customPlayerVRM?.data || undefined;
+  const overview = useGameDataOptional()?.worldOverview;
+  const store = overview?.vrmStore;
   const [sources, setSources] = useState<MorphSource[]>([]);
   const [loading, setLoading] = useState(false);
   const loadedRef = useRef(false);
@@ -108,18 +109,17 @@ export function useBodyMorphSources(): { sources: MorphSource[]; loading: boolea
     setLoading(true);
     (async () => {
       const built: MorphSource[] = [];
-      // The world's own model leads: a custom VRM if it has one.
-      if (customUrl) {
-        const morphs = await morphsForCustom(customUrl);
-        if (morphs.length) built.push({ heading: "This World's Model", morphs });
+      // The world's store Avatars lead, one group each under its display name.
+      for (const vrm of Object.values(store ?? {})) {
+        if (!vrm.file.data) continue;
+        const morphs = await morphsForCustom(vrm.file.data);
+        if (morphs.length) built.push({ heading: vrm.name, morphs });
       }
-      // Library models, newest-first. With no custom VRM the world wears the bundled default, so lead with
-      // it. Loaded one at a time rather than in parallel — VRMs are large, and a burst of concurrent
-      // GLTF loads would spike memory; the cache makes this a one-time cost.
+      // Library Avatars, newest-first, the bundled default leading: User's Default falls back to it. Loaded
+      // one at a time rather than in parallel — VRMs are large, and a burst of concurrent GLTF loads would
+      // spike memory; the cache makes this a one-time cost.
       const models = await ModelStorageService.getModelMetadata();
-      const ordered = customUrl
-        ? models
-        : [...models].sort((a, b) => (a.id === DEFAULT_AVATAR_ID ? -1 : b.id === DEFAULT_AVATAR_ID ? 1 : 0));
+      const ordered = [...models].sort((a, b) => (a.id === DEFAULT_AVATAR_ID ? -1 : b.id === DEFAULT_AVATAR_ID ? 1 : 0));
       for (const model of ordered) {
         const morphs = await morphsForModel(model.id);
         if (morphs.length) built.push({ heading: model.name, morphs });
@@ -127,13 +127,13 @@ export function useBodyMorphSources(): { sources: MorphSource[]; loading: boolea
       setSources(built);
       setLoading(false);
     })();
-  }, [customUrl]);
+  }, [store]);
 
-  // A changed custom VRM invalidates the loaded set; allow a reload on the next picker open.
+  // A changed store invalidates the loaded set; allow a reload on the next picker open.
   useEffect(() => {
     loadedRef.current = false;
     setSources([]);
-  }, [customUrl]);
+  }, [store]);
 
   return { sources, loading, load };
 }

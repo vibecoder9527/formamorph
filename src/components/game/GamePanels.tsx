@@ -9,8 +9,7 @@ import { useSentenceHighlight } from '@/lib/useSentenceHighlight';
 import { resolveEntityByName } from '@/lib/entityMatch';
 import { clearTurnDerived, parseTurnContent } from '@/lib/turnDigest';
 import { narrationOf } from '@/lib/aiResponse';
-import { usePlayerModelUrl } from '@/lib/usePlayerModelUrl';
-import { mergeBodyMorphs } from '@/lib/bodyMorphs';
+import { usePlayAvatars } from '@/lib/usePlayAvatars';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { traitOrderIndex, activeStatEnabled, refreshChosenTraits } from '@/lib/traitEffects';
 import { entityStatTraitsInForce, listableGlobalTraits, statTraitsInForce, traitGateInput, type TraitWorld } from '@/lib/traitRuntime';
@@ -21,6 +20,8 @@ import { useGameDataOptional } from '@/contexts/GameDataContext';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ReasoningBlock } from './ReasoningBlock';
 import { ChatNarration, PLAYER_ACTION_BUBBLE, type ChatBubbleTurn, type ChatPlayerTurn } from './ChatNarration';
+import { RequestStatusStrip } from './RequestStatusRow';
+import { NARRATION_FADE, NARRATION_FADE_UNDER_STRIP, useEdgeFades } from './narrationFade';
 import { ChatChoices } from './ChatChoices';
 import { ChoiceRows } from './ChoiceRows';
 import { TurnCard } from './TurnCard';
@@ -52,13 +53,12 @@ import { CONTINUE_CHOICE } from "@/lib/choices";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tip } from "@/components/ui/tooltip";
 import { Pager } from "@/components/ui/pagination";
-import VRMViewer from '@/views/VRMViewer';
-import { EntityVisual, hasEntityVisual } from './EntityVisual';
+import { EntityVisual } from './EntityVisual';
+import { EntityAvatar } from './EntityAvatar';
 import { useEntityStatMorphs } from '@/lib/useEntityStatMorphs';
 import { useEntityVisualPreference } from '@/lib/useEntityVisualPreference';
 import { useEntityGallery } from '@/lib/useEntityGallery';
@@ -76,7 +76,7 @@ import type { Entity, PersonaRef, SceneEntity, Stat, StatGroup, Trait } from '@/
 import { gateStates } from '@/lib/traitGates';
 import { worldEntitiesOf } from '@/lib/persona';
 import type { TraitCascade } from './SetupTraitList';
-import { formatAbsolute, formatClock } from '@/lib/gameClock';
+import { daypartAt, formatAbsolute, formatClock } from '@/lib/gameClock';
 import { logKind } from '@/lib/playLog';
 import { cn } from "@/lib/utils";
 import { useResolvedWorld } from '@/lib/useResolvedWorld';
@@ -87,8 +87,10 @@ import { StatRow } from './StatRow';
 import { rowDelta } from '@/lib/useStatDeltas';
 import type { OwnerId } from '@/lib/scope';
 import { StatGroupSections } from './StatGroupSections';
+import { PanelOwnerCard } from './PanelOwnerCard';
 import { statPanelLayout } from '@/lib/statGroupTree';
 import { PersonaRow } from './PersonaRow';
+import { YouMark } from './YouMark';
 import { useNarrationLayout } from '@/lib/useNarrationLayout';
 import { useStatsSnap } from '@/lib/useStatsSnap';
 import { firstShowableEntity, type StatPanelOption } from '@/lib/statPanelEntities';
@@ -98,6 +100,12 @@ import { parseSavedReasoning } from '@/lib/savedReasoning';
 import { scriptPrompts } from '@/lib/scriptPrompts';
 import { turnTells } from '@/lib/scriptTells';
 import { ScriptPromptLine, ScriptTellLines } from './ScriptPromptLine';
+
+/** What the entity view shows: an entity, or the played side when no entity is played. */
+type EntityViewSubject = { kind: 'entity'; entity: Entity } | { kind: 'played' };
+
+/** The played side's visual source, which shows the played side's Avatar and nothing else. */
+const PLAYED_SIDE: Pick<Entity, 'id' | 'name'> = { id: '__you', name: 'You' };
 
 /** One side-panel tab: an icon, and the label where the panel is wide enough to hold it. */
 const PanelTab = ({ value, icon: Icon, label }: { value: string; icon: LucideIcon; label: string }) => (
@@ -130,12 +138,10 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
   // The played entity heads the Entities tab in every scene; the scene parse never lists it.
   const personaEntity = persona?.entity;
   const {
-    // Aliased to the viewed-page values so paging back shows that turn's appearance + scene (they equal
-    // the live values on the latest page). Body morphs still ride live `bodyMorphValues`, which the
-    // GameViewer effect derives from the viewed stats.
-    viewCharacterData: characterData,
-    bodyMorphValues,
+    // Aliased to the viewed-page values so paging back shows that turn's scene (they equal the live values
+    // on the latest page).
     viewVisibleEntities: visibleEntities,
+    viewEntityFollowers: entityFollowers,
     logEntries,
     calendar,
     logsEndRef,
@@ -168,29 +174,34 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
     setVisibleEntities((prev) => prev.filter((se) => se.name !== name));
     setPendingRemoval(null);
   };
-  const { url: playerModelUrl, resolving: modelResolving } = usePlayerModelUrl(characterData?.playerModelId);
-  // First present entity with something to show — an image, or failing that a 3D model — displayed in the
-  // model section's Entities view (the portrait shows whether or not the name is revealed yet).
-  const firstShowable = firstShowableEntity(visibleEntities, entities, hasEntityVisual);
+  const avatars = usePlayAvatars();
+  // The played side with no played entity: the legacy fallback's Avatar, shown through the You row.
+  const youRow = !personaEntity && !!avatars.played;
+  const showable = (entity: Entity | undefined): entity is Entity => !!entity && avatars.shows(entity);
+  // First present entity with something to show (the image shows whether or not the name is revealed yet).
+  const firstShowable = firstShowableEntity(visibleEntities, entities, showable);
   const isMobile = useIsMobile();
-  const [showModel, setShowModel] = React.useState(true);
-  // Landscape model viewer view: the player VRM vs. the detected-entity view.
-  const [modelTab, setModelTab] = React.useState("avatar");
+  const [showEntityView, setShowEntityView] = React.useState(true);
   const [leftTab, setLeftTab] = React.useState(requestedTab ?? (isMobile ? "model" : "notes"));
   React.useEffect(() => { if (requestedTab) setLeftTab(requestedTab); }, [requestedTab, requestKey]);
 
-  // The shared pick when it has a picture to show, else the first detected showable entity. The stat panel's
-  // (None) and a pick with no picture both leave the view on that fallback.
+  // The shared pick when it has something to show, else the played entity, else the first showable scene
+  // entity. The stat panel's (None) and a pick with nothing to show both leave the view on that fallback.
   const pickedEntity = [...entities, ...(personaEntity ? [personaEntity] : [])].find((e) => e.id === selectedEntityId);
-  const entityViewEntity = (hasEntityVisual(pickedEntity) ? pickedEntity : undefined) ?? firstShowable;
+  const entityViewShown = (showable(pickedEntity) ? pickedEntity : undefined) ?? (showable(personaEntity) ? personaEntity : undefined);
+  const entityViewSubject: EntityViewSubject | undefined = entityViewShown ? { kind: 'entity', entity: entityViewShown }
+    : youRow ? { kind: 'played' }
+    : firstShowable && { kind: 'entity', entity: firstShowable };
+  const entityViewEntity = entityViewSubject?.kind === 'entity' ? entityViewSubject.entity : undefined;
+  const entityViewSource = entityViewSubject && (entityViewEntity ?? PLAYED_SIDE);
   const entityViewPreference = useEntityVisualPreference(entityViewEntity?.id);
-  const entityViewGallery = useEntityGallery(entityViewEntity);
-  const entityViewMorphs = useEntityStatMorphs(entityViewEntity);
+  const entityViewGallery = useEntityGallery(entityViewSource);
+  const entityViewMorphs = useEntityStatMorphs(entityViewSource);
+  const entityViewAvatar = entityViewSubject && (entityViewEntity ? avatars.sourceOf(entityViewEntity) : avatars.played);
 
-  // Clicking an entity swaps the in-section image when the viewer is open; otherwise it opens the
-  // entity popup (collapsed, on mobile, the entity has no image, or it's already the shown entity). A
-  // not-yet-revealed character can show its portrait but never opens the detail popup — that would spoil
-  // the name the scene is deliberately withholding.
+  // Clicking an entity with something to show selects it, so the view swaps to it. The popup opens on mobile,
+  // and in landscape when the view is hidden or already on that entity. A not-yet-revealed entity can show
+  // its image but never opens the detail popup: that would spoil the name the scene is withholding.
   const handleEntityListClick = (se: SceneEntity) => {
     const match = resolveEntityByName(se.name, entities);
     if (!match) return; // un-named (ad-hoc) participant — nothing to show
@@ -198,17 +209,12 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
   };
 
   const openEntity = (match: Entity, revealed: boolean) => {
-    const entitiesViewActive = !characterData || modelTab === "entities";
-    const alreadyShown = entitiesViewActive && match === entityViewEntity;
-    if (!isMobile && showModel && hasEntityVisual(match) && !alreadyShown) {
-      setSelectedEntityId(match.id);
-      setModelTab("entities");
-    } else if (revealed) {
-      onEntityClick(match.name);
-    }
+    const selects = showable(match) && (isMobile || (showEntityView && match.id !== entityViewEntity?.id));
+    if (selects) setSelectedEntityId(match.id);
+    if (revealed && (isMobile || !selects)) onEntityClick(match.name);
   };
 
-  // In landscape the model lives on top, not in a tab; leave the "model" tab.
+  // In landscape the view lives on top, not in a tab; leave the "model" tab.
   React.useEffect(() => {
     if (!isMobile && leftTab === "model") setLeftTab("notes");
   }, [isMobile, leftTab]);
@@ -233,28 +239,28 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
     }
   }, [devRoute?.modal, devRoute?.tab, setIsEditMode]);
 
-  const modelViewer = characterData ? (
+  const entityView = entityViewSource ? (
     // Mobile: fill the whole panel. Landscape: a fixed 1.2 aspect box sitting atop the panel.
     <div className={isMobile ? "relative w-full h-full" : "w-full relative"} style={isMobile ? undefined : { paddingTop: '120%' }}>
       <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
-        {modelResolving ? (
-          // Hold a loader while a library model's blob resolves, so we don't transiently mount the bundled
-          // default (which would report default capabilities and flash before the real model swaps in).
-          <Loader2 className="animate-spin" size={32} />
-        ) : (
-          <VRMViewer
-            key={playerModelUrl ?? 'default'}
-            bodyMorphValues={mergeBodyMorphs(characterData.bodyMorphs, bodyMorphValues)}
-            hairColor={characterData.hairColor}
-            eyeColor={characterData.eyeColor}
-            skinColor={characterData.skinColor}
-            hairTypes={characterData.hairTypes}
-            currentHairStyle={characterData.currentHairStyle}
-            hairLength={characterData.hairLength}
-            modelUrl={playerModelUrl}
-            extraColors={characterData.extraColors}
-          />
-        )}
+        <EntityVisual
+          key={entityViewSource.id}
+          entity={entityViewSource}
+          images={entityViewGallery.images}
+          avatar={entityViewAvatar && (
+            <EntityAvatar
+              entity={entityViewSource}
+              source={entityViewAvatar}
+              played={!entityViewEntity || entityViewEntity.id === avatars.playedId}
+              resolving={avatars.resolving}
+            />
+          )}
+          preference={entityViewPreference.preference}
+          onPreferenceChange={entityViewPreference.onPreferenceChange}
+          imageIndex={entityViewGallery.imageIndex}
+          onImageStep={entityViewGallery.onImageStep}
+          morphValues={entityViewMorphs}
+        />
       </div>
     </div>
   ) : null;
@@ -262,61 +268,28 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
   return (
   <Card className="w-full md:w-1/4 md:shrink-0 md:mr-1 grow md:grow-0 min-h-0 flex flex-col bg-background/60 border-border overflow-hidden">
     <CardContent className="flex-grow flex flex-col overflow-hidden p-4 sm:p-1">
-      {/* Landscape: model on top with a show/hide toggle in the upper right */}
+      {/* Landscape: the entity view on top with a show/hide toggle in the upper right */}
       {!isMobile && (
         <div className="mb-2">
           <div className="relative flex items-center justify-center min-h-10">
-            {/* Only worlds with a player model offer the Avatar/Entities swap. */}
-            {characterData && (
-              <ToggleGroup
-                type="single"
-                value={modelTab}
-                // A single ToggleGroup clears its value when the active item is clicked again; one of the two
-                // is always shown, so an empty result is ignored rather than stored.
-                onValueChange={(v) => { if (v) setModelTab(v); }}
-              >
-                <ToggleGroupItem value="avatar">Avatar</ToggleGroupItem>
-                <ToggleGroupItem value="entities">Entities</ToggleGroupItem>
-              </ToggleGroup>
-            )}
-            <Tip tip={showModel ? "Hide Avatar" : "Show Avatar"}>
+            <Tip tip={showEntityView ? "Hide Entity View" : "Show Entity View"}>
               <Button
                 variant="ghost"
                 size="icon"
                 className="absolute right-0"
-                onClick={() => setShowModel((s) => !s)}
+                onClick={() => setShowEntityView((s) => !s)}
               >
-                {showModel ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {showEntityView ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </Button>
             </Tip>
           </div>
-          {showModel && (
-            // No model ⇒ always the Entities view (there's no Avatar to swap to).
-            characterData && modelTab === "avatar"
-              ? modelViewer
-              : entityViewEntity && (
-                  <div className="w-full relative" style={{ paddingTop: '120%' }}>
-                    <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
-                      <EntityVisual
-                        key={entityViewEntity.id}
-                        entity={entityViewEntity}
-                        images={entityViewGallery.images}
-                        preference={entityViewPreference.preference}
-                        onPreferenceChange={entityViewPreference.onPreferenceChange}
-                        imageIndex={entityViewGallery.imageIndex}
-                        onImageStep={entityViewGallery.onImageStep}
-                        morphValues={entityViewMorphs}
-                      />
-                    </div>
-                  </div>
-                )
-          )}
+          {showEntityView && entityView}
         </div>
       )}
 
       <Tabs surfaceTabs="gameViewer" value={leftTab} onValueChange={setLeftTab} className="w-full flex-grow flex flex-col overflow-hidden">
         <TabsList className="grid w-full flex-shrink-0 auto-cols-fr grid-flow-col">
-          {isMobile && <PanelTab value="model" icon={AvatarIcon} label="Avatar" />}
+          {isMobile && <PanelTab value="model" icon={AvatarIcon} label="View" />}
           <PanelTab value="entities" icon={EntitiesIcon} label="Entities" />
           <PanelTab value="notes" icon={NotebookPen} label="Notes" />
           <PanelTab value="memory" icon={Brain} label="Memory" />
@@ -324,7 +297,7 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
         </TabsList>
         {isMobile && (
           <TabsContent value="model" className="flex-grow overflow-hidden min-h-[100px]">
-            {modelViewer}
+            {entityView}
           </TabsContent>
         )}
         {/* `flex` must be state-scoped: a plain `flex` class beats the UA `[hidden]{display:none}` Radix
@@ -338,8 +311,10 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
           <ScrollArea className="flex-grow min-h-0">
             <div className="p-2">
               {personaEntity && (
-                <EntityListRow label={`${personaEntity.name} (You)`} onClick={() => openEntity(personaEntity, true)} />
+                <EntityListRow label={personaEntity.name} you onClick={() => openEntity(personaEntity, true)} />
               )}
+              {/* No pick falls back to the played side, which is what selecting You means. */}
+              {youRow && <EntityListRow label={PLAYED_SIDE.name} onClick={() => setSelectedEntityId(undefined)} />}
               {visibleEntities.length > 0 ? (
                 visibleEntities.map((se, index) => {
                   const entityItem = resolveEntityByName(se.name, entities);
@@ -357,13 +332,14 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
                     <EntityListRow
                       key={index}
                       label={label}
+                      following={!!entityItem && entityFollowers.includes(entityItem.id)}
                       disabled={isDisabled}
                       onClick={() => handleEntityListClick(se)}
                       onRemove={isRemovable ? () => setPendingRemoval(label) : undefined}
                     />
                   );
                 })
-              ) : personaEntity ? null : (
+              ) : personaEntity || youRow ? null : (
                 <p>No entity visible.</p>
               )}
             </div>
@@ -604,6 +580,7 @@ export const MiddlePanel = ({
     setPlayerInput,
     isWaitingForAI,
     isRevealingNarration,
+    narrationSettled,
     isFlashing,
     isEditMode,
     setIsEditMode,
@@ -635,6 +612,11 @@ export const MiddlePanel = ({
     setPending: setPendingAttachments,
   });
   const chatLayout = useNarrationLayout() === 'chat';
+  // The narration fades out above the status strip while it shows.
+  const statusShowing = Boolean(progressBar);
+  const narrationFade = statusShowing ? NARRATION_FADE_UNDER_STRIP : NARRATION_FADE;
+  const pagesViewport = useRef<HTMLDivElement>(null);
+  useEdgeFades(pagesViewport, chatLayout);
   const liveReasoning = useLiveReasoning();
   // Per-word reveal: any enabled effect ⇒ animate (composed keyframe + CSS vars on the container);
   // nothing enabled ⇒ smooth crawl. The keyframe name feeds Streamdown, the amounts ride as CSS vars.
@@ -766,9 +748,11 @@ export const MiddlePanel = ({
   const pageReasoning = pageReasoningLive
     ? liveReasoning
     : currentAssistantMessage ? parseSavedReasoning(currentAssistantMessage.content) : null;
+  // The card holds its actions while live, so its row can open in place once the narration settles.
   const pageActions = currentAssistantMessage ? actionsFor({
-    index: currentPage - 1, isLatest: !isViewingPast, live: pageLive, hasImage: sceneImages.length > 0, text: pageNarration,
+    index: currentPage - 1, isLatest: !isViewingPast, live: false, hasImage: sceneImages.length > 0, text: pageNarration,
   }) : [];
+  const pageChromeHeld = pageLive && !narrationSettled;
   // The turn is live from submit, before its narration exists, until the reveal ends.
   const actionLineActions = actionLine === undefined ? [] : playerActionsFor({
     index: currentPage - 1, live: !isViewingPast && (pageLive || (isWaitingForAI && !currentAssistantMessage)), text: actionLine,
@@ -820,7 +804,7 @@ export const MiddlePanel = ({
       <span className="text-meta text-muted-foreground">{commandChoices ? 'Choices preview (/choices test)' : 'Markdown preview (/markdown test)'}</span>
       <Tip tip="Dismiss preview">
         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onDismissCommandPreview}>
-          <X className="h-4 w-4" />
+          <X className="h-5 w-5" />
         </Button>
       </Tip>
     </div>
@@ -932,6 +916,7 @@ export const MiddlePanel = ({
                 actionsFor={actionsFor}
                 playerActionsFor={playerActionsFor}
                 onDeleteSceneImage={onDeleteSceneImage}
+                fadeUnderStrip={statusShowing}
                 latestFooter={
                   <>
                     <ScriptPromptLine store={scriptPrompts} layout="chat" className="mb-3" />
@@ -950,7 +935,11 @@ export const MiddlePanel = ({
               )}
             </div>
           ) : (
-          <ScrollArea className={narrationFrame}>
+          <ScrollArea
+            className={narrationFrame}
+            viewportRef={pagesViewport}
+            viewportProps={{ className: narrationFade }}
+          >
             {optionsControl}
             {commandPreview && (
               <>
@@ -960,7 +949,7 @@ export const MiddlePanel = ({
               </>
             )}
             {!commandPreview && (actionLine !== undefined || currentAssistantMessage || (showReasoning && pageReasoning?.text)) && (
-              <TurnCard actions={pageActions} turnNumber={currentPage} live={pageLive} style={revealStyle}>
+              <TurnCard actions={pageActions} turnNumber={currentPage} live={pageChromeHeld} style={revealStyle}>
                 {sceneTurnId && (
                   <ScenePlate
                     turnId={sceneTurnId}
@@ -1128,6 +1117,9 @@ export const MiddlePanel = ({
               });
             }}
           />
+          {/* The footer. The status strip floats above it, so a request starting or ending moves nothing. */}
+          <div className="relative flex flex-col gap-2">
+          {progressBar && <RequestStatusStrip>{progressBar}</RequestStatusStrip>}
           <div className="flex flex-col items-center gap-2">
             {likePrompt}
             {locationSuggestion}
@@ -1138,7 +1130,6 @@ export const MiddlePanel = ({
               </div>
             )}
           </div>
-          {progressBar}
           <div className={cn('flex flex-col gap-2', attachDragOver && 'rounded-md ring-2 ring-inset ring-ring')} {...intakeProps}>
             {imageAttachments && (
               <AttachmentThumbs
@@ -1207,6 +1198,7 @@ export const MiddlePanel = ({
               )}
             </div>
           </div>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -1218,7 +1210,9 @@ const NO_ENTITY = '__none';
 const NO_STAT_GROUPS: StatGroup[] = [];
 const NO_AUTHORED_STATS: Stat[] = [];
 const entityItems = (options: StatPanelOption[]) =>
-  options.map((option) => <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>);
+  options.map((option) => (
+    <SelectItem key={option.id} value={option.id}>{option.label}{option.you && <YouMark />}</SelectItem>
+  ));
 
 export const RightPanel = ({
   onLocationClick, onToggleTrait, onPersonaChange, traitCascade, onDismissTraitCascade, onRegenerateStats, sceneImageJob,
@@ -1319,11 +1313,13 @@ export const RightPanel = ({
     const held = globalTraits.filter((t) => heldRows.has(t.id));
     return [...(isViewingPast ? held : listableGlobalTraits(held, globalRows, globalOrder)), ...entityRows];
   }, [isViewingPast, globalTraits, traitTree, viewOwnedTraits]);
-  // The played world entity is out of the cast, and a "playing as" gate has to find it.
+  // The played world entity is out of the cast, and a "playing as" gate has to find it. Time Conditions read
+  // the viewed turn's clock.
+  const daypart = daypartAt(gameTime, calendar);
   const gateWorld = React.useMemo<TraitWorld>(() => ({
-    traits, groups: traitGroups, entities: worldEntitiesOf(cast, persona), persona: personaRef ?? { source: 'none' },
+    traits, groups: traitGroups, entities: worldEntitiesOf(cast, persona), persona: personaRef ?? { source: 'none' }, daypart,
     ...inPlayOwners(ownerWorld, personaRef, traitLibrary),
-  }), [traits, traitGroups, cast, persona, personaRef, ownerWorld, traitLibrary]);
+  }), [traits, traitGroups, cast, persona, personaRef, daypart, ownerWorld, traitLibrary]);
   const viewTraitState = React.useMemo(
     () => ({ traits: globalTraits, disabledTraitIds: viewDisabledTraitIds, ownedTraits: viewOwnedTraits }),
     [globalTraits, viewDisabledTraitIds, viewOwnedTraits],
@@ -1447,49 +1443,64 @@ export const RightPanel = ({
             </div>
           )}
           <ScrollArea className="min-h-0 flex-grow mb-4 relative">
-            {visibleStats.length > 0 && (
-              <section aria-label="Global stats" data-testid="global-stats">
-                <h3 className="truncate px-2 pb-1 text-label font-medium">Global</h3>
-                <StatGroupSections
-                  nodes={playerLayout}
-                  idOf={({ stat }) => stat.id}
-                  nameOf={resolvePH}
-                  renderStat={({ stat, index }) => {
-                    const key = stat.name.toLowerCase();
-                    return (
-                      <StatRow
-                        stat={stat}
-                        {...rowDelta(statDeltas, null, key, isViewingPast ? (viewStatChanges[key] || 0) : null)}
-                        page={currentPage}
-                        isViewingPast={isViewingPast}
-                        snap={snapStats}
-                        editable={isEditMode && !isViewingPast}
-                        reserveDescriptorLine={anyDescriptors}
-                        onCommitValue={(value) => {
-                          const newStats = [...globalStats];
-                          newStats[index] = { ...stat, value };
-                          commitManualStatEdit(newStats);
-                        }}
-                      />
-                    );
-                  }}
-                />
-              </section>
-            )}
-            {playedRows.map((owner) => (
-              <section key={owner.entity.id} aria-label={`${owner.entity.name} stats`} data-testid="persona-stats" className="mt-2">
-                <h3 className="truncate px-2 pb-1 text-label font-medium">{owner.entity.name}</h3>
-                {ownerStatRows(owner)}
-              </section>
-            ))}
-            {entitiesShowStats && shownEntity && entitySection && (
-              <section aria-label={`${shownEntity.label} stats`} data-testid="entity-stats" className="mt-2 border-t border-border pt-2">
-                <h3 className="truncate px-2 pb-1 text-label font-medium">{shownEntity.label}</h3>
-                {entitySection.rows.length === 0 ? (
-                  <p role="status" className="py-4 text-center text-muted-foreground">No stats to show.</p>
-                ) : ownerStatRows(entitySection)}
-              </section>
-            )}
+            <div className="space-y-2 pb-2">
+              {visibleStats.length > 0 && (
+                <PanelOwnerCard role="region" aria-label="Global stats" data-testid="global-stats" name="Global">
+                  <StatGroupSections
+                    nodes={playerLayout}
+                    idOf={({ stat }) => stat.id}
+                    nameOf={resolvePH}
+                    renderStat={({ stat, index }) => {
+                      const key = stat.name.toLowerCase();
+                      return (
+                        <StatRow
+                          stat={stat}
+                          {...rowDelta(statDeltas, null, key, isViewingPast ? (viewStatChanges[key] || 0) : null)}
+                          page={currentPage}
+                          isViewingPast={isViewingPast}
+                          snap={snapStats}
+                          editable={isEditMode && !isViewingPast}
+                          reserveDescriptorLine={anyDescriptors}
+                          onCommitValue={(value) => {
+                            const newStats = [...globalStats];
+                            newStats[index] = { ...stat, value };
+                            commitManualStatEdit(newStats);
+                          }}
+                        />
+                      );
+                    }}
+                  />
+                </PanelOwnerCard>
+              )}
+              {playedRows.map((owner) => (
+                <PanelOwnerCard
+                  key={owner.entity.id}
+                  role="region"
+                  aria-label={`${owner.entity.name} stats`}
+                  data-testid="persona-stats"
+                  name={owner.entity.name}
+                  entity
+                  you
+                >
+                  {ownerStatRows(owner)}
+                </PanelOwnerCard>
+              ))}
+              {entitiesShowStats && shownEntity && entitySection && (
+                <PanelOwnerCard
+                  // Keyed by entity, so a new pick opens its card.
+                  key={shownEntity.id}
+                  role="region"
+                  aria-label={`${shownEntity.label} stats`}
+                  data-testid="entity-stats"
+                  name={shownEntity.label}
+                  entity
+                >
+                  {entitySection.rows.length === 0 ? (
+                    <p role="status" className="py-4 text-center text-muted-foreground">No stats to show.</p>
+                  ) : ownerStatRows(entitySection)}
+                </PanelOwnerCard>
+              )}
+            </div>
             <StatsActions
               className="absolute bottom-2 right-2"
               past={isViewingPast}

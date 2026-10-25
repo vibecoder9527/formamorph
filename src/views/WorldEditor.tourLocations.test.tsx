@@ -44,7 +44,7 @@ const storeWorld = vi.mocked(WorldStorageService.storeWorld);
 const WORLD: World = benchEditorWorld({
   worldOverview: {
     name: 'New World', description: 'A blank world ready for editing', author: '', thumbnail: null, bgm: null,
-    systemPrompt: '', use3DModel: false, tags: [],
+    systemPrompt: '', tags: [],
   },
   // A New World overview carries no readme or openings, which the overview type calls required.
 } as unknown as Partial<World>);
@@ -222,7 +222,7 @@ describe('Authoring Tour — add steps', () => {
       name: 'The Salt Lantern',
       playerDescription: 'The village inn, warm and smelling of peat smoke and fried fish.',
       aiDescription: expect.stringMatching(/^A two-story inn on the harbor\./),
-      backgroundImage: 'data:image/webp;base64,saltLantern',
+      images: [{ data: 'data:image/webp;base64,saltLantern' }],
     });
     // The first tour location keeps its own text.
     expect(ctx().locations.filter((l) => l.name === 'The Tidewell')).toHaveLength(1);
@@ -327,13 +327,14 @@ describe('Authoring Tour — completion', () => {
 describe('In Game — Locations', () => {
   it('Background Image: opens the Media tab, and the picture sits behind the Location tab', async () => {
     const { ctx } = await resumeAt('location-image');
-    expect(screen.getByRole('tab', { name: 'Media' })).toHaveAttribute('aria-selected', 'true');
+    // The location panel's own Media tab, apart from the editor's tab of the same name.
+    expect(within(screen.getByRole('tablist', { name: 'Location Fields' })).getByRole('tab', { name: 'Media' })).toHaveAttribute('aria-selected', 'true');
     expect(noteButton('Next')).toBeDisabled();
     expect(within(playerSees()).queryByTestId('location-backdrop-image')).toBeNull();
 
     fireEvent.click(noteButton('Use Example')!);
     await waitFor(() => expect(noteButton('Next')).toBeEnabled());
-    expect(ctx().locations.at(-1)?.backgroundImage).toBe('data:image/webp;base64,tidewell');
+    expect(ctx().locations.at(-1)?.images?.[0]?.data).toBe('data:image/webp;base64,tidewell');
     expect(within(playerSees()).getByTestId('location-backdrop-image'))
       .toHaveStyle({ backgroundImage: 'url(data:image/webp;base64,tidewell)' });
     // The location block stays, with nothing of the picture in it.

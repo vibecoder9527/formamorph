@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ToolParam } from '@/types';
 import { codeCompletions, codeDiagnostics } from '@/lib/statCodeAnalysis';
-import { statCodeNames, type StatCodeWorld } from '@/lib/statCodeTestRun';
+import { type StatCodeWorld } from '@/lib/statCodeTestRun';
 import { variableTreeLeaves } from '@/lib/statCodeVariableTree';
 import { tryWorldToolScript } from './worldToolTry';
 import { worldToolArgsNodes, worldToolSurface } from './worldToolSurface';
@@ -28,13 +28,14 @@ describe('the World Tool script surface', () => {
   it('lists every global a run really holds, args and the write surface included', async () => {
     const surface = worldToolSurface(params, 'after');
     const globals = surface.globals.map((entry) => entry.name);
-    expect(globals).toEqual(expect.arrayContaining(['args', 'location', 'clock', 'discover', 'memory', 'diary', 'stats', 'player']));
+    expect(globals).toEqual(expect.arrayContaining(['args', 'location', 'clock', 'discover', 'memories', 'entities', 'stats', 'player']));
+    expect(globals).not.toContain('diary');
     // `player` exists in a run whose code names it, so its probe names a call.
     const held = globals.filter((name) => name !== 'player');
     const probe = `return [${held.map((name) => `typeof ${name}`).join(', ')}, typeof player.tell].join(' ');`;
     const result = await tryWorldToolScript(
       { id: 't', name: 't', description: '', params, emptyResult: '{}', offeredTo: [], handler: { kind: 'script', timing: 'call', code: probe } },
-      '{"place":"Inn"}', statCodeNames(world),
+      '{"place":"Inn"}', world,
     );
     expect(result.failure).toBeUndefined();
     expect(result.text.split(' ')).toHaveLength(globals.length);
@@ -55,7 +56,7 @@ describe('the World Tool script surface', () => {
   });
 
   it('accepts every write a World Tool can make', () => {
-    expect(messages('location.move(args.place); clock.advance(5); discover("Tor"); memory.add("x"); memory.pin("y"); diary("Tor", "z");')).toEqual([]);
+    expect(messages('location.move(args.place); clock.advance(5); discover("Tor"); memories.add("x"); memories.pin("y"); entities.Tor.diary("z");')).toEqual([]);
   });
 
   it('gives a During AI Output Tool narration and no player, and the other timings the reverse', () => {

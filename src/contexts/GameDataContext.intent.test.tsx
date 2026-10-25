@@ -37,7 +37,7 @@ const world = (over: Partial<World> = {}): World => ({
   id: 'w-intent', version: '3.0.0',
   worldOverview: {
     name: 'Sedge Landing', description: '', author: '', thumbnail: null, bgm: null,
-    systemPrompt: '', use3DModel: true, tags: [],
+    systemPrompt: '', tags: [],
   },
   stats: [stat('hunger', 'Hunger'), stat('thirst', 'Thirst')],
   locations: [{ id: 'harbor', name: 'Harbor Steps' } as GameLocation],
@@ -191,15 +191,15 @@ describe('Steps that match intent', () => {
       await nextTask();
       ctx().setEntities((prev) => prev.map((e) => ({ ...e, images: [{ data: 'data:image/webp;base64,BB' }] })));
       await nextTask();
-      ctx().setLocations((prev) => prev.map((l) => ({ ...l, backgroundImage: 'data:image/webp;base64,CC' })));
+      ctx().setLocations((prev) => prev.map((l) => ({ ...l, images: [{ data: 'data:image/webp;base64,CC' }] })));
     }));
-    expect(ctx().locations[0].backgroundImage).toBe('data:image/webp;base64,CC');
+    expect(ctx().locations[0].images).toEqual([{ data: 'data:image/webp;base64,CC' }]);
     expect(labels(history())).toEqual(['Optimize Images']);
 
     await act1(() => history().undo());
     expect(ctx().worldOverview.thumbnail).toBeNull();
     expect(ctx().entities[0].images).toBeUndefined();
-    expect(ctx().locations[0].backgroundImage).toBeUndefined();
+    expect(ctx().locations[0].images).toBeUndefined();
   });
 
   it('settles an open batch when the provider unmounts before the batch ends', async () => {
@@ -281,8 +281,8 @@ describe('Steps that match intent', () => {
 
   it('labels a world setting by its field', async () => {
     const { ctx, history } = await open();
-    await act1(() => ctx().updateWorldOverview({ use3DModel: false }));
-    expect(labels(history())).toEqual(['Edit World: 3D Player Avatar']);
+    await act1(() => ctx().updateWorldOverview({ openingsEnabled: false }));
+    expect(labels(history())).toEqual(['Edit World: Openings']);
   });
 
   it('labels an entity edit through its function by the one field it changed, and runs the function once', async () => {
@@ -301,5 +301,27 @@ describe('Steps that match intent', () => {
     }
     expect(ctx().entities[0].link?.localReplacement).toBe(true);
     expect(labels(history())).toEqual(['Edit Entity Wick: Player Description']);
+  });
+});
+
+describe('relationships in the history', () => {
+  const tera = entity('tera', { name: 'Tera', relationships: [{ targetId: 'wick', label: 'mentor' }] });
+
+  it('records an added relationship as a Step that undo takes back', async () => {
+    const { ctx, history } = await open(world({ entities: [entity('wick', { name: 'Wick' }), entity('tera', { name: 'Tera' })] }));
+    await act1(() => ctx().updateEntity(tera));
+    expect(history().steps).toHaveLength(1);
+    await act1(() => history().undo());
+    expect(ctx().entities.find((e) => e.id === 'tera')?.relationships).toBeUndefined();
+  });
+
+  it('records deleting a target as one Step, and undo restores the relationships that pointed at it', async () => {
+    const { ctx, history } = await open(world({ entities: [entity('wick', { name: 'Wick' }), tera] }));
+    await act1(() => ctx().removeEntity('wick'));
+    expect(ctx().entities).toEqual([{ id: 'tera', name: 'Tera' }]);
+    expect(history().steps).toHaveLength(1);
+    await act1(() => history().undo());
+    expect(ctx().entities.map((e) => e.id)).toEqual(['wick', 'tera']);
+    expect(ctx().entities.find((e) => e.id === 'tera')?.relationships).toEqual([{ targetId: 'wick', label: 'mentor' }]);
   });
 });

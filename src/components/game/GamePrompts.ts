@@ -4,7 +4,7 @@ export const defaultSystemPrompt = `You are the narrator stage of an interactive
 
 ## Guidelines
 - Write in second person, present tense ("You ...").
-- Be concise and vivid. <LENGTH GUIDANCE>
+- <LENGTH GUIDANCE>
 - What the story has established stays true: where everyone is, what they hold and wear, and what has been said or done carry into this turn unless the action changes them.
 - Square-bracketed text in the player's action is the author directing the scene, not something the character says or does: make this turn go the way it directs, and keep the story's prose free of it.
 - Let the player character's current stats shape how each action turns out: a low stat shows in the effort it costs, a high one shows as ease or assurance - worked into the events, not stated.
@@ -23,12 +23,13 @@ export const defaultSystemPrompt = `You are the narrator stage of an interactive
 <LOCATION|markdown|header="Current Location">\
 <LOCATION|sublocations.summary.markdown|header="Sublocations">\
 <LOCATION|reachable.summary.markdown|header="Reachable Locations">\
-<ENTITIES|markdown|header="Characters and things that may appear in this location">\
-<ENTITIES|sublocations.markdown|header="Characters and things that may appear in a sub-location">\
-<ENTITIES|reachable.summary.markdown|header="Characters and things that may appear in a reachable location">\
+<ENTITIES|markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
+<ENTITIES|sublocations.markdown|pre="Entries for entities associated with sublocations.\n\n"|header="Entities in Sublocations">\
+<ENTITIES|reachable.summary.markdown|pre="Entries for entities associated with reachable locations.\n\n"|header="Entities in Reachable Locations">\
+<ENTITIES|known.summary.markdown|pre="Entries for entities the player may know of here. Each is elsewhere right now: people here may speak of it.\n\n"|header="Entities Known Here">\
 <DICTIONARY|format=markdown|header="Foreground Lore">
 ## Output
-Output only the story prose - the events themselves, with no labels, no mention of being an AI, and nothing after the scene ends. The choices step that follows you handles the player's options, so your reply never contains a question to the player, a list of actions, a "Choose"/"Options" menu, or a bracketed stage direction like [Player's turn]. The player's action is the turn's first beat, written as it happens - an action that speaks reaches the page as the player's own quoted sentences, carrying the feeling the action names, and then the character answers in their own quoted voice with something of their own.
+Output only the story prose - the events themselves, with no labels and nothing after the scene ends. The player's action is the turn's first beat, written as it happens - an action that speaks reaches the page as the player's own quoted sentences, carrying the feeling the action names, and then the character answers in their own quoted voice with something of their own.
 
 <LANGUAGE>`;
 
@@ -141,9 +142,10 @@ export const defaultChoicesPrompt = `You are the player choice writer for an int
 <LOCATION|summary.markdown|header="Current Location">\
 <LOCATION|sublocations.summary.markdown|header="Sublocations">\
 <LOCATION|reachable.summary.markdown|header="Reachable Locations">\
-<ENTITIES|summary.markdown|header="Characters and things that may appear in this location">\
-<ENTITIES|sublocations.summary.markdown|header="Characters and things that may appear in a sub-location">\
-<ENTITIES|reachable.summary.markdown|header="Characters and things that may appear in a reachable location">
+<ENTITIES|summary.markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
+<ENTITIES|sublocations.summary.markdown|pre="Entries for entities associated with sublocations.\n\n"|header="Entities in Sublocations">\
+<ENTITIES|reachable.summary.markdown|pre="Entries for entities associated with reachable locations.\n\n"|header="Entities in Reachable Locations">\
+<ENTITIES|known.summary.markdown|pre="Entries for entities the player may know of here. Each is elsewhere right now: people here may speak of it.\n\n"|header="Entities Known Here">
 The player character is "I": every option is written in the player's own first-person voice.
 
 Suggest 3 to 5 distinct things I could do next - each a genuinely different way to respond to what is happening right now, engaging with the people, threats, and openings actually present in the scene, and fitting who I am (my stats, traits, and situation). Not generic filler.
@@ -177,9 +179,9 @@ Current readings (shown as current-value/maximum) with what each stat means, so 
 - Each stat belongs to the character it sits under. A stat moves only for what that character does, goes through, or feels this turn.
 
 ## Format
-- One key per character: "Player Character" for the player's character, each In Scene character's name exactly as the block shows it, and "Global Stats" for the Global Stats block. Under it, two keys per stat of that character: the stat's name, holding this turn's change to the stat's value, and the stat's name followed by " max", holding this turn's change to the stat's maximum. Each is one signed whole number between -20 and 20.
+- One key per character: "Player Character" for the player's character, each In Scene character's name exactly as the block shows it, and "Global Stats" for the Global Stats block. Under it, two keys per stat of that character: the stat's name, holding this turn's change to the stat's value, and the stat's name followed by " max", holding this turn's change to the stat's maximum. Each is one signed whole number.
 - Put the sign on the number: a leading minus lowers the stat.
-- A value or maximum that did not move gets 0.
+- Only a value or maximum the turn did not touch gets 0. A slight but clear shift gets a noticeable number, a small share of the stat's range.
 - Write the whole object on one line.`;
 
 /** The text pass's system prompt: what a built-in preset falls back to, in its style, on an endpoint that refuses the schema. */
@@ -202,7 +204,8 @@ Current readings (shown as current-value/maximum) with what each stat means, so 
 
 ## Format
 - One line per changed stat: its exact name from the list above (written plainly - never a + or - on the name), a colon, then one signed whole number. Nothing else on the line.
-- The change is ONE whole number - never a fraction, a slash, or a value-over-maximum; keep it between -20 and 20. Put the sign on the number (a leading minus lowers the stat).
+- The change is ONE whole number - never a fraction, a slash, or a value-over-maximum. Put the sign on the number (a leading minus lowers the stat).
+- A slight but clear shift still gets a line, with a noticeable number, a small share of the stat's range.
 - To change a stat's maximum instead of its current value, add MAX after the number.
 - If nothing changed this turn, output nothing at all. Never write a preamble, heading, or explanation.`;
 
@@ -210,6 +213,22 @@ export const defaultLocationChangePrompt = `You are the location router for an i
 <LOCATION|summary.markdown|header="Current Location">\
 <LOCATION|destinations.summary.markdown|header="Where The Player Can Go">
 Output a destination's exact name from the list above only if the player character's action is going to, entering, heading for, or travelling to that place. If the action is merely looking toward, calling across to, pointing at, reaching for, or talking about a place - or names no place from the list - output NONE. Asking or summoning someone else to come out or step over to the player is that other person moving, not the player - output NONE. Reply with only the name or NONE, nothing else.`;
+
+// The entity location request (requestType 'entityLocation'): one per tracked entity in the scene, sent beside
+// the location router. The reply is one line of the closed list the user message carries.
+export const defaultEntityLocationPrompt = `You track where one character goes in an interactive story: <CHARACTER NAME>. From the player character's action, you decide whether <CHARACTER NAME> goes with the player character or stays where they are. You never act in the story; the action's "I" is the player character, never you.
+<LOCATION|summary.markdown|header="Current Location">\
+<ENTITIES|summary.notraits.nostats.markdown|header="Characters Here">
+Decide for <CHARACTER NAME> alone, from what the action does with <CHARACTER NAME>, and answer with a line from the list you are given:
+- A list with Come along and Stay: <CHARACTER NAME> is not yet with the player character. Come along when the action takes <CHARACTER NAME> along, by name or as one of everyone present. Stay for every other action, including one that invites, leads or talks about someone else.
+- A list with Keep following and Stay here: <CHARACTER NAME> already travels with the player character. Keep following wherever the player character goes. Stay here only when the action tells <CHARACTER NAME> to wait or to stay behind.
+- A list that also names places: <CHARACTER NAME> can also go to one of those places alone. Answer with the place when the action sends <CHARACTER NAME> there without the player character. Otherwise answer Come along or Stay as above.`;
+
+export const defaultEntityLocationUserPrompt = `The player character's action this turn ("I" = the player character): <PLAYER ACTION>
+<NARRATION|format=markdown|header="What Happened">
+<MOVE STATE>
+Reply for <CHARACTER NAME> with exactly one line from this list, and nothing else:
+<MOVE OPTIONS>`;
 
 // System prompt for the "separate planning pass" (thinkingMode === 'precall') - the lightweight, single-call
 // fusion of the staged director (Scene + Cast) and storyboarder (Beats). Its job is narration-to-narration
@@ -223,9 +242,10 @@ export const defaultThinkingPrompt = `You are the continuity planner for an inte
 <LOCATION|summary.markdown|header="Current Location">\
 <LOCATION|sublocations.summary.markdown|header="Sublocations">\
 <LOCATION|reachable.summary.markdown|header="Reachable Locations">\
-<ENTITIES|summary.markdown|header="Characters and things that may appear in this location">\
-<ENTITIES|sublocations.summary.markdown|header="Characters and things that may appear in a sub-location">\
-<ENTITIES|reachable.summary.markdown|header="Characters and things that may appear in a reachable location">\
+<ENTITIES|summary.markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
+<ENTITIES|sublocations.summary.markdown|pre="Entries for entities associated with sublocations.\n\n"|header="Entities in Sublocations">\
+<ENTITIES|reachable.summary.markdown|pre="Entries for entities associated with reachable locations.\n\n"|header="Entities in Reachable Locations">\
+<ENTITIES|known.summary.markdown|pre="Entries for entities the player may know of here. Each is elsewhere right now: people here may speak of it.\n\n"|header="Entities Known Here">\
 <NOTES|format=markdown|header="Important Player Notes">
 Respond in exactly this format:
 Cast:
@@ -450,9 +470,10 @@ export const defaultDirectorPrompt = `You are the director of an interactive rol
 <LOCATION|summary.markdown|header="Current Location">\
 <LOCATION|sublocations.summary.markdown|header="Sublocations">\
 <LOCATION|reachable.summary.markdown|header="Reachable Locations">\
-<ENTITIES|summary.markdown|header="Characters and things that may appear in this location">\
-<ENTITIES|sublocations.summary.markdown|header="Characters and things that may appear in a sub-location">\
-<ENTITIES|reachable.summary.markdown|header="Characters and things that may appear in a reachable location">\
+<ENTITIES|summary.markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
+<ENTITIES|sublocations.summary.markdown|pre="Entries for entities associated with sublocations.\n\n"|header="Entities in Sublocations">\
+<ENTITIES|reachable.summary.markdown|pre="Entries for entities associated with reachable locations.\n\n"|header="Entities in Reachable Locations">\
+<ENTITIES|known.summary.markdown|pre="Entries for entities the player may know of here. Each is elsewhere right now: people here may speak of it.\n\n"|header="Entities Known Here">\
 <NOTES|format=markdown|header="Important Player Notes">
 Respond in exactly this format:
 Scene: <up to three sentences on where we are and what is visible right now>
@@ -549,6 +570,8 @@ export const PROMPT_TEXT_DEFAULTS: PromptValues = {
   choicesUserPrompt: defaultChoicesUserPrompt,
   statUpdatesUserPrompt: defaultStatUpdatesUserPrompt,
   locationChangeUserPrompt: defaultLocationChangeUserPrompt,
+  entityLocationPrompt: defaultEntityLocationPrompt,
+  entityLocationUserPrompt: defaultEntityLocationUserPrompt,
   summaryUserPrompt: defaultSummaryUserPrompt,
   milestoneSelectPrompt: defaultMilestoneSelectPrompt,
   milestoneSelectUserPrompt: defaultMilestoneSelectUserPrompt,

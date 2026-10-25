@@ -7,7 +7,6 @@ import type { Entity } from '@/types';
 // suite is about — it tests the description's edit/regenerate controls only.
 vi.mock('../game/EntityVisual', () => ({
   EntityVisual: () => null,
-  hasEntityVisual: () => false,
 }));
 vi.mock('../game/AudioPlayer', () => ({ default: () => null }));
 vi.mock('@/lib/usePlaceholderResolver', () => ({ useEntityTextResolver: () => (_entity: unknown, t: string) => t }));
@@ -16,6 +15,9 @@ vi.mock('@/lib/useEntityVisualPreference', () => ({
 }));
 vi.mock('@/lib/useEntityGallery', () => ({ useEntityGallery: () => ({ imageIndex: 0, onImageStep: () => {} }) }));
 vi.mock('@/lib/useEntityStatMorphs', () => ({ useEntityStatMorphs: () => ({}) }));
+vi.mock('@/lib/usePlayAvatars', () => ({
+  usePlayAvatars: () => ({ sourceOf: () => undefined, played: undefined, playedId: undefined, resolving: false }),
+}));
 
 const entity: Entity = { id: 'e1', name: 'Grey Mouse', playerDescription: 'A wiry scavenger.' };
 

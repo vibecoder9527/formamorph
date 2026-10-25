@@ -3,7 +3,7 @@
 
 How your world meets the player's persona: playable entities, the **Allowed Personas** and **Starts On** controls, the **Persona** chip, and the two Built-in chips that carry names into your text.
 
-> Players read [Personas](Personas). This page covers the World Editor side. Everything here except the **Player Name** and **Character Name** chips is **Advanced mode only**.
+> Players read [Personas](Personas). This page covers the World Editor side. Everything here except the **Persona Name** and **Character Name** chips is **Advanced mode only**.
 
 ---
 
@@ -14,7 +14,7 @@ How your world meets the player's persona: playable entities, the **Allowed Pers
 1. Switch the World Editor to Advanced mode.
 2. Open the **Entities** tab, and select the entity.
 3. On the **Profile** tab, find the **Persona** control and select **Playable**.
-4. Optional: in **Starting Location**, pick where the player starts as this persona. **Automatic** uses the entity's first starting location.
+4. Optional: in **Locations**, add every place where the player can start as this persona. The first of them that is a starting location is picked first. With none flagged, the first one is.
 5. Read the entity's descriptions, and the descriptions that mention it. Make sure each one is still correct when the player is this entity. See [Playable Entities](#playable-entities).
 
 For an entity that exists only when the player picks it, select **Persona-Only** in step 3.
@@ -46,7 +46,7 @@ See [Persona Rules](#persona-rules) for each choice.
 
 1. Select a prose field, such as an entity's **AI-Facing Description** or an opening.
 2. Type `{`. The menu opens with **Built-in** at the top.
-3. Pick **Player Name** for the player's name, or **Character Name** for the name of the entity that owns the text.
+3. Pick **Persona Name** for the player's name, or **Character Name** for the name of the entity that owns the text.
 
 The menu offers **Character Name** only in an entity's own fields. You can also type `{{user}}` or `{{char}}` in any prose field, and the field turns it into the chip.
 
@@ -60,7 +60,7 @@ The menu offers **Character Name** only in an entity's own fields. You can also 
 | Traits for a player with no world persona | **Custom Persona** in the **Persona** control |
 | To decide who the player can be | **Allowed Personas** and **Starts On** on the **Overview** tab |
 | Your own prompt to know the persona | The **Persona** chip |
-| Your text to say the player's name | The **Player Name** chip |
+| Your text to say the player's name | The **Persona Name** chip |
 | An entity's text to say its own name | The **Character Name** chip |
 
 ## Playable Entities
@@ -84,7 +84,7 @@ A **Playable** entity shows under **From This World** when a player enters your 
 | The cast | The entity leaves it for that game. It returns when the player changes persona, unless it's [Persona-Only](#persona-only-entities). |
 | Its traits | They're the persona's traits, marked **You**. See [Entity Traits](World-Editor-Traits#entity-traits). |
 | The AI | Reads that everyone in the world already knows this person, and that your text about the entity means the player |
-| Starting location | The entity's **Starting Location** is preselected. With **Automatic**, its first location that is a starting location is. The player can change it. |
+| Starting location | The entity's **Locations** join the list beside the world's starting locations. Its first location that is a starting location is preselected, else its first location. The player can change it. |
 | [Entity Openings](World-Editor-Openings#entity-openings) | The entity's Others openings leave the draw, so page one never greets the player as themselves. Its [Self Openings](World-Editor-Openings#self-openings), if any, replace the whole draw. |
 
 Only entities you select are playable. The setting is your statement that the entity reads correctly from the player's side.
@@ -172,7 +172,7 @@ An entity's own stats become *persona stats* while the player plays as it. Under
 
 | Where | What happens |
 |---|---|
-| Stat panel | The global stats show under **Global**. The persona's stats show under its name, below them. Pick "*name* (You)" in the entity picker, and no entity section shows. |
+| Stat panel | The global stats show under **Global**. The persona's stats show under its name, below them. Pick the persona's name, marked **You**, in the entity picker, and no entity section shows. |
 | AI stat updates | The AI updates every persona stat under **Player Character**, and the global stats under **Global Stats**. A stat with the same name as a global stat stays a separate stat. See [How the AI Tracks Stat Changes](World-Editor-Stats#how-the-ai-tracks-stat-changes). |
 | AI prompts | The narrator, choice writer and storyboard planner read the global stats and traits first. The persona's own stats follow in its **Persona** block. Under a library persona and under **None**, the **Custom Persona** entity's stats sit in that block. A stat with the same name as an earlier stat reads as "*name* (2)". |
 | Persona switch | Each entity keeps its values. Switch back, and they are as you left them. |
@@ -214,10 +214,10 @@ These rows work with **Content**:
 
 Narration stays in second person, and entities say the player's name only after they learn it. Your prompt can state otherwise, for example that one entity already knows the player.
 
-## The Player Name Chip
+## The Persona Name Chip
 <!-- keywords: nameless reader wording, says the player, substitute word, grammar and capitals, not offered in field, older imports plain text, user macro -->
 
-Type `{` in a prose field and pick **Player Name** under **Built-in**. It needs no placeholder of its own.
+Type `{` in a prose field and pick **Persona Name** under **Built-in**. It needs no placeholder of its own.
 
 | The player has | In an opening | In world, entity and dictionary text |
 |---|---|---|
@@ -239,7 +239,7 @@ Type `{` in one of an entity's own fields and pick **Character Name** under **Bu
 
 - **The menu offers it only in an entity's own fields**, such as its descriptions and its openings. A book, a location or a world field doesn't offer it.
 - **In trait text, type `{{char}}`.** It becomes the chip and names the trait's owner. See [Entity Traits](World-Editor-Traits#entity-traits).
-- **In trait text the player carries, it reads as Player Name.** A *Paladin* text then names each Paladin, the player included.
+- **In trait text the player carries, it reads as Persona Name.** A *Paladin* text then names each Paladin, the player included.
 - **SillyTavern imports write it for you.** A card's `{{char}}` becomes this chip. In a card's embedded lorebook, `{{char}}` becomes the card's name as plain text.
 
 ## Related

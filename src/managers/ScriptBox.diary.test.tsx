@@ -19,18 +19,18 @@ const world: StatCodeWorld = {
   stats: [], statGroups: [], traits: [], traitGroups: [], entities: [{ id: 'e-tor', name: 'Tor' }], entityGroups: [], placeholders: [],
   placeholderGroups: [], dictionaries: [],
 };
-const context: ScriptBoxContext = { owner: null, names: statCodeNames(world), ownerStats: [], selfName: '', placeholderPlaces: [] };
+const context: ScriptBoxContext = { owner: null, names: statCodeNames(world), world, ownerStats: [], selfName: '', placeholderPlaces: [], home: { kind: 'world' } };
 const LABEL = 'World · After the AI';
 
 function Box({ initial }: { initial: Script }) {
   const [script, setScript] = useState(initial);
-  return <ScriptBox script={script} label={LABEL} self={{ kind: 'world' }} context={context} onChange={(code) => setScript({ ...script, code })} />;
+  return <ScriptBox script={script} label={LABEL} context={context} onChange={(code) => setScript({ ...script, code })} />;
 }
 
 describe('Test Code with a diary line', () => {
   it('lists a known target as a write and warns on an unknown one, with no error', async () => {
     const user = userEvent.setup();
-    render(<Box initial={{ id: 's', timing: 'after', code: 'diary("Tor", "I lied.");\ndiary("Stranger", "Hello.");' }} />);
+    render(<Box initial={{ id: 's', timing: 'after', code: 'entities.Tor.diary("I lied.");\nentities.Stranger.diary("Hello.");' }} />);
     await user.click(screen.getByRole('button', { name: `Test Code ${LABEL}` }));
 
     expect(await screen.findByText('diary: Tor: I lied.')).toBeInTheDocument();

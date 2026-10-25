@@ -105,7 +105,7 @@ See [During AI Output](#during-ai-output) for what the rewrite changes.
 <!-- route: worldEditorStat.code -->
 
 1. Open a **Scripts** tab and select **Add Script**. Pick any timing except **During AI Output**.
-2. Call a `player` function. `player.confirm("Open the door?")` returns `true` or `false`. `player.ask("Which path?", ["Left", "Right"])` returns the pick. `player.askText("Name the dog")` returns the typed text.
+2. Call a `player` function. `player.confirm("Open the door?")` returns `true` or `false`. `player.ask("Which path?", ["Left", "Right"])` returns the pick. `player.input("Name the dog")` returns the typed text.
 3. Use the answer in the next line. There is no `await`.
 4. Select **Test Code**. The question shows under the box, as it does in play.
 
@@ -200,7 +200,11 @@ A script runs in a sandbox at its own point in the turn (see [The Five Timings](
 - **Switch a trait** on or off (see [Traits](#traits))
 - **Read or switch an entity's traits**, and read its placeholders (see [Persona](#persona) and [Entities](#entities))
 - **Find the entity that owns the stat** with `owner` (see [Owner](#owner))
-- **Read a dictionary's placeholders** (see [Dictionaries](#dictionaries))
+- **Read a dictionary's placeholders and entries** (see [Dictionaries](#dictionaries))
+- **Read the locations**, and who is at each (see [Location](#location))
+- **Read the memories**, pin or forget one, and add a line (see [Memory](#memory))
+- **Read the player's notes** (see [Notes](#notes))
+- **Add a line to an entity's diary** (see [Diary](#diary))
 - **Rewrite a narration sentence** as it completes (see [Narration](#narration))
 - **Tell or ask the player** (see [Player](#player))
 - **React when a trait switches** (see [Trait](#trait))
@@ -211,8 +215,8 @@ A script runs in a sandbox at its own point in the turn (see [The Five Timings](
 
 1. A script is one box of JavaScript with a timing. A stat, a trait or the world holds any number of them
 2. At its timing, each script runs in a safe environment
-3. A script reads every stat, the story clock, the world's placeholders and traits, and the entities and dictionaries in the game
-4. `return <number>` sets the stat's value, clamped to its range. Writes to `self`, `stats`, `owner`, `placeholders`, `traits`, `persona`, `entities` and `dictionaries` apply after the run
+3. A script reads every stat, the story clock, the world's placeholders and traits, and the entities, locations, dictionaries, memories and notes in the game
+4. `return <number>` sets the stat's value, clamped to its range. Writes to `self`, `stats`, `owner`, `placeholders`, `traits`, `persona`, `entities`, `location`, `memories` and `dictionaries` apply after the run
 5. A script that throws or times out changes nothing
 
 ### The Home of a Script
@@ -313,7 +317,7 @@ A **World Tool** is a Tool that the world holds, on the **Tools** tab in the **L
 | **During AI Output** | On each narration sentence after the call, for the rest of the turn | The **Reply**, or "Done." when it's blank | The sentence, then the stats with the After the AI scripts |
 | **After the AI** | With the After the AI scripts | The **Reply**, or "Done." when it's blank | When the turn ends |
 
-The script reads and writes everything a world script does: stats, traits, placeholders, the [location](#location), the [clock](#passing-time), [discover](#discover), [memory](#memory) and the [diary](#diary). A During AI Output Tool also reads `narration` and rewrites the sentence, as a [During AI Output](#during-ai-output) script does.
+The script reads and writes everything a world script does: stats, traits, placeholders, the [location](#location), the [clock](#passing-time), [discover](#discover), [memories](#memory) and the [diary](#diary). A During AI Output Tool also reads `narration` and rewrites the sentence, as a [During AI Output](#during-ai-output) script does.
 
 - **`args` holds one member for each parameter the AI sent.** An optional parameter the AI left out is missing. `args` is read-only.
 - **A call lasts one turn.** Nothing armed carries into the next turn or the save.
@@ -349,17 +353,18 @@ A script can use only these objects. A word in angle brackets stands for a name 
 | --- | --- | --- | --- |
 | `self` | `id`, `name`, `type`, `description`, `enabled`, `min`, `max`, `value`, `regen`, `previous`, `delta` | `self.value` | `self.value = <n>` |
 | `stats` | `id`, `name`, `type`, `description`, `enabled`, `min`, `max`, `value`, `regen`, `previous`, `delta` | `stats.<Stat>.value` | `stats.<Stat>.value = <n>` |
-| `owner` | `id`, `name`, `type`, `pronouns`, `inScene`, `traits`, `placeholders`, `stats` | `owner.stats.<Stat>.value` | `owner.stats.<Stat>.value = <n>` |
+| `owner` | `id`, `name`, `type`, `pronouns`, `inScene`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `move()`, `follow()`, `unfollow()`, `diary()` | `owner.stats.<Stat>.value` | `owner.stats.<Stat>.value = <n>` |
 | `clock` | `day`, `daypart`, `deltaHours`, `elapsedHours`, `previous`, `advance()` | `clock.day` | `clock.advance(<n>)` |
-| `location` | `id`, `name`, `move()` | `location.name` | `location.move("<Location>")` |
+| `locations` | `id`, `name`, `description`, `summary`, `starting`, `present` | `locations.<Location>.present` | Read-only |
+| `location` | `id`, `name`, `description`, `summary`, `starting`, `present`, `move()` | `location.name` | `location.move("<Location>")` |
 | `discover` | — | — | `discover(<text>)` |
-| `memory` | `add()`, `pin()` | — | `memory.pin(<text>)` |
-| `diary` | — | — | `diary("<Entity>", <text>)` |
+| `memories` | `id`, `turn`, `timestamp`, `day`, `daypart`, `text`, `custom`, `kept`, `inContext`, `pinned`, `forgotten`, `add()`, `pin()`, `forget()`, `edit()`, `remove()` | `memories.length` | `memories.pin(<text>)` |
+| `notes` | — | `notes` | Read-only |
 | `traits` | `enabled`, `acquired`, `id`, `name`, `mode`, `available`, `group`, `playerToggle` | `traits.<Trait>.enabled` | `traits.<Trait>.enabled = true` |
-| `persona` | `id`, `name`, `type`, `pronouns`, `inScene`, `traits`, `placeholders`, `stats` | `persona.traits.<Trait>.enabled` | `persona.traits.<Trait>.enabled = true` |
-| `entities` | `id`, `name`, `type`, `pronouns`, `inScene`, `traits`, `placeholders`, `stats` | `entities.<Entity>.stats.<Stat>.value` | `entities.<Entity>.traits.<Trait>.enabled = true` |
+| `persona` | `id`, `name`, `type`, `pronouns`, `inScene`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats` | `persona.traits.<Trait>.enabled` | `persona.traits.<Trait>.enabled = true` |
+| `entities` | `id`, `name`, `type`, `pronouns`, `inScene`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `move()`, `follow()`, `unfollow()`, `diary()` | `entities.<Entity>.stats.<Stat>.value` | `entities.<Entity>.traits.<Trait>.enabled = true` |
 | `placeholders` | `id`, `name`, `value`, `values`, `text`, `roll()`, `pin()`, `unpin()` | `placeholders.<Placeholder>.text` | `placeholders.<Placeholder>.pin(<text>)` |
-| `dictionaries` | `id`, `name`, `placeholders` | `dictionaries.<Dictionary>.placeholders.<Placeholder>.text` | `dictionaries.<Dictionary>.placeholders.<Placeholder>.pin(<text>)` |
+| `dictionaries` | `id`, `name`, `entries`, `placeholders` | `dictionaries.<Dictionary>.placeholders.<Placeholder>.text` | `dictionaries.<Dictionary>.placeholders.<Placeholder>.pin(<text>)` |
 | `console` | `log()` | — | `console.log(<text>)` |
 
 A timing adds one name to those objects. A script reads only the name its own timing adds:
@@ -367,7 +372,7 @@ A timing adds one name to those objects. A script reads only the name its own ti
 | Name | Timing | Members | Read | Write |
 | --- | --- | --- | --- | --- |
 | **`narration`** | During AI Output only | `sentence`, `sent`, `buffered`, `full`, `index` | `narration.sentence` | `narration.sentence = <text>` |
-| **`player`** | Every timing but During AI Output | `tell()`, `toast()`, `confirm()`, `ask()`, `askText()` | `player.confirm(<text>)` | Calls, not writes |
+| **`player`** | Every timing but During AI Output | `tell()`, `toast()`, `confirm()`, `ask()`, `input()` | `player.confirm(<text>)` | Calls, not writes |
 | **`trait`** | When a Trait Switches only | `enabled`, `acquired`, `id`, `name`, `mode`, `available`, `group`, `playerToggle`, `owner` | `trait.enabled` | Read-only |
 
 A [World Tool](#world-tools)'s script also reads `args`, the values the AI sent, such as `args.<Parameter>`. It is read-only.
@@ -414,7 +419,7 @@ A script does not have to return anything. One that only writes `self`, a placeh
 <!-- keywords: own stats, read the entity's other stats, script on a monster's stat, this entity, entity's own stat, self entity, creature code, npc code, blueprint owner, empty owner, owner is blank, owner stats, owner traits, owner placeholders -->
 <!-- route: worldEditorStat.code -->
 
-`owner` is the entity that owns the running stat. It has the same members as an [entity entry](#entities): `id`, `name`, `type`, `pronouns`, `inScene`, `traits`, `placeholders` and `stats`. So code reaches the entity's own stats as `owner.stats`, its own traits as `owner.traits`, and its own placeholders as `owner.placeholders`.
+`owner` is the entity that owns the running stat. It has the same members as an [entity entry](#entities): `id`, `name`, `type`, `pronouns`, `inScene`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `move()`, `follow()`, `unfollow()` and `diary()`. So code reaches the entity's own stats as `owner.stats`, its own traits as `owner.traits`, and its own placeholders as `owner.placeholders`.
 
 | Box | What `owner` is |
 | --- | --- |
@@ -728,7 +733,7 @@ A write to an unknown trait name is ignored. **Test Code** and the Test Bench bo
 | `placeholders` | The placeholders the persona owns. See [Owned Placeholders](#owned-placeholders) |
 | `stats` | The persona's own stats by name, as an [entity's `stats`](#entities). Entries take writes |
 
-`persona` also has the `id`, `type`, `pronouns` and `inScene` of an [entity entry](#entities). `inScene` is always true for the played persona. Each entry in `persona.traits` has the [same members as a `traits` entry](#traits), for the persona's state. Writing `enabled` switches the persona's own trait by the same rules as `traits`.
+`persona` also has the `id`, `type`, `pronouns`, `inScene`, `location`, `following`, `description`, `summary` and `aliases` of an [entity entry](#entities). `inScene` is always true for the played persona. `location` is where the player is. `following` is always false. Each entry in `persona.traits` has the [same members as a `traits` entry](#traits), for the persona's state. Writing `enabled` switches the persona's own trait by the same rules as `traits`.
 
 ```javascript
 // Lose a point each turn while the persona is Scarred.
@@ -760,9 +765,18 @@ When the player plays no entity, `persona` is an empty entry. Its `name` is `''`
 | `type` | The entity's type, or `''` when it has none. Read-only |
 | `pronouns` | The entity's pronouns, or `''` when it has none. Read-only |
 | `inScene` | True when the entity is in this turn's scene. Read-only |
+| `location` | The code name of the location the entity is at. A follower reads the player's location. Empty when the entity has no position of its own and is at every location it lists. Read-only |
+| `following` | True when the entity follows the player. Read-only |
+| `description` | The full AI description, with each placeholder chip filled in. Read-only |
+| `summary` | The short AI summary, with each placeholder chip filled in. Read-only |
+| `aliases` | The entity's other names, as a list, with each placeholder chip filled in. Read-only |
 | `traits` | The entity's own traits by name, owned or linked |
 | `placeholders` | The placeholders the entity owns. See [Owned Placeholders](#owned-placeholders) |
 | `stats` | The entity's own stats by name. Entries take writes |
+| `move()` | Moves the entity to a location. See [Moving Entities](#moving-entities) |
+| `follow()` | Makes the entity follow the player |
+| `unfollow()` | Stops the entity following the player |
+| `diary(line)` | Adds a line to the entity's diary. See [Diary](#diary) |
 
 Each entry in an entity's `stats` has the [same members as a `stats` entry](#stat-properties), `previous` and `delta` included. Code writes `value`, `min`, `max` and `regen` on an entry, by the rules in [Writing to Other Stats](#writing-to-other-stats). A write to any other field is ignored and reported. An entity's stats run every turn, whether or not the entity is in the scene. A stat the entity has switched off reads with `enabled` false, and a write to it is ignored and reported.
 
@@ -789,9 +803,36 @@ if (self.value <= 0) entities.Mira.stats.Stamina.value -= 10;
 - An entity's `traits` lists only that entity's own set. A name outside it reads as a blank entry: `enabled` and `acquired` are false, and a switch through it is ignored and reported.
 - An entity the narrator invents during the game is not listed. Neither is a persona-only entity the player didn't pick, the **Custom Persona** entity under a world persona, or an entity with no code name.
 - Of two entities that share a code name, the later one is the entry. The played persona always keeps its own name.
-- An entity's descriptions, aliases, locations and media are not in the entry.
+- An entity's media are not in the entry.
+- An entity the game discovered during play is an entry, with every field above.
 
-A name no entity in the game has reads as a blank entry. Its `name` and `id` are `''`, and every trait reads as off. A switch or a stat write through it is ignored and reported. Check `entities.Mira.name` to test whether Mira is in the game.
+A name no entity in the game has reads as a blank entry. Its `name` and `id` are `''`, and every trait reads as off. A switch or a stat write through it is ignored and reported. A `move`, `follow`, `unfollow` or `diary` call through it stops the script with an error. A `diary` call first reads the key as an id, then as a name, so `entities[id].diary(line)` works for an id held in a variable. In the World Editor, a `diary` call through an unknown name only warns, because a discovered entity can have that name. Check `entities.Mira.name` to test whether Mira is in the game.
+
+#### Moving Entities
+<!-- keywords: move npc, companion joins, follow player, leave party, schedule, patrol, entity location, send away -->
+
+Three calls on an entity's entry set where it stands. Each one works on any entity, whatever its **Movement**.
+
+- **`entities.<Entity>.move("<Location>")`** puts the entity at a location of your world, by id, else by name. A following entity stops following.
+- **`entities.<Entity>.follow()`** makes the entity follow the player, at the player's location.
+- **`entities.<Entity>.unfollow()`** stops the entity following and leaves it at the player's location. An entity that isn't following stays where it is.
+
+How the calls apply:
+
+- **The writes apply when the turn ends**, after the player's move, the followers and the AI's entity answers. So a script's write beats the AI's answer. Prompts in the same turn read the entities where they stood.
+- **Calls apply in call order**, across every script of the turn. The last call on an entity wins.
+- **A `move` or a `follow` keeps a position for the entity from then on.** A **Free** entity then stands at one location, not at every listed one.
+- **A location your world doesn't have stops the script with an error.** So does the persona, which moves with the player, and a name no entity has.
+- **A When a Trait Switches script that runs outside a turn applies none of them.**
+- **In suggest mode, a script's write beats a waiting "come along".** The AI may ask an entity to come along, and that entity waits for **Go**. A write on the entity takes it off the wait.
+
+```js
+// The wight leaves its tomb once the crown is whole.
+if (traits["Crown Restored"].enabled) entities.Wight.move("Barrow Road");
+
+// Albus joins the party when his trust is high enough.
+if (entities.Albus.stats.Trust.value >= 50) entities.Albus.follow();
+```
 
 **Test Code** lists every authored entity, with no trait chosen and each stat at its starting value. A switch or a stat write it makes is reported and never applied.
 
@@ -804,6 +845,7 @@ A name no entity in the game has reads as a blank entry. Its `name` and `id` are
 | --- | --- |
 | `id` | Unique identifier. Read-only |
 | `name` | The dictionary's code name. Read-only |
+| `entries` | The dictionary's entries by name. See [Entries](#entries) |
 | `placeholders` | The placeholders the dictionary owns. See [Owned Placeholders](#owned-placeholders) |
 
 ```javascript
@@ -816,6 +858,26 @@ dictionaries.Weather.placeholders.Sky.pin(self.value < 20 ? 'storm' : 'clear');
 - A name no dictionary in the game has reads as a blank entry. Its `name` and `id` are `''`, and every placeholder under it reads as blank. A pin through it is ignored.
 - The editor warns on a dictionary name it doesn't know, because a library dictionary can bring more.
 
+#### Entries
+<!-- keywords: dictionary entries, lorebook entry, entry text, trigger keywords, read an entry, entry value, keys -->
+
+`dictionaries.<Dictionary>.entries` holds the dictionary's entries by entry name. A name with a space needs brackets: `dictionaries.Lore.entries["Old King"]`. Each entry has four fields. All are read-only.
+
+| Field | What it is |
+| --- | --- |
+| `id` | Unique identifier |
+| `name` | The entry's name |
+| `keys` | The entry's Trigger Keywords, as a list |
+| `value` | The entry's Value, with each placeholder chip filled in |
+
+```javascript
+// The lore entry names the king. Use it when the story is quiet.
+if (dictionaries.Lore.entries["Old King"].value.includes("exiled")) self.value += 1;
+```
+
+- A disabled entry is not listed. A dictionary the player turned off lists none.
+- Of two entries with one name in a dictionary, the later one is the entry. An entry with no name has no key.
+- A name the dictionary has no entry for reads as a blank entry. Its `id`, `name` and `value` are `''` and `keys` is an empty list.
 ### Narration
 <!-- keywords: rewrite a sentence, sentence hook, during ai output, narration object, narration sentence, sent, buffered, full, index, filter narration, replace words in the story, narration is not defined, error underline on narration -->
 <!-- route: worldEditorStat.code -->
@@ -842,7 +904,7 @@ When the reveal shows sentences in turn, `sent` and `buffered` split where the r
 **Test Code** reads a sample. The **Sample Sentence** field gives `sentence`. `sent` and `buffered` are empty and `index` is `0`.
 
 ### Player
-<!-- keywords: ask the player, tell the player, toast, confirm, ask, askText, prompt, dialog, choice, pick one, pick several, multiple, text field, question, answer, wait for the player, await, canceled prompt, player is not defined, message that stays in history -->
+<!-- keywords: ask the player, tell the player, toast, confirm, ask, input, prompt, dialog, choice, pick one, pick several, multiple, text field, question, answer, wait for the player, await, canceled prompt, player is not defined, message that stays in history -->
 <!-- route: worldEditorStat.code -->
 
 `player` is the human who plays, not the entity they play. `persona` stays that entity. `player` has five calls. It exists in every timing except **During AI Output**, where a call fails the script.
@@ -853,7 +915,7 @@ When the reveal shows sentences in turn, `sent` and `buffered` split where the r
 | `player.toast(text)` | Nothing | A toast. It is not saved |
 | `player.confirm(question)` | `true` or `false` | The question with two buttons |
 | `player.ask(question, options, { multiple })` | The picked value. With `multiple`, a list | Up to four options as buttons, five or more as a dropdown. With `multiple`, toggle buttons and **OK** |
-| `player.askText(question, placeholder)` | The typed text | The question with a text field and **OK** |
+| `player.input(question, placeholder)` | The typed text | The question with a text field and **OK** |
 
 `options` takes text, or `{ label, value }` pairs. The call returns the `value` of the pick. The script waits for the answer with no `await`.
 
@@ -867,7 +929,7 @@ placeholders.Route.pin(path);
 ```
 
 - **Closing a prompt fails the script.** Cancel, or Escape inside the prompt, fails it as canceled. Its writes drop, as on any error. The turn goes on, and the other scripts in the timing still apply.
-- **A prompt needs a screen.** With no game screen to answer, `ask`, `confirm` and `askText` fail as canceled at once. `tell` and `toast` do nothing.
+- **A prompt needs a screen.** With no game screen to answer, `ask`, `confirm` and `input` fail as canceled at once. `tell` and `toast` do nothing.
 - **A bad call is a TypeError.** A question that is not text, an `ask` with no options, or an option that is neither text nor `{ label, value }` throws in the script.
 - **A multiple pick with nothing chosen** returns an empty list. A single `ask` always returns one value.
 - **Prompts show one at a time.** An open prompt holds every other script that prompts, until you answer it. A script that never names `player` is not held.
@@ -945,7 +1007,28 @@ if (traits.Resting.enabled) clock.advance(8 * 60);
 ### Location
 <!-- keywords: move player, teleport, change scene, travel, where am i, current place, go to -->
 
-`location` is the place the turn is at. `location.name` is its code name and `location.id` its id. Both are empty in a world with no location.
+`locations` holds every location of the world by its code name, as `entities` holds the entities. A name with a space needs brackets: `locations["Old Mill"]`. `location` is the entry of the place the turn is at. Both have the same fields. All are read-only.
+
+| Field | What it is |
+| --- | --- |
+| `id` | Unique identifier |
+| `name` | The location's code name |
+| `description` | The full AI description, with each placeholder chip filled in |
+| `summary` | The short AI summary, with each placeholder chip filled in |
+| `starting` | True when the game can start at the location |
+| `present` | The [entity entries](#entities) at the location. The persona comes first when the player is there, then the entities in `entities` order. An entity with no position of its own is in `present` at every location it lists |
+
+In a world with no location, `location.id` and `location.name` are empty and `location.present` is an empty list. A name the world has no location for reads as a blank entry.
+
+```js
+// React while Mira is in the room.
+if (location.present.some((e) => e.name === "Mira")) self.value += 1;
+
+// Read another place.
+const mill = locations["Old Mill"].summary;
+```
+
+In Test Code and the Test Bench, no entity has a position. Each entity is in `present` at every location it lists, and the persona is at the starting location.
 
 `location.move("<Location>")` moves the turn to a location of your world, by name or id. It replaces the AI's move for that turn, and it needs no path from where the turn is.
 
@@ -972,28 +1055,75 @@ if (stats.Energy.value <= 0) location.move("Camp");
 ### Memory
 <!-- keywords: remember, add memory, pin memory, recall, story so far, long-term memory, note -->
 
-`memory` adds to the story's memory. Each call takes one line of text.
+`memories` is a list of the story's memories, the rows of the Memory panel, oldest first. It holds the summaries the story keeps and the **Custom** memories. A memory the player deleted is not in it. The list is empty in Test Code and the Test Bench, where no game runs. Two calls add to it. Each takes one line of text.
 
-- **`memory.add(<text>)`** adds a line to this turn's memory, after the AI's summary of the turn. The AI still writes its summary. Recall finds both on later turns when they fit. The line isn't sent with every request.
-- **`memory.pin(<text>)`** adds a memory that is sent with every request, as one you write in the Memory Manager is. It shows there under **Custom**, where the player can edit or delete it.
+- **`memories.add(<text>)`** adds a line to this turn's memory, after the AI's summary of the turn. The AI still writes its summary. Recall finds both on later turns when they fit. The line isn't sent with every request.
+- **`memories.pin(<text>)`** adds a memory that is sent with every request, as one you write in the Memory Manager is. It shows there under **Custom**, where the player can edit or delete it.
 - **Both go away when the turn does.** A regenerate or a stopped turn drops them.
+
+> ℹ️ **A pinned summary can still lose to the memory limit. A pinned line never does.** A summary that `pin()` keeps still competes for the room that the memory limit sets. A line that `memories.pin` adds is sent on every request, whatever the limit.
+
+#### Memory Entries
+
+Each memory in the list has these fields. All are read-only.
+
+| Field | What it is |
+| --- | --- |
+| `id` | Unique identifier |
+| `turn` | The turn number, from 1. A **Custom** memory has the number of the turn before it was added |
+| `timestamp` | Story hours at the end of that turn, on the scale of `clock.elapsedHours` |
+| `day` | Day number at that time |
+| `daypart` | Time of day at that time. It is one of the six `clock.daypart` words |
+| `text` | The text as the Memory panel shows it, edits included |
+| `custom` | True for a **Custom** memory |
+| `kept` | True when the story keeps the memory. Recall can still leave it out of a turn |
+| `inContext` | True when the memory went to the AI on the last turn |
+| `pinned` | True when the memory is pinned to stay |
+| `forgotten` | True when the memory is pinned to go |
+
+Four calls on a memory write to the Memory panel's verdicts. The writes apply when the turn ends. Later calls in the same turn overwrite earlier ones.
+
+| Call | What it does |
+| --- | --- |
+| `pin()` | Pins the memory to stay, as **Pin This Memory** does |
+| `forget()` | Pins the memory to go, as **Forget This Memory** does |
+| `edit(text)` | Rewrites the memory, as an edit in the Memory Manager does. A summary keeps its original and is pinned to stay |
+| `remove()` | Erases the memory, as **Delete This Memory** does. The player can restore it in the Memory Manager |
+
+- **`pin()` and `forget()` do nothing on a Custom memory.** The run lists each one as ignored. `edit(text)` and `remove()` work on a Custom memory.
+- **A verdict, an edit or a removal persists through a rewind**, as the player's does.
+- **A World Tool can write a verdict too.** An On Call Tool's verdict applies when the turn ends. An After the AI Tool's verdict applies with the After the AI scripts.
 
 ```js
 // The vault opened, so the story keeps the fact for good.
-if (stats.Keys.value >= 3) memory.pin("The vault under the chapel is open.");
+if (stats.Keys.value >= 3) memories.pin("The vault under the chapel is open.");
+
+// Pin the newest summary that the story has not kept.
+const last = memories.filter((m) => !m.custom).at(-1);
+if (last && !last.kept) last.pin();
+```
+
+### Notes
+<!-- keywords: player notes, notes text, read notes -->
+
+`notes` is the player's notes, as one text. It's empty in Test Code and the Test Bench, where no game runs. It's read-only.
+
+```js
+// The player wrote down the password, so the gate opens.
+if (notes.includes("swordfish")) traits.GateOpen.enabled = true;
 ```
 
 ### Diary
 <!-- keywords: character diary, journal, entity memory, what they remember, first person -->
 
-`diary("<Entity>", <text>)` adds a line to an entity's diary for this turn, by name or id, after the AI's entry. The AI still writes its entry. A diary line reads in the entity's own voice.
+`entities.<Entity>.diary(<text>)` adds a line to an entity's diary for this turn, after the AI's entry. The call also finds an entity by id: `entities["<id>"].diary(<text>)`. The AI still writes its entry. A diary line reads in the entity's own voice.
 
 - **Any entity in play is a target**, from your world or discovered during play.
-- **A name the game has no entity for stops the script with an error.** The persona has no diary, so its name stops the script too.
+- **An entity the game doesn't have stops the script with an error.** The persona has no diary, so `persona.diary` stops the script too.
 - **The line goes away when the turn does.** A regenerate or a stopped turn drops it.
 
 ```js
-if (traits.Betrayed.enabled) diary("Mira", "I trusted them, and they sold me out.");
+if (traits.Betrayed.enabled) entities.Mira.diary("I trusted them, and they sold me out.");
 ```
 
 ### Code Beats the AI

@@ -35,17 +35,50 @@ export const CLOCK_MEMBERS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'advance', detail: '(minutes) => void', info: 'Sets how long this turn takes, in story minutes, in place of the AI’s measure. Calls in one turn add up. The clock reads the same for the rest of the script.' },
 ]);
 
-/** The members of `location`: where the turn stands, and the move. */
+/** The members of one entry in `locations`. None takes a write. */
+export const LOCATION_ENTRY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
+  { name: 'id', detail: 'string', info: 'Unique id of the location' },
+  { name: 'name', detail: 'string', info: 'Code name of the location' },
+  { name: 'description', detail: 'string', info: 'Full AI description of the location, its placeholders filled in' },
+  { name: 'summary', detail: 'string', info: 'Short AI summary of the location, its placeholders filled in' },
+  { name: 'starting', detail: 'boolean', info: 'True when the game can start at the location' },
+  { name: 'present', detail: 'array', info: 'The entities at the location, each an entry of entities, the persona first when the player is there' },
+]);
+
+/** The members of `location`: the fields of a `locations` entry for where the turn stands, and the move. */
 export const LOCATION_MEMBERS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'id', detail: 'string', info: 'Unique id of the location the turn is at, or empty in a world with no location' },
   { name: 'name', detail: 'string', info: 'Code name of the location the turn is at, or empty in a world with no location' },
+  { name: 'description', detail: 'string', info: 'Full AI description of the location the turn is at, its placeholders filled in' },
+  { name: 'summary', detail: 'string', info: 'Short AI summary of the location the turn is at, its placeholders filled in' },
+  { name: 'starting', detail: 'boolean', info: 'True when the game can start at the location the turn is at' },
+  { name: 'present', detail: 'array', info: 'The entities at the turn’s location, the persona first, or none in a world with no location' },
   { name: 'move', detail: '(nameOrId) => void', info: 'Moves the turn to a location of the world, in place of the AI’s move. A name the world has no location for stops the script with an error.' },
 ]);
 
-/** The members of `memory`: a line for this turn, and a pinned memory. */
+/** The verbs on `memories`: a line for this turn, and a pinned line. */
 export const MEMORY_MEMBERS: readonly SurfaceEntry[] = readOnlyEntries([
-  { name: 'add', detail: '(line) => void', info: 'Adds a line to this turn’s memory, after the AI’s summary. Recall finds it on later turns when it fits. It isn’t sent with every request.' },
-  { name: 'pin', detail: '(line) => void', info: 'Adds a memory that’s sent with every request, as one you write in the Memory Manager is. It shows there under Custom.' },
+  { name: 'add', detail: '(line) => void', info: 'Adds a line to this turn’s memory, after the AI’s summary. Recall finds it on later turns when it fits, and it isn’t sent with every request.' },
+  { name: 'pin', detail: '(line) => void', info: 'Adds a memory that’s sent with every request, listed under Custom as in the Memory Manager. It never loses its place to the memory limit.' },
+]);
+
+/** The members of one entry in `memories`: its read-only fields, then the Memory Manager's verbs. */
+export const MEMORY_ENTRY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
+  { name: 'id', detail: 'string', info: 'Unique id of the memory' },
+  { name: 'turn', detail: 'number', info: 'Turn number of the memory, from 1, or the turn before it was added for a Custom memory' },
+  { name: 'timestamp', detail: 'number', info: 'Total story hours at the end of that turn, on the scale of clock.elapsedHours' },
+  { name: 'day', detail: 'number', info: 'Day number at the end of that turn' },
+  { name: 'daypart', detail: 'string', info: 'Daypart at the end of that turn: night, dawn, morning, midday, afternoon or evening' },
+  { name: 'text', detail: 'string', info: 'Text of the memory as the Memory panel shows it, edits included' },
+  { name: 'custom', detail: 'boolean', info: 'True for a memory listed under Custom: one the player wrote or a script pinned' },
+  { name: 'kept', detail: 'boolean', info: 'True when the story keeps the memory, though recall can still leave it out of a turn' },
+  { name: 'inContext', detail: 'boolean', info: 'True when the memory went to the AI on the last turn' },
+  { name: 'pinned', detail: 'boolean', info: 'True when the memory is pinned to stay' },
+  { name: 'forgotten', detail: 'boolean', info: 'True when the memory is pinned to go' },
+  { name: 'pin', detail: '() => void', info: 'Pins the memory to stay when the turn ends, as Pin This Memory in the Memory Manager does. On a Custom memory it does nothing, and the run lists it as ignored.' },
+  { name: 'forget', detail: '() => void', info: 'Pins the memory to go when the turn ends, as Forget This Memory in the Memory Manager does. On a Custom memory it does nothing, and the run lists it as ignored.' },
+  { name: 'edit', detail: '(text) => void', info: 'Rewrites the memory when the turn ends, as an edit in the Memory Manager does. A summary keeps its original and is pinned to stay.' },
+  { name: 'remove', detail: '() => void', info: 'Erases the memory when the turn ends, as Delete This Memory in the Memory Manager does. You can restore it there.' },
 ]);
 
 /** The fields of the clock object that `path` names, or null when `path` is no clock object. */
@@ -60,10 +93,14 @@ export const SANDBOX_GLOBALS: readonly SurfaceEntry[] = [
   { name: 'owner', detail: 'object', info: 'The entity that owns this stat, with the fields of an entities entry. A Blueprint stat’s code runs once for each owner. It’s empty in a global stat. Use owner.stats["Two Words"] for a name with a space.' },
   { name: 'stats', detail: 'object', info: 'The global stats by name, in every stat’s code. An entity’s own are on owner.stats. Use stats["Two Words"] for a name with a space.' },
   { name: 'clock', detail: shapeOf(CLOCK_MEMBERS), info: 'The story clock', access: 'readOnly' },
-  { name: 'location', detail: shapeOf(LOCATION_MEMBERS), info: 'The location the turn is at. Call location.move to move it.', access: 'readOnly' },
-  { name: 'discover', detail: '(name, description?) => void', info: 'Adds a new entity to the turn. With a description it joins at once; without one, the AI describes it. A name an entity already has does nothing.' },
-  { name: 'memory', detail: shapeOf(MEMORY_MEMBERS), info: 'The story’s memory. Call memory.add or memory.pin to add to it.', access: 'readOnly' },
-  { name: 'diary', detail: '(nameOrId, line) => void', info: 'Adds a line to an entity’s diary for this turn, after the AI’s entry. A name the game has no entity for stops the script with an error. The persona has no diary.' },
+  { name: 'locations', detail: 'object', info: 'Every location in the world by name, with the entities at each. Use locations["Two Words"] for a name with a space.' },
+  { name: 'location', detail: shapeOf(LOCATION_MEMBERS), info: 'The location the turn is at, with the fields of a locations entry. Call location.move to move it.', access: 'readOnly' },
+  { name: 'discover', detail: '(name, description?) => void', info: 'Adds a new entity to the turn, described by the AI unless you pass a description. A name an entity already has does nothing.' },
+  {
+    name: 'memories', detail: 'array', access: 'readOnly',
+    info: 'The story’s memories as the Memory panel lists them, oldest first. Each entry has its id, turn, day, daypart, text, Custom flag and pins. Call memories.add or memories.pin to add one. It’s empty in Test Code and the Test Bench.',
+  },
+  { name: 'notes', detail: 'string', info: 'The player’s notes. It’s empty in Test Code and the Test Bench.', access: 'readOnly' },
   { name: 'placeholders', detail: 'object', info: 'The world’s own placeholders by name. An entity’s or a dictionary’s are on its entry. Use placeholders["Two Words"] for a name with a space.' },
   { name: 'traits', detail: 'object', info: 'Every trait in the world by name. Use traits["Two Words"] for a name with a space.' },
   { name: 'entities', detail: 'object', info: 'Every entity in the game by name, with its own traits, placeholders and stats. Use entities["Two Words"] for a name with a space.' },
@@ -167,10 +204,15 @@ export const PERSONA_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'name', detail: 'string', info: 'Code name of the persona, or empty when the player plays no entity' },
   { name: 'type', detail: 'string', info: 'Type text of the persona, or empty when it has none' },
   { name: 'pronouns', detail: 'string', info: 'Pronouns text of the persona, or empty when it has none' },
-  { name: 'inScene', detail: 'boolean', info: 'True when the persona plays. False when the player plays no entity.' },
+  { name: 'inScene', detail: 'boolean', info: 'True when the persona plays, false when the player plays no entity' },
+  { name: 'location', detail: 'string', info: 'Code name of the location the player is at, or empty in a world with no location' },
+  { name: 'following', detail: 'boolean', info: 'Always false, since the persona moves with the player' },
+  { name: 'description', detail: 'string', info: 'Full AI description of the persona, its placeholders filled in' },
+  { name: 'summary', detail: 'string', info: 'Short AI summary of the persona, its placeholders filled in' },
+  { name: 'aliases', detail: 'array', info: 'Other names of the persona, its placeholders filled in' },
   { name: 'traits', detail: 'object', info: 'The persona’s own traits by name, owned or linked. Use persona.traits["Two Words"] for a name with a space.' },
-  { name: 'placeholders', detail: 'object', info: 'The persona’s own placeholders by name. Empty when the player plays no entity.' },
-  { name: 'stats', detail: 'object', info: 'The persona’s own stats by name, each with the fields of a stats entry. Empty when the player plays no entity. Entries take writes to value, min, max and regen.' },
+  { name: 'placeholders', detail: 'object', info: 'The persona’s own placeholders by name, or empty when the player plays no entity' },
+  { name: 'stats', detail: 'object', info: 'The persona’s own stats by name, each a stats entry, or empty when the player plays no entity' },
 ], OWNER_MAPS);
 
 /** The members of one entry in `entities`, and of `owner`. The members are read-only; a trait switches through
@@ -182,24 +224,42 @@ export const ENTITY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'type', detail: 'string', info: 'Type text of the entity, or empty when it has none' },
   { name: 'pronouns', detail: 'string', info: 'Pronouns text of the entity, or empty when it has none' },
   { name: 'inScene', detail: 'boolean', info: 'True when the entity is in this turn’s scene' },
+  { name: 'location', detail: 'string', info: 'Code name of the entity’s location, the player’s for a follower, or empty at every location it lists' },
+  { name: 'following', detail: 'boolean', info: 'True when the entity follows the player' },
+  { name: 'description', detail: 'string', info: 'Full AI description of the entity, its placeholders filled in' },
+  { name: 'summary', detail: 'string', info: 'Short AI summary of the entity, its placeholders filled in' },
+  { name: 'aliases', detail: 'array', info: 'Other names of the entity, its placeholders filled in' },
   { name: 'traits', detail: 'object', info: 'The entity’s own traits by name, owned or linked. Use entities.Mira.traits["Two Words"] for a name with a space.' },
   { name: 'placeholders', detail: 'object', info: 'The entity’s own placeholders by name. Use entities.Mira.placeholders["Two Words"] for a name with a space.' },
   { name: 'stats', detail: 'object', info: 'The entity’s own stats by name, each with the fields of a stats entry. Entries take writes to value, min, max and regen. Use entities.Mira.stats["Two Words"] for a name with a space.' },
+  { name: 'move', detail: '(nameOrId) => void', info: 'Moves the entity to a location of the world when the turn ends, and stops it following the player. A name the world has no location for stops the script with an error.' },
+  { name: 'follow', detail: '() => void', info: 'Makes the entity follow the player when the turn ends, at the player’s location' },
+  { name: 'unfollow', detail: '() => void', info: 'Stops the entity following the player when the turn ends, and leaves it at the player’s location. An entity that isn’t following stays where it is.' },
+  { name: 'diary', detail: '(line) => void', info: 'Adds a line to the entity’s diary for this turn, after the AI’s entry. An entity the game doesn’t have stops the script with an error.' },
 ], OWNER_MAPS);
+
+/** The members of one entry in a dictionary's `entries`. None takes a write. */
+export const DICTIONARY_ENTRY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
+  { name: 'id', detail: 'string', info: 'Unique id of the entry' },
+  { name: 'name', detail: 'string', info: 'Code name of the entry' },
+  { name: 'keys', detail: 'string[]', info: 'Trigger Keywords of the entry, where a match in a message activates it' },
+  { name: 'value', detail: 'string', info: 'Value of the entry: the text the AI gets when the entry activates' },
+]);
 
 /** The members of one entry in `dictionaries`. None takes a write. */
 export const DICTIONARY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'id', detail: 'string', info: 'Unique id of the dictionary' },
   { name: 'name', detail: 'string', info: 'Code name of the dictionary' },
+  { name: 'entries', detail: 'object', info: 'The dictionary’s entries by name, each with id, name, keys and value. A disabled entry isn’t listed. Use dictionaries.Lore.entries["Two Words"] for a name with a space.' },
   { name: 'placeholders', detail: 'object', info: 'The dictionary’s own placeholders by name. Use dictionaries.Lore.placeholders["Two Words"] for a name with a space.' },
-], OWNER_MAPS);
+], [...OWNER_MAPS, 'entries']);
 
 /** Built-ins the VM already has. Listed so a reference to one isn't flagged, and so completions offer the
  *  handful that stat code actually reaches for rather than everything a JS engine defines. */
 export const SANDBOX_BUILTINS: readonly SurfaceEntry[] = [
   { name: 'Math', detail: 'object', info: 'min, max, round, floor, abs, random and the rest' },
   { name: 'JSON', detail: 'object', info: 'parse and stringify' },
-  { name: 'Number', detail: 'function', info: 'Converts a value to a number. Also includes Number.isFinite and related functions.' },
+  { name: 'Number', detail: 'function', info: 'Converts a value to a number, with Number.isFinite and related functions on it' },
   { name: 'String', detail: 'function', info: 'Converts a value to a string' },
   { name: 'Boolean', detail: 'function', info: 'Converts a value to true or false' },
   { name: 'Array', detail: 'function', info: 'Array.isArray, Array.from' },
@@ -228,20 +288,20 @@ export const SANDBOX_BUILTINS: readonly SurfaceEntry[] = [
  */
 export const BUILTIN_MEMBERS: ReadonlyMap<string, readonly SurfaceEntry[]> = new Map(Object.entries({
   Math: [
-    { name: 'min', detail: '(...n) => number', info: 'Returns the smallest of its arguments' },
-    { name: 'max', detail: '(...n) => number', info: 'Returns the largest of its arguments' },
+    { name: 'min', detail: '(...n) => number', info: 'Picks the smallest of its arguments' },
+    { name: 'max', detail: '(...n) => number', info: 'Picks the largest of its arguments' },
     { name: 'round', detail: '(n) => number', info: 'Rounds to the nearest whole number, with halves rounding up' },
     { name: 'floor', detail: '(n) => number', info: 'Rounds down to a whole number' },
     { name: 'ceil', detail: '(n) => number', info: 'Rounds up to a whole number' },
     { name: 'trunc', detail: '(n) => number', info: 'Drops the fractional part, toward zero' },
-    { name: 'abs', detail: '(n) => number', info: 'Returns the distance from zero, never negative' },
-    { name: 'sign', detail: '(n) => number', info: 'Returns -1, 0 or 1 by the sign' },
+    { name: 'abs', detail: '(n) => number', info: 'Finds the distance from zero, never negative' },
+    { name: 'sign', detail: '(n) => number', info: 'Reads the sign as -1, 0 or 1' },
     { name: 'pow', detail: '(n, exp) => number', info: 'Raises the first argument to the second' },
-    { name: 'sqrt', detail: '(n) => number', info: 'Returns the square root' },
-    { name: 'hypot', detail: '(...n) => number', info: 'Returns the square root of the sum of the squares' },
-    { name: 'log', detail: '(n) => number', info: 'Returns the natural logarithm' },
-    { name: 'exp', detail: '(n) => number', info: 'Returns e raised to the given power' },
-    { name: 'random', detail: '() => number', info: 'Returns a number from 0 up to but not including 1. Reseeded each run.' },
+    { name: 'sqrt', detail: '(n) => number', info: 'Takes the square root' },
+    { name: 'hypot', detail: '(...n) => number', info: 'Takes the square root of the sum of the squares' },
+    { name: 'log', detail: '(n) => number', info: 'Takes the natural logarithm' },
+    { name: 'exp', detail: '(n) => number', info: 'Raises e to the given power' },
+    { name: 'random', detail: '() => number', info: 'Draws a number from 0 up to but not including 1, reseeded each run' },
     { name: 'PI', detail: 'number', info: 'Ratio of a circle’s circumference to its diameter' },
     { name: 'E', detail: 'number', info: 'Base of the natural logarithm' },
   ],
@@ -250,9 +310,9 @@ export const BUILTIN_MEMBERS: ReadonlyMap<string, readonly SurfaceEntry[]> = new
     { name: 'stringify', detail: '(value) => string', info: 'Writes a value as JSON text' },
   ],
   Object: [
-    { name: 'keys', detail: '(obj) => string[]', info: 'Returns the object’s own property names' },
-    { name: 'values', detail: '(obj) => any[]', info: 'Returns the object’s own property values' },
-    { name: 'entries', detail: '(obj) => any[][]', info: 'Returns one [name, value] pair per own property' },
+    { name: 'keys', detail: '(obj) => string[]', info: 'Lists the object’s own property names' },
+    { name: 'values', detail: '(obj) => any[]', info: 'Lists the object’s own property values' },
+    { name: 'entries', detail: '(obj) => any[][]', info: 'Lists one [name, value] pair per own property' },
     { name: 'assign', detail: '(target, ...src) => obj', info: 'Copies properties onto the first object' },
     { name: 'fromEntries', detail: '(pairs) => obj', info: 'Builds an object from [name, value] pairs' },
     { name: 'freeze', detail: '(obj) => obj', info: 'Stops further changes to an object' },
@@ -274,13 +334,13 @@ export const BUILTIN_MEMBERS: ReadonlyMap<string, readonly SurfaceEntry[]> = new
   ],
   String: [
     { name: 'fromCharCode', detail: '(...codes) => string', info: 'Builds a string from character codes' },
-    { name: 'raw', detail: '(strings, ...v) => string', info: 'Returns a template literal with its escapes left as written' },
+    { name: 'raw', detail: '(strings, ...v) => string', info: 'Reads a template literal with its escapes as written' },
   ],
   Boolean: [],
   Date: [
     { name: 'now', detail: '() => number', info: 'Real-world milliseconds since 1970. The story clock is clock.elapsedHours.' },
     { name: 'parse', detail: '(text) => number', info: 'Reads a date string as milliseconds' },
-    { name: 'UTC', detail: '(y, m, ...) => number', info: 'Returns milliseconds for a date given in UTC parts' },
+    { name: 'UTC', detail: '(y, m, ...) => number', info: 'Converts a date given in UTC parts to milliseconds' },
   ],
 }));
 
@@ -296,7 +356,7 @@ export const STAT_CODE_SURFACE: CodeSurface = {
   label: 'stat script',
   globals: SANDBOX_GLOBALS,
   builtins: SANDBOX_BUILTINS,
-  members: new Map([...BUILTIN_MEMBERS, ['location', LOCATION_MEMBERS], ['memory', MEMORY_MEMBERS]]),
+  members: new Map([...BUILTIN_MEMBERS, ['location', LOCATION_MEMBERS], ['memories', MEMORY_MEMBERS]]),
   languageNames: LANGUAGE_NAMES,
   // The Variable menu is the drill tree in `statCodeVariableTree`.
   missingReturn: 'This code never returns a number or writes self.value, so the stat keeps its value.',
@@ -314,10 +374,10 @@ export const TRAIT_SCRIPT_SURFACE: CodeSurface = {
   label: 'trait script',
   globals: SANDBOX_GLOBALS.map((entry) => {
     if (entry.name === 'self') {
-      return { name: 'self', detail: 'Trait', info: 'The trait this script belongs to. Read-only. Switch a trait through traits or owner.traits.', access: 'readOnly' };
+      return { name: 'self', detail: 'Trait', info: 'The trait this script belongs to. Switch a trait through traits or owner.traits.', access: 'readOnly' };
     }
     return entry.name === 'owner'
-      ? { ...entry, info: 'The entity that holds this trait, with the fields of an entities entry. It’s empty for a global trait. Use owner.stats["Two Words"] for a name with a space.' }
+      ? { ...entry, info: 'The entity this trait belongs to, with the fields of an entities entry. It’s empty for a global trait. Use owner.stats["Two Words"] for a name with a space.' }
       : entry;
   }),
   missingReturn: null,
@@ -328,20 +388,20 @@ export const TRAIT_SCRIPT_SURFACE: CodeSurface = {
 export const SWITCHED_TRAIT_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   ...TRAIT_ENTRY_FIELDS.map((entry) => (entry.name === TRAIT_WRITABLE_FIELD
     ? { ...entry, info: 'True when the switch turned the trait on. False when it turned it off.' } : entry)),
-  { name: 'owner', detail: 'string', info: 'Code name of the entity that holds the trait, or empty for a global trait' },
+  { name: 'owner', detail: 'string', info: 'Code name of the entity the trait belongs to, or empty for a global trait' },
 ]);
 
 /** `trait`, which only a When a Trait Switches script reads. */
 export const SWITCHED_TRAIT_GLOBAL: SurfaceEntry = {
   name: 'trait', detail: 'Trait', access: 'readOnly',
-  info: 'The trait that switched. Read-only. Its enabled field tells you which way it switched.',
+  info: 'The trait that switched. Its enabled field tells you which way.',
 };
 
 /** The fields of `narration` in a During AI Output script. Only `sentence` takes a write. */
 export const NARRATION_FIELDS: readonly SurfaceEntry[] = withAccess([
-  { name: 'sentence', detail: 'string', info: 'The sentence that just completed. Assign it, or return a string, to replace it' },
+  { name: 'sentence', detail: 'string', info: 'The sentence that just completed. Assign it, or return a string, to replace it.' },
   { name: 'sent', detail: 'string[]', info: 'The earlier sentences the reveal already released' },
-  { name: 'buffered', detail: 'string[]', info: 'The complete sentences the reveal still holds, already past their scripts' },
+  { name: 'buffered', detail: 'string[]', info: 'The complete sentences the reveal still has queued, already past their scripts' },
   { name: 'full', detail: 'string', info: 'Everything received so far, the sentence and the partial tail included' },
   { name: 'index', detail: 'number', info: 'The position of the sentence in the reply, from 0' },
 ], ['sentence'], 'writable');
@@ -357,8 +417,8 @@ export const PLAYER_CALL_ENTRIES: readonly SurfaceEntry[] = [
   { name: 'tell', detail: '(text) => void', info: 'Shows the player a message under the narration. It stays with the turn and never reaches the AI.' },
   { name: 'toast', detail: '(text) => void', info: 'Shows the player a toast. It isn’t saved.' },
   { name: 'confirm', detail: '(question) => boolean', info: 'Asks a yes or no question and waits for the answer' },
-  { name: 'ask', detail: '(question, options, { multiple }?) => any', info: 'Asks the player to pick from text or { label, value } options, and waits. Returns the value picked, or a list with multiple.' },
-  { name: 'askText', detail: '(question, placeholder?) => string', info: 'Asks the player for typed text and waits for the answer' },
+  { name: 'ask', detail: '(question, options, { multiple }?) => any', info: 'Asks the player to pick from text or { label, value } options, and waits. The result is the value picked, or a list with multiple.' },
+  { name: 'input', detail: '(question, placeholder?) => string', info: 'Asks the player for typed text and waits for the answer' },
 ];
 
 /** `player`, which every script reads except a During AI Output one. */
@@ -388,7 +448,7 @@ export const WORLD_SCRIPT_SURFACE: CodeSurface = {
   ...STAT_CODE_SURFACE,
   label: 'world script',
   globals: SANDBOX_GLOBALS.map((entry) => (entry.name === 'self' || entry.name === 'owner'
-    ? { name: entry.name, detail: 'object', info: 'Empty in a world script.', access: 'readOnly' }
+    ? { name: entry.name, detail: 'object', info: 'Empty in a world script', access: 'readOnly' }
     : entry)),
   missingReturn: null,
   selfIs: 'empty',

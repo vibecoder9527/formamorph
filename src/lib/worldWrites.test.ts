@@ -18,3 +18,18 @@ describe('advancedClock', () => {
     expect(advancedClock(10, { minutes: 0 })).toBe(10);
   });
 });
+
+describe('mergeWorldWrites', () => {
+  it('joins entity writes in run order, the earlier batch first', () => {
+    const before = { entities: [{ entity: 'wight', kind: 'move' as const, location: 'barrow' }] };
+    const after = { entities: [{ entity: 'wight', kind: 'follow' as const }] };
+    expect(mergeWorldWrites(before, after)?.entities).toEqual([...before.entities, ...after.entities]);
+  });
+
+  it('joins memory entry writes in run order, so the later script’s verdict lands last', () => {
+    const first = { memoryWrites: [{ id: 't1', kind: 'pin' as const }] };
+    const second = { memoryWrites: [{ id: 't1', kind: 'forget' as const }] };
+    expect(mergeWorldWrites(first, second)?.memoryWrites).toEqual([...first.memoryWrites, ...second.memoryWrites]);
+    expect(mergeWorldWrites(first, { location: 'gate' })?.memoryWrites).toEqual(first.memoryWrites);
+  });
+});

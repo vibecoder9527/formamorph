@@ -4,32 +4,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { hasCode, SCRIPT_TIMING_LABEL, SCRIPT_TIMINGS, scriptLabel } from "@/lib/scripts";
+import { hasCode, patchScript, SCRIPT_TIMING_LABEL, SCRIPT_TIMINGS, scriptLabel, type ScriptPatch } from "@/lib/scripts";
 import { useLanding } from "@/lib/surface/useLanding";
 import { fieldFrame } from "@/lib/historyField";
 import { newScript, noFocus, SCRIPT_ROW_ATTRIBUTE, scriptRow } from "@/lib/scriptRows";
 import type { TargetAttribute } from "@/lib/surface/surfaceTargets";
 import type { CodeUseReveal } from "@/lib/codeUseReveal";
 import type { Script, ScriptTiming } from "@/types";
-import { ScriptBox, type ScriptBoxContext, type ScriptSelf } from "./ScriptBox";
-
-/** `script` with `name` as its name; a cleared name is absent, so the fallback shows and nothing exports. */
-export function renamedScript(script: Script, name: string): Script {
-  const { name: _old, ...rest } = script;
-  return name ? { ...rest, name } : rest;
-}
+import { ScriptBox, type ScriptBoxContext } from "./ScriptBox";
 
 /**
  * One script: its name, its timing, a remove action and its code box. The owner's Scripts section and the World
- * Editor's Scripts tab both draw this row, so an author edits the same box from either place.
+ * Editor's Scripts tab both draw this row, so an author edits the same box from either place. A change reports
+ * only the field it edits; a cleared name reports the name absent, so the fallback shows and nothing exports.
  */
-export function ScriptRow({ script, ownerName, self, context, onChange, onRemove, reveal, autoFocus }: {
+export function ScriptRow({ script, ownerName, context, onChange, onRemove, reveal, autoFocus }: {
   script: Script;
   /** The home's name as the author reads it, for a blank name's fallback. */
   ownerName: string;
-  self: ScriptSelf;
   context: ScriptBoxContext;
-  onChange: (next: Script) => void;
+  onChange: (patch: ScriptPatch) => void;
   onRemove: () => void;
   /** A Find All Uses row bound for this script. */
   reveal?: CodeUseReveal | null;
@@ -47,9 +41,9 @@ export function ScriptRow({ script, ownerName, self, context, onChange, onRemove
           aria-label="Name"
           placeholder={fallback}
           value={script.name ?? ''}
-          onChange={(e) => onChange(renamedScript(script, e.target.value))}
+          onChange={(e) => onChange({ name: e.target.value || undefined })}
         />
-        <Select value={script.timing} onValueChange={(timing: ScriptTiming) => onChange({ ...script, timing })}>
+        <Select value={script.timing} onValueChange={(timing: ScriptTiming) => onChange({ timing })}>
           <SelectTrigger className="w-auto shrink-0 gap-1" aria-label="Timing" {...fieldFrame('scripts', script.id, 'timing')}>
             <SelectValue />
           </SelectTrigger>
@@ -73,8 +67,7 @@ export function ScriptRow({ script, ownerName, self, context, onChange, onRemove
         frame={fieldFrame('scripts', script.id, 'code')}
         script={script}
         label={label}
-        self={self}
-        onChange={(code) => onChange({ ...script, code })}
+        onChange={(code) => onChange({ code })}
         context={context}
         reveal={reveal}
         autoFocus={autoFocus}
@@ -96,13 +89,12 @@ export function ScriptRow({ script, ownerName, self, context, onChange, onRemove
  * A home's scripts as rows, then Add Script. The timing select is the only way to move a script between timings
  * (Q4). A blank name shows the owner and timing in its place (Q6).
  */
-export function ScriptsSection({ scripts, onChange, ownerName, self, context, reveal, addTarget, focusId }: {
+export function ScriptsSection({ scripts, onChange, ownerName, context, reveal, addTarget, focusId }: {
   scripts: readonly Script[];
   /** Absent once the list is empty. */
   onChange: (next: Script[] | undefined) => void;
   /** The home's name as the author reads it, for a blank name's fallback. */
   ownerName: string;
-  self: ScriptSelf;
   context: ScriptBoxContext;
   /** A Find All Uses row bound for one of these scripts. */
   reveal?: CodeUseReveal | null;
@@ -130,9 +122,11 @@ export function ScriptsSection({ scripts, onChange, ownerName, self, context, re
           key={script.id}
           script={script}
           ownerName={ownerName}
-          self={self}
           context={context}
-          onChange={(next) => write(scripts.map((entry) => (entry.id === script.id ? next : entry)))}
+          onChange={(patch) => {
+            const next = patchScript(scripts, script.id, patch);
+            if (next !== scripts) write([...next]);
+          }}
           onRemove={() => write(scripts.filter((entry) => entry.id !== script.id))}
           reveal={reveal?.scriptId === script.id ? reveal : null}
           autoFocus={script.id === focused}

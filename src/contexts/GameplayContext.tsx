@@ -24,6 +24,8 @@ import { pageAssistantIndex, pageNextActionIndex, placeSnapshot } from '../lib/t
 import { backfillGameStateStats } from '../lib/statBackfill';
 import { liveAppliedValues, migrateGlobalFields, savedAppliedValues, savedCascadeOff } from '../lib/globalSaveFields';
 import { backfillEntityStats, backfillGameStateEntityStats, entityStatDeltas, withEntityStatValue, withoutEntityCodeBounds } from '../lib/entityStats';
+import { positionedCast, reconcileGameStatePositions, type PlaceableEntity } from '../lib/entityPresence';
+import { reconcileGameStateFollowers, withRuntimePositions, type FollowerState } from '../lib/entityFollowing';
 import { deltasOf, useStatDeltas } from '../lib/useStatDeltas';
 
 import { normalizeVisibleEntities } from '../lib/sceneEntities';
@@ -44,6 +46,7 @@ import type {
   Entity,
   EntityStatChanges,
   EntityStatValues,
+  EntityPositions,
   ImageAttachment,
   LogEntry,
   GameLocation,
@@ -63,7 +66,9 @@ import type {
   TraitsPanelView,
   CascadeOffTraitIds,
   OwnedTraitStates,
+  WorldVrmStore,
 } from '@/types';
+import { remapChosenVrm } from '../lib/legacyVrm';
 
 // Frozen empties for the `view*` fallbacks: a literal `[]` there is a new identity per render, which
 // leaks into consumers' dependency arrays and can drive a render loop while viewing a past page.
@@ -114,6 +119,46 @@ function useProvideGameplay() {
   const [ownedTraits, setOwnedTraits] = useState<OwnedTraitStates>({});
   // Entity id → its stat values. Snapshotted per turn too.
   const [entityStats, setEntityStats] = useState<EntityStatValues>({});
+  // Entity id → where it stands, for each positioned entity. Snapshotted per turn too.
+  const [entityPositions, setEntityPositions] = useState<EntityPositions>({});
+  // The ids of the entities following the player. Snapshotted per turn too. The ref is read by a move made in
+  // the same batch as a followers write.
+  const [entityFollowers, setFollowersState] = useState<readonly string[]>([]);
+  const entityFollowersRef = useRef<readonly string[]>([]);
+  const setEntityFollowers = useCallback((followers: readonly string[]) => {
+    entityFollowersRef.current = followers;
+    setFollowersState(followers);
+  }, []);
+  // The ids of the entities the player has met. Snapshotted per turn too.
+  const [metEntities, setMetEntities] = useState<readonly string[]>([]);
+  // The runtime character ids, so a join can tell their positions from the world entities'. A join adds its
+  // peeled ids at once, so a move in the same batch reads them.
+  const runtimeIdsRef = useRef<ReadonlySet<string>>(new Set());
+  runtimeIdsRef.current = new Set([...runtimeIdsRef.current, ...discoveredEntities.map((d) => d.entity.id)]);
+  /** Writes `moved` over the live positions: a runtime character's onto its anchor, `added` ones included. */
+  const placeMoved = useCallback((moved: Readonly<EntityPositions>, added: readonly DiscoveredEntity[] = []) => {
+    if (added.length) runtimeIdsRef.current = new Set([...runtimeIdsRef.current, ...added.map((d) => d.entity.id)]);
+    const runtimeIds = runtimeIdsRef.current;
+    const world = Object.fromEntries(Object.entries(moved).filter(([id]) => !runtimeIds.has(id)));
+    if (Object.keys(world).length) setEntityPositions((positions) => ({ ...positions, ...world }));
+    if (added.length || Object.keys(world).length < Object.keys(moved).length) {
+      setDiscoveredEntities((prev) => {
+        const fresh = added.filter((d) => !prev.some((known) => known.entity.id === d.entity.id));
+        return withRuntimePositions(fresh.length ? [...prev, ...fresh] : prev, moved);
+      });
+    }
+  }, []);
+  /** Brings every follower to `locationId`: the player just moved there. */
+  const carryFollowersTo = useCallback((locationId: string) => {
+    const followers = entityFollowersRef.current;
+    if (followers.length) placeMoved(Object.fromEntries(followers.map((id) => [id, locationId])));
+  }, [placeMoved]);
+  /** Puts a join in place: its followers, the positions it moved over the live ones, and the characters it
+   *  peeled off. */
+  const applyFollowerState = useCallback((state: FollowerState, peeled: readonly DiscoveredEntity[] = []) => {
+    setEntityFollowers(state.followers);
+    placeMoved(state.positions, peeled);
+  }, [setEntityFollowers, placeMoved]);
   // The entity stats as this turn found them, which the turn's entity deltas count from. Runtime only.
   const [entityStatBaseline, setEntityStatBaseline] = useState<EntityStatValues>({});
   const entityStatChanges = useMemo(() => entityStatDeltas(entityStats, entityStatBaseline), [entityStats, entityStatBaseline]);
@@ -225,6 +270,9 @@ function useProvideGameplay() {
   // which is true across the whole turn (setup/thinking/aux). The reveal view keys on this so the stale
   // last-turn text can't animate during setup (e.g. the re-generate flash).
   const [isRevealingNarration, setIsRevealingNarration] = useState(false);
+  // False from a turn's start until its narration's last word has faded in; the turn card's action row
+  // opens then, ahead of the choices.
+  const [narrationSettled, setNarrationSettled] = useState(true);
   // Formaquestion holds its Send while a turn generates. Leaving the game ends the turn.
   useEffect(() => { turnActivity.set(isWaitingForAI); }, [isWaitingForAI]);
   useEffect(() => () => turnActivity.set(false), []);
@@ -263,8 +311,9 @@ function useProvideGameplay() {
 
   const changeLocation = useCallback((newLocation: GameLocation) => {
     setCurrentLocation(newLocation);
+    carryFollowersTo(newLocation.id);
     addLogEntry(`Entered new location: ${newLocation.name}`);
-  }, [addLogEntry]);
+  }, [addLogEntry, carryFollowersTo]);
 
   // Note: flattenNestedGameStates has been moved to a web worker to prevent UI freezing
 
@@ -283,6 +332,9 @@ function useProvideGameplay() {
       ...(savedCascade ? { cascadeOffTraitIds: savedCascade } : {}),
       ...(Object.keys(ownedTraits).length ? { ownedTraits } : {}),
       ...(Object.keys(entityStats).length ? { entityStats } : {}),
+      ...(Object.keys(entityPositions).length ? { entityPositions } : {}),
+      ...(entityFollowers.length ? { entityFollowers: [...entityFollowers] } : {}),
+      ...(metEntities.length ? { metEntities: [...metEntities] } : {}),
       ...(Object.keys(entityStatChanges).length ? { entityStatChanges } : {}),
       ...(Object.keys(codePins).length ? { codePins } : {}),
       visibleEntities,
@@ -305,7 +357,7 @@ function useProvideGameplay() {
       // Add a version flag for backward compatibility
       stateVersion: 2
     };
-  }, [globalStats, globalTraits, disabledTraitIds, appliedTraitValues, cascadeOffTraitIds, ownedTraits, entityStats, entityStatChanges, codePins, visibleEntities, discoveredEntities, suppressedCharacterNames, logEntries, currentLocation,
+  }, [globalStats, globalTraits, disabledTraitIds, appliedTraitValues, cascadeOffTraitIds, ownedTraits, entityStats, entityPositions, entityFollowers, metEntities, entityStatChanges, codePins, visibleEntities, discoveredEntities, suppressedCharacterNames, logEntries, currentLocation,
       gameTime, startHour, fullMessageHistory, characterData, choices, isGameStarted, playerNotes, currentPage]);
 
   /** Restore a `GameState` into the live gameplay state, resolving `locationId` against `locations` and
@@ -330,6 +382,9 @@ function useProvideGameplay() {
       setCascadeOffTraitIds(gameState.cascadeOffTraitIds ?? {});
       setOwnedTraits(gameState.ownedTraits ?? {});
       resetEntityStats(gameState.entityStats ?? {});
+      setEntityPositions(gameState.entityPositions ?? {});
+      setEntityFollowers(gameState.entityFollowers ?? []);
+      setMetEntities(gameState.metEntities ?? []);
       setCodePins(gameState.codePins ?? EMPTY_PINS);
       setVisibleEntities(normalizeVisibleEntities(gameState.visibleEntities));
       // Rollback / re-generate also keep the live discovered cast + suppressed names (they carry the
@@ -478,15 +533,28 @@ function useProvideGameplay() {
    *  legacy numeric version) loads directly; an older nested shape is flattened off-thread via the
    *  `convertSaveFile` worker, with a best-effort raw load if conversion throws. Returns success.
    *  `worldEntities` given, the owned trait state and stat values of an entity the playthrough no longer holds
-   *  are dropped, and each authored entity's missing stats are backfilled. */
+   *  are dropped, and each authored entity's missing stats are backfilled. `vrmStore` is the world's Avatar
+   *  store, which a pre-per-entity-Avatar save's chosen Avatar remaps against. */
   const loadGame = useCallback(async (
-    saveId: string, locations: GameLocation[], worldStats: Stat[] = [], worldEntities?: readonly Pick<Entity, 'id' | 'stats'>[],
+    saveId: string, locations: GameLocation[], worldStats: Stat[] = [], worldEntities?: readonly (PlaceableEntity & Pick<Entity, 'stats'>)[],
+    vrmStore?: WorldVrmStore,
   ) => {
-    /** The state with every stat the world has since added, global and each entity's, and no entity stat
-     *  carrying stored code bounds. */
-    const backfilled = (state: GameState) => {
+    const locationIds = locations.map((l) => l.id);
+    /** The state with its chosen Avatar remapped against the world's Avatar store. */
+    const withChosenVrmRemapped = (raw: GameState) => (raw.characterData
+      ? { ...raw, characterData: remapChosenVrm(raw.characterData, vrmStore) }
+      : raw);
+    /** The state with every stat the world has since added, global and each entity's, no entity stat
+     *  carrying stored code bounds, each position checked against the world, and its chosen Avatar remapped. */
+    const backfilled = (raw: GameState, persona?: PersonaRef) => {
+      const state = withChosenVrmRemapped(raw);
       const players = backfillGameStateStats(withoutEntityCodeBounds(state), worldStats);
-      return worldEntities ? backfillGameStateEntityStats(players, worldEntities) : players;
+      if (!worldEntities) return players;
+      const cast = positionedCast(worldEntities, persona);
+      return reconcileGameStateFollowers(
+        reconcileGameStatePositions(backfillGameStateEntityStats(players, worldEntities), cast, locationIds),
+        new Set([...cast.map((entity) => entity.id), ...(state.discoveredEntities ?? []).map((d) => d.entity.id)]),
+      );
     };
     try {
       // IndexedDB returns dynamically-shaped data; narrowed by the runtime checks below.
@@ -512,12 +580,12 @@ function useProvideGameplay() {
         // top-level history so loadGameState restores narration/rollback correctly. Backfill any stat the
         // world has since added (e.g. an updated default world) so an older save shows it — additive only.
         const success = loadGameState(
-          held(backfilled({ ...migrated.currentState, fullMessageHistory: migrated.messageHistory ?? [] })),
+          held(backfilled({ ...migrated.currentState, fullMessageHistory: migrated.messageHistory ?? [] }, migrated.persona)),
           locations,
           { worldStats },
         );
         if (success) {
-          setGameStates(migrated.stateHistory.map((s) => held(backfilled(s))));
+          setGameStates(migrated.stateHistory.map((s) => held(backfilled(s, migrated.persona))));
           // Restore the per-playthrough dictionary set; older saves lack it, so keep the entry-seeded set.
           if (Array.isArray(migrated.dictionaries)) setRuntimeDictionaries(migrated.dictionaries);
           setPlaceholderRolls(migrated.placeholderRolls ?? {});
@@ -604,7 +672,7 @@ function useProvideGameplay() {
 
           // Try to load the save anyway (legacy shape, best-effort)
           try {
-            const success = loadGameState(migrateGlobalFields(savedData as unknown as GameState), locations, { worldStats });
+            const success = loadGameState(withChosenVrmRemapped(migrateGlobalFields(savedData as unknown as GameState)), locations, { worldStats });
             if (success) {
               addSystemLogEntry(`Game loaded from "${saveName}" (with conversion errors)`);
               setSaveLoads((n) => n + 1);
@@ -657,6 +725,7 @@ function useProvideGameplay() {
   // What the shown turn moved each entity stat: live, this turn's; on a past page, that turn's record.
   const viewEntityStatChanges = viewedSnapshot ? (viewedSnapshot.entityStatChanges ?? EMPTY_ENTITY_CHANGES) : entityStatChanges;
   const viewCodePins = viewedSnapshot ? (viewedSnapshot.codePins ?? EMPTY_PINS) : codePins;
+  const viewEntityFollowers: readonly string[] = viewedSnapshot ? (viewedSnapshot.entityFollowers ?? EMPTY_IDS) : entityFollowers;
   const viewCharacterData = viewedSnapshot?.characterData ?? characterData;
   const viewVisibleEntities = useMemo(
     () => (viewedSnapshot ? normalizeVisibleEntities(viewedSnapshot.visibleEntities) : visibleEntities),
@@ -789,6 +858,15 @@ function useProvideGameplay() {
     setEntityStats,
     setEntityStatBaseline,
     resetEntityStats,
+    entityPositions,
+    setEntityPositions,
+    entityFollowers,
+    setEntityFollowers,
+    carryFollowersTo,
+    applyFollowerState,
+    viewEntityFollowers,
+    metEntities,
+    setMetEntities,
     codePins,
     setCodePins,
     runtimeDictionaries,
@@ -846,6 +924,8 @@ function useProvideGameplay() {
     setIsWaitingForAI,
     isRevealingNarration,
     setIsRevealingNarration,
+    narrationSettled,
+    setNarrationSettled,
     fullMessageHistory,
     setFullMessageHistory,
     displayedMessages,

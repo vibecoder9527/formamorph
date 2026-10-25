@@ -113,6 +113,7 @@ Import runs every world through a migration. The migration changes an older shap
 | A dictionary `key` or `secondaryKeys` as one comma-separated string | A list of keywords |
 | An entity `image` string | The first item of `images` |
 | An entity `images` list of strings | Each string as `{ "data": … }` |
+| A location `backgroundImage` string | The first item of `images` |
 | A location `entities` list | Each entity's `locations` |
 | A location `connections` list of names | Records in the top-level `connections` |
 | A connection with `from`, `to`, `twoWay` and `aiHint` | A connection with `a`, `b` and legs |
@@ -126,7 +127,7 @@ Import runs every world through a migration. The migration changes an older shap
 | A stat with `type: "list"` | A `number` stat at its `min`. The items are dropped |
 | A script that uses `stats.find(…)` | The same code with the stat map |
 | A Stomach, Fatness or Breastsize stat with no `morphBindings` | The matching body morphs |
-| A root `customPlayerVRM` | `worldOverview.customPlayerVRM` |
+| A root `customPlayerVRM` | An Avatar in `worldOverview.vrmStore`. See [Avatar Picks](#avatar-picks) |
 | Entity and location `inGameDescription` and `detailedDescription` | `playerDescription` and `aiDescription` |
 | A trait `description` | Both `playerDescription` and `aiDescription` |
 
@@ -145,9 +146,9 @@ Write new files in the current shape. A file with `scripts` loads in an older ve
 | `thumbnail` | ✓ | [Image](#media-fields) \| `null` | The card image |
 | `bgm` | ✓ | [Audio](#media-fields) \| `null` | Background music, as a data URL |
 | `systemPrompt` | ✓ | String | The **AI-Facing Description**: what the AI reads about the world. Players never see it |
-| `use3DModel` | ✓ | Boolean | The world shows a 3D avatar |
 | `tags` | ✓ | String[] | Listing tags |
-| `customPlayerVRM` | | [MediaAsset](#media-fields) \| `null` | The world's own player avatar, a `.vrm` file |
+| `vrmStore` | | Object | The world's Avatars, keyed by `id`. Each value is `{ "name": String, "file": MediaAsset, "hash": String }`. `hash` is optional. Entities refer to an entry by `id` through `vrmPick` |
+| `legacyVrmFallback` | | [Avatar pick](#avatar-picks) | Written by the migration of an older world, not for authors. It gives the played entity an Avatar when that entity has none. Absent = no fallback |
 | `readme` | | String | Markdown the player sees when play starts |
 | `introReadme` | | String | Markdown the player sees on the first setup screen. It shares the readme's on and off switch |
 | `promptOverrides` | | Object | The world's **Custom Prompts**. See below. Absent = the player's prompts |
@@ -156,8 +157,17 @@ Write new files in the current shape. A file with `scripts` loads in an older ve
 | `openingsEnabled` | | Boolean | `false` stops every opening of the world, its locations and its entities from drawing. Absent = on |
 | `allowedPersonas` | | `"any"` \| `"world"` | Which personas the player can pick. `"world"` allows only this world's personas and its Custom Persona. Absent = `"any"` |
 | `startPersona` | | Object | The persona a new player starts on: `{ "source": "none" }`, or `{ "source": "world", "entityId": "<entity id>" }`. Absent = the player's default persona |
+| `mapBackground` | | Object | The picture behind the Locations canvas and the in-game Map. See below. Absent = none |
 
 See [Persona Rules](Persona-Authoring#persona-rules) for how the last two fields behave.
+
+**`mapBackground`** holds the world map art:
+
+| Field | Req. | Type | Meaning |
+|---|---|---|---|
+| `images` | ✓ | [Gallery image](#media-fields)[] | One or more images. In play, the Map shows the first visible one. A condition with no `owner` reads the played persona. The editor's canvas shows the first |
+| `frame` | ✓ | Object | `{ "x", "y", "width", "height" }` in canvas units. Every image fits inside it at its own aspect ratio |
+| `opacity` | ✓ | Number | From `0` to `1` |
 
 **`promptOverrides`** replaces some of the player's prompts while they play this world:
 
@@ -285,10 +295,12 @@ Each requirement has a `kind`:
 | `"group"` | `id`, `name`, `owner` | The owner has any trait in the group with this `id` |
 | `"playingAs"` | `id`, `name` | The player plays as the entity with this `id` |
 | `"stat"` | `id`, `name`, `owner`, `operator`, `value`, `unit` | The owner's stat with this `id` compares true against `value` |
+| `"time"` | `dayparts` | The story clock's time of day is one of `dayparts` |
 
 - `name` is optional. It holds the target's name, so a requirement still reads when the target is gone.
 - A `"stat"` requirement's `operator` is one of `">"`, `"<"`, `">="`, `"<="`, `"="` or `"≠"`. Its `unit` is `"raw"` for the stat's own units or `"percent"` for a share of the stat's min→max span. `{ "kind": "stat", "id": "health", "operator": "<", "value": 20, "unit": "percent" }` holds while Health is under 20% of its range.
 - `owner` is optional, and it applies only to a trait, group or stat an entity owns. A requirement that names a global item (a root trait, a root group or a global stat) reads the global scope, and the app drops any `owner` stored with it. Absent = the trait's own owner. `{ "kind": "you" }` checks the entity the player plays, and never holds when the player plays none. `{ "kind": "entity", "id": "<entity id>", "name": "…" }` checks that entity.
+- A `"time"` requirement's `dayparts` lists one or more of `"night"`, `"dawn"`, `"morning"`, `"midday"`, `"afternoon"` and `"evening"`. It has no `id`, `owner` or `not`. `{ "kind": "time", "dayparts": ["evening", "night"] }` holds from evening until dawn.
 - `not` is optional. `true` flips the requirement: it holds while its target is off. `{ "kind": "trait", "id": "paladin", "not": true }` holds while the owner doesn't have Paladin.
 - A requirement whose target is gone never holds, with or without `not`.
 
@@ -326,10 +338,10 @@ The world group with `system: "blueprints"`, and every group below it, holds Blu
 | `aiDescription` | | String | The full description the AI reads |
 | `aiSummary` | | String | A short description the AI reads where the full one is too long |
 | `description` | | String | An older field. The player reads it when `playerDescription` is absent |
-| `backgroundImage` | | [Image](#media-fields) | The background |
+| `images` | | [Gallery image](#media-fields)[] | The gallery, in author order. In play the backdrop shows the first visible image |
 | `imageTags` | | String | Comma-separated tags for image generation |
 | `ambientSound` | | [MediaAsset](#media-fields) | Looping sound |
-| `isStarting` | | Boolean | A new game can start here. One marked = every game starts there. Several = the player picks. None = any location. A played entity's `startingLocationId` joins the choices |
+| `isStarting` | | Boolean | A new game can start here. One marked = every game starts there. Several = the player picks. None = any location. A played entity's `locations` join the choices |
 | `parentId` | | String \| `null` | The parent location's `id`. Absent or `null` = the top level. List order is the order among siblings |
 | `canvasPosition` | | `{ "x", "y" }` | Editor-only. The location's place on the Locations canvas, relative to its parent. Absent = automatic |
 | `placeholderPins` | | [Pin](#placeholder-pins)[] | Placeholder values pinned while the player is here. A child location does not get its parent's pins |
@@ -363,7 +375,6 @@ A connection needs at least one leg. Both legs = two-way. A leg has one optional
 | `persona` | | Boolean | The **Persona** mark. See [Persona Marks](#persona-marks) |
 | `personaOnly` | | Boolean | The entity exists only while the player plays it |
 | `customPersona` | | Boolean | The **Custom Persona** mark |
-| `startingLocationId` | | String | The **Starting Location** preselected when the player plays this entity. Absent = Automatic: the first of its `locations` marked `isStarting` |
 | `playerDescription` | | String | What the player reads |
 | `aiDescription` | | String | The full description the AI reads |
 | `aiSummary` | | String | A short description the AI reads where the full one is too long |
@@ -372,6 +383,7 @@ A connection needs at least one leg. Both legs = two-way. A leg has one optional
 | `imageTags` | | String | Comma-separated tags for image generation |
 | `sound` | | [MediaAsset](#media-fields) | A sound |
 | `model` | | [MediaAsset](#media-fields) | A 3D model |
+| `vrmPick` | | [Avatar pick](#avatar-picks) | The entity's Avatar. Absent = none |
 | `locations` | | String[] | The `id`s of the locations where the entity is. It is at all of them |
 | `groupId` | | String \| `null` | Editor-only. The [entity group's](#entity-groups) `id`. Absent or `null` = no group |
 | `order` | | Number | Editor-only. The order in its group |
@@ -532,7 +544,7 @@ A chip is a token in a text field. The editor inserts chips. To write one by han
 
 The editor can add two more parts after the placement id: a path to a part of the placeholder, and a label after `:=`. Copy those from a chip the editor wrote.
 
-Two chips need no placeholder. `{{user}}` is the [Player Name chip](Persona-Authoring#the-player-name-chip). `{{char}}` is the [Character Name chip](Persona-Authoring#the-character-name-chip).
+Two chips need no placeholder. `{{user}}` is the [Persona Name chip](Persona-Authoring#the-persona-name-chip). `{{char}}` is the [Character Name chip](Persona-Authoring#the-character-name-chip).
 
 ## Dictionaries
 <!-- keywords: lorebook object, keyword array, regex flag, constant flag, position values, depth key, world info fields, token budget -->
@@ -603,21 +615,21 @@ An entity or a book in a world can follow a library item. Its `link` object reco
 ## Media Fields
 <!-- keywords: base64, embed binary, encode image, huge file size, web address string, audio encoding, mime, asset object -->
 
-**Images** (`thumbnail`, location `backgroundImage`, a gallery image's `data`, book `thumbnail`) hold one string:
+**Images** (`thumbnail`, a gallery image's `data`, book `thumbnail`) hold one string:
 
 - A base64 data URL, such as `data:image/png;base64,…`
 - Or an `http` or `https` URL. The app loads the image from that address
 
-**Gallery images** (entity `images`) are objects:
+**Gallery images** (entity and location `images`, and `mapBackground.images`) are objects:
 
 | Field | Req. | Type | Meaning |
 |---|---|---|---|
 | `data` | ✓ | Image | The picture |
-| `requires` | | [Requirement rows](#trait-requirements) | The Visibility rule. Absent = always shown |
+| `requires` | | [Requirement rows](#trait-requirements) | The Visibility rule. Absent = always shown. On a location or the Map Background, a condition with no `owner` reads the played persona |
 
 **Background music** (`bgm`) is a base64 data URL.
 
-**Uploaded audio and models** (`customPlayerVRM`, location `ambientSound`, entity `sound` and `model`) are a `MediaAsset`:
+**Uploaded audio and models** (the `file` of a `vrmStore` entry, location `ambientSound`, entity `sound` and `model`) are a `MediaAsset`:
 
 | Field | Req. | Type | Meaning |
 |---|---|---|---|
@@ -629,6 +641,21 @@ An entity or a book in a world can follow a library item. Its `link` object reco
 ```json
 { "data": "data:model/vrm;base64,...", "type": "model/vrm", "name": "hero.vrm" }
 ```
+
+## Avatar Picks
+<!-- keywords: vrm pick, entity avatar, avatar store reference, user's default, legacy keys, use3DModel, customPlayerVRM -->
+
+An Avatar pick says which Avatar an entity shows. It is an object with a `kind`:
+
+| Shape | Meaning |
+|---|---|
+| `{ "kind": "default" }` | **User's Default**: the player's default Avatar |
+| `{ "kind": "world", "id": "<vrmStore id>" }` | An Avatar in the world's `vrmStore` |
+| `{ "kind": "library", "id": "<id>" }` | An Avatar in the player's library. Library entities use this form. A world file never holds it. |
+
+Entities share an Avatar by naming the same `id`. A pick of an `id` the store lacks reads as none. A character card or entity listing that carries a pick also carries the Avatar file.
+
+A world file from an older version can hold `use3DModel` and `customPlayerVRM` in `worldOverview`. The app moves the Avatar into `vrmStore` and sets `legacyVrmFallback` only when `use3DModel` is `true`. New files do not write those two keys.
 
 ## Example World
 <!-- keywords: sample, starter, minimal, full file, copy paste, reference json, demo, boilerplate -->
@@ -646,7 +673,6 @@ A short world. `...` replaces the media data.
     "thumbnail": "data:image/png;base64,...",
     "bgm": null,
     "systemPrompt": "A quiet fantasy town. Magic is rare and feared.",
-    "use3DModel": false,
     "tags": ["fantasy"],
     "readme": "# Welcome\nYou arrive at dusk.",
     "openings": [

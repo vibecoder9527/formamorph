@@ -45,6 +45,8 @@ const shown = () =>
   screen.queryAllByRole('checkbox').concat(screen.queryAllByRole('radio'))
     .map((el) => el.getAttribute('aria-label') ?? '');
 const section = (name: string) => screen.getByRole('group', { name });
+/** The You pill inside `host`, found by what the player reads. The accessible name's ", You" is no text node. */
+const pill = (host: HTMLElement) => within(host).getByText('You');
 const openDisabled = (name: string) =>
   fireEvent.click(within(section(name)).getByRole('button', { name: /^Disabled/ }));
 
@@ -335,6 +337,36 @@ describe('a gated trait in play', () => {
     expect(screen.getByText('Unlocked by playing as Sir Aldric')).toBeTruthy();
   });
 
+  // Q7: a Condition on the persona reads the played persona's name with the You pill, or Persona with no one played.
+  describe("a Condition on the persona's traits", () => {
+    // Sir Aldric's own Knighthood is the target: a global target offers no owner (Q10).
+    const knight = { ...aldric, traits: [T('t-knighthood', 'Knighthood')] };
+    const SQUIRE = T('t-squire', 'Squire', { requires: [{ all: [{ kind: 'trait', id: 't-knighthood', owner: { kind: 'you' } }] }] });
+    const unfoldGlobal = () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Global,/ }));
+      openDisabled('Global');
+    };
+
+    it('names the played world persona with the pill', () => {
+      renderTraits([...TRAITS, SQUIRE], [], [], {
+        world: { entities: [knight] },
+        seed: (gameplay) => gameplay.setPersonaRef({ source: 'world', entityId: 'e-aldric' }),
+      });
+      unfoldGlobal();
+      const line = screen.getByText(/^Requires Sir Aldric/);
+      expect(line).toHaveTextContent(/^Requires Sir AldricYou: Knighthood$/);
+      expect(within(line).getByText('You')).toBeTruthy();
+    });
+
+    it('reads Persona, with no pill, when no one is played', () => {
+      renderTraits([...TRAITS, SQUIRE], [], [], { world: { entities: [knight] } });
+      unfoldGlobal();
+      const line = screen.getByText(/^Requires Persona/);
+      expect(line).toHaveTextContent(/^Requires Persona: Knighthood$/);
+      expect(within(line).queryByText('You')).toBeNull();
+    });
+  });
+
   it('shows the cascade banner until the player dismisses it', async () => {
     const onDismissTraitCascade = vi.fn();
     renderRightPanel({ traitCascade: { off: ['Plate Armor'], because: 'Paladin' }, onDismissTraitCascade }, {
@@ -389,9 +421,26 @@ describe('entity nodes in the traits tab', () => {
     expect(screen.getByText('Requires Paladin')).toBeTruthy();
   });
 
-  it('marks the entity the player plays as You', () => {
+  it('marks the entity the player plays with the You pill after its name, and reads it out as You', () => {
     withAsh({ seed: (gameplay) => gameplay.setPersonaRef({ source: 'world', entityId: 'e-ash' }) });
-    expect(screen.getByRole('button', { name: 'Ash, You, 1 enabled' })).toBeTruthy();
+    const heading = screen.getByRole('button', { name: 'Ash, You, 1 enabled' });
+    expect(pill(heading)).toBeInTheDocument();
+    expect(heading).toHaveTextContent(/^AshYou/);
+    expect(screen.queryByRole('button', { name: /\(You\)/ })).toBeNull();
+  });
+
+  it("marks the played entity's sub-heading with the pill when its node sits inside a world group", () => {
+    renderTraits([PALADIN], [G('g-pack', 'Pack')], [], {
+      world: { entities: [{ ...ash, traitPlacement: { groupId: 'g-pack', order: 0 } }] },
+      seed: (gameplay) => {
+        gameplay.setOwnedTraits({ 'e-ash': { chosen: ['t-tamed'] } });
+        gameplay.setPersonaRef({ source: 'world', entityId: 'e-ash' });
+      },
+    });
+    expect(screen.getByRole('button', { name: 'Pack, 1 enabled' })).toBeTruthy();
+    const subheading = within(section('Pack')).getByText('Ash');
+    expect(pill(subheading)).toBeInTheDocument();
+    expect(subheading).toHaveTextContent(/^AshYou$/);
   });
 
   it("reads an owned trait's Character Name as its owner", () => {

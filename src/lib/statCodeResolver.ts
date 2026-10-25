@@ -3,13 +3,15 @@
  * walk, so they never disagree about what code reaches.
  */
 
-import { javascriptLanguage } from '@codemirror/lang-javascript';
 import type { SyntaxNode, Tree } from '@lezer/common';
 import { surfaceHasGlobal, type CodeSurface } from '@/lib/codeSurface';
 import { locationMoveKey } from '@/lib/codeRenameChains';
 import { isPlaceholderEntryMember } from '@/lib/statCodePaths';
 import { DELTA_MEMBERS } from '@/lib/statCodeSurface';
 import { findSlotRanges } from '@/lib/statCodeTemplates';
+import { declarations, declaredNames, memberKey, parseCode, type EntryRef } from '@/lib/codeTreeNames';
+
+export { declarations, declaredNames, memberKey, parseCode, type EntryRef };
 
 /** Whose code a stat box holds: an entity's own stat, or a Blueprint stat. */
 export type CodeOwnerKind = 'entity' | 'blueprint';
@@ -48,11 +50,24 @@ export type CodeValue =
   | { is: 'owner' }
   | { is: 'dictionaryMap' }
   | { is: 'dictionary'; key: string }
+  /** A book's `entries`, `dictionary` its code name. */
+  | { is: 'dictionaryEntryMap'; dictionary: string }
+  | { is: 'dictionaryEntry'; dictionary: string; key: string }
+  | { is: 'locationMap' }
+  | { is: 'locationEntry'; key: string }
   | { is: 'clock'; path: 'clock' | 'clock.previous' }
+  /** An array whose element shape is known. `path` is its exact dotted path where it has one, like `memories`. */
+  | { is: 'array'; of: ArrayElement; path: string | null }
+  /** One element of such an array. */
+  | { is: 'element'; of: ArrayElement }
   /** An exact path the surface lists members for, like `Math` or `scene.location`. */
   | { is: 'listed'; path: string };
 
+/** The element shapes an array can hold: a `memories` entry, or an entity entry as `present` holds. */
+export type ArrayElement = 'memory' | 'entity';
+
 export type CodeStatValue = Extract<CodeValue, { is: 'stat' }>;
+type ArrayValue = Extract<CodeValue, { is: 'array' }>;
 
 /** The name at a position, by kind, with its key and span. A bracket key's span holds its quotes. */
 export type ResolvedCodeName = { key: string; from: number; to: number } & (
@@ -63,7 +78,8 @@ export type ResolvedCodeName = { key: string; from: number; to: number } & (
   | { kind: 'placeholder'; owner: PlaceholderOwner; path: readonly string[] }
   | { kind: 'entity' }
   | { kind: 'dictionary' }
-  /** The place a `location.move("<name>")` call names. */
+  | { kind: 'dictionaryEntry'; dictionary: string }
+  /** A `locations` key, or the place a `location.move("<name>")` call names. */
   | { kind: 'location' }
   | { kind: 'declared'; at: number }
   | { kind: 'slot' }
@@ -79,29 +95,6 @@ export interface ResolverOptions {
   /** Treat `{{name:type=default}}` spans as slots. */
   slots?: boolean;
 }
-
-export const parseCode = (code: string): Tree => javascriptLanguage.parser.parse(code);
-
-/** Every name the code declares, at its first declaration. Whole-document rather than block-scoped. */
-export function declarations(code: string, tree: Tree = parseCode(code)): Map<string, number> {
-  const names = new Map<string, number>();
-  const add = (from: number, to: number) => { if (!names.has(code.slice(from, to))) names.set(code.slice(from, to), from); };
-  const cursor = tree.cursor();
-  do {
-    if (cursor.type.name === 'VariableDefinition') {
-      add(cursor.from, cursor.to);
-    } else if (cursor.type.name === 'PatternProperty') {
-      // `const {min, max} = stat` binds the property names themselves unless renamed.
-      const child = cursor.node.firstChild;
-      if (child) add(child.from, child.to);
-    }
-  } while (cursor.next());
-  return names;
-}
-
-/** Every name the author declared anywhere in the code. */
-export const declaredNames = (code: string, tree: Tree = parseCode(code)): Set<string> =>
-  new Set(declarations(code, tree).keys());
 
 /** Identifiers holding something that came out of `stats` or `self` — the objects whose fields we can name
  *  — each mapped to the text of the declaration that bound it. */
@@ -121,26 +114,35 @@ export function statLikeNames(code: string, tree: Tree): Map<string, string> {
   return names;
 }
 
-/** A map entry's name as the code spells it, and where. */
-export interface EntryRef {
-  name: string;
-  from: number;
-  to: number;
-}
-
-/** The key one member names, or null for a key only a run could know. */
-export function memberKey(node: SyntaxNode, code: string): EntryRef | null {
-  const property = node.getChild('PropertyName');
-  if (property) return { name: code.slice(property.from, property.to), from: property.from, to: property.to };
-  const literal = node.getChild('String');
-  if (!literal || literal.to - literal.from < 2 || code[literal.to - 1] !== code[literal.from]) return null;
-  const name = code.slice(literal.from + 1, literal.to - 1);
-  // An escape has to be evaluated to name the key.
-  return name.includes('\\') ? null : { name, from: literal.from, to: literal.to };
-}
-
 /** The methods that hand back one element of an array. `filter` hands back another array. */
-const PICK_ONE = new Set(['find', 'at', 'pop', 'shift']);
+const PICK_ONE = new Set(['find', 'findLast', 'at', 'pop', 'shift']);
+
+/** The methods that hand back an array of the same elements. */
+const SAME_ARRAY = new Set(['filter', 'slice', 'reverse', 'sort', 'splice', 'toReversed', 'toSorted', 'toSpliced']);
+
+/** A location's `present`, the entity entries standing there. */
+const present = (path: string | null): CodeValue => ({ is: 'array', of: 'entity', path });
+
+/** The methods whose callback takes an element as its first parameter. */
+const ELEMENT_CALLBACK = new Set([
+  'every', 'filter', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap', 'forEach', 'map', 'some', 'sort', 'toSorted',
+]);
+
+/** The method a call calls on an object, with that object, or null for any other call. */
+function methodCall(call: SyntaxNode, code: string): { object: SyntaxNode; method: string } | null {
+  const callee = call.firstChild;
+  const property = callee?.name === 'MemberExpression' ? callee.getChild('PropertyName') : null;
+  const object = callee?.firstChild;
+  return property && object ? { object, method: code.slice(property.from, property.to) } : null;
+}
+
+/** The name a callback binds as its first parameter, or null for a pattern or no parameter. */
+function firstParam(callback: SyntaxNode | undefined): SyntaxNode | null {
+  if (callback?.name !== 'ArrowFunction' && callback?.name !== 'FunctionExpression') return null;
+  const first = callback.getChild('ParamList')?.firstChild;
+  const param = first?.name === '(' ? first.nextSibling : first;
+  return param?.name === 'VariableDefinition' ? param : null;
+}
 
 const DELTA_SOURCES = new Set(DELTA_MEMBERS.map((member) => member.name));
 
@@ -194,13 +196,58 @@ export function codeResolver(
         case 'persona': return { is: 'persona' };
         case 'owner': return { is: 'owner' };
         case 'dictionaries': return { is: 'dictionaryMap' };
+        case 'locations': return { is: 'locationMap' };
         case 'clock': return { is: 'clock', path: 'clock' };
         case 'trait': return { is: 'switchedTrait' };
+        case 'memories': return { is: 'array', of: 'memory', path: 'memories' };
       }
     }
     if (surface.members.has(name)) return { is: 'listed', path: name };
     if ((has('stats') || has('self')) && isStatLike(name)) return { is: 'stat', owner: null, key: null };
-    return null;
+    const element = elementBindings()?.get(name);
+    return element ? { is: 'element', of: element } : null;
+  }
+
+  // Null during the scan, so the scan never reads its own bindings.
+  let bindings: Map<string, ArrayElement | null> | null | undefined;
+  /** The names the code binds to one element of a known array: a callback's first parameter, or a for-of binding.
+   *  A name bound to two element shapes, or declared anywhere else, binds neither. */
+  function elementBindings(): Map<string, ArrayElement | null> | null {
+    if (bindings !== undefined) return bindings;
+    bindings = null;
+    const found = new Map<string, ArrayElement | null>();
+    const bound = new Set<number>();
+    const bind = (binding: SyntaxNode | null | undefined, array: CodeValue | null) => {
+      if (!binding || array?.is !== 'array') return;
+      const name = code.slice(binding.from, binding.to);
+      found.set(name, found.has(name) && found.get(name) !== array.of ? null : array.of);
+      bound.add(binding.from);
+    };
+    const cursor = tree.cursor();
+    do {
+      if (cursor.type.name === 'CallExpression') {
+        const call = methodCall(cursor.node, code);
+        if (call && ELEMENT_CALLBACK.has(call.method)) {
+          const args = cursor.node.getChild('ArgList');
+          bind(firstParam(args ? collectArgs(args)[0] : undefined), valueOf(call.object));
+        }
+      } else if (cursor.type.name === 'ForOfSpec') {
+        const of = cursor.node.getChild('of');
+        const iterated = of?.nextSibling;
+        if (iterated && iterated.name !== ')') bind(cursor.node.getChild('VariableDefinition'), valueOf(iterated));
+      }
+    } while (cursor.next());
+    // The walk is whole-document, so a name the code also declares elsewhere is the author's own.
+    const names = tree.cursor();
+    do {
+      const definition = names.type.name === 'VariableDefinition' ? names.node
+        : names.type.name === 'PatternProperty' ? names.node.firstChild : null;
+      if (definition && !bound.has(definition.from) && found.has(code.slice(definition.from, definition.to))) {
+        found.set(code.slice(definition.from, definition.to), null);
+      }
+    } while (names.next());
+    bindings = found;
+    return bindings;
   }
 
   /** What `base` holds under `key`. A null key is one only a run could name; only a stat map resolves it. */
@@ -215,11 +262,16 @@ export function codeResolver(
       case 'placeholders': return { ...base, path: [...base.path, key] };
       case 'entityMap': return { is: 'entity', key };
       case 'dictionaryMap': return { is: 'dictionary', key };
+      case 'locationMap': return { is: 'locationEntry', key };
+      case 'locationEntry': return key === 'present' ? present(null) : null;
+      case 'listed': return base.path === 'location' && key === 'present' ? present('location.present') : null;
       case 'entity': return ownerMap({ route: 'entity', entity: base.key }, key);
       case 'persona': return ownerMap({ route: 'persona' }, key);
       case 'owner': return ownerMap({ route: 'owner' }, key);
       case 'dictionary':
+        if (key === 'entries') return { is: 'dictionaryEntryMap', dictionary: base.key };
         return key === 'placeholders' ? { is: 'placeholders', owner: { route: 'dictionary', dictionary: base.key }, path: [] } : null;
+      case 'dictionaryEntryMap': return { is: 'dictionaryEntry', dictionary: base.dictionary, key };
       case 'clock': return base.path === 'clock' && key === 'previous' ? { is: 'clock', path: 'clock.previous' } : null;
       default: return null;
     }
@@ -248,11 +300,18 @@ export function codeResolver(
   function valueOf(node: SyntaxNode): CodeValue | null {
     if (node.name === 'VariableName') return rootValue(code.slice(node.from, node.to));
     if (node.name === 'CallExpression') {
+      const call = methodCall(node, code);
+      if (!call) return null;
+      if (SAME_ARRAY.has(call.method)) {
+        const array = arrayOf(call.object);
+        return array && { ...array, path: null };
+      }
+      if (!PICK_ONE.has(call.method)) return null;
       // `Object.values(stats).find(…)` picks one stat.
-      const callee = node.firstChild;
-      const method = callee?.name === 'MemberExpression' ? callee.getChild('PropertyName') : null;
-      const map = method && PICK_ONE.has(code.slice(method.from, method.to)) && callee?.firstChild ? valuesOfStatMap(callee.firstChild) : null;
-      return map ? { is: 'stat', owner: map.owner, key: null } : null;
+      const map = valuesOfStatMap(call.object);
+      if (map) return { is: 'stat', owner: map.owner, key: null };
+      const array = arrayOf(call.object);
+      return array && { is: 'element', of: array.of };
     }
     if (node.name !== 'MemberExpression') return null;
     const object = node.firstChild;
@@ -260,11 +319,20 @@ export function codeResolver(
     const bracket = !node.getChild('PropertyName');
     const iterated = bracket && object ? valuesOfStatMap(object) : null;
     if (iterated) return { is: 'stat', owner: iterated.owner, key: null };
+    // An index picks one element: `memories[0]`, `memories[i]`.
+    const array = node.getChild('[') && object ? arrayOf(object) : null;
+    if (array && (key === null || /^\d+$/.test(key.name))) return { is: 'element', of: array.of };
     const base = object ? valueOf(object) : null;
     const stepped = base && stepValue(base, key?.name ?? null);
     if (stepped) return stepped;
     const path = dottedPath(node, code);
     return path !== null && surface.members.has(path) ? { is: 'listed', path } : null;
+  }
+
+  /** The array an expression is, or null where it is no array of known elements. */
+  function arrayOf(node: SyntaxNode): ArrayValue | null {
+    const value = valueOf(node);
+    return value?.is === 'array' ? value : null;
   }
 
   /** What the object before the member access's `.`, `?.` or `[` at `at` is. */
@@ -289,6 +357,8 @@ export function codeResolver(
       case 'traitMap': return { ...span, kind: 'trait', owner: base.owner };
       case 'entityMap': return { ...span, kind: 'entity' };
       case 'dictionaryMap': return { ...span, kind: 'dictionary' };
+      case 'dictionaryEntryMap': return { ...span, kind: 'dictionaryEntry', dictionary: base.dictionary };
+      case 'locationMap': return { ...span, kind: 'location' };
       case 'placeholders':
         // Below the first key a member wins over a child of the same name, and nothing hangs off a member.
         if (base.path.slice(1).some(isPlaceholderEntryMember)) return null;

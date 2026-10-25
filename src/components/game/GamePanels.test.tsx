@@ -6,7 +6,7 @@ import { CONTINUE_CHOICE } from '@/lib/choices';
 import { encodePlaceholderToken } from '@/lib/placeholders';
 import { defaultSystemPrompt } from './GamePrompts';
 import openChat from '@/defaultworlds/open-chat.json';
-import { readTurn, renderLeftPanel, renderMiddlePanel, renderRightPanel, statFixture, type PanelHarness, type TurnFixture } from '@/test/gamePanels';
+import { readTurn, renderLeftPanel, renderMiddlePanel, renderRightPanel, statFixture, worldFixture, type Gameplay, type PanelHarness, type TurnFixture } from '@/test/gamePanels';
 import { resetTtsPlayback, setTtsPlayback } from '@/test/stubs/ttsPlayback';
 import { lastVrmViewerProps, resetVrmViewerStub } from '@/test/stubs/vrmViewer';
 
@@ -162,14 +162,15 @@ describe('MiddlePanel — the audio row', () => {
 });
 
 describe('LeftPanel', () => {
-  it('draws the player model for a world that has one', () => {
+  it('draws the player model for a world that has one', async () => {
     renderLeftPanel({}, {
+      world: { worldOverview: { ...worldFixture().worldOverview, legacyVrmFallback: { kind: 'default' } } },
       seed: (gameplay) => gameplay.setCharacterData({
-        bodyMorphs: { Belly: 0.25 }, currentHairStyle: 'long', hairLength: 0.5,
+        bodyMorphs: { Belly: 0.25 }, currentHairStyle: 'long', hairLength: 0.5, chosenVrm: null,
       }),
     });
 
-    expect(screen.getByTestId('vrm-viewer')).toBeInTheDocument();
+    expect(await screen.findByTestId('vrm-viewer')).toBeInTheDocument();
     expect(lastVrmViewerProps()?.bodyMorphValues).toMatchObject({ Belly: 0.25 });
   });
 
@@ -195,24 +196,6 @@ describe('LeftPanel', () => {
     expect(view.gameplay().playerNotes).toBe('the dock is rotten');
   });
 
-  // The Avatar/Entities swap picks which view shows; it never switched a tab panel, so it's a radio group.
-  // Re-clicking the active one must be a no-op — a single toggle group otherwise clears its own value.
-  it('swaps between the avatar and the entity list without ever clearing the choice', () => {
-    renderLeftPanel({}, { seed: (gameplay) => gameplay.setCharacterData({ bodyMorphs: {}, currentHairStyle: 'long', hairLength: 0.5 }) });
-
-    const swap = screen.getByRole('radiogroup');
-    const player = within(swap).getByRole('radio', { name: 'Avatar' });
-    const entities = within(swap).getByRole('radio', { name: 'Entities' });
-    expect(player).toHaveAttribute('data-state', 'on');
-
-    fireEvent.click(entities);
-    expect(entities).toHaveAttribute('data-state', 'on');
-    expect(player).toHaveAttribute('data-state', 'off');
-
-    fireEvent.click(entities);
-    expect(entities).toHaveAttribute('data-state', 'on');
-  });
-
   // The bug this guards: the list resolved a scene name to an entity by bare substring, either way round,
   // so "Wolf" and "Direwolf" were interchangeable — the row label came from whichever was authored first.
   it('labels two present entities whose names share a word with their own names', () => {
@@ -228,6 +211,22 @@ describe('LeftPanel', () => {
     fireEvent.mouseDown(screen.getByRole('tab', { name: /Entities/i }));
     expect(screen.getByText('Wolf')).toBeInTheDocument();
     expect(screen.getByText('Direwolf')).toBeInTheDocument();
+  });
+
+  it('marks the entities following the player, and no one else', () => {
+    const cast = [{ id: 'e1', name: 'Bram' }, { id: 'e2', name: 'Hesk' }];
+    renderLeftPanel({ entities: cast as never }, {
+      world: { entities: cast } as never,
+      seed: (gameplay) => {
+        gameplay.setVisibleEntities([{ name: 'Bram', revealed: true }, { name: 'Hesk', revealed: true }]);
+        gameplay.setEntityFollowers(['e1']);
+      },
+    });
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Entities/i }));
+    const mark = screen.getByRole('img', { name: 'Following you' });
+    expect(screen.getByText('Bram').closest('div')!.contains(mark)).toBe(true);
+    expect(screen.getAllByRole('img', { name: 'Following you' })).toHaveLength(1);
   });
 
   it('labels a lone longer-named entity as itself, not as the shorter name it contains', () => {
@@ -251,10 +250,23 @@ describe('LeftPanel', () => {
     });
 
     fireEvent.mouseDown(screen.getByRole('tab', { name: /Entities/i }));
-    expect(screen.getByText('Kira (You)')).toBeInTheDocument();
+    const name = screen.getByText('Kira');
+    expect(name.parentElement).toHaveTextContent(/^KiraYou$/);
     expect(screen.queryByText('No entity visible.')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText('Kira (You)'));
+    fireEvent.click(name);
     expect(onEntityClick).toHaveBeenCalledWith('Kira');
+  });
+
+  it('lists no persona and no You mark under None in a world without a Custom Persona', () => {
+    const world = [{ id: 'e1', name: 'Wolf' }];
+    renderLeftPanel({ entities: world as never }, {
+      world: { entities: world } as never,
+      seed: (gameplay) => gameplay.setPersonaRef({ source: 'none' }),
+    });
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Entities/i }));
+    expect(screen.getByText('No entity visible.')).toBeInTheDocument();
+    expect(screen.queryByText('You')).toBeNull();
   });
 });
 
@@ -449,6 +461,51 @@ describe('RightPanel', () => {
     renderRightPanel({}, { turns: TURNS, stats: [] });
     expect(screen.queryByRole('tab', { name: 'Stats' })).toBeNull();
     expect(screen.getByRole('tab', { name: 'Traits' })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('RightPanel — the You mark', () => {
+  const mira = { id: 'mira', name: 'Mira', persona: true };
+  const asMira = {
+    world: { entities: [mira] } as never, turns: TURNS, stats: STATS,
+    seed: (gameplay: Gameplay) => {
+      gameplay.setEntityStats({ mira: [statFixture('Trust', 60)] });
+      gameplay.setPersonaRef({ source: 'world', entityId: 'mira' });
+    },
+  };
+
+  it('follows the persona’s name on the persona row', () => {
+    renderRightPanel({}, asMira);
+    const row = screen.getByTestId('persona-row');
+    expect(within(row).getByText('Mira').parentElement).toHaveTextContent(/^MiraYou$/);
+  });
+
+  it('shows no mark on the persona row under None', () => {
+    renderRightPanel({}, { turns: TURNS, stats: STATS, seed: (gameplay) => gameplay.setPersonaRef({ source: 'none' }) });
+    const row = screen.getByTestId('persona-row');
+    expect(within(row).getByText('None')).toBeInTheDocument();
+    expect(within(row).queryByText('You')).toBeNull();
+  });
+
+  it('follows the persona’s name on its stat section heading', () => {
+    renderRightPanel({}, asMira);
+    const section = screen.getByRole('region', { name: 'Mira stats' });
+    expect(within(section).getByRole('heading')).toHaveTextContent(/^MiraYou$/);
+    expect(within(screen.getByRole('region', { name: 'Global stats' })).queryByText('You')).toBeNull();
+  });
+
+  it('marks the Custom Persona entity’s stat heading under None', () => {
+    const custom = { id: 'w-you', name: 'Wanderer', customPersona: true };
+    renderRightPanel({}, {
+      world: { entities: [custom] } as never, turns: TURNS, stats: STATS,
+      seed: (gameplay) => {
+        gameplay.setEntityStats({ 'w-you': [statFixture('Trust', 70)] });
+        gameplay.setPersonaRef({ source: 'none' });
+      },
+    });
+    const section = screen.getByRole('region', { name: 'Wanderer stats' });
+    expect(within(section).getByRole('heading')).toHaveTextContent(/^WandererYou$/);
+    expect(within(screen.getByTestId('persona-row')).getByText('Wanderer').parentElement).toHaveTextContent(/^WandererYou$/);
   });
 });
 

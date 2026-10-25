@@ -6,14 +6,15 @@ import { executeStatCode } from './statCodeExecutor';
 import { statCodeNamed } from './statCodeNames';
 import { codeDictionaries, sandboxDictionaries, sandboxPlaceholders } from './statCodePlaceholders';
 import {
-  CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, LOCATION_MEMBERS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_FIELDS, ENTITY_FIELDS, PERSONA_FIELDS,
+  CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, LOCATION_ENTRY_FIELDS, LOCATION_MEMBERS, MEMORY_ENTRY_FIELDS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_FIELDS, ENTITY_FIELDS, PERSONA_FIELDS,
   NARRATION_FIELDS, PLAYER_CALL_ENTRIES, PREVIOUS_FIELDS, SANDBOX_GLOBALS, STAT_CODE_SURFACE, STAT_FIELDS, TRAIT_ENTRY_FIELDS,
   placeholderEntryFields, scriptSurface,
 } from './statCodeSurface';
 import { codeDiagnostics } from './statCodeAnalysis';
+import { codeCard } from './codeCards';
 import { entityTraitNames, sandboxTraits, unplayedEntities, worldTraitPlaces } from './statCodeTraits';
 import {
-  TEMPLATE_NAME, buildVariableTree, timingGlobalsOf, variableTreeLeaves, type VariableField, type VariableNode, type VariableTreeNames,
+  TEMPLATE_NAME, buildVariableTree, isVerbLeaf, readOnlyTree, timingGlobalsOf, variableTreeLeaves, type VariableField, type VariableNode, type VariableTreeNames,
 } from './statCodeVariableTree';
 
 const ph = (id: string, name: string, values: readonly string[], over: Partial<Placeholder> = {}): Placeholder =>
@@ -51,7 +52,12 @@ const world = {
     },
     { id: 'tom', name: 'Old Tom', traits: [], placeholders: [] },
   ] as Entity[],
-  dictionaries: [{ id: 'lore', name: 'Lore', entries: [], placeholders: [ph('era', 'Era', ['first'])] }] as Dictionary[],
+  dictionaries: [{
+    id: 'lore', name: 'Lore', placeholders: [ph('era', 'Era', ['first'])], entries: [
+      { id: 'crown', name: 'Iron Crown', key: ['crown'], value: 'A crown.' },
+      { id: 'sealed', name: 'Sealed', key: ['vault'], value: 'Hidden.', enabled: false },
+    ],
+  }] as Dictionary[],
 };
 
 /** The names as the stat box hands them to the editor. */
@@ -62,6 +68,7 @@ function editorNames(): VariableTreeNames {
     traits: worldTraitPlaces({ traits: world.traits, traitGroups: [] }, list),
     entities: entityTraitNames({ traits: world.traits, traitGroups: [], entities: world.entities }, list),
     placeholders: { list, owners: placeholderOwners(world), dictionaries: codeDictionaries(world.dictionaries, list) },
+    locations: ['Dock', 'Old Mill'],
   };
 }
 
@@ -99,14 +106,30 @@ const tree = buildVariableTree(editorNames());
 const templateTree = buildVariableTree();
 const emptyTree = buildVariableTree({});
 
-const NAME_LISTS: Record<string, string> = { traits: 'Traits', placeholders: 'Placeholders', stats: 'Stats' };
+const NAME_LISTS: Record<string, string> = { traits: 'Traits', placeholders: 'Placeholders', stats: 'Stats', entries: 'Entries' };
 
 /** A surface list as its level reads: each name-keyed map is a name list under its title. */
 const asLevel = (entries: readonly { name: string }[]) => entries.map((entry) => NAME_LISTS[entry.name] ?? entry.name);
 
 describe('the top level', () => {
   it('lists the sandbox’s globals in the order an author meets them, without console', () => {
-    expect(tree.map(labelOf)).toEqual(['This Stat', 'Stats', 'Traits', 'Entities', 'Persona', 'Placeholders', 'Dictionaries', 'Clock', 'Location', 'Discover', 'Memory', 'Diary']);
+    expect(tree.map(labelOf)).toEqual(['This Stat', 'Stats', 'Traits', 'Entities', 'Persona', 'Placeholders', 'Dictionaries', 'Clock', 'Locations', 'Location', 'discover', 'Memories', 'notes']);
+  });
+
+  it('inserts discover directly, with no group around the one call', () => {
+    expect(leaf(tree, 'discover')).toMatchObject({ insert: 'discover("Name")' });
+    expect(selected(leaf(tree, 'discover'))).toBe('"Name"');
+  });
+
+  // A group's one child would be a menu step that picks nothing.
+  const oneChildGroups = (nodes: readonly VariableNode[], at: string[] = []): string[] => nodes.flatMap((node) => {
+    if (node.kind === 'empty' || node.kind === 'field') return [];
+    const here = [...at, node.label];
+    const own = node.kind === 'group' && node.children.length === 1 && node.children[0].kind === 'field' ? [here.join(' › ')] : [];
+    return [...own, ...oneChildGroups(childrenOf(node), here)];
+  });
+  it.each([['the world', tree], ['a template', templateTree], ['an empty world', emptyTree]])('draws no group of one field in %s', (_case, nodes) => {
+    expect(oneChildGroups(nodes)).toEqual([]);
   });
 
   // `owner` is empty in a world stat's code, so only an owned or Blueprint stat's menu reaches it.
@@ -234,6 +257,12 @@ describe('entities, the persona and dictionaries', () => {
     expect(inserts(tree, 'Dictionaries', 'Lore', 'Placeholders', 'Era', 'value')).toBe('dictionaries.Lore.placeholders.Era.value');
   });
 
+  it('lists a dictionary’s enabled entries under it, each with its four fields', () => {
+    expect(levelAt(tree, 'Dictionaries', 'Lore', 'Entries')).toEqual(['Iron Crown']);
+    expect(levelAt(tree, 'Dictionaries', 'Lore', 'Entries', 'Iron Crown')).toEqual(['id', 'name', 'keys', 'value']);
+    expect(inserts(tree, 'Dictionaries', 'Lore', 'Entries', 'Iron Crown', 'keys')).toBe('dictionaries.Lore.entries["Iron Crown"].keys');
+  });
+
   it('opens the clock to its members and its previous to the start of the turn', () => {
     expect(levelAt(tree, 'Clock')).toEqual(CLOCK_MEMBERS.map((entry) => entry.name));
     expect(levelAt(tree, 'Clock', 'previous')).toEqual(CLOCK_PREVIOUS_FIELDS.map((entry) => entry.name));
@@ -247,6 +276,50 @@ const miraNames = () => {
     ? { ...entity, stats: [stat('m-trust', 'Trust'), stat('m-streak', 'Cold Streak')] } : entity));
   return entityTraitNames({ traits: world.traits, traitGroups: [], entities }, allPlaceholders(world)).find((entity) => entity.id === 'mira')!;
 };
+
+describe('verbs last in a group (R7)', () => {
+  /** Every group, at any depth, with a verb before a non-verb among its children. */
+  const misordered = (nodes: readonly VariableNode[], at: string[] = []): string[] => nodes.flatMap((node) => {
+    if (node.kind === 'empty' || node.kind === 'field') return [];
+    const here = [...at, node.label];
+    const level = childrenOf(node);
+    const firstVerb = level.findIndex(isVerbLeaf);
+    const bad = node.kind === 'group' && firstVerb >= 0 && level.slice(firstVerb).some((child) => !isVerbLeaf(child)) ? [here.join(' › ')] : [];
+    return [...bad, ...misordered(level, here)];
+  });
+
+  const owner = { kind: 'entity', entity: null } as const;
+  const timing = { narration: true, player: true, trait: true };
+  const worldTree = buildVariableTree(editorNames(), owner, 'stat', timing);
+  const toolTree = readOnlyTree(buildVariableTree(editorNames(), null, 'empty', timing));
+
+  it.each([['a world script', worldTree], ['a template', buildVariableTree(undefined, owner, 'stat', timing)]])(
+    'puts no verb before a field in %s',
+    (_case, nodes) => {
+      expect(variableTreeLeaves(nodes).filter(isVerbLeaf).length).toBeGreaterThan(0);
+      expect(misordered(nodes)).toEqual([]);
+    },
+  );
+
+  // Q24: a Tool script's menu drops every verb, so its order is the fields' alone.
+  it('keeps a user Tool script’s read-only menu in order, with no verb left in it', () => {
+    expect(variableTreeLeaves(toolTree).some(isVerbLeaf)).toBe(false);
+    expect(misordered(toolTree)).toEqual([]);
+  });
+
+  it('reads an entity’s fields, then move, follow, unfollow, diary', () => {
+    expect(levelAt(tree, 'Entities', 'Mira').slice(-4)).toEqual(['move', 'follow', 'unfollow', 'diary']);
+  });
+
+  it('reads the memory entry’s eleven fields, then pin, forget, edit, remove', () => {
+    const level = levelAt(tree, 'Memories', 'memories[0]');
+    const verbs = ['pin', 'forget', 'edit', 'remove'];
+    const names = MEMORY_ENTRY_FIELDS.map((entry) => entry.name);
+    expect(level).toEqual([...names.filter((name) => !verbs.includes(name)), ...verbs]);
+    expect(level.length - verbs.length).toBe(11);
+  });
+
+});
 
 describe('the owner’s group', () => {
   const entityOwner = buildVariableTree(editorNames(), { kind: 'entity', entity: miraNames() });
@@ -334,7 +407,8 @@ describe('field info', () => {
     [['Clock'], CLOCK_MEMBERS],
     [['Clock', 'previous'], CLOCK_PREVIOUS_FIELDS],
     [['Location'], LOCATION_MEMBERS],
-    [['Memory'], MEMORY_MEMBERS],
+    [['Locations', 'Old Mill'], LOCATION_ENTRY_FIELDS],
+    [['Memories'], MEMORY_MEMBERS],
     [['Traits', 'Brave'], TRAIT_ENTRY_FIELDS],
     [['Entities', 'Mira'], ENTITY_FIELDS],
     [['Entities', 'Mira', 'Traits', 'Keen'], TRAIT_ENTRY_FIELDS],
@@ -350,6 +424,56 @@ describe('field info', () => {
       expect(node && node.kind !== 'empty' && { detail: node.kind === 'field' ? node.detail : entry.detail, info: node.info })
         .toEqual({ detail: entry.detail, info: entry.info });
     }
+  });
+});
+
+describe('array elements', () => {
+  // The fields only: the persona has no verbs and stands first where the player is.
+  const presentFields = [
+    'id', 'name', 'type', 'pronouns', 'inScene', 'location', 'following', 'description', 'summary', 'aliases', 'traits', 'placeholders', 'stats',
+  ];
+
+  it('lists the memory element’s group, then the memories calls, with the verbs last', () => {
+    expect(levelAt(tree, 'Memories')).toEqual(['memories[0]', 'add', 'pin']);
+    expect(levelAt(tree, 'Memories', 'memories[0]')).toEqual(MEMORY_ENTRY_FIELDS.map((entry) => entry.name));
+  });
+
+  it('lists the present list first, then an entity entry’s fields, under the location and each locations row', () => {
+    for (const steps of [['Location', 'present'], ['Locations', 'Old Mill', 'present'], ['Locations', 'Dock', 'present']]) {
+      expect(levelAt(tree, ...steps)).toEqual(['present', ...presentFields]);
+    }
+    expect(inserts(tree, 'Location', 'present', 'present')).toBe('location.present');
+  });
+
+  it.each([
+    [['Memories', 'memories[0]', 'text'], 'memories[0]?.text', '0'],
+    [['Location', 'present', 'following'], 'location.present[0]?.following', '0'],
+    [['Locations', 'Old Mill', 'present', 'name'], 'locations["Old Mill"].present[0]?.name', '0'],
+  ])('inserts %j with the index to type over', (steps, insert, selection) => {
+    expect(inserts(tree, ...steps)).toBe(insert);
+    expect(selected(leaf(tree, ...steps))).toBe(selection);
+  });
+
+  it.each([['pin', 'memories[0]?.pin()'], ['forget', 'memories[0]?.forget()'], ['edit', 'memories[0]?.edit("Text")'], ['remove', 'memories[0]?.remove()']])(
+    'calls a memory’s %s complete, the index to type over', (verb, insert) => {
+      const call = leaf(tree, 'Memories', 'memories[0]', verb);
+      expect(call.insert).toBe(insert);
+      expect(selected(call)).toBe('0');
+    },
+  );
+
+  it('keeps a template’s type-over name selected over the index', () => {
+    const name = leaf(templateTree, 'Locations', TEMPLATE_NAME, 'present', 'name');
+    expect(name.insert).toBe('locations["Name"].present[0]?.name');
+    expect(selected(name)).toBe(TEMPLATE_NAME);
+  });
+
+  // The menu and the cards read one element shape, so every element leaf has the card of the field it names.
+  const elementLeaves = variableTreeLeaves(tree).filter((field) => field.insert.includes('[0]'));
+  it('has element leaves to check', () => { expect(elementLeaves.length).toBe(MEMORY_ENTRY_FIELDS.length + presentFields.length * 3); });
+  it.each(elementLeaves.map((field) => [field.insert, field]))('gives %s the card of its field', (insert, field) => {
+    const card = codeCard(insert, insert.lastIndexOf(`.${field.label}`) + 2, { surface: STAT_CODE_SURFACE });
+    expect(card).toMatchObject({ description: field.info, signature: { type: field.detail } });
   });
 });
 
@@ -400,11 +524,11 @@ describe('every leaf against the sandbox', () => {
     persona: entities.find((entity) => entity.id === 'mira'),
     dictionaries: sandboxDictionaries(names.placeholders!.dictionaries ?? [], placeholders.owners),
     // Test Code stands at the world's starting location.
-    places: { locations: [{ id: 'dock', name: 'Dock' }], location: { id: 'dock', name: 'Dock' } },
+    places: { locations: [{ id: 'dock', name: 'Dock' }, { id: 'mill', name: 'Old Mill' }], location: { id: 'dock', name: 'Dock' } },
   });
 
-  // `diary` names a real entity and never the persona, so it has its own cases below.
-  const isDiary = (field: VariableField) => field.insert.startsWith('diary(');
+  // `diary` writes for a real entity and never the persona, so it has its own cases below.
+  const isDiary = (field: VariableField) => field.label === 'diary';
 
   // A pin through a path that reaches nothing is dropped, not thrown, so that is checked apart from the run.
   // Only Mira plays, so the persona's union reaches Rook's names as blanks.
@@ -428,17 +552,21 @@ describe('every leaf against the sandbox', () => {
     await expect(run(`const read = ${insert}; return 1;`)).resolves.toMatchObject({ value: 1, error: null });
   });
 
-  it('writes the diary of the world’s first entity as inserted, where Test Code plays no persona', async () => {
-    const [diary] = variableTreeLeaves(tree).filter(isDiary);
-    expect(diary.insert).toBe('diary("Mira", "Line")');
-    expect(diary.insert.slice(diary.selection?.from, diary.selection?.to)).toBe('Mira');
-    const result = await executeStatCode(`${diary.insert}; return 1;`, stats, stats[0], { entities });
-    expect(result).toMatchObject({ value: 1, error: null, worldWrites: { diary: [{ entity: 'mira', line: 'Line' }] } });
+  it('lists diary on each entity’s entry and nowhere at the top level or on the persona', () => {
+    expect(variableTreeLeaves(tree).filter(isDiary).map((field) => field.insert)).toEqual(['entities.Mira.diary("Line")', 'entities.Rook.diary("Line")', 'entities["Old Tom"].diary("Line")']);
   });
 
-  it('leaves the template’s diary name to type over, since no entity is called Name', async () => {
+  it('writes the diary of an entity the player doesn’t play as inserted, the line left to type over', async () => {
+    const diary = leaf(tree, 'Entities', 'Rook', 'diary');
+    expect(selected(diary)).toBe('"Line"');
+    expect(await run(`${diary.insert}; return 1;`)).toMatchObject({ value: 1, error: null, worldWrites: { diary: [{ entity: 'rook', line: 'Line' }] } });
+    expect((await run(`${leaf(tree, 'Entities', 'Mira', 'diary').insert}; return 1;`)).error).toMatch(/no entity named "Mira"/);
+  });
+
+  it('leaves the template’s entity name to type over, since no entity is called Name', async () => {
     const [diary] = variableTreeLeaves(templateTree).filter(isDiary);
-    expect(diary.insert.slice(diary.selection?.from, diary.selection?.to)).toBe('Name');
+    expect(diary.insert).toBe('entities["Name"].diary("Line")');
+    expect(selected(diary)).toBe('Name');
     expect((await run(`${diary.insert}; return 1;`)).error).toMatch(/no entity named "Name"/);
   });
 

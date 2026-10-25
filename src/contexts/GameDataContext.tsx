@@ -3,14 +3,17 @@ import { createContext, useContext, useState, useCallback, useMemo, useEffect, u
 import WorldStorageService from '../services/WorldStorageService';
 import { canonicalEqual } from '@/lib/canonicalStringify';
 import { dirtyDiff } from '@/lib/dirtyDiff';
+import { mapImages } from '@/lib/mapBackground';
 import { registerDevHook } from '@/lib/devRouter';
 import { holdUnsavedWorld } from '@/lib/unsavedWorld';
 import { onWorldChangedElsewhere, type WorldChange } from '@/lib/worldChangeSignal';
 import { migrateWorld, APP_VERSION } from '@/lib/version';
 import { dropLocationFromEntities } from '@/lib/entityPresence';
+import { dropRelationshipsTo } from '@/lib/entityRelationships';
 import { dropLinksTo, removeBlueprints } from '@/lib/traitLinks';
 import { dropStatLinksTo, playStatWorld, removeStatBlueprints } from '@/lib/statLinks';
 import { neededCopies, syncBlueprintCopies } from '@/lib/blueprintCopies';
+import { withoutSpentFallback } from '@/lib/legacyVrm';
 import { dropLocationFromConnections } from '@/lib/locationGraph';
 import { removeLocationPromotingChildren } from '@/lib/locationTree';
 import { newLocationPosition } from '@/lib/locationCanvas';
@@ -103,9 +106,7 @@ function useProvideGameData() {
     thumbnail: null, // Base64 encoded string of the image file
     bgm: null, // Base64 encoded string of the audio file
     systemPrompt: '',
-    use3DModel: true,
     tags: [],
-    customPlayerVRM: null // { data, type } of an optional custom player VRM model
   });
   const [stats, setStats] = useState<Stat[]>([]);
   const [statGroups, setStatGroups] = useState<StatGroup[]>([]);
@@ -304,10 +305,10 @@ function useProvideGameData() {
     setEntities(prevEntities => [...prevEntities, newEntity]);
   }, []);
 
-  // Membership rides on the entity itself, so deleting it takes every location link with it — no
-  // location-side cleanup to do.
+  // Membership rides on the entity itself, so deleting it takes every location link with it. Relationships
+  // that target it ride on other entities, so they go in the same pass.
   const removeEntity = useCallback((entityId: string) => {
-    setEntities(prevEntities => prevEntities.filter(entity => entity.id !== entityId));
+    setEntities(prevEntities => dropRelationshipsTo(entityId, prevEntities.filter(entity => entity.id !== entityId)));
   }, []);
 
   const addEntityGroup = useCallback((newGroup: EntityGroup) => {
@@ -380,25 +381,21 @@ function useProvideGameData() {
       thumbnail: null,
       bgm: null,
       systemPrompt: '',
-      use3DModel: true,
       tags: [],
-      customPlayerVRM: null
     };
 
-    // Handle world overview with validation (migrateWorld already moved any legacy VRM into worldOverview).
+    // Handle world overview with validation (migrateWorld already moved any legacy VRM into the store).
     const overview = worldData.worldOverview || defaultOverview;
     const allowedPersonas = worldAllowedPersonas(overview);
     const startPersona = worldStartPersona(overview);
-    const normalizedOverview: WorldOverview = {
+    const normalizedOverview: WorldOverview = withoutSpentFallback({
       name: overview.name || defaultOverview.name,
       description: overview.description || defaultOverview.description,
       author: overview.author || defaultOverview.author,
       thumbnail: overview.thumbnail || defaultOverview.thumbnail,
       bgm: overview.bgm || defaultOverview.bgm,
       systemPrompt: overview.systemPrompt || defaultOverview.systemPrompt,
-      use3DModel: typeof overview.use3DModel === 'boolean' ? overview.use3DModel : defaultOverview.use3DModel,
       tags: Array.isArray(overview.tags) ? overview.tags : defaultOverview.tags,
-      customPlayerVRM: overview.customPlayerVRM || defaultOverview.customPlayerVRM,
       readme: overview.readme || defaultOverview.readme,
       introReadme: overview.introReadme || defaultOverview.introReadme,
       // Allowlisted like everything above — omitting it here would silently drop a world's authored
@@ -407,11 +404,14 @@ function useProvideGameData() {
       // Same allowlist rule. The switch is spread only when it is actually a boolean: absent means on.
       ...(Array.isArray(overview.openings) ? { openings: overview.openings } : {}),
       ...(overview.openingWeights ? { openingWeights: overview.openingWeights } : {}),
+      ...(overview.vrmStore ? { vrmStore: overview.vrmStore } : {}),
+      ...(overview.legacyVrmFallback ? { legacyVrmFallback: overview.legacyVrmFallback } : {}),
       ...(typeof overview.openingsEnabled === 'boolean' ? { openingsEnabled: overview.openingsEnabled } : {}),
+      ...(mapImages(overview).length && overview.mapBackground ? { mapBackground: overview.mapBackground } : {}),
       // Any and the player's default are the absent values.
       ...(allowedPersonas !== 'any' ? { allowedPersonas } : {}),
       ...(startPersona ? { startPersona } : {})
-    };
+    }, Array.isArray(worldData.entities) ? worldData.entities : []);
     // Replace, never merge: a merge lets a field the normalizer doesn't set survive from the previously
     // loaded world, leaking it into this one and into the next saveWorld.
     setWorldOverview(normalizedOverview);
@@ -641,6 +641,7 @@ function useProvideGameData() {
       const writeBack = await planOwnedWriteBack({
         entities: data.entities, dictionaries: data.dictionaries, placeholders, locations,
         traits: data.traits, traitGroups: data.traitGroups ?? [], stats: data.stats, statGroups: data.statGroups ?? [],
+        vrmStore: worldOverview.vrmStore,
       });
       const stamped = (stamps: LinkStamp[]) => (stamps.length
         ? { ...data, entities: stampLinks(data.entities, stamps), dictionaries: stampLinks(data.dictionaries, stamps) }

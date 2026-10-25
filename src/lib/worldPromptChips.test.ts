@@ -28,7 +28,7 @@ const MOOD_CHIP = encodePlaceholderToken({ id: MOOD.id, mode: 'unique', placemen
 
 const overview = (promptOverrides: WorldOverview['promptOverrides']): WorldOverview => ({
   name: 'W', description: '', author: '', thumbnail: null, bgm: null,
-  systemPrompt: '', use3DModel: false, tags: [], promptOverrides,
+  systemPrompt: '', tags: [], promptOverrides,
 });
 
 const WORLD = overview({
@@ -174,7 +174,7 @@ describe('which custom prompts give chip values', () => {
   });
 });
 
-describe('the Player Name marker in a custom prompt', () => {
+describe('the Persona Name marker in a custom prompt', () => {
   // The marker reads its sentence position from the text around it, which a per-chip value cannot carry.
   // A prompt names the player with the Persona prompt variable.
   it('is not a chip value, so the prompt keeps it as typed', () => {

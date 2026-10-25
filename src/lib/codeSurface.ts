@@ -41,7 +41,7 @@ export interface SurfaceEntry {
 }
 
 /** Whether an entry is a function, by the arrow its detail spells. */
-export const isMethodEntry = (entry: SurfaceEntry): boolean => /^\(.*\)\s*=>/.test(entry.detail);
+export const isMethodEntry = (entry: Pick<SurfaceEntry, 'detail'>): boolean => /^\(.*\)\s*=>/.test(entry.detail);
 
 /** `entries` with each field's access. A method and a name in `maps` carry none. */
 const applyAccess = (entries: readonly SurfaceEntry[], accessOf: (name: string) => CodeAccess, maps: readonly string[]) =>
@@ -81,8 +81,12 @@ export interface CodeSurface {
   /** What `self` holds with `statMaps`: a trait's script reads its trait's entry, read-only; a world script's is
    *  empty. Absent = a stat. */
   selfIs?: 'trait' | 'empty';
+  /** True when no write reaches anything and no method exists: a user Tool's script (Q24). */
+  readOnly?: boolean;
   /** The Guide heading of each global that has one, for its card's Read in the Guide link. */
   guide?: Readonly<Record<string, DocTarget>>;
+  /** Retired globals by name: each member read and the sentence naming its new form (Q28). */
+  retired?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
 const knownNames = new WeakMap<CodeSurface, ReadonlySet<string>>();

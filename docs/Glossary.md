@@ -83,7 +83,8 @@ The words Formamorph uses, and what each one means. Each term links the page tha
 | [Save](Saves-and-Backup) | One game's progress, with every turn, your notes and your memories |
 | [Autosave](Saves-and-Backup#autosave) | The saves each world keeps, written after every turn: one by default, more with **Autosaves Kept** |
 | [Backup](Saves-and-Backup#the-backup--restore-dialog) | One file with your worlds, saves, library entities and library dictionaries |
-| [Avatar](Avatars) | A 3D model of you, the player, from a VRM file |
+| [Avatar](Avatars) | A 3D model from a VRM file, chosen for an entity |
+| [User's Default](Avatars#how-to-set-your-default-avatar) | The Avatar you mark as your default. An entity set to it shows your default, or the bundled Avatar when you have none. |
 | [Permissive License](Avatars#the-permissive-license) | A VRM license that allows every use the community needs. An Avatar needs it to publish. |
 | [Profile Image](Avatars#avatars-3d-models-and-profile-images) | The image on your Community Creations account. It is not an Avatar. |
 
@@ -160,7 +161,7 @@ The words Formamorph uses, and what each one means. Each term links the page tha
 | [Condition](World-Editor-Traits#conditions) | One check in a row: a trait, any trait in a group, a persona, or a stat. **Not** makes it hold while the target is off. |
 | [Stat Condition](World-Editor-Traits#stat-conditions) | A Condition that compares a stat to a number, raw or as a percent of the stat's range. *Rage >= 80* |
 | [Visibility Rule](World-Editor-Entities#visibility-rules) | Rows on a gallery image that decide when it shows in play. With no rows, it always shows. |
-| [Owner](World-Editor-Traits#whose-trait-counts) | The entity or dictionary that has a trait, a stat or a placeholder, as its own or through a link or copy. The played persona is the owner **You**. An item with no owner is global. |
+| [Owner](World-Editor-Traits#whose-trait-counts) | The entity or dictionary that has a trait, a stat or a placeholder, as its own or through a link or copy. The played persona is the owner **Persona**. An item with no owner is global. |
 | [Global Stat](World-Editor-Stats#how-the-ai-tracks-stat-changes) | A stat on the **Stats** tab, outside every entity. No one owns it. The AI reads it under **Global Stats**. |
 | [Global Trait](World-Editor-Traits#whose-trait-counts) | A trait outside every entity, such as one the player picks at the start. No one owns it. The AI reads the picked ones under **Global Traits**. |
 | [Persona Stat](Persona-Authoring#persona-stats) | A stat of the entity the player plays. The AI reads it in the **Persona** block, under the `Player Character` key. |
@@ -176,7 +177,7 @@ The words Formamorph uses, and what each one means. Each term links the page tha
 | [World or Unique](World-Editor-Placeholders#world-or-unique) | Every World chip of a placeholder shows the same roll. Each Unique chip rolls on its own. |
 | [Draw Weight](World-Editor-Placeholders#draw-weight) | How often a value comes up, compared with the others. Weight 0 never draws it. |
 | [Pin](World-Editor-Placeholders#pins) | Holds a placeholder at one value while its source is active: a stat band, a location, a trait or a value |
-| [Player Name, Character Name](World-Editor-Placeholders#built-in-chips) | The two built-in chips. Type `{{user}}` for your name, or `{{char}}` for the entity that owns the text. |
+| [Persona Name, Character Name](World-Editor-Placeholders#built-in-chips) | The two built-in chips. Type `{{user}}` for your name, or `{{char}}` for the entity that owns the text. |
 | [Dictionary](World-Editor-Dictionary) | A world's lorebook. Its entries reach the AI only when a keyword matches. |
 | [Book](World-Editor-Dictionary#books) | A group of dictionary entries. A library dictionary is one book. |
 | [Entry](World-Editor-Dictionary#the-entry-panel) | One piece of lore: **Trigger Keywords** and the **Value** the AI gets |

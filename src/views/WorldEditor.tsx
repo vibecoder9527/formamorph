@@ -55,10 +55,9 @@ import { SaveSplitButton } from '@/components/editor/SaveSplitButton';
 import { useSaveStatus } from '@/components/editor/useSaveStatus';
 import { useAutoSave } from '@/components/editor/useAutoSave';
 import { ChangedElsewhereDialog } from '@/components/editor/ChangedElsewhereDialog';
-import { OPTIMIZE_IMAGES_TIP } from '@/components/editor/appBarCopy';
 import { useMountedRef } from '@/lib/useMountedRef';
 import { useSettings } from '@/contexts/SettingsContext';
-import { ImageDown, Loader2, Search, ChevronRight } from "lucide-react";
+import { Search, ChevronRight } from "lucide-react";
 import { ActionIcon } from '@/lib/actionIcons';
 import { cn } from "@/lib/utils";
 import EditorFindBar from '@/components/editor/EditorFindBar';
@@ -94,6 +93,8 @@ import { useWorldToolsAdapter } from '../managers/useWorldToolsAdapter';
 import { useWorldEntitiesAdapter } from '../managers/useWorldEntitiesAdapter';
 import { useWorldLocationsAdapter } from '../managers/useWorldLocationsAdapter';
 import { useWorldDictionaryAdapter } from '../managers/useWorldDictionaryAdapter';
+import { useWorldMediaEditor } from '../managers/useWorldMediaEditor';
+import type { OptimizeControl } from '../managers/MediaHeader';
 import { LOCATION_VIEWS, type LocationView } from './locationViews';
 import { NO_OVERVIEW_PANEL, overviewPanelFor, type OverviewPanel } from './overviewPanels';
 import { placeholderPanelTabsFor, type PlaceholderPanelTab } from './placeholderPanelTabs';
@@ -126,12 +127,15 @@ import { hasAuthoredOpenings, openingsEnabled, setOpeningsEnabled } from '@/lib/
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { APP_VERSION } from '@/lib/version';
 import type { Entity, Dictionary, World, FocusFieldHint } from '@/types';
+import { mediaHolds, type MediaParent } from '@/lib/mediaIndex';
+import { mediaParentSpec } from '@/lib/mediaParents';
 import { useDownscalePrompt } from '@/lib/useDownscalePrompt';
 import { SelectedContentActions } from '@/components/ContentLinkStatus';
 import { useLibraryLinking } from '@/lib/useLibraryLinking';
 import { Tip } from '@/components/ui/tooltip';
 import { authoredChipScene } from '@/lib/chipValues/authoredScene';
 import { buildToolSnapshot } from '@/lib/tools/toolSnapshot';
+import { openingStateOf } from '@/lib/openingState';
 import { useHelpWorldSource } from '@/lib/formaquestion/helpWorld';
 
 /** The Take Me There mark for a tab's search and add row. The registry says which tabs have one; Overview has no list. */
@@ -206,7 +210,7 @@ const WorldEditorInner = ({
   // unsaved edits included.
   const editorToolWorld = useCallback(() => {
     const world = getWorldData();
-    return buildToolSnapshot(authoredChipScene(world), world.dictionaries ?? []);
+    return buildToolSnapshot(authoredChipScene(world), world.dictionaries ?? [], null, { state: openingStateOf(world), authored: world });
   }, [getWorldData]);
   useHelpWorldSource(editorToolWorld, getWorldData);
 
@@ -219,9 +223,9 @@ const WorldEditorInner = ({
     updateWorldOverview({ thumbnail: w.worldOverview.thumbnail });
     setEntities(w.entities);
     setLocations(w.locations);
+    setDictionaries(w.dictionaries);
   };
-  // null = idle; 'scanning' = measuring before the choice dialog; then the live per-image encode progress.
-  const [optimizeProgress, setOptimizeProgress] = useState<{ done: number; total: number } | 'scanning' | null>(null);
+  const [optimizeProgress, setOptimizeProgress] = useState<OptimizeControl['progress']>(null);
   const { exportWorld, dialog: worldExportDialog } = useWorldExport(promptWorld);
   // Cancels an in-flight optimize when the editor closes: without it the orphaned run keeps the shared encode
   // worker busy for the whole world and then writes its stale click-time snapshot back into GameDataContext,
@@ -628,7 +632,7 @@ const WorldEditorInner = ({
     try {
       // The card's own data keeps the chips; only the filename is flattened, since a placement id is not a name.
       const links = await exportedComponentLinks(entity.link);
-      downloadBlob(await exportEntityCard(entity, placeholders, links, undefined, { traits, traitGroups, entities, stats, statGroups }), `${labelPlaceholders(entity.name, placeholders, { letters: placementLetters, owners: placeholderOwners }) || 'Character'}.webp`);
+      downloadBlob(await exportEntityCard(entity, placeholders, links, undefined, { traits, traitGroups, entities, stats, statGroups }, worldOverview?.vrmStore), `${labelPlaceholders(entity.name, placeholders, { letters: placementLetters, owners: placeholderOwners }) || 'Character'}.webp`);
     } catch (error) {
       toastError(error, 'Could not export the entity.');
     }
@@ -659,6 +663,8 @@ const WorldEditorInner = ({
     entities, dictionaries, placeholders, worldPlaceholders, placeholderGroups, locations, traits, traitGroups, stats, statGroups,
     updateEntity, updateDictionary, setEntities, setDictionaries,
     addEntityToWorld, addBookToWorld, addPlaceholder, addLocation, setOwnedLibraryIds,
+    vrmStore: worldOverview?.vrmStore,
+    setVrmStore: (vrmStore) => updateWorldOverview({ vrmStore }),
     reopenPicker: (kind) => {
       setResumePicker(true);
       if (kind === 'dictionary') setShowAddDictionary(true); else setShowAddEntity(true);
@@ -1033,8 +1039,23 @@ const WorldEditorInner = ({
   const dictionaryParts = useListEditor(dictionaryEditor.adapter, {
     selectedId: selections.dictionary ?? null, onSelect: selectDictionaryItem, search,
   });
+  const selectMediaItem = useCallback((id: string | null) => select('media', id), [select]);
+  const goToMediaParent = useCallback((parent: MediaParent) => {
+    const target = mediaParentSpec(parent.kind).goTo;
+    if (target.to === 'overview') setActiveTab('overview');
+    else if (target.to === 'canvas') {
+      setActiveTab('locations');
+      setLocationView('canvas');
+    } else navigateToBenchItem(target.tab, parent.id);
+  }, [navigateToBenchItem]);
+  const mediaParts = useWorldMediaEditor({
+    selectedId: selections.media ?? null, onSelect: selectMediaItem, search, onGoTo: goToMediaParent,
+    publishBytes: bench.publishBytes,
+    optimize: { progress: optimizeProgress, onRun: () => { void optimizeImages(); } },
+  });
   // The active tab's List Editor parts, on a tab that runs on it.
   const partsByTab: Partial<Record<string, ListEditorParts>> = {
+    media: mediaParts,
     traits: traitsParts, placeholders: placeholdersParts, stats: statsParts,
     entities: entitiesParts, locations: locationsParts, dictionary: dictionaryParts, scripts: scriptsParts, tools: toolsParts,
   };
@@ -1042,7 +1063,7 @@ const WorldEditorInner = ({
   const adaptersByTab: Partial<Record<RevealTab, { holds: (id: string) => boolean }>> = {
     traits: traitsAdapter, placeholders: placeholdersEditor.adapter, stats: statsAdapter,
     entities: entitiesEditor.adapter, locations: locationsAdapter, dictionary: dictionaryEditor.adapter, scripts: scriptsAdapter,
-    tools: toolsAdapter,
+    tools: toolsAdapter, media: { holds: (id) => mediaHolds(getWorldData(), id) },
   };
   listHoldsRef.current = (tab, id) => !!adaptersByTab[tab]?.holds(id);
   // What the author sees on the active tab beyond the tab itself, for a new Step's Origin.
@@ -1231,25 +1252,6 @@ const WorldEditorInner = ({
       {findButton}
     </div>
   );
-  const optimizing = optimizeProgress !== null;
-  const optimizeTip = optimizeProgress === null ? OPTIMIZE_IMAGES_TIP
-    : optimizeProgress === 'scanning' ? 'Scanning…' : `Optimizing ${optimizeProgress.done}/${optimizeProgress.total}…`;
-  // aria-disabled keeps pointer events, so the tooltip shows the progress.
-  const optimizeButton = advanced && (
-    <Tip tip={optimizeTip}>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="aria-disabled:opacity-50"
-        aria-label="Optimize Images"
-        aria-disabled={optimizing}
-        aria-busy={optimizing}
-        onClick={() => { if (!optimizing) void optimizeImages(); }}
-      >
-        {optimizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageDown className="h-4 w-4" />}
-      </Button>
-    </Tip>
-  );
   // Both modes and both layouts reach Export World here.
   const saveMenu = [{
     label: 'Export World',
@@ -1306,7 +1308,6 @@ const WorldEditorInner = ({
           <Separator orientation="vertical" className="mx-1 h-5" />
           {modeSelect}
           <Separator orientation="vertical" className="mx-1 h-5" />
-          {optimizeButton}
           {benchButton}
           <SaveSplitButton {...saveProps} />
         </>
@@ -1367,7 +1368,6 @@ const WorldEditorInner = ({
     <div className="p-3 border-t flex flex-wrap items-center gap-2">
       {tabActions}
       <div className="ml-auto flex items-center gap-2">
-        {optimizeButton}
         <SaveSplitButton {...saveProps} iconOnly />
       </div>
     </div>

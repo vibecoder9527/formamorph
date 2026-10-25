@@ -292,7 +292,7 @@ describe('the assembled first prompt', () => {
     const w = world({
       worldOverview: {
         name: 'Sedge Landing', description: '', author: '', thumbnail: null, bgm: null, systemPrompt: '',
-        use3DModel: false, tags: [],
+        tags: [],
         openings: [{ id: 'o0', text: 'Benched.', kind: 'action' }, { id: 'o1', text: cue, kind: 'action' }],
         openingWeights: { o0: 0 },
       },
@@ -705,17 +705,17 @@ describe('the persona pick', () => {
     expect(at(w, { personaId: 'e-wren' }).opening.text).toBe('Wren steps ashore.');
   });
 
-  it('names the persona as the Player Name of its own row', () => {
+  it('names the persona as the Persona Name of its own row', () => {
     const w = staged({ entities: [{ ...cast()[1], openings: [row('o-wren', '{{user}} steps ashore.', true)] }] });
     expect(at(w, { personaId: 'e-wren' }).opening.text).toBe('Wren steps ashore.');
   });
 
-  it('names the Custom Persona entity as the Player Name under None', () => {
+  it('names the Custom Persona entity as the Persona Name under None', () => {
     const w = staged({ entities: [{ ...custom(), openings: [row('o-custom', '{{user}} arrives.', true)] }] });
     expect(at(w, {}).opening.text).toBe('Newcomer arrives.');
   });
 
-  it('reads the Player Name as "you" when the world has no persona to play', () => {
+  it('reads the Persona Name as "you" when the world has no persona to play', () => {
     const w = staged({ worldOverview: { ...ov, openings: [row('o-world', '{{user}} wake.')] } });
     expect(at(w, {}).opening.text).toBe('You wake.');
   });
@@ -799,6 +799,15 @@ describe('entity stats at game start', () => {
   it('leaves out a trait a fresh game does not pick', () => {
     const [row] = marenOf(staged([maren({ traits: [stoic] })]))!.stats;
     expect(row).toMatchObject({ value: 20, max: 100, traitShift: 0 });
+  });
+
+  it('moves a global stat through an entity’s default global row, as play opens it (ticket 02 persona ruling)', () => {
+    const lucky: Trait = { id: 't-lucky', name: 'Lucky', isDefault: true, statChanges: [{ statId: 's-luck', value: 3, type: 'starting' }] };
+    const luckOf = (opening: ReturnType<typeof openingFor>) => opening.stats.find((s) => s.id === 's-luck')!.value;
+    const base = luckOf(openingFor(staged([maren({ traits: [] })])));
+    expect(luckOf(openingFor(staged([maren({ traits: [lucky] })])))).toBe(base + 3);
+    const wren = staged([maren({ id: 'e-wren', name: 'Wren', persona: true, personaOnly: true, traits: [lucky] })]);
+    expect(luckOf(atPersona(wren, 'e-wren'))).toBe(base + 3);
   });
 
   it('never lets an entity’s trait move the player’s stats', () => {

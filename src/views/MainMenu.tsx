@@ -10,8 +10,8 @@ import { useDevRoute, registerDevHook } from '../lib/devRouter';
 import { useSurfaceTab } from '@/components/ui/surface';
 import { ELEMENT_ICONS } from '@/lib/elementIcons';
 import { MAIN_MENU_CARD_TABS, type MainMenuCardTab } from './mainMenuTabs';
-import { findSavesUsingModel } from '@/lib/modelUsage';
-import { DEFAULT_AVATAR_URL } from '@/lib/defaultAvatar';
+import { clearLibraryModelPicks, deleteModelDescription, findModelUsage, type ModelUsage } from '@/lib/libraryVrmDelete';
+import { DEFAULT_AVATAR_URL, clearUserDefaultAvatar, readUserDefaultAvatar, setUserDefaultAvatar } from '@/lib/defaultAvatar';
 import { toast } from 'react-toastify';
 import { toastError } from '@/lib/linkToast';
 import { withImportedWorldTools } from '@/lib/tools/worldTools';
@@ -22,7 +22,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tip, Tooltip, TooltipTrigger, TooltipPortal, TooltipPositioner, TooltipPopup } from "@/components/ui/tooltip";
 import {ConfirmDialog} from "@/components/ConfirmDialog";
 import {FilePlus2, DoorOpen, Pencil, AlertTriangle, Code, User, Shield, Globe, LayoutGrid, GalleryThumbnails, Columns2, RectangleVertical, Menu, BookOpen, ChevronLast, MoreHorizontal, MessageSquarePlus, FolderOpen, Archive, Settings, ScrollText, type LucideIcon } from "lucide-react";
-import { DefaultPersonaBadge, DefaultPersonaMenuItem } from '@/components/library/DefaultPersona';
+import { DefaultAvatarMenuItem, DefaultBadge, DefaultPersonaMenuItem } from '@/components/library/LibraryDefault';
 import { AvatarThumbnailMenuItems } from '@/components/library/AvatarThumbnail';
 import { useAvatarThumbnails } from '@/lib/useAvatarThumbnails';
 import { ActionIcon } from '@/lib/actionIcons';
@@ -56,6 +56,8 @@ import WorldEditor from './WorldEditor';
 import { LibraryTileGrid } from '@/components/library/LibraryTileGrid';
 import { EntityPlaceholderArt } from '@/components/EntityPlaceholderArt';
 import { useLibraryTiles } from '@/lib/useLibraryTiles';
+import { isWorldOptimizing, useOptimizingWorldIds } from '@/lib/worldOptimizeProgress';
+import { onWorldSavedHere } from '@/lib/worldChangeSignal';
 import { useComponentUpdates } from '@/lib/useComponentUpdates';
 import { UpdateAvailableDialog } from '@/components/modals/UpdateAvailableDialog';
 import { WorldUpdateReviewDialog } from '@/components/modals/WorldUpdateReviewDialog';
@@ -81,6 +83,7 @@ import { WebVersionChangelog } from '@/components/menu/WebVersionChangelog';
 import { parseDictionaryImport } from '@/lib/dictionaryFile';
 import { readLibraryDetails } from '@/lib/contentAuthor';
 import { importCharacterFile } from '@/lib/entityFile';
+import { withCarriedVrm } from '@/lib/entityVrmCarry';
 import { importedDefaultPersona, isJsonFile, isStPersonaBackupFile, readStPersonaFiles, stPersonaReport } from '@/lib/stPersonaImport';
 import { useDownscalePrompt } from '@/lib/useDownscalePrompt';
 import { useWorldExport } from '@/lib/useWorldExport';
@@ -194,15 +197,6 @@ const IMPORT_TARGET: Record<MainMenuCardTab, TargetAttribute> = {
   entities: targetAttribute('mainMenu.entities', 'import-entity'),
   dictionaries: targetAttribute('mainMenu.dictionaries', 'import-dictionary'),
   models: targetAttribute('mainMenu.models', 'import-avatar'),
-};
-
-/** Name the affected saves in a prompt, capping the list so a big library doesn't produce a wall of text. */
-const listSaves = (names: string[]): string => {
-  const shown = names.slice(0, 3).map((name) => `"${name}"`);
-  const rest = names.length - shown.length;
-  if (rest > 0) return `${shown.join(', ')} and ${rest} more`;
-  if (shown.length === 1) return shown[0];
-  return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
 };
 
 
@@ -376,6 +370,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   const [showIntroReadme, setShowIntroReadme] = useState(false);
   // The global default persona: a library entity id, device-local.
   const [defaultPersona, setDefaultPersonaId] = useState(readDefaultPersona);
+  const [defaultAvatar, setDefaultAvatarId] = useState(readUserDefaultAvatar);
   const entryFlow = useRef<EnterWorldFlowHandle>(null);
   // Unpinned: the code notice reads stat names outside any entry draft.
   const { stats } = useResolvedAuthoredWorld();
@@ -433,7 +428,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     if (devRoute?.modal === 'profile') setShowProfileDialog(true);
     if (devRoute?.modal === 'feedbackHub') setShowFeedback(true);
     if (devRoute?.modal === 'adminPanel') setShowAdminPanel(true);
-    if (['worldEditor', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere'].includes(devRoute?.modal ?? '')) setShowWorldEditor(true);
+    if (['worldEditor', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar'].includes(devRoute?.modal ?? '')) setShowWorldEditor(true);
     if (devRoute?.modal === 'avatar') setShowCharacterCustomization(true);
     if (devRoute?.modal === 'aiSetup') setGate({ reason: 'firstRun' });
     // The prompt viewer reads a world's overrides, so it opens on a canned one rather than on whatever the
@@ -569,8 +564,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [modelToDelete, setModelToDelete] = useState<string | null>(null);
   const [previewModelId, setPreviewModelId] = useState<string | null>(null);
-  // Saves whose character wears the model queued for deletion; null while the scan is still running.
-  const [modelUsage, setModelUsage] = useState<string[] | null>(null);
+  // The saves and library entities that use the model queued for deletion; null while the scan runs.
+  const [modelUsage, setModelUsage] = useState<ModelUsage | null>(null);
   const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
   // A blank character being authored but not yet saved (New Entity → editor, persisted only on Save).
   const [draftEntity, setDraftEntity] = useState<Entity | null>(null);
@@ -623,7 +618,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
    * side already offers this choice; the publish side is where the big image actually comes from.
    */
   const publishEntity = async (entity: Entity, libraryDetails?: { author?: string }) => {
-    openPublish(entityPublishPayload(await promptEntity(entity), libraryDetails), entity.id);
+    openPublish(entityPublishPayload(await withCarriedVrm(await promptEntity(entity)), libraryDetails), entity.id);
   };
 
   /**
@@ -806,6 +801,14 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     }
   }, []);
 
+  // A world stored behind the menu, such as a download that lands after Community Creations closes, joins
+  // the grid. Saves of worlds the grid already holds are edits, which their own surfaces resync.
+  const worldIdsRef = useRef(new Set<string>());
+  worldIdsRef.current = new Set(worlds.map((world) => world.id as string));
+  useEffect(() => onWorldSavedHere((worldId) => {
+    if (!worldIdsRef.current.has(worldId)) void refreshWorlds();
+  }), [refreshWorlds]);
+
   // Always the newest reader of the editor's store, for the resync below to call after the store has settled.
   const getWorldDataRef = useRef(getWorldData);
   getWorldDataRef.current = getWorldData;
@@ -911,7 +914,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   useEffect(() => {
     if (!modelToDelete) { setModelUsage(null); return; }
     let cancelled = false;
-    findSavesUsingModel(modelToDelete).then((names) => { if (!cancelled) setModelUsage(names); });
+    findModelUsage(modelToDelete).then((usage) => { if (!cancelled) setModelUsage(usage); });
     return () => { cancelled = true; };
   }, [modelToDelete]);
 
@@ -985,12 +988,14 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   ].join('\n\n----\n\n');
 
   const handleWorldSelection = async (worldId: string) => {
+    // Its stored copy is about to be rewritten with the re-encoded images.
+    if (isWorldOptimizing(worldId)) return;
     try {
       const worldData = await WorldStorageService.getWorldData(worldId);
       const selectedWorld = worlds.find(w => w.id === worldId);
 
       if (worldData && selectedWorld) {
-        // Cache the migrated world (not the raw one) so downstream reuse — duplicate, use3DModel checks —
+        // Cache the migrated world (not the raw one) so downstream reuse — duplicate, Avatar checks —
         // sees the current shape instead of the legacy input.
         const { world: migrated } = loadWorldData(worldData as World, true, { stored: true });
         setSelectedWorld({
@@ -1669,6 +1674,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   const dictionaryIds = useMemo(() => dictionaries.map((dictionary) => dictionary.id), [dictionaries]);
   const modelIds = useMemo(() => models.map((model) => model.id), [models]);
   const worldTiles = useLibraryTiles('worlds', worldIds, !isLoadingWorlds);
+  // Read here, not at the menu, so a run that ends re-renders the tile menus that disable Delete.
+  const optimizingWorldIds = useOptimizingWorldIds();
   const entityTiles = useLibraryTiles('entities', entityIds, !isLoadingEntities);
   const dictionaryTiles = useLibraryTiles('dictionaries', dictionaryIds, !isLoadingDictionaries);
   const modelTiles = useLibraryTiles('models', modelIds, !isLoadingModels);
@@ -2015,6 +2022,9 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
                 </span>
               </Tip>
             ) : undefined;
+            const isDefault = model.id === defaultAvatar;
+            const badge = isDefault || glb ? <div className="flex gap-1">{isDefault && <DefaultBadge />}{glb}</div> : undefined;
+            const note = isDefault || glb ? <span className="flex items-center gap-1">{isDefault && 'Default Avatar'}{glb}</span> : undefined;
             return (
               <SortableWorldCard
                 world={{ id: model.id, name: model.name, description: creditLine(model.license?.authors), thumbnail: model.thumbnail }}
@@ -2025,8 +2035,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
                 placeholder={<EntityPlaceholderArt id={model.id} name={model.name} />}
                 omitEmptyDescription
                 omitEmptyTags
-                badge={glb}
-                note={glb}
+                badge={badge}
+                note={note}
                 onSelect={setPreviewModelId}
               />
             );
@@ -2038,7 +2048,14 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           itemActions={(id) => {
             const model = models.find((m) => m.id === id);
             return model ? (
-              <AvatarThumbnailMenuItems model={model} onChange={(source) => { void setModelThumbnailSource(id, source); }} />
+              <>
+                <DefaultAvatarMenuItem
+                  isDefault={id === defaultAvatar}
+                  onSet={() => { setUserDefaultAvatar(id); setDefaultAvatarId(id); }}
+                  onClear={() => { clearUserDefaultAvatar(); setDefaultAvatarId(undefined); }}
+                />
+                <AvatarThumbnailMenuItems model={model} onChange={(source) => { void setModelThumbnailSource(id, source); }} />
+              </>
             ) : null;
           }}
           onDelete={setModelToDelete}
@@ -2089,7 +2106,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
               compact={compact}
               placeholder={<EntityPlaceholderArt id={entity.id} sourceId={entity.sourceId} name={entity.name} />}
               onSelect={setEditingEntityId}
-              badge={entity.id === defaultPersona && entity.persona ? <DefaultPersonaBadge /> : undefined}
+              badge={entity.id === defaultPersona && entity.persona ? <DefaultBadge /> : undefined}
               note={entity.id === defaultPersona && entity.persona ? 'Default persona' : undefined}
             />
           )}
@@ -2183,6 +2200,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           // Withheld while the tiles are blank: the menu entry is the one that can't be taken back, and
           // it would be aimed at a card with no name on it. The rest of the menu writes ids, which are real.
           onDelete={isLoadingWorlds ? undefined : setWorldToDelete}
+          canDelete={(id) => !optimizingWorldIds.has(id)}
         />
       )}
 
@@ -2680,6 +2698,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         title="Delete World"
         description="Are you sure you want to delete this world? This action cannot be undone."
         onConfirm={async () => {
+          // A run that finishes would write the world straight back.
+          if (isWorldOptimizing(worldToDelete!)) return;
           try {
             await WorldStorageService.deleteWorld(worldToDelete!);
             setWorlds(prev => prev.filter(w => w.id !== worldToDelete));
@@ -2734,17 +2754,13 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         open={!!modelToDelete}
         onOpenChange={(open) => !open && setModelToDelete(null)}
         title="Delete Player Avatar"
-        description={
-          modelUsage === null
-            ? 'Checking which saves use this player avatar…'
-            : modelUsage.length === 0
-              ? 'Are you sure you want to delete this player avatar? This action cannot be undone.'
-              : `${modelUsage.length === 1 ? 'One save uses' : `${modelUsage.length} saves use`} this player avatar — ${listSaves(modelUsage)}. ${modelUsage.length === 1 ? 'It' : 'They'} will fall back to the default avatar. This action cannot be undone.`
-        }
+        description={deleteModelDescription(modelUsage)}
         onConfirm={async () => {
           try {
             await ModelStorageService.deleteModel(modelToDelete!);
             setModels(prev => prev.filter(m => m.id !== modelToDelete));
+            await clearLibraryModelPicks(modelToDelete!)
+              .catch((error: unknown) => toastError(error, 'Could not clear the Avatar from your library entities.'));
           } catch (error) {
             // The library refuses to drop its last avatar; tell the player why rather than failing silently.
             toastError(error, 'Could not delete that player avatar.');

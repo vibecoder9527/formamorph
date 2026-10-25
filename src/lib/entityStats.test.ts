@@ -9,6 +9,7 @@ import {
   backfillEntityStats, entityCodeTurns, entityStatOwners, seedEntityStats, withEntityRegen, withOwnerCodeResults,
 } from './entityStats';
 import { boxScripts } from '@/test/scriptFixtures';
+import { statCodeTurnOf } from '@/test/statCodeTurnFixture';
 
 const stat = (over: Partial<Stat> = {}): Stat => ({
   id: 'trust', name: 'Trust', type: 'number', description: '', min: 0, max: 100, value: 20, regen: 1, descriptors: [], ...over,
@@ -35,9 +36,9 @@ describe('seedEntityStats', () => {
 describe('backfillEntityStats', () => {
   const saved = (value: number): PlayerStat => ({ ...trust, value });
 
-  it('adds a stat the world has since given an entity at its starting value, and keeps one it removed', () => {
+  it('adds a stat the world has since given an entity at its start value (Q8), and keeps one it removed', () => {
     const removed: PlayerStat = { ...stat({ id: 'old', name: 'Old' }), value: 9 };
-    const out = backfillEntityStats({ bram: [saved(44), removed] }, [{ ...bram, stats: [trust, { ...stock, starting: 7 }] }]);
+    const out = backfillEntityStats({ bram: [saved(44), removed] }, [{ ...bram, stats: [trust, { ...stock, value: 7 }] }]);
     expect(out.bram.map((s) => [s.id, s.value])).toEqual([['trust', 44], ['old', 9], ['stock', 7]]);
   });
 
@@ -123,11 +124,11 @@ describe('entityStatOwners', () => {
     expect(owners.map((o) => o.id)).toEqual(['bram', 'cp']);
     expect(withEntityRegen(all, owners, 2).cp[0].value).toBe(22);
     const turns = entityCodeTurns(owners, 2, (_, stats) => stats);
-    const out = await runStatCodeTurn({
+    const out = await runStatCodeTurn(statCodeTurnOf({
       stats: [], enabled: {}, previous: [], asks: [], regenApplied: {}, clock: {}, owners: turns,
       ownerTraits: { acquired: [], disabledTraitIds: [], appliedValues: {}, world: { traits: [], groups: [] } },
       statNameOf: (s) => s.name, traitNameOf: (t) => t.name,
-    });
+    }));
     expect(out.owners?.cp.stats[0].value).toBe(32);
   });
 

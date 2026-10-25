@@ -116,11 +116,41 @@ export interface SandboxPlace {
   name: string;
 }
 
+/** One `locations` entry's input. Text left out reads empty; `starting` left out reads false. */
+export interface SandboxLocation extends SandboxPlace {
+  description?: string;
+  summary?: string;
+  starting?: boolean;
+}
+
 /** The world's locations a run can name, and where the turn stands. */
 export interface SandboxPlaces {
-  locations: readonly SandboxPlace[];
+  locations: readonly SandboxLocation[];
   location: SandboxPlace | null;
 }
+
+/** One entry of `memories`: a Memory panel row as a script reads it. */
+export interface SandboxMemory {
+  id: string;
+  /** The play turn, 1-based; a Custom line's is the turn that closed before it was added. */
+  turn: number;
+  /** Story hours at the end of that turn. */
+  timestamp: number;
+  day: number;
+  daypart: string;
+  text: string;
+  custom: boolean;
+  kept: boolean;
+  inContext: boolean;
+  pinned: boolean;
+  forgotten: boolean;
+}
+
+/** `row` with only the fields an entry reads, so nothing else a caller holds crosses into the VM; its text as a host slot. */
+const memoryData = (row: SandboxMemory, reads: HostReads) => ({
+  id: row.id, turn: row.turn, timestamp: row.timestamp, day: row.day, daypart: row.daypart, text: reads.text(row.text),
+  custom: row.custom, kept: row.kept, inContext: row.inContext, pinned: row.pinned, forgotten: row.forgotten,
+});
 
 /** One `discover` call. With a description the entity is created at once; without, the discover pass
  *  describes it. */
@@ -137,13 +167,23 @@ export interface WorldWrites {
   minutes?: number;
   /** Once per name, in first-call order; a call with a description fills in one without. */
   discover?: DiscoverWrite[];
-  /** Every `memory.add` line, in call order. */
+  /** Every `memories.add` line, in call order. */
   memory?: string[];
-  /** Every `memory.pin` line, in call order. */
+  /** Every `memories.pin` line, in call order. */
   pins?: string[];
   /** Every `diary` line, in call order. */
   diary?: DiaryWrite[];
+  /** Every `move`, `follow` and `unfollow` on an entity entry, in call order. */
+  entities?: EntityCodeWrite[];
+  /** Every `pin`, `forget`, `edit` and `remove` on a `memories` entry, in call order. */
+  memoryWrites?: MemoryWrite[];
 }
+
+/** One verb on a `memories` entry, by the row's id. An edit marks whether the row is a Custom line. */
+export type MemoryWrite = { id: string } & ({ kind: 'pin' | 'forget' | 'remove' } | { kind: 'edit'; text: string; custom: boolean });
+
+/** One `move`, `follow` or `unfollow` on an entity entry: the entity's id, or its name when it has none. */
+export type EntityCodeWrite = { entity: string } & ({ kind: 'move'; location: string } | { kind: 'follow' | 'unfollow' });
 
 /** One `diary` call: the entity's id, or its name when it has none, and the line. */
 export interface DiaryWrite {
@@ -227,6 +267,15 @@ export interface SandboxEntity {
   type?: string;
   pronouns?: string;
   inScene?: boolean;
+  description?: string;
+  summary?: string;
+  aliases?: readonly string[];
+  /** The id of the location the entity stands at in play. Absent, it stands at every one of `locationIds`. */
+  locationId?: string;
+  /** The ids of the locations the entity is authored to list. */
+  locationIds?: readonly string[];
+  /** Whether the entity follows the player, which places it where the player stands. */
+  following?: boolean;
   /** The entity's owner node in the placeholder tree. Absent, its `placeholders` holds no names. */
   placeholders?: SandboxPlaceholderNode;
   /** What its `stats` reads and takes writes on. Absent, it holds no stats. */
@@ -240,12 +289,22 @@ export interface SandboxStats {
   enabled?: Readonly<Record<string, boolean>>;
 }
 
-/** One entry of the sandbox's `dictionaries`: a book's code name, and its owner node in the placeholder tree. */
+/** One entry of a book's `entries`, by its code name. */
+export interface SandboxDictionaryEntry {
+  id: string;
+  name: string;
+  keys: readonly string[];
+  value: string;
+}
+
+/** One entry of the sandbox's `dictionaries`: a book's code name, its owner node in the placeholder tree, and its
+ *  enabled entries in authored order. */
 export interface SandboxDictionary {
   name: string;
   id?: string;
   /** Absent, its `placeholders` holds no names. */
   placeholders?: SandboxPlaceholderNode;
+  entries?: readonly SandboxDictionaryEntry[];
 }
 
 /** A stat's value and max, as one turn input carries them. */
@@ -379,6 +438,62 @@ export interface SandboxPlaceholderNode {
 
 // The host hook every entry's `roll()` calls. The prelude takes it and deletes the global before user code runs.
 const ROLL_HOOK = '__formamorphRollPlaceholder';
+// The host hook a heavy read calls with its slot, taken and deleted like the roll hook.
+const HOST_READ_HOOK = '__formamorphHostRead';
+// The prelude's reader of a host slot, each answer cached for the run. User code's parameters shadow it.
+const HOST_READ = '__formamorphRead';
+
+/** The run's host-backed reads (Q37, Q48): heavy text and a book's entries stay on the host until code reads them.
+ *  The prelude carries slot numbers; -1 is the empty value. */
+interface HostReads {
+  /** The slot of `value`; one slot per distinct text, so two paths to one text ask the host once. With `resolve`,
+   *  the slot holds the text resolved on its read; a run passes one resolver. */
+  text(value: string | undefined, resolve?: (text: string) => string): number;
+  /** A slot whose value `build` makes on its first read, not before. */
+  deferred(build: () => unknown): number;
+  /** A slot's value as JSON, so every string crosses into the VM intact. */
+  answer(at: number): string;
+}
+
+function hostReads(): HostReads {
+  const slots: (() => unknown)[] = [];
+  const byText = new Map<string, number>();
+  const byResolved = new Map<string, number>();
+  const deferred = (build: () => unknown) => slots.push(build) - 1;
+  return {
+    text: (value, resolve) => {
+      if (!value) return -1;
+      const known = resolve ? byResolved : byText;
+      let at = known.get(value);
+      if (at === undefined) known.set(value, at = deferred(resolve ? () => resolve(value) : () => value));
+      return at;
+    },
+    deferred,
+    answer: (at) => JSON.stringify(slots[at]?.() ?? null),
+  };
+}
+
+/** The prelude that binds `HOST_READ`: a slot's value from the host on first read, from its cache after. */
+const HOST_READ_PRELUDE = [
+  `const ${HOST_READ} = ((hook, parse) => {`,
+  `  const answers = [];`,
+  `  return (at) => (at < 0 ? '' : at in answers ? answers[at] : (answers[at] = parse(hook(at))));`,
+  `})(globalThis.${HOST_READ_HOOK}, JSON.parse);`,
+  `delete globalThis.${HOST_READ_HOOK};`,
+].join('\n');
+
+/** JS source of `(target, fields, prefix, note) => target`: each field, holding a slot, becomes a getter of the slot's
+ *  text whose setter calls `note(prefix + field)`, as `LOCK_FIELDS` does for a held value. */
+const LAZY_TEXT = `(target, fields, prefix, note) => {
+  for (const field of fields) {
+    const at = target[field];
+    Object.defineProperty(target, field, { enumerable: true, get: () => ${HOST_READ}(at), set: () => note(prefix + field) });
+  }
+  return target;
+}`;
+
+/** A setter for a `LAZY_TEXT` source object that code never reaches: its entry's own accessors record writes. */
+const NO_NOTE = '() => {}';
 // The preludes' readers of what the run did to each map; the program's completion value calls them. User
 // code runs in a function whose parameters shadow both names, so it cannot reach them.
 const PLACEHOLDER_WRITES = '__formamorphPlaceholderWrites';
@@ -395,6 +510,8 @@ const OWNER_STAT_WRITES = '__formamorphOwnerStatWrites';
 const ENTITY_STAT_WRITES = '__formamorphEntityStatWrites';
 // The writable fields of `self` the code assigned, in assignment order.
 const SELF_ASSIGNED = '__formamorphSelfAssigned';
+// `JSON.stringify` as it stood before user code, which may replace the global one, for the program's completion value.
+const STRINGIFY = '__formamorphStringify';
 // Read-only writes outside every map, as full paths: on a `self` that is no entry of `stats`, and on `clock`.
 const LOOSE_WRITES = '__formamorphLooseWrites';
 const LOOSE_NOTE = '__formamorphLooseNote';
@@ -477,6 +594,10 @@ const LOCK_FIELDS = `(target, fields, prefix, note) => {
   }
   return target;
 }`;
+
+/** JS source of `(target, text, prefix, note) => target`: the `text` fields lazy, every other field locked. */
+const LOCK_ENTRY = `(target, text, prefix, note) => (${LAZY_TEXT})(
+  (${LOCK_FIELDS})(target, Object.keys(target).filter((field) => !text.includes(field)), prefix, note), text, prefix, note)`;
 
 /** JS source of `(entry, assigned, note) => void`: locks every field of a stat entry, at every depth. With an
  *  `assigned` list, the writable fields stay open and each assignment to one is listed there, changed or not. */
@@ -719,7 +840,10 @@ const traitData = (entries: readonly SandboxTrait[]) =>
     [name, { enabled, acquired, id, name, mode, available, group, playerToggle }]));
 
 /** The fields on an entity entry that a write never reaches. */
-const ENTITY_READ_ONLY_FIELDS = ['id', 'name', 'type', 'pronouns', 'inScene', 'traits', 'placeholders', 'stats'] as const;
+const ENTITY_READ_ONLY_FIELDS = [
+  'id', 'name', 'type', 'pronouns', 'inScene', 'location', 'following', 'description', 'summary', 'aliases', 'traits', 'placeholders', 'stats',
+  'move', 'follow', 'unfollow', 'diary',
+] as const;
 
 /** The entities in play keyed by code name, and the played persona, which may be one of them. */
 export interface KeyedEntities<T extends SandboxEntity = SandboxEntity> {
@@ -735,18 +859,23 @@ export function keyedEntities<T extends SandboxEntity>(entities: readonly T[], p
   return { byName, persona };
 }
 
+/** Whether `entity` is the played persona: the entry itself, or one with its id. */
+const isPlayed = (entity: SandboxEntity, persona: SandboxEntity): boolean =>
+  entity === persona || (!!persona.id && entity.id === persona.id);
+
 /** JS source of `(fields, entries, blank, build) => [map, readWrites, entry]`: frozen entries with read-only
- *  `fields`, built by `build(key, data, unknown) => [values, rows]`; an unknown name builds from `blank`.
+ *  `fields`, built by `build(key, data, unknown) => [values, rows, hidden?]`, where `hidden` fields are left
+ *  out of the entry's keys; an unknown name builds from `blank`.
  *  `entry(key, data, unknown, tag)` builds one more, whose reader row carries `tag`. */
 const READ_ONLY_ENTRY_MAP = `(fields, entries, blank, build) => {
   const readers = [];
   const entry = (key, data, unknown, tag = null) => {
-    const [values, rows] = build(key, data, unknown);
+    const [values, rows, hidden = []] = build(key, data, unknown);
     const written = [];
     readers.push([key, unknown, rows, written, tag]);
     const out = {};
     for (const field of fields) {
-      define(out, field, { enumerable: true, get: () => values[field], set: () => (${ADD_ONCE})(written, field) });
+      define(out, field, { enumerable: !hidden.includes(field), get: () => values[field], set: () => (${ADD_ONCE})(written, field) });
     }
     return freeze(out);
   };
@@ -757,10 +886,10 @@ const READ_ONLY_ENTRY_MAP = `(fields, entries, blank, build) => {
     get: (target, key) => typeof key !== 'string' || key in target ? target[key]
       : strays[key] || (strays[key] = entry(key, blank, true)),
   });
-  const readWrites = () => stringify(readers
+  const readRows = () => readers
     .map(([key, unknown, rows, written, tag]) => [key, unknown, rows(), written, tag])
-    .filter((row) => row[2].length || row[3].length));
-  return [proxy, readWrites, entry];
+    .filter((row) => row[2].length || row[3].length);
+  return [proxy, () => stringify(readRows()), entry, readRows];
 }`;
 
 /** The prelude that binds `names` to what `body` returns, with the read-only entry-map factory in scope as
@@ -795,13 +924,15 @@ const OWN_OWNER_TAG = 'owner';
  *  the owner's entry holds `owner.stats`. The stat-write reader's rows are `[key, unknown, statMapRows]`. */
 const entitiesPrelude = (
   { byName, persona }: KeyedEntities, { indexOf }: FlatPlaceholderMap, blankStat: unknown, place: OwnerPlace,
-  statEntriesOf: (entity: SandboxEntity) => StatEntry[],
+  statEntriesOf: (entity: SandboxEntity) => StatEntry[], standing: Standing, reads: HostReads,
 ): string => {
   const data = (entity: SandboxEntity, owner: boolean) => {
-    const { id = '', type = '', pronouns = '', inScene = false, traits, placeholders } = entity;
+    const { id = '', type = '', pronouns = '', inScene = false, description, summary, aliases = [], traits, placeholders } = entity;
+    const played = isPlayed(entity, persona);
     return {
-      id, type, pronouns, inScene, traits: traitData(traits), ph: ownerIndex(indexOf, placeholders),
-      stats: owner ? {} : statMapData(statEntriesOf(entity)), owner,
+      id, type, pronouns, inScene, location: standing.nameOf(entity, played), following: !played && !!entity.following,
+      description: reads.text(description), summary: reads.text(summary), aliases, traits: traitData(traits), ph: ownerIndex(indexOf, placeholders),
+      stats: owner ? {} : statMapData(statEntriesOf(entity)), owner, played,
     };
   };
   const own = place.kind === 'own' ? place.entity : undefined;
@@ -813,6 +944,7 @@ const entitiesPrelude = (
     ownEntry: own === undefined ? null : { ...(own ? { ...data(own, true), name: own.name } : { owner: true, absent: true }), own: true },
   };
   return readOnlyEntryMapPrelude(`entities, persona, owner, ${ENTITY_WRITES}, ${ENTITY_STAT_WRITES}`, spec, [
+    `const lazy = ${LAZY_TEXT};`,
     `const traitMap = ((keys) => ${trackedMapFactory(TRAIT_MAP)})(Object.keys);`,
     `const statMapOf = ((keys) => ${trackedMapFactory(statMapKind(blankStat, null))})(Object.keys);`,
     `const statReaders = [];`,
@@ -826,7 +958,13 @@ const entitiesPrelude = (
     `  const placeholders = data.own ? ${OWNER_VIEW}(data.ph ?? -1, ['owner', 'owner'], !!data.absent)`,
     `    : ${OWNER_VIEW}(data.ph ?? -1, key ? ['entity', key] : ['persona', 'persona'], unknown || !key);`,
     `  const stats = data.owner ? ${OWNER_STATS} : statMap(key, unknown, data.stats || {});`,
-    `  return [{ id: '', type: '', pronouns: '', inScene: false, ...data, name: data.own ? data.name || '' : unknown ? '' : key, traits, placeholders, stats }, rows];`,
+    `  const who = { id: data.id || '', name: data.own ? data.name || '' : key, played: !!data.played, unknown: unknown || !!data.absent };`,
+    `  const write = (kind) => (target) => ${ENTITY_WRITE}(who, kind, target);`,
+    `  const moves = { move: write('move'), follow: write('follow'), unfollow: write('unfollow'), diary: write('diary') };`,
+    `  const blank = { id: '', type: '', pronouns: '', inScene: false, location: '', following: false, description: -1, summary: -1 };`,
+    `  const aliases = Object.freeze([...(data.aliases || [])]);`,
+    `  const values = { ...blank, ...data, name: data.own ? data.name || '' : unknown ? '' : key, aliases, traits, placeholders, stats, ...moves };`,
+    `  return [lazy(values, ['description', 'summary'], '', ${NO_NOTE}), rows, who.played ? Object.keys(moves) : []];`,
     `});`,
     `const persona = spec.persona ? entry('', spec.persona, false) : entities[${JSON.stringify(persona.name)}];`,
     `const owner = spec.ownEntry ? entry('', spec.ownEntry, false, ${JSON.stringify(OWN_OWNER_TAG)})`,
@@ -841,14 +979,33 @@ const ownerIndex = (indexOf: FlatPlaceholderMap['indexOf'], node: SandboxPlaceho
   (node ? indexOf.get(node) ?? -1 : -1);
 
 /** The fields on a dictionary entry. None takes a write. */
-const DICTIONARY_READ_ONLY_FIELDS = ['id', 'name', 'placeholders'] as const;
+const DICTIONARY_READ_ONLY_FIELDS = ['id', 'name', 'entries', 'placeholders'] as const;
 
-/** The `dictionaries` prelude, the later of two books sharing a name winning. */
-const dictionariesPrelude = (dictionaries: readonly SandboxDictionary[], { indexOf }: FlatPlaceholderMap): string => {
-  const spec = [...new Map(dictionaries.map((book) => [book.name, { id: book.id ?? '', ph: ownerIndex(indexOf, book.placeholders) }]))];
+/** The fields on an entry of a book's `entries`. None takes a write. */
+const DICTIONARY_ENTRY_READ_ONLY_FIELDS = ['id', 'name', 'keys', 'value'] as const;
+
+/** The `dictionaries` prelude, the later of two books or two entries sharing a name winning. A book's `entries` map
+ *  comes from the host on its first read (Q48), and each `value` resolves on its own (Q54). A book's reader rows are
+ *  its `entries` map's rows. */
+const dictionariesPrelude = (
+  dictionaries: readonly SandboxDictionary[], { indexOf }: FlatPlaceholderMap, reads: HostReads, resolve?: (value: string) => string,
+): string => {
+  const entriesOf = (book: SandboxDictionary) =>
+    [...new Map((book.entries ?? []).map(({ id, name, keys, value }) => [name, { id, keys, value: reads.text(value, resolve) }]))];
+  const spec = [...new Map(dictionaries.map((book) =>
+    [book.name, { id: book.id ?? '', ph: ownerIndex(indexOf, book.placeholders), entries: reads.deferred(() => entriesOf(book)) }]))];
   return readOnlyEntryMapPrelude(`dictionaries, ${DICTIONARY_WRITES}`, spec, [
-    `const [dictionaries, readWrites] = entryMap(${JSON.stringify(DICTIONARY_READ_ONLY_FIELDS)}, spec, { id: '', ph: -1 }, (key, data, unknown) =>`,
-    `  [{ id: data.id, name: unknown ? '' : key, placeholders: ${OWNER_VIEW}(data.ph, ['dictionary', key], unknown) }, () => []]);`,
+    `const lazy = ${LAZY_TEXT};`,
+    `const blankEntry = { id: '', keys: [], value: -1 };`,
+    `const [dictionaries, readWrites] = entryMap(${JSON.stringify(DICTIONARY_READ_ONLY_FIELDS)}, spec, { id: '', ph: -1, entries: -1 }, (key, data, unknown) => {`,
+    `  let built = null;`,
+    `  const entries = () => built || (built = entryMap(${JSON.stringify(DICTIONARY_ENTRY_READ_ONLY_FIELDS)},`,
+    `    data.entries < 0 ? [] : ${HOST_READ}(data.entries), blankEntry, (name, entry, stray) =>`,
+    `    [lazy({ id: entry.id, name: stray ? '' : name, keys: freeze([...entry.keys]), value: entry.value }, ['value'], '', ${NO_NOTE}), () => []]));`,
+    `  const values = { id: data.id, name: unknown ? '' : key, placeholders: ${OWNER_VIEW}(data.ph, ['dictionary', key], unknown) };`,
+    `  define(values, 'entries', { get: () => entries()[0] });`,
+    `  return [values, () => (built ? built[3]() : [])];`,
+    `});`,
     `return [dictionaries, readWrites];`,
   ]);
 };
@@ -864,16 +1021,21 @@ interface EntryWriteRow {
   tag: unknown;
 }
 
-/** The rows in a read-only entry map's dump; a malformed row is skipped. */
-function readEntryWriteRows(dump: string): EntryWriteRow[] {
-  const parsed: unknown = JSON.parse(dump);
-  return (Array.isArray(parsed) ? parsed : []).flatMap((row) => (Array.isArray(row) && typeof row[0] === 'string'
+/** The rows of a read-only entry map's reader; a malformed row is skipped. */
+const entryWriteRows = (rows: unknown): EntryWriteRow[] =>
+  (Array.isArray(rows) ? rows : []).flatMap((row) => (Array.isArray(row) && typeof row[0] === 'string'
     ? [{ name: row[0], unknown: row[1] === true, mapRows: row[2], fields: row[3], tag: row[4] ?? null }] : []));
-}
 
-/** The read-only fields the run wrote on `dictionaries` entries, as code spelled them. */
+/** The rows in a read-only entry map's dump. */
+const readEntryWriteRows = (dump: string): EntryWriteRow[] => entryWriteRows(JSON.parse(dump));
+
+/** The read-only fields the run wrote on `dictionaries` entries and their `entries`, as code spelled them. */
 const readDictionaryWrites = (dump: string): string[] =>
-  readEntryWriteRows(dump).flatMap(({ name, fields }) => readOnlyPaths(memberPath('dictionaries', name), fields));
+  readEntryWriteRows(dump).flatMap(({ name, fields, mapRows }) => {
+    const book = memberPath('dictionaries', name);
+    return [...readOnlyPaths(book, fields),
+      ...entryWriteRows(mapRows).flatMap((row) => readOnlyPaths(memberPath(`${book}.entries`, row.name), row.fields))];
+  });
 
 /** How code names an entry of `root`: dot syntax for an identifier, brackets otherwise. */
 export const memberPath = (root: string, name: string) =>
@@ -1126,6 +1288,8 @@ export interface StatCodeRunOptions {
   owner?: SandboxEntity;
   /** Every dictionary, in authored order. */
   dictionaries?: readonly SandboxDictionary[];
+  /** Resolves an entry's `value` when code reads it (Q54). Absent, a value reads as authored. */
+  resolveEntryValue?: (value: string) => string;
   /** Absent outside During AI Output, where `narration` and `player` do not exist. */
   narration?: NarrationInput;
   /** A trait script's own trait: `self` reads its entry, read-only. Only with no `currentStat`. */
@@ -1137,34 +1301,137 @@ export interface StatCodeRunOptions {
   prompts?: ScriptPromptHost;
   /** What `location` reads and what `location.move` can name. Absent, the run knows none. */
   places?: SandboxPlaces;
-  /** The entities play discovered, which `diary` can name beside `entities`. */
+  /** The entities play discovered, which an unknown entry's `diary` can name beside `entities`. */
   discovered?: readonly SandboxPlace[];
   /** A World Tool run's call arguments, frozen. Absent on a Script, where `args` does not exist. */
   args?: Readonly<Record<string, unknown>>;
-  /** The editor's run, which has no discovered cast: a `diary` name the cast lacks is listed in `maybeDiary`, not
+  /** The editor's run, which has no discovered cast: a `diary` on an entity the cast lacks is listed in `maybeDiary`, not
    *  thrown (Q46). Play leaves it off, so an unknown name fails. */
   openCast?: boolean;
+  /** The Memory panel's live rows, oldest first. Absent, `memories` is empty. */
+  memories?: readonly SandboxMemory[];
+  /** The player's notes. Absent, `notes` is empty. */
+  notes?: string;
+  /** A user Tool's run: the surface without writes (Q24, Q44). Every field is read-only, a write is listed in
+   *  `readOnlyWrites`, and no verb, `self`, `owner`, `discover` or `player` exists. */
+  readOnly?: boolean;
 }
 
 const WORLD_WRITES = '__formamorphWorldWrites';
+const ENTITY_WRITE = '__formamorphEntityWrite';
 const ADVANCE_CLOCK = '__formamorphAdvanceClock';
 
-/** The prelude of `location`, `discover`, `memory`, `diary` and the hook `clock.advance` calls. An unknown location or
- *  entity is listed as well as thrown, so a script that catches the throw still fails. `cast` is who `diary` can name. */
-const worldPrelude = ({ locations, location }: SandboxPlaces, cast: readonly SandboxPlace[], openCast: boolean): string => [
-  `const [location, discover, memory, diary, ${ADVANCE_CLOCK}, ${WORLD_WRITES}] = ((places, cast, open, lock, note) => {`,
-  `  const writes = { location: null, minutes: 0, advanced: false, discover: [], memory: [], pins: [], diary: [], unknown: [], maybe: [] };`,
-  `  const find = (kind, list, target) => {`,
-  `    const hit = typeof target === 'string' ? list.find((place) => place.id === target) || list.find((place) => place.name === target) : undefined;`,
-  `    if (hit) return hit.id;`,
-  `    const message = 'The world has no ' + kind + ' named "' + String(target) + '"';`,
+const MOVE_TURN = '__formamorphMoveTurn';
+
+/** The globals a read-only run reads through its view, the surface of a user Tool (Q24). */
+const READ_ONLY_GLOBALS = ['entities', 'persona', 'locations', 'location', 'memories', 'clock', 'stats', 'traits', 'placeholders', 'dictionaries'] as const;
+
+const READ_ONLY_VIEW_OF = '__formamorphReadOnlyView';
+
+/**
+ * JS source of `(note) => view`: `view(value, path)` reads `value` with its own function members left out, and a
+ * write through it calls `note(path)` and changes nothing. An object keeps one view, so `present` holds the very
+ * entries `entities` holds; an array reads as a frozen copy of its items' views.
+ */
+const READ_ONLY_VIEW = `(note) => {
+  const { create, freeze, getPrototypeOf } = Object;
+  const { apply, ownKeys, getOwnPropertyDescriptor } = Reflect;
+  const { isArray } = Array;
+  const { stringify } = JSON;
+  const { map, filter } = Array.prototype;
+  const { hasOwnProperty } = Object.prototype;
+  const views = new WeakMap();
+  const hidden = (source, key) => apply(hasOwnProperty, source, [key]) && typeof source[key] === 'function';
+  const step = (path, key) => /^[A-Za-z_$][\\w$]*$/.test(key) ? path + '.' + key : path + '[' + stringify(key) + ']';
+  const view = (source, path) => {
+    if (source === null || typeof source !== 'object') return source;
+    const known = views.get(source);
+    if (known) return known;
+    if (isArray(source)) {
+      const items = freeze(apply(map, source, [(item, at) => view(item, path + '[' + at + ']')]));
+      views.set(source, items);
+      return items;
+    }
+    const read = (key) => (typeof key !== 'string' ? source[key] : hidden(source, key) ? undefined : view(source[key], step(path, key)));
+    const drop = (key) => { if (typeof key === 'string') note(step(path, key)); return true; };
+    const out = new Proxy(create(null), {
+      get: (target, key) => read(key),
+      has: (target, key) => key in source && !hidden(source, key),
+      ownKeys: () => apply(filter, ownKeys(source), [(key) => !hidden(source, key)]),
+      getOwnPropertyDescriptor: (target, key) => {
+        const found = getOwnPropertyDescriptor(source, key);
+        return found && !hidden(source, key) ? { value: read(key), writable: false, enumerable: found.enumerable, configurable: true } : undefined;
+      },
+      getPrototypeOf: () => getPrototypeOf(source),
+      set: (target, key) => drop(key),
+      defineProperty: (target, key) => drop(key),
+      deleteProperty: (target, key) => drop(key),
+    });
+    views.set(source, out);
+    return out;
+  };
+  return view;
+}`;
+
+/** The program's names a read-only run hides from its code: the globals its surface lacks, and the prelude's hooks. */
+const HIDDEN_GLOBALS = [
+  'self', 'owner', 'discover', MOVE_TURN, ADVANCE_CLOCK, ENTITY_WRITE, WORLD_WRITES, SELF_ASSIGNED, STRINGIFY, READ_ONLY_VIEW_OF,
+] as const;
+
+/** `code` as a read-only run runs it: the hidden names shadowed, each surface global, `args` with them when the run
+ *  has it, read through its view. The inner function lets code declare a name the outer one shadows. */
+const readOnlyCode = (code: string, withArgs: boolean): string => {
+  const viewed = [...READ_ONLY_GLOBALS, ...(withArgs ? ['args'] : [])];
+  return [
+    `return (function (${[...HIDDEN_GLOBALS, ...viewed].join(', ')}) {`,
+    `  return (function () {`,
+    code,
+    `  })();`,
+    `})(${[...HIDDEN_GLOBALS.map(() => 'undefined'), ...viewed.map((name) => `${READ_ONLY_VIEW_OF}(${name}, '${name}')`)].join(', ')});`,
+  ].join('\n');
+};
+
+/** JS source that reseeds `Math.random` with sfc32 from `seed`: QuickJS seeds from the clock, so runs in one
+ *  millisecond would repeat it. */
+const reseedRandom = (seed: readonly number[]): string => [
+  `((m, a, b, c, d) => { m.random = () => { const t = (a + b + d) | 0; d = (d + 1) | 0; a = b ^ (b >>> 9);`,
+  '  b = (c + (c << 3)) | 0; c = (c << 21) | (c >>> 11); c = (c + t) | 0; return (t >>> 0) / 2 ** 32; };',
+  `  for (let i = 0; i < 15; i++) m.random(); })(Math, ${seed.join(', ')});`,
+].join('\n');
+
+/** The prelude of `discover`, `memories`, the hooks `location.move` and `clock.advance` call and the hook an entity
+ *  entry's writes call. An unknown location or entity is listed as well as thrown, so a script that catches the
+ *  throw still fails. An unknown entry's diary finds its key in `cast` by id, else by name; in an `openCast` run a
+ *  miss is listed as a maybe instead. `memories` is frozen: its own writes land at commit and never read back. */
+const worldPrelude = (
+  { locations, location }: SandboxPlaces, cast: readonly SandboxPlace[], openCast: boolean, memories: readonly SandboxMemory[], reads: HostReads,
+): string => [
+  `const [${MOVE_TURN}, discover, memories, ${ADVANCE_CLOCK}, ${ENTITY_WRITE}, ${WORLD_WRITES}] = ((places, cast, open, rows, lockEntry, note) => {`,
+  `  const writes = { location: null, minutes: 0, advanced: false, discover: [], memory: [], pins: [], diary: [], entities: [], memoryWrites: [], unknown: [], maybe: [] };`,
+  `  const fail = (message) => {`,
   `    writes.unknown.push(message);`,
   `    throw new Error(message);`,
   `  };`,
-  `  const here = places.location || { id: '', name: '' };`,
-  `  const location = Object.freeze(lock({`,
-  `    id: here.id, name: here.name, move: (target) => { writes.location = find('location', places.locations, target); },`,
-  `  }, ['id', 'name', 'move'], 'location.', note));`,
+  `  const find = (kind, list, target) => {`,
+  `    const hit = typeof target === 'string' ? list.find((place) => place.id === target) || list.find((place) => place.name === target) : undefined;`,
+  `    return hit ? hit.id : fail('The world has no ' + kind + ' named "' + String(target) + '"');`,
+  `  };`,
+  `  const entityWrite = (who, kind, target) => {`,
+  `    const diary = kind === 'diary';`,
+  `    const listed = diary && who.unknown ? cast.find((place) => place.id === who.name) || cast.find((place) => place.name === who.name) : undefined;`,
+  `    if (listed) return void writes.diary.push({ entity: listed.id, line: line('diary', target) });`,
+  `    if (diary && open && who.unknown) {`,
+  `      line('diary', target);`,
+  `      if (!writes.maybe.includes(who.name)) writes.maybe.push(who.name);`,
+  `      return;`,
+  `    }`,
+  `    if (who.unknown) fail('The game has no entity named "' + who.name + '"');`,
+  `    if (who.played) fail(!diary ? 'The persona moves with the player' : who.name ? 'The game has no entity named "' + who.name + '"' : 'The persona has no diary');`,
+  `    const entity = who.id || who.name;`,
+  `    if (diary) writes.diary.push({ entity, line: line('diary', target) });`,
+  `    else writes.entities.push(kind === 'move' ? { entity, kind, location: find('location', places.locations, target) } : { entity, kind });`,
+  `  };`,
+  `  const move = (target) => { writes.location = find('location', places.locations, target); };`,
   `  const text = (value) => (typeof value === 'string' ? value.trim() : '');`,
   `  const discover = (name, description) => {`,
   `    if (!text(name)) throw new TypeError('discover needs a name as text');`,
@@ -1185,38 +1452,107 @@ const worldPrelude = ({ locations, location }: SandboxPlaces, cast: readonly San
   `    if (!text(value)) throw new TypeError(call + ' needs a line as text');`,
   `    return text(value);`,
   `  };`,
-  `  const diary = (target, value) => {`,
-  `    const listed = typeof target === 'string' && cast.some((place) => place.id === target || place.name === target);`,
-  `    if (open && !listed && text(target)) {`,
-  `      line('diary', value);`,
-  `      if (!writes.maybe.includes(text(target))) writes.maybe.push(text(target));`,
-  `      return;`,
-  `    }`,
-  `    const entity = find('entity', cast, target);`,
-  `    writes.diary.push({ entity, line: line('diary', value) });`,
-  `  };`,
-  `  const memory = Object.freeze(lock({`,
-  `    add: (value) => { writes.memory.push(line('memory.add', value)); },`,
-  `    pin: (value) => { writes.pins.push(line('memory.pin', value)); },`,
-  `  }, ['add', 'pin'], 'memory.', note));`,
-  `  return [location, Object.freeze(discover), memory, Object.freeze(diary), advance, writes];`,
-  `})(${JSON.stringify({ locations, location })}, ${JSON.stringify(cast)}, ${openCast}, ${LOCK_FIELDS}, ${LOOSE_NOTE});`,
+  `  const verb = (target, path, name, call) => Object.defineProperty(target, name, { get: () => call, set: () => note(path + name) });`,
+  `  const memories = rows.map((row, at) => {`,
+  `    const { id, custom } = row;`,
+  `    const path = 'memories[' + at + '].';`,
+  `    const entry = lockEntry(row, ['text'], path, note);`,
+  // A verdict on a Custom line changes nothing, so it is listed as a dropped write (Q15).
+  `    const verdict = (kind) => () => (custom ? note(path + kind + '()') : void writes.memoryWrites.push({ id, kind }));`,
+  `    verb(entry, path, 'pin', verdict('pin'));`,
+  `    verb(entry, path, 'forget', verdict('forget'));`,
+  `    verb(entry, path, 'edit', (value) => { writes.memoryWrites.push({ id, kind: 'edit', text: line(path + 'edit', value), custom }); });`,
+  `    verb(entry, path, 'remove', () => { writes.memoryWrites.push({ id, kind: 'remove' }); });`,
+  `    return Object.freeze(entry);`,
+  `  });`,
+  `  const listVerb = (name, call) => verb(memories, 'memories.', name, call);`,
+  `  listVerb('add', (value) => { writes.memory.push(line('memories.add', value)); });`,
+  `  listVerb('pin', (value) => { writes.pins.push(line('memories.pin', value)); });`,
+  `  return [move, Object.freeze(discover), Object.freeze(memories), advance, entityWrite, writes];`,
+  `})(${JSON.stringify({ locations: locations.map(({ id, name }) => ({ id, name })), location })}, ${JSON.stringify(cast)}, ${openCast},`,
+  `  JSON.parse(${JSON.stringify(JSON.stringify(memories.map((row) => memoryData(row, reads))))}), ${LOCK_ENTRY}, ${LOOSE_NOTE});`,
 ].join('\n');
 
 const NO_PLACES: SandboxPlaces = { locations: [], location: null };
 
-/** The entities of `entities` that `diary` can name: every one but the persona, by id, else by name. */
-const diaryCast = (entities: readonly SandboxEntity[], persona: SandboxEntity): SandboxPlace[] => entities
-  .filter((entity) => entity !== persona && !(persona.id && entity.id === persona.id) && hasEntityKey(entity.name))
-  .map((entity) => ({ id: entity.id || entity.name, name: entity.name }));
+/** Who an unknown entry's diary can name: every entity but the persona, by id, else by name, then the discovered. */
+const diaryCast = (entities: readonly SandboxEntity[], persona: SandboxEntity, discovered: readonly SandboxPlace[]): SandboxPlace[] => [
+  ...entities
+    .filter((entity) => entity !== persona && !(persona.id && entity.id === persona.id) && hasEntityKey(entity.name))
+    .map((entity) => ({ id: entity.id || entity.name, name: entity.name })),
+  ...discovered,
+];
+
+/** Where the entities stand: the name each one's `location` reads, and who each location's `present` lists. */
+interface Standing {
+  nameOf(entity: SandboxEntity, played: boolean): string;
+  /** Whether `present` starts with the persona, and the `entities` keys that follow it. */
+  presentAt(locationId: string): { persona: boolean; keys: string[] };
+}
+
+/** Where `keyed` stand among `places`. A follower and the persona stand where the player does; an entity with no
+ *  position stands at every location it lists. */
+function standingOf({ locations, location: here }: SandboxPlaces, { byName, persona }: KeyedEntities): Standing {
+  const nameById = new Map(locations.map((place) => [place.id, place.name]));
+  const standsAt = (entity: SandboxEntity, locationId: string) => {
+    if (entity.following) return here?.id === locationId;
+    return entity.locationId ? entity.locationId === locationId : !!entity.locationIds?.includes(locationId);
+  };
+  return {
+    nameOf: (entity, isPersona) => {
+      // The empty persona is no entity, so it stands nowhere.
+      if (isPersona) return entity.id ? here?.name ?? '' : '';
+      if (entity.following) return here?.name ?? '';
+      return entity.locationId ? nameById.get(entity.locationId) ?? '' : '';
+    },
+    presentAt: (locationId) => ({
+      persona: !!persona.id && here?.id === locationId,
+      keys: [...byName].filter(([, entity]) => !isPlayed(entity, persona) && standsAt(entity, locationId)).map(([name]) => name),
+    }),
+  };
+}
+
+/** The `locations` and `location` prelude, after the entities prelude: `present` holds its entries. The later of
+ *  two locations sharing a name wins the key. */
+const locationsPrelude = ({ locations, location: here }: SandboxPlaces, standing: Standing, reads: HostReads): string => {
+  const data = (place: SandboxLocation, prefix: string) => ({
+    id: place.id, name: place.name, description: reads.text(place.description), summary: reads.text(place.summary), starting: !!place.starting,
+    ...standing.presentAt(place.id), prefix,
+  });
+  const current = here ? locations.find((place) => place.id === here.id) ?? here : null;
+  const blank = { ...data({ id: '', name: '' }, ''), persona: false, keys: [] };
+  const spec = {
+    locations: [...new Map(locations.filter((place) => hasEntityKey(place.name)).map((place) => [place.name, place]))]
+      .map(([name, place]) => [name, data(place, `${memberPath('locations', name)}.`)]),
+    here: current ? data(current, 'location.') : { ...blank, prefix: 'location.' },
+    blank,
+  };
+  return [
+    `const [locations, location] = ((spec, move, lockEntry, note, entities, persona) => {`,
+    `  const entry = (data, extra) => {`,
+    `    const present = Object.freeze([...(data.persona ? [persona] : []), ...data.keys.map((key) => entities[key])]);`,
+    `    const out = { id: data.id, name: data.name, description: data.description, summary: data.summary, starting: data.starting, present, ...extra };`,
+    `    return Object.freeze(lockEntry(out, ['description', 'summary'], data.prefix, note));`,
+    `  };`,
+    `  const map = Object.create(null);`,
+    `  for (const [key, data] of spec.locations) map[key] = entry(data, {});`,
+    `  const strays = Object.create(null);`,
+    `  const stray = (key) => entry({ ...spec.blank, prefix: (/^[A-Za-z_$][\\w$]*$/.test(key) ? 'locations.' + key : 'locations[' + JSON.stringify(key) + ']') + '.' }, {});`,
+    `  const locations = new Proxy(Object.freeze(map), {`,
+    `    get: (target, key) => typeof key !== 'string' || key in target ? target[key] : strays[key] || (strays[key] = stray(key)),`,
+    `  });`,
+    `  return [locations, entry(spec.here, { move })];`,
+    `})(JSON.parse(${JSON.stringify(JSON.stringify(spec))}), ${MOVE_TURN}, ${LOCK_ENTRY}, ${LOOSE_NOTE}, entities, persona);`,
+  ].join('\n');
+};
 
 /** The world writes a run's dump holds, or the error of the first unknown name it named. */
 function readWorldWrites(dump: string): { writes?: WorldWrites; maybeDiary?: string[] } | { error: string } {
   const parsed: unknown = JSON.parse(dump);
   if (!parsed || typeof parsed !== 'object') return {};
-  const { location, minutes, advanced, discover, memory, pins, diary, unknown, maybe } = parsed as {
+  const { location, minutes, advanced, discover, memory, pins, diary, entities, memoryWrites, unknown, maybe } = parsed as {
     location: string | null; minutes: number; advanced: boolean; discover: DiscoverWrite[]; memory: string[]; pins: string[];
-    diary: DiaryWrite[]; unknown: string[]; maybe: string[];
+    diary: DiaryWrite[]; entities: EntityCodeWrite[]; memoryWrites: MemoryWrite[]; unknown: string[]; maybe: string[];
   };
   if (unknown.length) return { error: unknown[0] };
   const writes: WorldWrites = {
@@ -1226,6 +1562,8 @@ function readWorldWrites(dump: string): { writes?: WorldWrites; maybeDiary?: str
     ...(memory.length ? { memory } : {}),
     ...(pins.length ? { pins } : {}),
     ...(diary.length ? { diary } : {}),
+    ...(entities.length ? { entities } : {}),
+    ...(memoryWrites.length ? { memoryWrites } : {}),
   };
   return {
     ...(Object.keys(writes).length ? { writes } : {}),
@@ -1234,7 +1572,7 @@ function readWorldWrites(dump: string): { writes?: WorldWrites; maybeDiary?: str
 }
 
 /** The `player` object of a During AI Output run: every call throws, since a sentence cannot wait on a dialog. */
-const PLAYER_CALLS = ['tell', 'toast', 'confirm', 'ask', 'askText'] as const;
+const PLAYER_CALLS = ['tell', 'toast', 'confirm', 'ask', 'input'] as const;
 const OUTPUT_PLAYER = [
   `const player = Object.freeze(Object.fromEntries(${JSON.stringify(PLAYER_CALLS)}.map((call) => [call, () => {`,
   `  throw new Error('player.' + call + " can't run in ${SCRIPT_TIMING_LABEL.output}");`,
@@ -1271,9 +1609,9 @@ const PLAYER_PRELUDE = [
   `      const picked = call({ kind: 'ask', question: text('ask', 'a question', question), options: list.map((o) => o.label), multiple });`,
   `      return multiple ? picked.map((at) => list[at].value) : list[picked].value;`,
   `    },`,
-  `    askText: (question, placeholder) => call({`,
-  `      kind: 'askText', question: text('askText', 'a question', question),`,
-  `      ...(placeholder === undefined ? {} : { placeholder: text('askText', 'a placeholder', placeholder) }),`,
+  `    input: (question, placeholder) => call({`,
+  `      kind: 'input', question: text('input', 'a question', question),`,
+  `      ...(placeholder === undefined ? {} : { placeholder: text('input', 'a placeholder', placeholder) }),`,
   `    }),`,
   `  });`,
   `})(globalThis.${PROMPT_HOOK}, JSON.stringify, JSON.parse, Array.isArray);`,
@@ -1299,8 +1637,9 @@ export const executeStatCode = async (
    *  write is ignored. */
   currentStat: Stat | null,
   {
-    clock, turn, enabled, placeholders = [], traits = [], entities = [], persona = EMPTY_PERSONA, owner, dictionaries = [],
+    clock, turn, enabled, placeholders = [], traits = [], entities = [], persona = EMPTY_PERSONA, owner, dictionaries = [], resolveEntryValue,
     narration, selfTrait, switchedTrait, prompts = scriptPrompts, places = NO_PLACES, discovered = [], args, openCast = false,
+    memories = [], notes = '', readOnly = false,
   }: StatCodeRunOptions = {},
 ): Promise<StatCodeResult> => {
   // If code is empty, return null (use the manually set value)
@@ -1315,6 +1654,7 @@ export const executeStatCode = async (
     ]);
     const keyed = keyedEntities(entities, persona);
     const place = ownerPlace(keyed, owner);
+    const standing = standingOf(places, keyed);
     const statsData = marshalStats({ stats, turn, enabled });
     const keyedStats = keyedStatEntries(statsData);
     const ownerStatsData = owner?.stats ? marshalStats(owner.stats) : [];
@@ -1345,15 +1685,18 @@ export const executeStatCode = async (
     // A trait script's `self` is its trait's entry; a world script's is an empty object.
     const selfTraitSource = selfTrait ? JSON.stringify(Object.values(traitData([selfTrait]))[0]) : '{}';
     const blankStat = blankStatEntry(selfData);
+    const reads = hostReads();
 
     // A script that names `player.` waits on the host for its answers, which only the async engine can do
     // (Q45). During AI Output keeps the sync engine: there `player` is the stub that throws (Q14).
-    const engine: SandboxEngine = !narration && namesPlayer(code) ? 'async' : 'sync';
+    // A read-only run has no `player`, so it never waits.
+    const engine: SandboxEngine = !narration && !readOnly && namesPlayer(code) ? 'async' : 'sync';
     // Set when the player closed a prompt. The call throws in the VM, but a script may catch it, so the run
     // reads this and fails as canceled whatever the program then did (Q15).
     let canceled = false;
     const hostFunctions: Record<string, SandboxHostFunction> = {
       [ROLL_HOOK]: (vm, indexHandle) => vm.newString(placeholderMap.nodes[vm.getNumber(indexHandle)]?.entry?.roll() ?? ''),
+      [HOST_READ_HOOK]: (vm, slotHandle) => vm.newString(reads.answer(vm.getNumber(slotHandle))),
       ...(engine === 'sync' ? {} : {
         [PROMPT_HOOK]: async (vm, requestHandle) => {
           // The prelude built the request from checked arguments, so it is one of the kinds.
@@ -1370,11 +1713,14 @@ export const executeStatCode = async (
     };
 
     // The stat data rides in as JSON literals (JSON is valid JS expression syntax); console.log, the roll
-    // hook and the prompt hook are the only host functions. The user code runs as a function body so `return` works, with
+    // hook, the read hook and the prompt hook are the only host functions. The user code runs as a function body so `return` works, with
     // the readers' names shadowed as its parameters; the program's completion value pairs what it returned
     // with what `self`'s writable fields hold afterwards, then what it did to `placeholders`, `traits` and
     // the entities' traits.
     const program = [
+      ...(readOnly ? [reseedRandom([...crypto.getRandomValues(new Uint32Array(4))])] : []),
+      `const ${STRINGIFY} = JSON.stringify;`,
+      HOST_READ_PRELUDE,
       `const ${SELF_ASSIGNED} = [];`,
       statsPrelude({ root: 'stats', reader: STAT_WRITES, entries: keyedStats, blank: blankStat, selfName: selfNameIn('stats') }),
       statsPrelude({
@@ -1385,7 +1731,7 @@ export const executeStatCode = async (
       `const self = ${!currentStat ? selfTraitSource : selfMap ? `${selfMap}[${JSON.stringify(selfData.name)}]` : JSON.stringify(selfData)};`,
       ...(selfMap || !currentStat ? [] : [`(${LOCK_STAT})(self, ${SELF_ASSIGNED}, (path) => ${LOOSE_NOTE}('self.' + path));`]),
       ...(!currentStat && selfTrait ? [`Object.freeze((${LOCK_FIELDS})(self, Object.keys(self), 'self.', ${LOOSE_NOTE}));`] : []),
-      worldPrelude(places, [...diaryCast(entities, persona), ...discovered], openCast),
+      worldPrelude(places, diaryCast(entities, persona, discovered), openCast, memories, reads),
       `const clock = ((lock, advance) => {`,
       `  const clock = ${JSON.stringify(clockObject(clock))};`,
       `  Object.freeze(lock(clock.previous, ['day', 'daypart'], 'clock.previous.', ${LOOSE_NOTE}));`,
@@ -1409,13 +1755,17 @@ export const executeStatCode = async (
       ...(args ? [`const args = Object.freeze(JSON.parse(${JSON.stringify(JSON.stringify(args))}));`] : []),
       placeholdersPrelude(placeholderMap),
       trackedMapPrelude({ ...TRAIT_MAP, root: 'traits', reader: TRAIT_WRITES, data: traitData(traits) }),
-      entitiesPrelude(keyed, placeholderMap, blankStat, place, statEntriesOf),
-      dictionariesPrelude(dictionaries, placeholderMap),
-      `[(function(${PLACEHOLDER_WRITES}, ${TRAIT_WRITES}, ${ENTITY_WRITES}, ${STAT_WRITES}, ${LOOSE_WRITES}, ${LOOSE_NOTE}, ${DICTIONARY_WRITES}, ${OWNER_VIEW}, ${OWNER_STATS}, ${OWNER_STAT_WRITES}, ${ENTITY_STAT_WRITES}) {`,
-      code,
+      entitiesPrelude(keyed, placeholderMap, blankStat, place, statEntriesOf, standing, reads),
+      locationsPrelude(places, standing, reads),
+      dictionariesPrelude(dictionaries, placeholderMap, reads, resolveEntryValue),
+      // An accessor, so `notes = x` drops and lists the write as a locked field does.
+      `Object.defineProperty(globalThis, 'notes', { enumerable: true, get: () => ${JSON.stringify(notes)}, set: () => ${LOOSE_NOTE}('notes') });`,
+      ...(readOnly ? [`const ${READ_ONLY_VIEW_OF} = (${READ_ONLY_VIEW})(${LOOSE_NOTE});`] : []),
+      `[(function(${PLACEHOLDER_WRITES}, ${TRAIT_WRITES}, ${ENTITY_WRITES}, ${STAT_WRITES}, ${LOOSE_WRITES}, ${LOOSE_NOTE}, ${DICTIONARY_WRITES}, ${OWNER_VIEW}, ${OWNER_STATS}, ${OWNER_STAT_WRITES}, ${ENTITY_STAT_WRITES}, ${HOST_READ}) {`,
+      readOnly ? readOnlyCode(code, !!args) : code,
       `})(), ${selfRead('value')}, ${CODE_BOUND_FIELDS.map(selfRead).join(', ')}, ${PLACEHOLDER_WRITES}(), ${TRAIT_WRITES}(), ${ENTITY_WRITES}(),`,
-      `  ${STAT_WRITES}(), ${DICTIONARY_WRITES}(), JSON.stringify(${SELF_ASSIGNED}), ${OWNER_STAT_WRITES}(), JSON.stringify(${LOOSE_WRITES}),`,
-      `  ${ENTITY_STAT_WRITES}(), ${narration ? 'narration.sentence' : 'undefined'}, JSON.stringify(${WORLD_WRITES})];`,
+      `  ${STAT_WRITES}(), ${DICTIONARY_WRITES}(), ${STRINGIFY}(${SELF_ASSIGNED}), ${OWNER_STAT_WRITES}(), ${STRINGIFY}(${LOOSE_WRITES}),`,
+      `  ${ENTITY_STAT_WRITES}(), ${narration ? 'narration.sentence' : 'undefined'}, ${STRINGIFY}(${WORLD_WRITES})];`,
     ].join('\n');
 
     return await runInSandbox(program, ({ vm, result, consoleOutput, timedOut }): StatCodeResult => {
@@ -1424,7 +1774,7 @@ export const executeStatCode = async (
         const dumped = vm.dump(result.error) as { name?: string; message?: string; stack?: string } | string;
         const err = typeof dumped === 'object' && dumped !== null ? dumped : { message: String(dumped) };
         // The interrupt handler surfaces as an "interrupted" InternalError — report it as the timeout.
-        if (timedOut || /interrupted/i.test(err.message || '')) {
+        if (timedOut || (err.name === 'InternalError' && /interrupted/i.test(err.message || ''))) {
           return { value: null, error: 'Execution timed out', kind: 'timeout' };
         }
         return {

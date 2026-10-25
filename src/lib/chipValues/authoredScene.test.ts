@@ -77,7 +77,7 @@ describe('authoredChipScene and entity stats', () => {
     expect(authoredChipScene(world()).ownedStats ?? {}).toEqual({});
   });
 
-  it('carries the Custom Persona entity’s name as the Player Name, and the player without one', () => {
+  it('carries the Custom Persona entity’s name as the Persona Name, and the player without one', () => {
     const you: Entity = { id: 'you', name: 'Sylvie', customPersona: true };
     expect(chipValues(authoredChipScene(world({ entities: [wren, { ...wren, id: 'p', name: 'Odd', persona: true }, you] })))('header:{{user}}'))
       .toBe('Sylvie');
@@ -124,6 +124,13 @@ describe('authoredChipScene', () => {
   it('starts every stat at its authored value, or its minimum when none is set', () => {
     const scene = authoredChipScene(world());
     expect(scene.stats.map((s) => [s.name, s.value])).toEqual([['Warmth', 40], ['Nerve', 10]]);
+  });
+
+  it('opens a stat through the seed rule: an authored zero stays zero, then clamps to the range (Q8)', () => {
+    const scene = authoredChipScene(world({ stats: [
+      { ...warmth, min: -10, value: 0 }, { ...nerve, value: 0 }, { ...warmth, id: 'w2', name: 'Chill', value: 5, starting: 10 },
+    ] }));
+    expect(scene.stats.map((s) => [s.name, s.value])).toEqual([['Warmth', 0], ['Nerve', 10], ['Chill', 5]]);
   });
 
   it("nests the Stats chips under the world's stat groups, loose stats first", () => {

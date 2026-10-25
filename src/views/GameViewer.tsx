@@ -1,7 +1,8 @@
 import { randomUUID } from "@/lib/uuid";
-import { ownedTraitStatesFrom } from '@/lib/ownedTraitState';
-import { ownerPins, inPlayOwners, inPlayLibrary, libraryUnder } from '@/lib/ownedTraitsInPlay';
+import { openingFold, openingStateOf } from '@/lib/openingState';
+import { ownerPins, inPlayOwners, laterDiscovered, libraryUnder } from '@/lib/ownedTraitsInPlay';
 import { samePersonaRef } from '@/lib/personaPick';
+import { metFromScene, metRosterByLocation, runtimeCharacterPositions } from '@/lib/metEntities';
 import { libraryBooksInPlay } from '@/lib/dictionarySelection';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, useSyncExternalStore, lazy, Suspense } from "react";
 import { useGameData } from "../contexts/GameDataContext";
@@ -13,16 +14,18 @@ import { targetAttribute } from "@/lib/surface/surfaceTargets";
 import { EXIT_TO_MENU_PROMPT } from "@/lib/leavePrompts";
 import { useGameplay } from "@/contexts/GameplayContext";
 import { useAccountDeletion } from "@/contexts/AccountDeletionContext";
-import { type StatClock, type WorldWrites } from "@/lib/statCodeExecutor";
+import { type SandboxMemory, type StatClock, type WorldWrites } from "@/lib/statCodeExecutor";
 import { advancedClock, mergeWorldWrites } from "@/lib/worldWrites";
-import { pruneScriptPins, withScriptPins } from "@/lib/scriptPins";
+import { addScriptPins, pruneScriptPins, withScriptPins } from "@/lib/scriptPins";
+import { deletedAfter, editsAfter, notesAfter, pinsAfter } from "@/lib/memoryWrites";
 import {
-  overlayStatCodeResult, playthroughPlaceholderSet, runStatCodeTurn, runSwitchScripts, withPinWrites, type ScriptTrigger, type StatCodeTurn, type StatCodeTurnResult,
+  overlayStatCodeResult, playthroughPlaceholderSet, runStatCodeTurn, runSwitchScripts, splitOwnerTurns, withPinWrites, type SandboxState, type ScriptTrigger,
+  type StatCodeTurn, type StatCodeTurnResult,
 } from "@/lib/statCodeTurn";
 import { landSwitchRun } from "@/lib/switchRunLanding";
 import { openOutputRun, type OutputRun } from "@/lib/outputRun";
 import {
-  applyEntityStatResponse, entityCodeTurns, entityStatOwners, personaEntities, personaStatOwners, seedEntityStats, statOwnerEntities,
+  applyEntityStatResponse, entityCodeTurns, entityStatOwners, personaEntities, personaStatOwners, statOwnerEntities,
   statRequestOwners, withEntityRegen, withOwnerCodeResults,
 } from "@/lib/entityStats";
 import { readsTurnStart, type RunTiming } from "@/lib/statCodeTiming";
@@ -40,11 +43,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { ClearSearchButton } from "@/components/ui/search-field";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Meta } from "@/components/ui/typography";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Pager } from "@/components/ui/pagination";
 import { Music, SquarePen, Database, ScrollText, ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Search, Eye, EyeOff, DoorOpen } from "lucide-react";
-import IndeterminateProgress from "../components/ui/indeterminate-progress";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tip } from "@/components/ui/tooltip";
@@ -101,7 +102,7 @@ import {
 } from "../lib/stagedPlanning";
 import { selectRelevantDiary } from "../lib/semanticDiary";
 import { findEntityByCharacterName, materializeDiscoveredEntity, discoveredAsEntities, cleanDiscoveredDescription, pruneDiscoveredToHistory, pickedAtStart, INITIAL_SOURCE_TURN_ID } from "../lib/runtimeCharacters";
-import { entityIdsAt } from "../lib/entityPresence";
+import { entitiesInPlay, entityIdsAt, positionedCast, startingPositions } from "../lib/entityPresence";
 import { selectRegenSource, buildRegenContext } from "../lib/discoveredRegen";
 import { outputReserve } from "../lib/outputLength";
 import { outputCaps, type AiEndpointTarget, type AiSettingsSnapshot } from "../lib/aiRequest/aiRequestSpec";
@@ -120,7 +121,7 @@ import { parseTurnContent, recentParticipants, collectCharacterDiary, parsedTurn
 import { navigableDestinations } from "../lib/locationContext";
 import { chipValues, entityStatsField, sceneEntityChipValues } from "../lib/chipValues/chipValues";
 import { useLiveChipScene, type SceneWrites } from "../lib/chipValues/liveScene";
-import { buildToolSnapshot, type ToolMemorySource } from "../lib/tools/toolSnapshot";
+import { buildToolSnapshot, type ToolScriptSource, type ToolMemorySource } from "../lib/tools/toolSnapshot";
 import { toolCallStatus } from "../lib/tools/toolCallStatus";
 import { snapshotToolExecutor, toolsOfferedTo } from "../lib/tools/toolOffer";
 import { openWorldToolTurn, replayedToolEffects, type WorldToolTurn } from "../lib/tools/worldToolTurn";
@@ -128,6 +129,8 @@ import { onCallRunner } from "../lib/tools/onCallRunner";
 import { useHelpWorldSource } from "../lib/formaquestion/helpWorld";
 import type { ChipSceneTime } from "../lib/chipValues/chipScene";
 import { useResolvedWorld } from "@/lib/useResolvedWorld";
+import { useLocationBackdrop, useMapBackdrop } from "@/lib/useLocationBackdrop";
+import { useSeedAvatarOnSaveLoad } from "@/lib/useLibraryAvatars";
 import { usePersonaNotice } from "@/lib/usePersonaNotice";
 import { resolveStartingLocation } from "../lib/startingLocation";
 import { variableForToken, tokenVariant } from "../lib/promptVariables";
@@ -150,24 +153,34 @@ import {
   type BackgroundPassKind, type BackgroundPassQueue, type DiaryTarget, type DigestTarget,
 } from "../lib/backgroundPassQueue/backgroundPassQueue";
 import { BackgroundPassStatus } from "../components/game/BackgroundPassStatus";
+import { RequestStatusRow } from "../components/game/RequestStatusRow";
+import { TOOL_GLYPH, requestLabel, requestStatus } from "../components/game/statusGlyphs/glyphMap";
 import { buildNarrationPrompt, type DictionaryDebug } from "../lib/turnPipeline/narrationPrompt";
 import { buildPlannerBand } from "../lib/turnPipeline/plannerBand";
 import { readNarration, selectVisitorAdditions, presentSceneEntities, splitParticipants } from "../lib/turnPipeline/narrationReading";
 import { planTurn, planHasPass } from "../lib/turnPipeline/planTurn";
 import { runTurn, type TurnAdvance, type TurnRequestAdapter } from "../lib/turnPipeline/turnRunner";
 import { createPendingRequests } from "../lib/turnPipeline/pendingRequests";
-import { computeTurnCommit, withCodeWrites, type TurnCommit, type TurnCommitContext } from "../lib/turnPipeline/computeTurnCommit";
+import {
+  commitEntityMoves, computeTurnCommit, entityMovesOf, withCodeLines, withCodeWrites, type TurnCommit, type TurnCommitContext,
+} from "../lib/turnPipeline/computeTurnCommit";
+import {
+  entityMoveOffers, entityMoveSubjects, hasEntityOffer, joinEntityMoves, movedPositions, moveWithPlayer,
+  NO_ENTITY_MOVES, NO_ENTITY_OFFER, peelIntents, peeledCharacters, runtimePositions, turnPeelOff,
+  type EntityMoveOffer, type FollowerState, type PeelOff,
+} from "../lib/entityFollowing";
 import { classifyTurnError, type TurnErrorKind } from "../lib/turnPipeline/turnErrors";
-import { emptyTurnMaterial, type TurnMaterial, type TurnPassSubject, type TurnPlanInput, type TurnPrompts, type TurnSettings } from "../lib/turnPipeline/turnPlan";
+import { emptyTurnMaterial, type TurnMaterial, type TurnPassSubject, type TurnPlan, type TurnPlanInput, type TurnPrompts, type TurnSettings } from "../lib/turnPipeline/turnPlan";
 import { parseTurns, buildVerbatimHistory, buildBandedHistory, extractKeywords, type BandCounts } from "../lib/turnBanding";
 import { anatomyRegions, toAnatomyBlocks, type AnatomyRun } from "../lib/requestAnatomy";
 import type { PromptJumpTarget } from "../lib/promptJump";
 import {
   markFindHits, markFraction, parseFindTerms, planFindHits, type FindMarked,
 } from "@/lib/findMarks";
-import { buildStamper, hoursByPosition, FLAT_HOURS_PER_TURN } from "../lib/gameClock";
+import { buildStamper, daypartAt, hoursByPosition, FLAT_HOURS_PER_TURN } from "../lib/gameClock";
 import { agedMilestoneCandidates, resolveMilestoneDrop } from "../lib/milestoneMemory";
 import { applyMemoryOverrides, activeNotes } from "../lib/memoryOverrides";
+import { buildMemoryLedger, scriptMemories } from "../lib/memoryView";
 import { buildRelevanceScores, EMBED_BATCH_BOUND_MS, EMBED_BOUND_MS, vectorKey } from "../lib/memoryRelevance";
 import { entryVectorKey, entryEmbedText } from "../lib/semanticDictionary";
 import { selectSemanticRehydrations } from "../lib/semanticRehydration";
@@ -175,12 +188,14 @@ import { pickHistoryRecall, type HistoryPicks } from "../lib/historyRecall";
 import { embedTexts, isEmbeddingModelReady, loadEmbeddingModel } from "../lib/embeddingWorkerClient";
 import { getVectors, putVector } from "../lib/embeddingCache";
 import { findEntityNames, matchNames, sameCharacterName } from "../lib/entityMatch";
-import { parseChoices } from "../lib/choices";
+import { keepSameRows, parseChoices, parseStreamingChoices } from "../lib/choices";
 import { setGameplayText } from "../lib/gameplayTextStore";
 import { useSentenceReveal } from "../lib/useSentenceReveal";
 import { useSmoothedReveal } from "../lib/useSmoothedReveal";
 import { revealActive } from "../lib/narrationRevealConfig";
-import { CHOICES_TEST_ACTION, CHOICES_TEST_CHOICES, CHOICES_TEST_NARRATION, REVEAL_TEST_NARRATION, REVEAL_TEST_PROFILES, type RevealArrivalEvent } from "../lib/revealTestScripts";
+import { CHOICES_TEST_ACTION, CHOICES_TEST_CHOICES, CHOICES_TEST_NARRATION, REVEAL_TEST_NARRATION, REVEAL_TEST_PROFILES, TURN_TEST_ACTION, TURN_TEST_CHOICES, TURN_TEST_NARRATION, type RevealArrivalEvent } from "../lib/revealTestScripts";
+import { scriptedFetch } from "../lib/scriptedFetch";
+import { TURN_CHROME_ENTER_MS } from "../lib/turnChrome";
 import { MARKDOWN_SAMPLE } from "../lib/markdownSample";
 import { parseSlashCommand } from "../lib/slashCommands";
 import { appliedStatDeltas, applyRegen, sumDeltas } from "../lib/statChanges";
@@ -197,7 +212,7 @@ import { addSceneImage, removeSceneImage, pruneSceneImages, setSceneTags as patc
 import { addToPending, setTurnAttachments, latestTurnAttachments, pruneAttachments } from "../lib/actionAttachments";
 import { useImageAttachments } from "../lib/useImageAttachments";
 import { useMountedRef } from "../lib/useMountedRef";
-import { generateImage, buildImageRequest } from "../lib/imageGen";
+import { generateImage, buildImageRequest, takesCharacterPrompts } from "../lib/imageGen";
 import { toastImageFailure } from "../lib/imageGen/failureToast";
 import { buildImagePrompt } from "../lib/imagePrompt";
 import { downloadBlob } from "../lib/downloadBlob";
@@ -209,7 +224,7 @@ import {
 } from "../lib/traitEffects";
 import { usePlaceholderSession } from "../contexts/PlaceholderSessionContext";
 import {
-  acquireTrait, activeTraits as traitsInForce, applyOwnedStatTraits, applyGlobalRowTraits, entityStatTraitsInForce, heldGlobalTraits, globalRowTraits, seedNewGameStats, startingTraitLog,
+  activeTraits as traitsInForce, entityStatTraitsInForce, heldGlobalTraits, globalRowTraits, startingTraitLog,
   gateStatsOf, settleTraits, statTraitsInForce, switchPersonaStats, switchPlayerTrait, traitNameIn, traitSwitchEvents,
   type GatedTraitResult, type TraitRuntimeState, type TraitWorld,
 } from "../lib/traitRuntime";
@@ -390,6 +405,22 @@ const NO_PASSES: ReadonlySet<BackgroundPassKind> = new Set();
 interface ViewRequest extends TransportRequest {
   /** Skips the status label; a concurrent batch sets one label itself. */
   quiet?: boolean;
+  /** Answers the request in place of the network, for a scripted turn. */
+  fetchImpl?: typeof fetch;
+}
+
+/** A scripted turn's stand-in replies: its narration and choices streams. */
+interface TurnScript {
+  narration: typeof fetch;
+  choices: typeof fetch;
+}
+
+/** The passes a scripted turn runs; every other one would ask a real endpoint. */
+const SCRIPTED_PASSES = new Set(['narration', 'choices']);
+
+/** Calls `render` only while mounted, so a closed dialog's body costs the parent's render nothing. */
+function RenderMounted({ render }: { render: () => React.ReactNode }) {
+  return <>{render()}</>;
 }
 
 const GameViewer = ({
@@ -493,6 +524,7 @@ const GameViewer = ({
     revealMinStagger,
     locationChangeEnabled,
     locationAutoApply,
+    entityMovement,
     narrationVerbatimTurns,
     thinkingVerbatimTurns,
     thinkingMode,
@@ -534,17 +566,22 @@ const GameViewer = ({
     choicesUserPrompt,
     statUpdatesUserPrompt,
     locationChangeUserPrompt,
+    entityLocationPrompt,
+    entityLocationUserPrompt,
     summaryUserPrompt,
     milestoneSelectPrompt,
     milestoneSelectUserPrompt,
-    // Scene images: the tag pass's prompts and the toggles. The provider config itself is read off
-    // `settings` by buildImageRequest, not destructured here.
+    // Scene images: the tag pass's prompts and the toggles. buildImageRequest reads the rest of the
+    // provider config off `settings`; provider and model pick the scene line's form.
     sceneTagsPrompt,
     sceneTagsUserPrompt,
     discoverEntityPrompt,
     discoverEntityUserPrompt,
     sceneImageAuto,
     imageTagPrompt,
+    imageCleanTags,
+    imageProvider,
+    imageModel,
     imageGenDisabled,
     imageLandscapeWidth,
     imageLandscapeHeight,
@@ -569,6 +606,7 @@ const GameViewer = ({
 
   const {
     setCharacterData,
+    visibleEntities,
     setVisibleEntities,
     setCurrentLocation,
     setGlobalStats,
@@ -587,6 +625,14 @@ const GameViewer = ({
     setEntityStats,
     setEntityStatBaseline,
     resetEntityStats,
+    entityPositions,
+    setEntityPositions,
+    entityFollowers,
+    setEntityFollowers,
+    carryFollowersTo,
+    applyFollowerState,
+    metEntities,
+    setMetEntities,
     setSelectedEntityId,
     codePins,
     setCodePins,
@@ -611,6 +657,7 @@ const GameViewer = ({
     setIsWaitingForAI,
     isRevealingNarration,
     setIsRevealingNarration,
+    setNarrationSettled,
     fullMessageHistory,
     setFullMessageHistory,
     setDisplayedMessages,
@@ -655,6 +702,8 @@ const GameViewer = ({
     setMemoryDeleted,
     memoryNotes,
     setMemoryNotes,
+    contextMemoryIds,
+    rehydratedMemoryIds,
     sceneImages,
     setSceneImages,
     actionAttachments,
@@ -697,16 +746,18 @@ const GameViewer = ({
     () => ({ traits: authoredTraits, traitGroups, entities: traitEntities }),
     [authoredTraits, traitGroups, traitEntities],
   );
-  /** The authored world every owner's trait gates read: the traits, the groups, who the player is, and each
-   *  present owner's tree under that persona. */
+  // The per-turn settle reads this at the render that holds the turn's advanced clock.
+  const daypart = daypartAt(gameTime, calendar);
+  /** The authored world every owner's trait gates read: the traits, the groups, who the player is, each
+   *  present owner's tree under that persona, and the story clock's daypart. */
   const gatedWorld = useCallback(
     (ref: PersonaRef | undefined = personaRef): TraitWorld => ({
-      traits: authoredTraits, groups: traitGroups, persona: ref ?? { source: 'none' },
+      traits: authoredTraits, groups: traitGroups, persona: ref ?? { source: 'none' }, daypart,
       // A persona change reads this before its render, so its entities and library are the ones under `ref`.
       entities: ref === personaRef ? worldEntitiesOf(entities, persona) : presentEntitiesUnder(ref),
       ...inPlayOwners(ownerWorld, ref, libraryUnder(traitLibrary, personaRef, ref)),
     }),
-    [authoredTraits, traitGroups, entities, persona, personaRef, ownerWorld, traitLibrary, presentEntitiesUnder],
+    [authoredTraits, traitGroups, daypart, entities, persona, personaRef, ownerWorld, traitLibrary, presentEntitiesUnder],
   );
   // A Custom Persona pick lies dormant under a world persona, so only the held picks are active.
   const activeTraits = useMemo(() => {
@@ -734,6 +785,22 @@ const GameViewer = ({
     () => [...entities, ...discoveredAsEntities(discoveredEntities)],
     [entities, discoveredEntities],
   );
+  // The names a script's diary lines land under, by entity id.
+  const diaryNames = useMemo(
+    () => Object.fromEntries([...traitLibrary, ...allEntities].map((entity) => [entity.id, entity.name])),
+    [traitLibrary, allEntities],
+  );
+  // An entity is met once the scene lists it by its revealed name.
+  useEffect(() => {
+    setMetEntities((met) => metFromScene(met, visibleEntities, allEntities));
+  }, [visibleEntities, allEntities, setMetEntities]);
+  // The Map's live roster: where each met entity with a position stands. A runtime character stands where
+  // it was met.
+  const metRoster = useMemo(() => metRosterByLocation({
+    entities: allEntities,
+    positions: { ...runtimeCharacterPositions(discoveredEntities), ...entityPositions },
+    met: metEntities,
+  }), [allEntities, discoveredEntities, entityPositions, metEntities]);
   // Everything a capitalized word in the narration might be OTHER than a new character. Feeds the
   // narration name extractor so a place, a stat, a trait, a lore term, a wildcard value or the player
   // never gets promoted to a person. Location names include the whole world, not just here — the
@@ -883,8 +950,10 @@ const GameViewer = ({
       CHOICES_TEST_CHOICES,
       REVEAL_TEST_PROFILES.steady.schedule(CHOICES_TEST_CHOICES.length),
       (slice) => {
-        const list = parseChoices(slice);
-        if (list.length > 0 && !(fadeRevealActive && !fadeReveal.isDrained())) setCommandChoices({ list, settled: false });
+        const list = parseStreamingChoices(slice);
+        if (list.length > 0 && !(fadeRevealActive && !fadeReveal.isDrained())) {
+          setCommandChoices((prev) => (prev && !prev.settled && keepSameRows(prev.list, list) === prev.list ? prev : { list, settled: false }));
+        }
       },
       () => {
         void (fadeRevealActive ? fadeReveal.drained() : Promise.resolve()).then(() => {
@@ -897,6 +966,9 @@ const GameViewer = ({
       streamChoices();
     });
   }, [startCommandPreview, replaySchedule, pushPreviewNarration, finishPreviewNarration, fadeReveal, fadeRevealActive]);
+
+  // Set once the turn function exists, below.
+  const runTurnTestRef = useRef<(profileName?: string) => void>(() => {});
 
   // Dispatch a parsed slash command; returns true if it was handled (caller then skips the AI).
   const runSlashCommand = useCallback((input: string): boolean => {
@@ -911,6 +983,11 @@ const GameViewer = ({
     if (parsed.command === "choices" && parsed.args[0] === "test") {
       // /choices test [burst|steady|slow|fast|erratic] — the profile paces the narration.
       runChoicesTest(parsed.args[1]);
+      return true;
+    }
+    if (parsed.command === "turn" && parsed.args[0] === "test") {
+      // /turn test [burst|steady|slow|fast|erratic] — a real turn on canned replies; the profile paces the narration.
+      runTurnTestRef.current(parsed.args[1]);
       return true;
     }
     toast.info(`Unknown command: /${parsed.command}`);
@@ -1098,9 +1175,9 @@ const GameViewer = ({
       // Seed the fixture as an id-keyed record and load it by that id.
       const id = randomUUID();
       await putSaveRecord({ ...(fx.save as unknown as Record<string, unknown>), id, name: fx.saveName } as unknown as SaveRecord);
-      await loadGame(id, locations, stats, codeEntities.world);
+      await loadGame(id, locations, stats, codeEntities.world, worldOverview.vrmStore);
     })();
-  }, [devRoute?.fixture, locations, stats, codeEntities, loadGame]);
+  }, [devRoute?.fixture, locations, stats, codeEntities, loadGame, worldOverview.vrmStore]);
   const imageAttachments = useImageAttachments();
   const mounted = useMountedRef();
   // DEV dev-router: `attach=sample` stages attached images once the game has a committed turn, through the
@@ -1135,6 +1212,14 @@ const GameViewer = ({
   const [showEditorExitPrompt, setShowEditorExitPrompt] = useState(false);
   const [lastPromptChars, setLastPromptChars] = useState(0);
   const [suggestedLocation, setSuggestedLocation] = useState<GameLocation | null>(null);
+  // The entities whose "come along" waits on the offered move: Go brings them, Dismiss drops them.
+  const entityOfferRef = useRef<EntityMoveOffer>(NO_ENTITY_OFFER);
+  // The peel-off of the turn that made the offer, so Go creates the follower it promised.
+  const followerPeelRef = useRef<{ peelOff: PeelOff; turnId: string } | undefined>(undefined);
+  /** Where tracked entities and runtime characters stand, and who follows the player. */
+  const liveFollowerState = (): FollowerState => ({
+    positions: { ...runtimePositions(discoveredEntities), ...entityPositions }, followers: entityFollowers,
+  });
   // AI progress feedback: which request is running, its streamed output estimate (null = indeterminate), and
   // whether the player may already type their next action (choices done, background requests still finishing).
   const [aiRequestType, setAiRequestType] = useState<AIRequestType | null>(null);
@@ -1552,19 +1637,27 @@ const GameViewer = ({
     const target = partialRegenTarget();
     if (!target || !choicesEnabled) return;
     const { prev, action } = target;
+    // The new list streams in from empty; replacing the old one row by row would show it at once.
+    setChoices([]);
     void runPartialRegen(async (signal) => {
       const presentNames = new Set([
         ...(prev.entities ?? []),
         ...recentParticipants(fullMessageHistory, CHOICES_PRESENCE_TURNS - 1),
       ]);
       const sceneEntities = allEntities.filter((e) => presentNames.has(e.name));
-      const response = await requestChoices(
-        contextValues(),
-        sceneEntityOverride(currentLocation, sceneEntities),
-        action,
-        prev.narration ?? "",
-        signal,
-      );
+      let response = "";
+      try {
+        response = await requestChoices(
+          contextValues(),
+          sceneEntityOverride(currentLocation, sceneEntities),
+          action,
+          prev.narration ?? "",
+          signal,
+        );
+      } finally {
+        // A stopped or failed re-roll puts the turn's own choices back.
+        if (signal.aborted || !response) setChoices(prev.choices ?? []);
+      }
       if (signal.aborted) return;
       const choices = parseChoices(response);
       setChoices(choices);
@@ -2098,9 +2191,12 @@ const GameViewer = ({
     } : null),
     [memoryDigests, fullMessageHistory, memoryOverrides, narrationVerbatimTurns, stripMedia, semanticMemory, embedActionVec, semanticDiaries, characterDiaries],
   );
+  // What a user Tool's script reads (Q24): the turn's start as code has left it, as an On Call World Tool reads it.
+  // Set beside `prepareTurnStartCode`, once per render.
+  const toolScriptSourceRef = useRef<((base: TurnCodeState | null) => ToolScriptSource) | null>(null);
   // Settings → Tools runs Try It on the playthrough, read as a Tool call in play reads it.
   const toolWorld = useCallback(
-    () => buildToolSnapshot(liveScene(), dictionaries, toolMemorySource()),
+    () => buildToolSnapshot(liveScene(), dictionaries, toolMemorySource(), toolScriptSourceRef.current?.(null)),
     [liveScene, dictionaries, toolMemorySource],
   );
   // A Formaquestion Tool reads the same playthrough while the game shows; the code test reads the authored world.
@@ -2112,6 +2208,8 @@ const GameViewer = ({
   const turnPrompts = (): TurnPrompts => ({
     locationChange: locationChangePromptText || "",
     locationChangeUser: locationChangeUserPrompt,
+    entityLocation: entityLocationPrompt,
+    entityLocationUser: entityLocationUserPrompt,
     thinking: thinkingPrompt,
     director: directorPrompt,
     directorUser: directorUserPrompt,
@@ -2220,6 +2318,7 @@ const GameViewer = ({
     statCount: requestStatCount,
     locationChangeEnabled,
     locationAutoApply,
+    entityMovement,
     aiClock,
     memoryDigests,
     characterDiaries,
@@ -2275,6 +2374,16 @@ const GameViewer = ({
     addSystemLogEntry(errorMessage);
   };
 
+  // A script's verdicts, edits and removals land on the fields the Memory Manager writes, so a rewind keeps them (Q18).
+  const landMemoryWrites = useCallback((writes: WorldWrites | undefined | null) => {
+    const verbs = writes?.memoryWrites;
+    if (!verbs?.length) return;
+    setMemoryPins((prev) => pinsAfter(prev, verbs));
+    setMemoryEdits((prev) => editsAfter(prev, verbs));
+    setMemoryNotes((prev) => notesAfter(prev, verbs));
+    setMemoryDeleted((prev) => deletedAfter(prev, verbs));
+  }, [setMemoryPins, setMemoryEdits, setMemoryNotes, setMemoryDeleted]);
+
   /**
    * Apply one Turn Commit: thin setters, in the order the turn's presentation depends on. The turn's own
    * locals ride in `turn` — everything else here is component state.
@@ -2287,6 +2396,9 @@ const GameViewer = ({
       written: boolean;
       /** What the commit was computed from, which the later code writes lay over. */
       context: TurnCommitContext;
+      /** Where tracked entities stood and who followed when the turn began, where the player stood, and what
+       *  the turn already applied when its move committed. */
+      entityMove: { start: FollowerState; from: string | undefined; applied: FollowerState };
     },
   ) => {
     const { signal } = turn;
@@ -2302,10 +2414,9 @@ const GameViewer = ({
       if (target) setSuggestedLocation(target);
     }
 
-    // Fade path: let the paced reveal finish playing out before the turn's results appear, so choices
-    // and stat changes don't pop in over a still-fading narration. The smooth crawl self-catches-up,
-    // so it needs no hold. (The reveal has been running in parallel with the post-narration passes.)
-    if (fadeRevealActive && !turn.written) await fadeReveal.drained();
+    // The turn's results wait for its end to land: the narration settled and its action row open, so the
+    // choices and stat changes never appear over a still-fading narration.
+    await landNarration(turn.written);
     // Stop pressed while the reveal was still draining — bail before committing choices/stats/snapshot.
     // abortGeneration already kept the narration.
     if (signal.aborted) return;
@@ -2359,6 +2470,24 @@ const GameViewer = ({
       addLogEntry(`Moved to location: ${codeTarget.name}`);
     }
     const location = codeTarget ?? turn.location;
+    const { start, from, applied } = turn.entityMove;
+    if (from) {
+      const { state, offer } = commitEntityMoves(start, final, { from, to: location?.id });
+      const { peel } = turn.context;
+      const turnId = final.turn.turnId ?? currentTurnIdRef.current;
+      const anyKnown = new Set<string>();
+      if (state !== applied) {
+        applyFollowerState(
+          { followers: state.followers, positions: movedPositions(state.positions, applied.positions) },
+          peeledCharacters(state, peel, anyKnown, turnId),
+        );
+        // Removes peeled followers the final move dropped.
+        const unmade = peeledCharacters(applied, peel, anyKnown, turnId).filter((d) => !state.followers.includes(d.entity.id));
+        if (unmade.length) setDiscoveredEntities((prev) => prev.filter((d) => !unmade.some((gone) => gone.entity.id === d.entity.id)));
+      }
+      entityOfferRef.current = offer;
+      followerPeelRef.current = offer.comeAlong.length && peel ? { peelOff: peel, turnId } : undefined;
+    }
 
     setFullMessageHistory((prev) => {
       const updatedHistory = [...prev];
@@ -2380,6 +2509,7 @@ const GameViewer = ({
       const anchor = fullMessageHistoryRef.current.length;
       setMemoryNotes((prev) => withScriptPins(prev, committedTurnId, pins, anchor));
     }
+    landMemoryWrites(final.codeWrites);
 
     // Persist any characters this turn discovered, anchored to its location + turn so they roll back with
     // it. Guarded against a double-add (variant-aware name match) by a visitor added moments ago.
@@ -2435,11 +2565,13 @@ const GameViewer = ({
    */
   const sendGameAction = async (
     action: string,
-    { writtenNarration, attachments, resentAttachments }: {
+    { writtenNarration, attachments, resentAttachments, script }: {
       writtenNarration?: string;
       attachments?: ImageAttachment[];
       /** The re-sent turn's images. They are kept even when the turn may not send them. */
       resentAttachments?: ImageAttachment[];
+      /** Plays the turn on canned narration and choices streams, with no other pass. */
+      script?: TurnScript;
     } = {},
   ) => {
     setUserPage(null); // taking an action resumes following, so the player sees their new turn land
@@ -2458,10 +2590,12 @@ const GameViewer = ({
       hasCurrentLocation: !!currentLocation,
       writtenNarration,
       attachments: resentAttachments ?? attachments,
-      settings: turnSettings(),
+      settings: script ? { ...turnSettings(), thinkingMode: "off" as const, choicesEnabled: true } : turnSettings(),
       prompts: turnPrompts(),
     };
-    let plan = planTurn(planInput);
+    const scripted = (planned: TurnPlan): TurnPlan =>
+      script ? { ...planned, passes: planned.passes.filter((pass) => SCRIPTED_PASSES.has(pass.id)) } : planned;
+    let plan = scripted(planTurn(planInput));
     // Only narration sees the real opening text; every other consumer (stats, planner, choices, dictionary
     // triggers, stored history) sees the terse "START GAME" proxy — the full cue is a narrator directive
     // that derails those prompts. The player's own text lives on in openingActionRef.
@@ -2484,6 +2618,12 @@ const GameViewer = ({
     setIsRevealingNarration(false);
     turnReasoningRef.current = { text: "", ms: 0 };
     setLiveReasoning({ text: "", ms: 0, active: false });
+    // A new turn end to land: its action row stays closed and its choices wait until then.
+    turnSeqRef.current++;
+    landingRef.current = null;
+    choicesHeldRef.current = true;
+    heldChoicesRef.current = null;
+    setNarrationSettled(false);
 
     // What the turn's own derivations carry between passes. The pipeline's material holds everything the
     // requests render from; these are the view-side reads that outlive a single pass.
@@ -2505,6 +2645,29 @@ const GameViewer = ({
     // The planner's call on whether the player is in the picture; undefined until a planner has cast the turn.
     let playerInFrame: boolean | undefined;
     let turnParticipants: string[] = [];
+    // Where tracked entities stood and who followed when the turn began; every join this turn starts here.
+    const moveStart = liveFollowerState();
+    const moveFrom = currentLocation?.id;
+    let entityIntents = NO_ENTITY_MOVES;
+    // The join the narration is written over: followers already beside the player. Null when it moves nobody.
+    let turnJoin: FollowerState | null = null;
+    const movingCast = positionedCast(allEntities, personaRef);
+    const peel = turnPeelOff(movingCast, randomUUID);
+    // The runtime characters the scene list names, the only ones asked unless they already follow.
+    const runtimeInScene = new Set(discoveredEntities
+      .filter((d) => participants.some((name) => sameCharacterName(name, d.entity.name)))
+      .map((d) => d.entity.id));
+    /** Each entity the turn asks whether it moves, with the replies it is offered. */
+    const moveSubjects = (): TurnPassSubject[] => !moveFrom ? [] : entityMoveSubjects(
+      movingCast, moveStart, moveFrom, { runtime: discoveredEntities, inScene: runtimeInScene },
+    ).map((entity) => ({
+      name: entity.name,
+      entity,
+      ...entityMoveOffers(entity, moveStart.followers.includes(entity.id), moveFrom, locations, connections),
+    }));
+    /** The characters `join` peels off, born this turn. */
+    const peeledBy = (join: FollowerState) =>
+      peeledCharacters(join, peel, new Set(discoveredEntities.map((d) => d.entity.id)), currentTurnIdRef.current);
 
     const reportFailure = (error: unknown) =>
       reportTurnFailure(classifyTurnError(error), error, false, isOpeningTurn);
@@ -2521,6 +2684,8 @@ const GameViewer = ({
       setChoices([]);
       setChoicesReady(false);
       setSuggestedLocation(null);
+      entityOfferRef.current = NO_ENTITY_OFFER;
+      followerPeelRef.current = undefined;
       // Stamp a stable id for this turn, written into its assistant JSON (powers the digest apply-guard).
       currentTurnIdRef.current = randomUUID();
       // The attachments leave the action box with the text, and the turn keeps the ones it may carry.
@@ -2549,6 +2714,7 @@ const GameViewer = ({
       };
       // The At Game Start scripts shape the opening: once per new playthrough, ahead of the before box.
       scriptLocationRef.current = turnLocation;
+      turnMemoriesRef.current = scriptMemoriesRef.current;
       const { written: beforeBox, world: beforeWorld } = await runBeforeAI(
         rawGlobalStatsRef.current, { deltaHours: 0, elapsedHours: gameTime, calendar }, undefined, isOpeningTurn && newPlaythroughRef.current,
       );
@@ -2560,7 +2726,7 @@ const GameViewer = ({
         scriptLocationRef.current = beforeTarget;
       }
       // Any code move beats the router and the suggest pass, so neither request is sent.
-      if (beforeWorld?.location !== undefined) plan = planTurn({ ...planInput, destinationCount: 0, locationCount: 0 });
+      if (beforeWorld?.location !== undefined) plan = scripted(planTurn({ ...planInput, destinationCount: 0, locationCount: 0 }));
       beforeBoxUndoRef.current = beforeBox ? preBox : null;
       turnPreBoxRef.current = preBox;
       turnBeforeBoxRef.current = beforeBox;
@@ -2569,6 +2735,12 @@ const GameViewer = ({
       const beforeClock = advancedClock(gameTime, beforeWorld);
       turnClockRef.current = beforeClock ?? null;
       let codeView = turnCodeView(beforeBox, beforeClock);
+      /** The world the turn's prompts read: the code view, with the followers at the player's side. */
+      const sceneBox = (): SceneWrites | null => {
+        if (!turnJoin) return codeView;
+        const peeled = peeledBy(turnJoin);
+        return { ...(codeView ?? {}), positions: turnJoin.positions, ...(peeled.length && { addedEntities: discoveredAsEntities(peeled) }) };
+      };
       // An On Call write since the narration's context values were built, which later prompts must read (Q52).
       let narrationBuilt = false;
       let ctxStale = false;
@@ -2584,7 +2756,7 @@ const GameViewer = ({
       const renderNarration = (picks?: HistoryPicks) => {
         // The shared context base (incl. all three Stats-chip variants), scoped to this turn's location;
         // every system-prompt render below spreads it and adds its own tokens.
-        const ctx = contextValues(turnLocation, codeView);
+        const ctx = contextValues(turnLocation, sceneBox());
         const { prompt, runs, dictionaryDebug } = buildNarrationPrompt({
           template: systemPrompt,
           ctx,
@@ -2707,6 +2879,9 @@ const GameViewer = ({
       const applyNarrationReading = (narration: string): Partial<TurnMaterial> => {
         // Commit the auto-resolved move now that the narration — already written for the new location —
         // succeeded, so an aborted/empty turn leaves the location unchanged.
+        if (turnJoin) {
+          applyFollowerState({ followers: turnJoin.followers, positions: movedPositions(turnJoin.positions, moveStart.positions) }, peeledBy(turnJoin));
+        }
         if (turnLocation && turnLocation.id !== currentLocation?.id) {
           changeLocation(turnLocation);
           addLogEntry(`Moved to location: ${turnLocation.name}`);
@@ -2774,8 +2949,8 @@ const GameViewer = ({
               turnLocation = target;
               scriptLocationRef.current = target;
             }
-            // An advance moves the time later prompts, Tool calls and scripts read (Q45).
-            if (target || world?.minutes !== undefined) executeTool = turnToolExecutor();
+            // An advance moves the time later prompts, Tool calls and scripts read (Q45); any write, what a user Tool reads.
+            if (target || world?.minutes !== undefined || written) executeTool = turnToolExecutor();
             if (written) {
               if (!beforeBoxUndoRef.current) beforeBoxUndoRef.current = turnPreBoxRef.current;
               onCallStateRef.current = written;
@@ -2791,7 +2966,9 @@ const GameViewer = ({
       const worldToolTurn = openWorldToolTurn(worldTools, onCall);
       worldToolTurnRef.current = worldToolTurn;
       const turnToolExecutor = () => worldToolTurn.executor(
-        snapshotToolExecutor(() => buildToolSnapshot(liveScene(turnLocation, codeView), dictionaries, toolMemorySource())),
+        snapshotToolExecutor(() => buildToolSnapshot(
+          liveScene(turnLocation, sceneBox()), dictionaries, toolMemorySource(), toolScriptSourceRef.current?.(onCallStateRef.current ?? turnBeforeBoxRef.current),
+        )),
       );
       let executeTool = turnToolExecutor();
 
@@ -2799,7 +2976,7 @@ const GameViewer = ({
       const takeStagedCtx = (): Partial<TurnMaterial> => {
         if (!planCtxStale) return {};
         planCtxStale = false;
-        return { ctx: contextValues(turnLocation, codeView) };
+        return { ctx: contextValues(turnLocation, sceneBox()) };
       };
 
       const advance: TurnAdvance = async (event, material) => {
@@ -2816,7 +2993,17 @@ const GameViewer = ({
         }
         if (event.at === "stage") {
           // Assembled once the up-front router has settled the location, and before the planner reads it.
-          if (event.stage === "planning") return assembleNarration();
+          if (event.stage === "preNarration" && planHasPass(plan, "entityLocationAuto")) {
+            return { subjects: { ...material.subjects, entityLocationAuto: moveSubjects() } };
+          }
+          if (event.stage === "planning") {
+            // The router has settled the move, so the followers and "come along" can stand beside the player.
+            if (moveFrom) {
+              const joined = joinEntityMoves(moveStart, { from: moveFrom, to: turnLocation?.id }, entityIntents);
+              turnJoin = joined === moveStart ? null : joined;
+            }
+            return assembleNarration();
+          }
           if (event.stage === "narration") {
             // Hand the streaming narration (inside sendAiRequest) this turn's scene-list inputs so it can
             // keep the Entities tab live per sentence.
@@ -2843,13 +3030,16 @@ const GameViewer = ({
               enabledStats(globalStatsRef.current, statEnabledRef.current), presentEntitiesOf(fanOut.diary), entityStatsRef.current,
             );
             // A call during the narration never rebuilds its text; the passes after it read the change (Q44).
-            const ctx = ctxStale ? { ctx: contextValues(turnLocation, codeView) } : {};
+            const ctx = ctxStale ? { ctx: contextValues(turnLocation, sceneBox()) } : {};
             ctxStale = false;
             return {
               ...ctx,
-              subjects: { ...material.subjects, ...fanOut },
+              subjects: {
+                ...material.subjects, ...fanOut,
+                ...(planHasPass(plan, "entityLocationSuggest") && { entityLocationSuggest: moveSubjects() }),
+              },
               statRequest,
-              statCtx: contextValues(turnLocation, codeView, statRequest),
+              statCtx: contextValues(turnLocation, sceneBox(), statRequest),
             };
           }
           return;
@@ -2867,6 +3057,9 @@ const GameViewer = ({
             }
             return;
           }
+          case "entityLocationAuto":
+            entityIntents = peelIntents(entityMovesOf(event.outcomes), peel);
+            return;
           case "thinking": {
             if (!first.raw) return;
             classifyPlannerCast((first.parsed as ParsedDirector).cast);
@@ -2883,7 +3076,7 @@ const GameViewer = ({
               return { ...takeStagedCtx(), directorScene: scene, npcCastSize: 0, turnPlan: buildStagedPlan({ scene, stances: flaggedCast, beats: "" }) };
             }
             // The scene's cast, whose text resolved with each owner: the character pass sends it as is.
-            const castScene = liveScene(turnLocation, codeView);
+            const castScene = liveScene(turnLocation, sceneBox());
             const { chosen, overflow } = matchCastToEntities(
               npcCast,
               castScene.entities.filter((e) => castScene.presentIds.includes(e.id)),
@@ -2937,6 +3130,7 @@ const GameViewer = ({
       // Each call reads the executor at call time, so a later call in the same request sees an earlier one's move.
       const request: TurnRequestAdapter = (spec, context) => pendingRequests.track(spec.type, () => sendAiRequest({
         ...spec, signal: context.signal, executeTool: (tool, args) => executeTool(tool, args),
+        fetchImpl: spec.type === "narration" ? script?.narration : spec.type === "choices" ? script?.choices : undefined,
       }));
 
       const result = await runTurn({
@@ -2953,10 +3147,11 @@ const GameViewer = ({
         request,
         signal,
         advance,
-        // Choices are the interactive part: unblock the input the moment they land rather than when the
-        // rest of their batch settles.
+        // Choices are the interactive part: unblock the input the moment they show rather than when the rest
+        // of their batch settles. They show once the turn end lands, so Continue joins after them.
         onPassSettled: (id, outcome) => {
-          if (id === "choices" && outcome.ok && !signal.aborted) setChoicesReady(true);
+          if (id !== "choices" || !outcome.ok || signal.aborted) return;
+          void landNarration(plan.writtenNarration !== null).then(() => { if (!signal.aborted) setChoicesReady(true); });
         },
       });
 
@@ -2991,8 +3186,9 @@ const GameViewer = ({
         calendar,
         codeWrites: turnWorldWrites,
         heldNames: [...entities.map((entity) => entity.name), ...suppressedCharacterNames],
-        diaryNames: Object.fromEntries([...traitLibrary, ...allEntities].map((entity) => [entity.id, entity.name])),
+        diaryNames,
         toolCalls: worldToolTurn.calls(),
+        peel,
       };
       const commit = computeTurnCommit({ result, plan, context: commitContext });
       if (!commit) return;
@@ -3003,6 +3199,7 @@ const GameViewer = ({
         destinations,
         written: plan.writtenNarration !== null,
         context: commitContext,
+        entityMove: { start: moveStart, from: moveFrom, applied: turnJoin ?? moveStart },
       });
     } catch (error) {
       // The pipeline's own failures come back as a typed result above; what lands here is a derivation
@@ -3011,9 +3208,13 @@ const GameViewer = ({
     } finally {
       setIsWaitingForAI(false);
       setIsRevealingNarration(false);
+      // A turn that ended without landing (stopped, failed) still opens its row and lets choices through.
+      setNarrationSettled(true);
+      releaseChoices();
       setAiRequestType(null);
       scriptLocationRef.current = null;
       turnClockRef.current = null;
+      turnMemoriesRef.current = null;
       // Release the turn's controller (unless a newer turn already replaced it).
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
@@ -3103,6 +3304,17 @@ const GameViewer = ({
   // Where a running turn stands for its scripts' `location`, ahead of the render that commits a move. Null
   // between turns, where the live location stands.
   const scriptLocationRef = useRef<GameLocation | null>(null);
+  // The Memory panel's rows as a script's `memories` reads them, from the ledger the panel builds.
+  const scriptMemoryList = useMemo(() => scriptMemories(buildMemoryLedger({
+    history: fullMessageHistory, overrides: memoryOverrides, pins: memoryPins, selection: milestoneSelection,
+    verbatimFloor: narrationVerbatimTurns, context: { bandIds: contextMemoryIds, rehydratedIds: rehydratedMemoryIds },
+  }), fullMessageHistory, calendar), [
+    fullMessageHistory, memoryOverrides, memoryPins, milestoneSelection, narrationVerbatimTurns, contextMemoryIds, rehydratedMemoryIds, calendar,
+  ]);
+  const scriptMemoriesRef = useRef(scriptMemoryList);
+  scriptMemoriesRef.current = scriptMemoryList;
+  // The list every run of a turn reads, taken once as the turn starts (Q40). Null between turns, where the live list stands.
+  const turnMemoriesRef = useRef<SandboxMemory[] | null>(null);
   // The story hours a running turn's clock advances reached, which its later runs read (Q45). Null when the
   // turn has not advanced the clock, and between turns.
   const turnClockRef = useRef<number | null>(null);
@@ -3150,7 +3362,7 @@ const GameViewer = ({
         const entityPrevious = preTurn ? preTurn.entityStats ?? {} : entityStatsRef.current;
         const entityBase = entityTurn?.values ?? entityPrevious;
         const world = traitWorld ?? gatedWorld();
-        const owners = entityCodeTurns(
+        const ownerRows = entityCodeTurns(
           entityOwnersOf(entityBase, preTurn ? preTurn.ownedTraits ?? {} : undefined, world), readsTurnStart(timing) ? null : clock.deltaHours ?? FLAT_HOURS_PER_TURN,
           (ownerId, ticked) => resolveStatText(
             refreshSavedStats(ticked, statEntities.find((e) => e.id === ownerId)?.stats ?? []), resolvePH,
@@ -3170,16 +3382,14 @@ const GameViewer = ({
         const healthLoss = tick && thresholdStats ? starvationLoss(thresholdStats, enabled, clock.deltaHours ?? FLAT_HOURS_PER_TURN) : null;
         const health = healthLoss === null ? undefined : stats.find((s) => s.name === "Health");
         const here = scriptLocationRef.current ?? currentLocation;
-        const turn: StatCodeTurn = {
-          timing,
-          prompts: playPrompts(timing),
-          stats, enabled, previous: before, asks, regenApplied, clock,
+        const { owners, ownerTurns } = splitOwnerTurns(ownerRows);
+        const state: SandboxState = {
+          stats, enabled, clock,
           gateStats: gateStatsOf({
             traits: held.acquired, disabledTraitIds: held.disabledTraitIds, ownedTraits: held.ownedTraits, stats, entityStats: entityBase,
           }, world),
-          ...(health && healthLoss !== null ? { penalties: { [health.id]: healthLoss } } : {}),
           ownerTraits: {
-            ...held, world, entities: codeEntities.world, library: libraryIn(world),
+            ...held, world, entities: codeEntities.world, library: libraryIn(world), discovered: laterDiscovered(discoveredEntities),
             inSceneIds: liveScene().inSceneIds,
           },
           placeholders: {
@@ -3188,20 +3398,28 @@ const GameViewer = ({
             // The stored shape too, so an Object pinned to a list reads that list back rather than its join.
             codePins: basePins,
             // A During AI Output run reads the pins its earlier sentences left.
-            pinsAfter: (state) => pinsFor(state.codePins, {
-              traits: [...state.acquired], disabledTraitIds: [...state.disabledTraitIds], ownedTraits: state.ownedTraits, stats: [...state.stats],
+            pinsAfter: (after) => pinsFor(after.codePins, {
+              traits: [...after.acquired], disabledTraitIds: [...after.disabledTraitIds], ownedTraits: after.ownedTraits, stats: [...after.stats],
             }).world,
           },
+          owners,
+          places: { locations, location: here && { id: here.id, name: here.name } },
+          positions: { ...runtimePositions(discoveredEntities), ...entityPositions },
+          followers: entityFollowers,
+          resolveText: (text, owner) => (owner ? resolveEntityText(owner, text) : resolvePH(text)),
+          memories: turnMemoriesRef.current ?? scriptMemoriesRef.current,
+          notes: liveScene().notes,
+        };
+        const turn: StatCodeTurn = {
+          state,
+          timing,
+          prompts: playPrompts(timing),
+          previous: before, asks, regenApplied, ownerTurns,
+          ...(health && healthLoss !== null ? { penalties: { [health.id]: healthLoss } } : {}),
           statNameOf: (stat) => resolvePH(stat.name),
           traitNameOf: (trait) => resolveTraitText(trait, trait.name),
-          owners,
           worldScripts,
           ...(triggers?.length ? { triggers } : {}),
-          places: {
-            locations: locations.map(({ id, name }) => ({ id, name })),
-            location: here && { id: here.id, name: here.name },
-          },
-          discovered: discoveredEntities.map(({ entity }) => ({ id: entity.id, name: entity.name })),
         };
         /** Lays the run's result onto live state and hands back what it left. */
         const finish = (result: StatCodeTurnResult) => {
@@ -3281,7 +3499,7 @@ const GameViewer = ({
       }
     },
     [setGlobalStats, setEntityStats, entityOwnersOf, entityInForceUnder, addStatDeltas, setCodePins, resolvePH, statCodePlaceholders, pinsFor, traits, authoredStats, worldScripts, resolveTraitText, gatedWorld, codeEntities, statEntities, inForceOn, liveScene, libraryIn, locations, currentLocation, discoveredEntities,
-      setGlobalTraits, setDisabledTraitIds, setAppliedTraitValues, setCascadeOffTraitIds, setOwnedTraits, addLogEntry, playPrompts, commitTraitState],
+      entityPositions, entityFollowers, resolveEntityText, setGlobalTraits, setDisabledTraitIds, setAppliedTraitValues, setCascadeOffTraitIds, setOwnedTraits, addLogEntry, playPrompts, commitTraitState],
   );
 
   // Runs one timing's scripts over this turn and lays the result: a turn with no stat response runs it directly.
@@ -3300,6 +3518,37 @@ const GameViewer = ({
     [prepareStatCode],
   );
 
+  // A run outside a turn lands its memory and diary lines on the latest turn, and its pins anchored after it (Q6).
+  const landOnLatestTurn = useCallback((writes: WorldWrites | undefined) => {
+    // A verdict needs no turn: a Custom line can stand before the first one.
+    landMemoryWrites(writes);
+    const history = fullMessageHistoryRef.current;
+    const turnId = latestTurnId(history);
+    if (!writes || !turnId) return;
+    setFullMessageHistory((prev) => {
+      const at = prev.findLastIndex((message) => message.role === "assistant");
+      const turn = at < 0 ? null : parseTurnContent(prev[at].content);
+      const landed = turn?.turnId === turnId ? withCodeLines(turn, writes, diaryNames) : turn;
+      if (!turn || landed === turn) return prev;
+      const next = [...prev];
+      next[at] = { role: "assistant", content: JSON.stringify(landed) };
+      return next;
+    });
+    if (writes.pins?.length) setMemoryNotes((prev) => addScriptPins(prev, turnId, writes.pins ?? [], history.length));
+  }, [setFullMessageHistory, setMemoryNotes, diaryNames, landMemoryWrites]);
+  // The writes of runs that ended while a turn ran: the turn's stream and commit rewrite its message.
+  const heldWritesRef = useRef<WorldWrites | undefined>(undefined);
+  const landBetweenTurns = useCallback((writes: WorldWrites | undefined) => {
+    if (abortControllerRef.current) heldWritesRef.current = mergeWorldWrites(heldWritesRef.current, writes);
+    else landOnLatestTurn(writes);
+  }, [landOnLatestTurn]);
+  useEffect(() => {
+    if (isWaitingForAI || abortControllerRef.current || !heldWritesRef.current) return;
+    const held = heldWritesRef.current;
+    heldWritesRef.current = undefined;
+    landOnLatestTurn(held);
+  }, [isWaitingForAI, fullMessageHistory, landOnLatestTurn]);
+
   // The When a Trait Switches runs of every trait an in-play action switched, over the state the action left;
   // their writes land at once (Q12, Q47). A run's own switches fire inside the run.
   const fireSwitchScripts = useCallback(
@@ -3317,12 +3566,12 @@ const GameViewer = ({
       try {
         const turn = fromWorld === world ? prepared.turn : { ...prepared.turn, switchedFrom: fromWorld };
         const result = await runSwitchScripts(turn, events);
-        if (result && mounted.current) prepared.finish(result);
+        if (result && mounted.current) landBetweenTurns(prepared.finish(result).world);
       } catch (error) {
         console.error("Error processing stat code:", error);
       }
     },
-    [prepareStatCode, gameTime, calendar, mounted],
+    [prepareStatCode, gameTime, calendar, mounted, landBetweenTurns],
   );
 
   // The runs before the AI, over a turn's starting stats: on an opening that runs the start scripts, the start
@@ -3554,13 +3803,54 @@ const GameViewer = ({
     return { sink, end };
   };
 
-  /** Live choices: each delta parses the list, and a retracted round clears it. */
+  // The turn end plays in order: the narration's last word fades in, its action row opens, then the choices
+  // stream. A turn holds its choices from its start until `landNarration` resolves.
+  const turnSeqRef = useRef(0);
+  const landingRef = useRef<{ turn: number; landed: Promise<void> } | null>(null);
+  const choicesHeldRef = useRef(false);
+  const heldChoicesRef = useRef<string[] | null>(null);
+
+  const releaseChoices = () => {
+    choicesHeldRef.current = false;
+    const held = heldChoicesRef.current;
+    heldChoicesRef.current = null;
+    if (held) setChoices((prev) => keepSameRows(prev, held));
+  };
+
+  /** Waits out the narration's reveal (none for written narration), opens the action row, then releases the
+   *  choices once it has opened. Called at the narration's end and again by the commit; the first call runs it. */
+  const landNarration = (written = false): Promise<void> => {
+    const turn = turnSeqRef.current;
+    if (landingRef.current?.turn === turn) return landingRef.current.landed;
+    const landed = (fadeRevealActive && !written ? fadeReveal.drained() : Promise.resolve()).then(() => {
+      if (turnSeqRef.current !== turn) return;
+      setNarrationSettled(true);
+      return new Promise<void>((resolve) => setTimeout(() => {
+        if (turnSeqRef.current === turn) releaseChoices();
+        resolve();
+      }, TURN_CHROME_ENTER_MS));
+    });
+    landingRef.current = { turn, landed };
+    return landed;
+  };
+
+  /** Starts landing the turn end as soon as the narration stream finishes. */
+  const landingListener: NarrationListener = (event) => {
+    if (event.type === "finished") void landNarration();
+  };
+
+  /** Live choices: each delta parses the list, and a retracted round clears it. Until the turn end lands they
+   *  wait in `heldChoicesRef`, so none shows before the narration settles and its action row opens. */
   const choicesSink: TransportSink = (event) => {
-    if (event.type === "retract") setChoices([]);
+    if (event.type === "retract") {
+      heldChoicesRef.current = null;
+      setChoices([]);
+    }
     if (event.type !== "delta") return;
-    // Not over a still-fading narration: the drain commits them.
-    const choicesList = parseChoices(stripReasoningLive(event.content));
-    if (choicesList.length > 0 && !(fadeRevealActive && !fadeReveal.isDrained())) setChoices(choicesList);
+    const choicesList = parseStreamingChoices(stripReasoningLive(event.content));
+    if (choicesList.length === 0) return;
+    if (choicesHeldRef.current) heldChoicesRef.current = choicesList;
+    else setChoices((prev) => keepSameRows(prev, choicesList));
   };
 
   /**
@@ -3689,6 +3979,10 @@ const GameViewer = ({
     const stats = base?.globalStats ?? rawGlobalStatsRef.current;
     return prepareStatCode(stats, stats, [], { deltaHours: 0, elapsedHours: turnClockRef.current ?? gameTime, calendar }, base ?? undefined, timing);
   };
+  toolScriptSourceRef.current = (base) => {
+    const world = getWorldData();
+    return { state: prepareTurnStartCode(base)?.turn.state ?? openingStateOf(world), authored: world };
+  };
 
   /**
    * The narration's sink: live reasoning on the transport, the rest on the Narration Stream. `settled` answers
@@ -3697,7 +3991,7 @@ const GameViewer = ({
   const narrationSink = (): { sink: TransportSink; settled: () => Promise<string | undefined> } => {
     const output = startOutputRun();
     // An output script rewrites whole sentences, so the crawl must not show the raw tail.
-    const listeners = [revealListenerFor(output !== null), sceneListListener, historyListener];
+    const listeners = [revealListenerFor(output !== null), landingListener, sceneListListener, historyListener];
     // Opt-in streaming read-aloud needs a loaded model.
     if (streamNarrationAudio && ttsLoaded) listeners.push(readAloudListener);
     const rewriting = output && rewriteSentences(output.rewrite, ...listeners);
@@ -3710,7 +4004,7 @@ const GameViewer = ({
   };
 
   /** Sends one request through the Request Transport, with the sinks its type reports to. */
-  const sendAiRequest = async (args: ViewRequest): Promise<string> => {
+  const sendAiRequest = async ({ fetchImpl, ...args }: ViewRequest): Promise<string> => {
     const { type: requestType, silent = false, quiet = false } = args;
     if (!silent && !quiet) setAiRequestType(requestType);
     const lookups = lookupSink();
@@ -3719,7 +4013,7 @@ const GameViewer = ({
     if (narration) sinks.push(narration.sink);
     if (requestType === "choices") sinks.push(choicesSink);
     try {
-      const text = await transportRequest(args, transportContext(), fanOut(sinks));
+      const text = await transportRequest(args, { ...transportContext(), ...(fetchImpl && { fetchImpl }) }, fanOut(sinks));
       // The turn reads the narration its scripts left, which is what the screen and the save already hold.
       return (narration && text ? await narration.settled() : undefined) ?? text;
     } finally {
@@ -3786,7 +4080,7 @@ const GameViewer = ({
       // describes what a character looks like, which is all this layer wants.
       const tags = await buildImagePrompt(
         { description, kind },
-        { snapshot: aiSnapshot, tagPrompt: imageTagPrompt, signal },
+        { snapshot: aiSnapshot, tagPrompt: imageTagPrompt, cleanTags: imageCleanTags, signal },
       );
       const cleaned = scrub ? scrub(tags) : tags;
       derivedTagsRef.current.set(subject.id, cleaned);
@@ -3847,7 +4141,10 @@ const GameViewer = ({
     });
     const actionTags = await sendAiRequest({ ...request, signal });
     if (signal.aborted) return "";
-    const line = composeSceneTags({ characters: cast, locationTags, actionTags, places, knownTags });
+    const line = composeSceneTags({
+      characters: cast, locationTags, actionTags, places, knownTags, cleanTags: imageCleanTags,
+      segmented: takesCharacterPrompts(imageProvider, imageModel),
+    });
     // Stored whether or not an image follows, so the player can read and edit what would be sent.
     if (line) setFullMessageHistory((prev) => patchSceneTags(prev, turnId, line) ?? prev);
     return line;
@@ -4053,6 +4350,23 @@ const GameViewer = ({
   // DEV-only: expose window.__baseline for the fork-local test harness (no-op in production builds).
   const debugTurnsRef = useRef(debugTurns);
   debugTurnsRef.current = debugTurns;
+  // A real turn whose narration and choices stream from canned text: the turn's end runs as in play, so its
+  // reveal, action row and choices can be watched without an endpoint. The narration is short enough that
+  // the choices stream in view.
+  runTurnTestRef.current = (profileName = 'steady') => {
+    const profile = REVEAL_TEST_PROFILES[profileName];
+    if (!profile) {
+      toast.info(`Unknown profile. Try: ${Object.keys(REVEAL_TEST_PROFILES).join(', ')}`);
+      return;
+    }
+    void sendGameAction(TURN_TEST_ACTION, {
+      script: {
+        narration: scriptedFetch(TURN_TEST_NARRATION, profile.schedule(TURN_TEST_NARRATION.length)),
+        choices: scriptedFetch(TURN_TEST_CHOICES, REVEAL_TEST_PROFILES.steady.schedule(TURN_TEST_CHOICES.length)),
+      },
+    });
+  };
+
   const sendGameActionRef = useRef(sendGameAction);
   sendGameActionRef.current = sendGameAction;
   const isGameStartedRef = useRef(isGameStarted);
@@ -4097,10 +4411,15 @@ const GameViewer = ({
   );
   const passesRunning = useSyncExternalStore(subscribePasses, () => passQueue?.running() ?? NO_PASSES);
 
+  // A running turn streams its narration into history sentence by sentence; the queue is busy then, so it
+  // reads the history as the turn found it and re-derives once the turn ends.
+  const settledHistoryRef = useRef(fullMessageHistory);
+  if (!isWaitingForAI) settledHistoryRef.current = fullMessageHistory;
+  const settledHistory = settledHistoryRef.current;
   useEffect(() => {
     passQueue?.update({
-      history: fullMessageHistory,
-      effectiveTurns: parseEffectiveTurns(fullMessageHistory),
+      history: settledHistory,
+      effectiveTurns: parseEffectiveTurns(settledHistory),
       milestoneSelection,
       memoryPins,
       busy: isWaitingForAI || sceneImageJob !== null,
@@ -4112,7 +4431,7 @@ const GameViewer = ({
       entityNames: allEntities.map((e) => e.name),
       suppressedNames: suppressedCharacterNames,
     });
-  }, [passQueue, fullMessageHistory, parseEffectiveTurns, milestoneSelection, memoryPins, isWaitingForAI, sceneImageJob, concurrentTurnRequests, memoryDigests, describeCharacters, characterDiaries, thinkingMode, allEntities, suppressedCharacterNames]);
+  }, [passQueue, settledHistory, parseEffectiveTurns, milestoneSelection, memoryPins, isWaitingForAI, sceneImageJob, concurrentTurnRequests, memoryDigests, describeCharacters, characterDiaries, thinkingMode, allEntities, suppressedCharacterNames]);
 
   const fullMessageHistoryRef = useRef(fullMessageHistory);
   fullMessageHistoryRef.current = fullMessageHistory;
@@ -4152,7 +4471,7 @@ const GameViewer = ({
         const digest = await sendAiRequestRef.current({ ...buildDigestRequestRef.current(target), signal: queueSignal });
         const trimmed = (digest ?? "").trim();
         if (!trimmed || queueSignal.aborted || !mounted.current) return false;
-        // The fresh digest replaces the AI's text only; the turn's `memory.add` lines still follow it.
+        // The fresh digest replaces the AI's text only; the turn's `memories.add` lines still follow it.
         const codeMemory = parsedTurnById(fullMessageHistoryRef.current, turnId)?.codeMemory;
         const text = turnMemory({ summary: trimmed, codeMemory }) ?? trimmed;
         setMemoryEdits((prev) => ({ ...prev, [turnId]: { text, source: 'ai' } }));
@@ -4346,6 +4665,7 @@ const GameViewer = ({
   );
   const settleHistory = useMemo(() => ({ states: gameStates, commit: setGameStates }), [gameStates, setGameStates]);
   useSettleOnSaveLoad(saveLoads, !personaPending, traitState, gatedWorld, traitName, commitLoadSettle, settleHistory);
+  useSeedAvatarOnSaveLoad(saveLoads, !personaPending, persona);
   // The per-turn settle writes log lines and leaves the banner alone, as a stat-code switch does (Q26).
   const commitTurnSettle = useCallback(
     (result: GatedTraitResult) => {
@@ -4411,6 +4731,7 @@ const GameViewer = ({
   const changeLocation = useCallback(
     (newLocation: GameLocation) => {
       setCurrentLocation(newLocation);
+      carryFollowersTo(newLocation.id);
 
       if (newLocation.ambientSound) {
         setAmbientSound(newLocation.ambientSound);
@@ -4418,7 +4739,7 @@ const GameViewer = ({
         setAmbientSound(null);
       }
     },
-    [setCurrentLocation],
+    [setCurrentLocation, carryFollowersTo],
   );
 
   const isInitialized = useRef(false);
@@ -4435,50 +4756,26 @@ const GameViewer = ({
       // Cold-load from the main menu: restore the save instead of starting a fresh game. Its world is
       // already in GameData (loaded before this view mounted), so `locations` here are the right ones.
       if (initialSaveId) {
-        void loadGame(initialSaveId, locations, authoredStats, codeEntities.world);
+        void loadGame(initialSaveId, locations, authoredStats, codeEntities.world, worldOverview.vrmStore);
         return;
       }
 
-      // New game: seed the live stats from the world defaults, recording each stat's game-start baseline
-      // (`starting`) so the opening turn's deltas read from the world value, not 0/min. Seeding lives here —
-      // not in a reactive effect on `stats` — so it runs exactly once for a fresh game and can never race
-      // with / clobber a loaded save (which returns above).
-      // Seeded from the AUTHORED stats, chips and all: names resolve on the way out of state, never in, so
-      // a resolved name written in here would freeze whatever pins happened to be active at game start and
-      // no later pin could ever move it.
-      const seeded = seedNewGameStats(authoredStats);
+      // New game, once: a loaded save returned above. The fold reads the authored world, chips and all.
+      const opening = openingFold(getWorldData(), { traits: initialTraits, owned: initialOwnedTraits }, {
+        ...(initialPersona ?? { ref: { source: 'none' } }), characters: initialCharacters ?? [],
+      });
+      const acquired = opening.state.ownerTraits.acquired;
+      const seedLibrary = opening.state.ownerTraits.library ?? [];
       newPlaythroughRef.current = true;
-
-      // Authored order, not click order: stat changes apply in sequence, so a deterministic order is what
-      // makes two players who picked the same traits end up with the same stats. Authored traits for the
-      // same reason as the stats above.
-      const chosen = new Set(initialTraits);
-      const seedLibrary = inPlayLibrary({ traits: authoredTraits, traitGroups, entities: traitEntities }, initialPersona?.libraryEntity, initialCharacters ?? []);
-      const seedWorld: TraitWorld = {
-        traits: authoredTraits, groups: traitGroups, entities: traitEntities, persona: initialPersona?.ref ?? { source: 'none' },
-        ...inPlayOwners(ownerWorld, initialPersona?.ref, seedLibrary),
-      };
-      // Only the held picks: a Custom Persona pick made before the entry step moved to a world persona is not
-      // the player's under it.
-      const chosenList = inAuthoredOrder(heldGlobalTraits(authoredTraits.filter((t) => chosen.has(t.id)), seedWorld), traitOrder);
-      // Folded rather than set one trait at a time: each acquisition reads the whole slice, so the batch has
-      // to thread through in one pass instead of racing several queued state updates.
-      let seedState: TraitRuntimeState = { stats: seeded, traits: [], disabledTraitIds: [], appliedValues: {} };
-      for (const trait of chosenList) {
-        seedState = acquireTrait(seedState, trait, { traits: authoredTraits, groups: traitGroups }).state;
+      // A log line is frozen when written, so each authored trait resolves now with its owner's pins.
+      const ownerEntity = (id: string | null) =>
+        (id == null ? null : traitEntities.find((e) => e.id === id) ?? seedLibrary.find((e) => e.id === id) ?? null);
+      for (const { trait, ownerId } of opening.startingTraits) {
+        for (const line of startingTraitLog([trait], (t) => resolveTraitText(t, t.name, ownerEntity(ownerId)))) addLogEntry(line);
       }
-      // Every entity's global rows apply after the world picks; then each entity's own traits apply to its stats.
-      const globalRows = applyGlobalRowTraits({
-        ...seedState, ownedTraits: ownedTraitStatesFrom(initialOwnedTraits), entityStats: seedEntityStats(statOwnerEntities({ world: codeEntities.world, library: seedLibrary })),
-      }, seedWorld);
-      seedState = applyOwnedStatTraits(globalRows.state, seedWorld);
-      // Logs are write-time strings shown raw, and each trait here is authored (chips intact), so each resolves
-      // now with its own pins.
-      const traitLabel = (trait: Trait) => resolveTraitText(trait, trait.name);
-      for (const line of startingTraitLog([...chosenList, ...globalRows.applied], traitLabel)) addLogEntry(line);
-      commitTraitState(seedState);
+      commitTraitState(opening.traitState);
       // The seeded entity stats are also the baseline their first changes read from.
-      resetEntityStats(seedState.entityStats ?? {});
+      resetEntityStats(opening.entityStats);
       // A new game starts with no entity picked in the stat panel or the entity view.
       setSelectedEntityId(undefined);
 
@@ -4492,10 +4789,10 @@ const GameViewer = ({
         world: ownerWorld,
         persona: initialPersona?.ref,
         library: seedLibrary,
-        globalTraits: chosenList,
+        globalTraits: acquired,
         owned: initialOwnedTraits,
         sharedPlaceholders: worldPlaceholders,
-      }, { location: authoredLocation, stats: seedState.stats, placeholders, rolls: sessionRolls }).world;
+      }, { location: authoredLocation, stats: opening.traitState.stats, placeholders, rolls: sessionRolls }).world;
       if (location && authoredLocation) {
         changeLocation(location);
         // A log line is frozen the moment it is written.
@@ -4538,9 +4835,16 @@ const GameViewer = ({
       // Pre-fill the drawn opening so the player can shape the first turn before submitting it. Resolved
       // here (against the pins the traits above are about to impose) so the player reads plain prose.
       // An Opening Narration is page one: the game starts on it at once, with the box left empty.
+      // Each One entity starts at one of its locations, so the opening pool reads who stands at the start.
+      const startPositions = startingPositions(positionedCast(codeEntities.world, personaPick.ref), locations.map((l) => l.id));
+      setEntityPositions(startPositions);
+      setEntityFollowers([]);
+      setMetEntities([]);
+      entityOfferRef.current = NO_ENTITY_OFFER;
+      followerPeelRef.current = undefined;
       // The whole world, since the cast in state still reads the persona from before this seed.
       const { persona: drawnPersona, draw: drawn, owner: drawnOwner } = drawNewGameOpening({
-        pick: personaPick, worldEntities: traitEntities, overview: worldOverview, locations, startingLocationId: location?.id,
+        pick: personaPick, worldEntities: entitiesInPlay(traitEntities, startPositions), overview: worldOverview, locations, startingLocationId: location?.id,
         picked, random: Math.random,
       });
       openingSessionRef.current = {
@@ -4572,12 +4876,10 @@ const GameViewer = ({
     initialCharacters,
     initialPersona,
     dictionaries,
-    authoredTraits,
+    getWorldData,
     authoredLocations,
-    traitGroups,
     ownerWorld,
     worldPlaceholders,
-    traitOrder,
     locations,
     worldLoaded,
     worldOverview,
@@ -4598,6 +4900,7 @@ const GameViewer = ({
     setPlayerInput,
     setMemoryPins,
     setCodePins,
+    setEntityPositions,
     setEntityVisualPreference,
     setEntityImageIndex,
     setMilestoneSelection,
@@ -4620,62 +4923,33 @@ const GameViewer = ({
   // Extract the displayed narration from an assistant message (see lib/aiResponse).
   const parseAssistantMessage = (content: string) => narrationOf(content) ?? "";
 
-  // Status line shown above the input while a turn is being generated, naming the current AI
-  // request (Narration / Choices / Stat Updates / Location) so the player knows what's processing.
+  // The status strip names the running request: a turn's AI request, a Tool round, or a background pass.
+  // One start per busy stretch, so the timer spans every request of the turn and resets with the next.
+  const busyStartedAtRef = useRef<number | null>(null);
+  if (!isWaitingForAI) busyStartedAtRef.current = null;
+  else busyStartedAtRef.current ??= Date.now();
+  const turnStartedAt = busyStartedAtRef.current ?? undefined;
+
   const progressBar = (() => {
     // The active turn's request takes the status row; a silent memory digest (which runs between turns)
     // shows here too when no turn is in flight, but only when "Show Silent Requests" is enabled. Tool
     // rounds are silent requests, so their line follows the same setting.
     const toolStatus = toolCallStatus(toolLookups);
-    if (toolStatus && showSilentRequests) {
-      return (
-        <div className="flex items-center gap-2 mb-1">
-          <Meta className="whitespace-nowrap truncate min-w-0 max-w-[60%]">
-            {toolStatus}
-          </Meta>
-          <div className="flex-grow">
-            <IndeterminateProgress />
-          </div>
-        </div>
-      );
-    }
+    if (toolStatus && showSilentRequests) return <RequestStatusRow label={toolStatus} glyph={TOOL_GLYPH} startedAt={turnStartedAt} />;
     if (isWaitingForAI) {
-      const labels: Partial<Record<AIRequestType, string>> = {
-        thinking: "Plan",
-        director: "Cast",
-        character: "Motivation",
-        storyboard: "Storyboard",
-        narration: "Narration",
-        choices: "Choices",
-        statUpdates: "Stat Updates",
-        locationChange: "Location",
-        summary: "Memory",
-        milestoneSelect: "Memory Select",
-        diary: "Diary",
-        discoverEntity: "Character",
-        timePassed: "Clock",
-        openingTime: "Opening",
-        sceneTags: "Scene Tags",
-      };
-      const label = (aiRequestType && labels[aiRequestType]) ?? "Response";
-      return (
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-meta text-muted-foreground whitespace-nowrap">
-            Generating {label}…
-          </span>
-          <div className="flex-grow">
-            <IndeterminateProgress />
-          </div>
-        </div>
-      );
+      const status = requestStatus(aiRequestType);
+      return <RequestStatusRow label={requestLabel(status)} glyph={status.glyph} startedAt={turnStartedAt} />;
     }
-    return showSilentRequests ? <BackgroundPassStatus running={passesRunning} /> : null;
+    // Null when no pass runs, so the footer floats no empty strip and the narration takes no strip fade.
+    return showSilentRequests && passesRunning.size > 0 ? <BackgroundPassStatus running={passesRunning} /> : null;
   })();
 
-  // The context meter's history math is O(turns) (parseTurns + banding), so memoize it: this recomputes
-  // only when the history/settings that feed getTrimmedMessageHistory change (a few times per turn),
-  // not on every render.
+  // The context meter's history math is O(turns) (parseTurns + banding), so memoize it. A running turn
+  // writes its narration into history sentence by sentence, so the meter holds its last reading until the
+  // turn ends.
+  const memoryStatsRef = useRef<{ promptTokens: number; trimmed: ChatMessage[]; bandCounts: BandCounts | null; historyTokens: number } | null>(null);
   const memoryStats = useMemo(() => {
+    if (isWaitingForAI && memoryStatsRef.current) return memoryStatsRef.current;
     const promptTokens = estimateTokens(lastPromptChars);
     const { messages: trimmed } = getTrimmedMessageHistory(promptTokens, "", lastRelevanceScoresRef.current, lastActionVecRef.current);
     return {
@@ -4684,7 +4958,8 @@ const GameViewer = ({
       bandCounts: lastBandCountsRef.current, // set as a side effect of the call above
       historyTokens: estimateTokens(estimateHistoryChars(trimmed)),
     };
-  }, [getTrimmedMessageHistory, lastPromptChars]);
+  }, [getTrimmedMessageHistory, lastPromptChars, isWaitingForAI]);
+  memoryStatsRef.current = memoryStats;
 
   const memoryBar = (() => {
     // Token breakdown of the model's context window: prompt + history + reserved output vs the window.
@@ -4784,6 +5059,18 @@ const GameViewer = ({
         onClick={() => {
           changeLocation(suggestedLocation);
           addLogEntry(`Moved to location: ${suggestedLocation.name}`);
+          const offer = entityOfferRef.current;
+          const offered = followerPeelRef.current;
+          entityOfferRef.current = NO_ENTITY_OFFER;
+          followerPeelRef.current = undefined;
+          if (hasEntityOffer(offer)) {
+            const live = liveFollowerState();
+            const went = moveWithPlayer(live, offer, suggestedLocation.id);
+            applyFollowerState(
+              { followers: went.followers, positions: movedPositions(went.positions, live.positions) },
+              offered ? peeledCharacters(went, offered.peelOff, new Set(), offered.turnId) : [],
+            );
+          }
           setSuggestedLocation(null);
         }}
       >
@@ -4792,7 +5079,11 @@ const GameViewer = ({
       <Button
         size="sm"
         variant="ghost"
-        onClick={() => setSuggestedLocation(null)}
+        onClick={() => {
+          entityOfferRef.current = NO_ENTITY_OFFER;
+          followerPeelRef.current = undefined;
+          setSuggestedLocation(null);
+        }}
       >
         Dismiss
       </Button>
@@ -4881,6 +5172,8 @@ const GameViewer = ({
   const viewLocation = isViewingPast
     ? (locations.find((l) => l.id === viewLocationId) ?? currentLocation)
     : currentLocation;
+  const backdrop = useLocationBackdrop(viewLocation);
+  const mapBackdrop = useMapBackdrop(worldOverview);
 
   // Menu save/load handlers, extracted so the desktop (header) and mobile (tab-row) MenuModal instances share them.
   const handleMenuSave = (name: string, opts?: { overwriteId?: string; includeSceneImages?: boolean }) =>
@@ -4904,7 +5197,7 @@ const GameViewer = ({
         const { world: migrated } = loadWorldData(world, false, { stored: true });
         return await loadGame(
           id, Array.isArray(migrated.locations) ? migrated.locations : [], Array.isArray(migrated.stats) ? migrated.stats : [],
-          Array.isArray(migrated.entities) ? migrated.entities : [],
+          Array.isArray(migrated.entities) ? migrated.entities : [], migrated.worldOverview?.vrmStore,
         );
       } catch (error) {
         console.error('Cross-world load failed:', error);
@@ -4912,7 +5205,7 @@ const GameViewer = ({
         return false;
       }
     }
-    return loadGame(id, locations, stats, codeEntities.world);
+    return loadGame(id, locations, stats, codeEntities.world, worldOverview.vrmStore);
   };
   const menuModal = (extra?: { onEditWorld?: () => void; onShowAiContext?: () => void }) => (
     <MenuModal
@@ -4933,7 +5226,7 @@ const GameViewer = ({
     >
       {locationBackground && (
         <LocationBackdrop
-          image={viewLocation ? viewLocation.backgroundImage : "./default-background.jpg"}
+          image={backdrop}
           overlay={backgroundOverlay}
           overlayHidden={uiHidden}
         />
@@ -5076,6 +5369,8 @@ const GameViewer = ({
         locations={locations}
         connections={connections}
         currentLocationId={currentLocation?.id ?? null}
+        entitiesAt={metRoster}
+        mapBackground={mapBackdrop}
         changeLocation={changeLocation}
         resolveText={resolvePH}
       />
@@ -5150,7 +5445,7 @@ const GameViewer = ({
       {/* Full AI context sent each turn, paginated by turn */}
       <Dialog open={isDebugOpen} onOpenChange={setIsDebugOpen}>
         <DialogContent surface="aiContext" aria-describedby={undefined} className="max-w-[95vw] w-[95vw] h-[90dvh] flex flex-col overflow-hidden">
-          {(() => {
+          <RenderMounted render={() => {
             const palette = HIGHLIGHT_PALETTE;
             // Stable per-entry color + name lookups (by the live dictionary's order), shared by the legend,
             // the inline match-chips, and the reason popovers so one accent always means one entry.
@@ -5251,6 +5546,7 @@ const GameViewer = ({
                 const scope = variant.includes("sublocations") ? "in the sub-locations"
                   : variant.includes("reachable") ? "nearby"
                   : variant.includes("destinations") ? "where you can go"
+                  : variant.includes("known") ? "known here"
                   : "here";
                 return `${what} ${scope}${variant.includes("summary") ? " (summary)" : ""}`;
               }
@@ -5685,7 +5981,7 @@ const GameViewer = ({
                 )}
               </>
             );
-          })()}
+          }} />
         </DialogContent>
       </Dialog>
 

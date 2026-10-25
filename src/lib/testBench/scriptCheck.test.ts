@@ -41,13 +41,59 @@ describe('the on-demand script check', () => {
     expect(found?.ruleId).toBe(SCRIPT_EXECUTION.id);
   });
 
-  it('runs memory and diary writes for an entity of the world clean, and fails a diary for one it lacks', async () => {
+  it('reads an empty memories list (Q12)', async () => {
+    const world = (code: string): RuleWorld => ({ ...base([]), scripts: [{ id: 'w', timing: 'after', code }] });
+    expect(await checkScripts(world('if (memories.length !== 0) throw new Error("memories hold " + memories.length);'))).toEqual([]);
+    // The control: the same read throws when the list is empty, so the clean run above did read it.
+    const [found] = await checkScripts(world('if (memories.length === 0) throw new Error("empty");'));
+    expect(found?.ruleId).toBe(SCRIPT_EXECUTION.id);
+  });
+
+  it('runs memory and diary writes for an entity of the world clean, and does not fail a diary for one it lacks (Q2: open cast)', async () => {
     const world = (code: string): RuleWorld => ({
       ...base([]), entities: [{ id: 'tor', name: 'Tor', description: '' } as Entity], scripts: [{ id: 'w', timing: 'after', code }],
     });
-    expect(await checkScripts(world('memory.add("The gate fell."); memory.pin("Tor lied."); diary("Tor", "I lied.");'))).toEqual([]);
-    const [found] = await checkScripts(world('diary("Mira", "Hello.");'));
+    expect(await checkScripts(world('memories.add("The gate fell."); memories.pin("Tor lied."); entities.Tor.diary("I lied.");'))).toEqual([]);
+    const rows = async (code: string) => (await checkScripts(world(code))).map((f) => [f.ruleId, f.message]);
+    expect(await rows('entities.Mira.diary("Hello.");')).toEqual([[
+      SCRIPT_UNKNOWN_NAME.id, '“World · After the AI” writes a diary for “Mira”, a name the cast lacks. Play may discover it.',
+    ]]);
+    expect(await rows('entities.Mira.diary("Hello."); entities.Bo.diary("Hi.");')).toEqual([[
+      SCRIPT_UNKNOWN_NAME.id, '“World · After the AI” writes a diary for “Mira”, “Bo”, names the cast lacks. Play may discover them.',
+    ]]);
+    expect(await rows('entities.Mira.diary("Hello."); traits.Bold.enabled = true;')).toEqual([[
+      SCRIPT_UNKNOWN_NAME.id,
+      '“World · After the AI” writes to unknown names. Writes ignored: no trait is named “Bold”. It also writes a diary for “Mira”, a name the cast lacks. Play may discover it.',
+    ]]);
+  });
+
+  it('runs a persona-only entity’s trait Script outside the opening cast, as play with no persona does (ticket 04 ruling)', async () => {
+    const albus: Entity = {
+      id: 'albus', name: 'Albus', persona: true, personaOnly: true,
+      traits: [{ id: 'sly', name: 'Sly', statChanges: [], scripts: [{ id: 's', timing: 'after', code: 'if (owner.name !== "" || self.enabled) throw new Error("cast");\nentities.Albus.diary("Hm.");' }] }],
+    };
+    expect((await checkScripts({ ...base([]), entities: [albus] })).map((f) => [f.ruleId, f.message])).toEqual([[
+      SCRIPT_UNKNOWN_NAME.id, '“Sly · After the AI” of “Albus” writes a diary for “Albus”, a name the cast lacks. Play may discover it.',
+    ]]);
+  });
+
+  it('reads the turn-one clock of each timing, as Test Code does (Q2)', async () => {
+    const world = (timing: Script['timing'], hours: number): RuleWorld => ({
+      ...base([]), scripts: [{ id: 'w', timing, code: `if (clock.elapsedHours !== ${hours} || clock.deltaHours !== ${hours}) throw new Error("clock");` }],
+    });
+    expect(await checkScripts(world('before', 0))).toEqual([]);
+    expect(await checkScripts(world('start', 0))).toEqual([]);
+    expect(await checkScripts(world('after', 1))).toEqual([]);
+    const [found] = await checkScripts(world('after', 0));
     expect(found?.ruleId).toBe(SCRIPT_EXECUTION.id);
+  });
+
+  it('reads a switched-off stat as off, as play does (Q2: the authored enabled map)', async () => {
+    const world = base([
+      stat({ id: 'luck', name: 'Luck', value: 5, enabled: false }),
+      stat({ id: 'grit', name: 'Grit', value: 5, scripts: boxScripts({ after: 'if (stats.Luck.enabled || !stats.Grit.enabled) throw new Error("on"); return 5;' }) }),
+    ]);
+    expect(await checkScripts(world)).toEqual([]);
   });
 
   it('runs every script the static rules read, and names each by the same row', async () => {
@@ -196,10 +242,10 @@ describe('the on-demand script check', () => {
     expect(found.message).toContain('times out');
   }, 15000);
 
-  it('runs each coded stat against the world’s starting values, so a run mirrors turn one', async () => {
-    // Vigor opens at 80; code reading it must see 80, not the live-value default of zero.
+  it('runs each coded stat against the world’s authored values, so a run mirrors turn one (Q8)', async () => {
+    // Vigor opens at its authored 80, so code reading it sees 80.
     const found = await checkScripts(base([
-      stat({ id: 's1', name: 'Vigor', starting: 80 }),
+      stat({ id: 's1', name: 'Vigor', value: 80 }),
       stat({
         id: 's2',
         name: 'Fertility',
@@ -291,13 +337,13 @@ describe('the on-demand script check', () => {
       expect(found[0].items).toEqual([{ id: 'creature', name: 'The Creature', section: 'entities' }]);
     });
 
-    it('runs an owned box with its entity as owner and the world as stats, every owner at its starting values', async () => {
+    it('runs an owned box with its entity as owner and the world as stats, every owner at its authored values (Q8)', async () => {
       const check = 'if (owner.stats.Rage.value !== 7) throw new Error("owner");\n'
         + 'if (stats.Destruction.value !== 3) throw new Error("world");\n'
         + 'if (entities["The Creature"].stats.Rage.value !== 7) throw new Error("entry");\nreturn 1;';
       const world = owned(
-        [stat({ id: 'rage', name: 'Rage', starting: 7 }), stat({ id: 'fury', name: 'Fury', scripts: boxScripts({ after: check }) })],
-        [stat({ id: 'dest', name: 'Destruction', starting: 3 })],
+        [stat({ id: 'rage', name: 'Rage', value: 7 }), stat({ id: 'fury', name: 'Fury', scripts: boxScripts({ after: check }) })],
+        [stat({ id: 'dest', name: 'Destruction', value: 3 })],
       );
       expect(await checkScripts(world)).toEqual([]);
       // A world box reads the same entity through `entities`, and its own owner is empty.
@@ -314,9 +360,9 @@ describe('the on-demand script check', () => {
         const link = (id: string) => ({ id, originalId: 'guards', kind: 'group' as const, originalName: 'Guards', groupId: null });
         return {
           ...base([
-            stat({ id: 'dest', name: 'Destruction', starting: 3 }),
+            stat({ id: 'dest', name: 'Destruction', value: 3 }),
             stat({ id: 'guard', name: 'Guard', groupId: 'guards', scripts: boxScripts({ after: code }) }),
-            stat({ id: 'watch', name: 'Watch', groupId: 'guards', starting: 4 }),
+            stat({ id: 'watch', name: 'Watch', groupId: 'guards', value: 4 }),
           ]),
           statGroups: [blueprints, guards],
           entities: [
@@ -336,7 +382,7 @@ describe('the on-demand script check', () => {
 
     it('runs an owner’s overridden code on a linked stat once, with its entity as owner', async () => {
       const guard = stat({ id: 'guard', name: 'Guard', groupId: 'bp', scripts: boxScripts({ after: 'return 1;' }) });
-      const owner = (code: string) => creature([stat({ id: 'rage', name: 'Rage', starting: 7 })], {
+      const owner = (code: string) => creature([stat({ id: 'rage', name: 'Rage', value: 7 })], {
         statLinks: [{
           id: 'link', originalId: 'guard', kind: 'stat', originalName: 'Guard', groupId: null,
           overrides: { guard: { scripts: { value: boxScripts({ after: code }), blueprint: boxScripts({ after: 'return 1;' }) } } },

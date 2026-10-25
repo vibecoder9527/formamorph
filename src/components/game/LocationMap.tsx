@@ -3,7 +3,7 @@ import {
   Background, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
-import { LocationIcon } from '@/lib/elementIcons';
+import { EntitiesIcon, LocationIcon } from '@/lib/elementIcons';
 import { FloatingEdge } from '@/components/FloatingEdge';
 import { toFlowEdge } from '@/lib/canvasEdges';
 import { useCanvasConnectionStyle } from '@/lib/canvasPrefs';
@@ -14,7 +14,10 @@ import {
 import { useMediaQuery } from '@/lib/useMediaQuery';
 import { CanvasControls } from '@/components/CanvasControls';
 import { Tip } from '@/components/ui/tooltip';
+import { MapBackgroundLayer } from '@/components/MapBackgroundLayer';
+import type { MapBackdrop } from '@/lib/useLocationBackdrop';
 import { cn } from '@/lib/utils';
+import type { MetRoster } from '@/lib/metEntities';
 import type { Connection, GameLocation } from '@/types';
 
 /**
@@ -32,6 +35,8 @@ interface MapNodeData extends Record<string, unknown> {
   label: string;
   /** The box the player is standing in. */
   here: boolean;
+  /** The met entities standing in this box. */
+  entities?: string[];
 }
 
 type MapNode = Node<MapNodeData>;
@@ -69,6 +74,19 @@ const TravelButton = ({ id, data, className }: {
   );
 };
 
+/** How many met entities stand in a box, on its top-right corner. The tip names them. */
+const EntityCount = ({ names }: { names?: string[] }) => {
+  if (!names?.length) return null;
+  return (
+    <Tip tip={names.join(', ')}>
+      <span role="img" className="absolute -right-2 -top-2 z-10 flex items-center gap-0.5 rounded-full border bg-card px-1.5 text-meta text-muted-foreground shadow-sm">
+        <EntitiesIcon className="h-3 w-3" aria-hidden="true" />
+        {names.length}
+      </span>
+    </Tip>
+  );
+};
+
 /** Unseen ends xyflow needs before it draws an arrow; `FloatingEdge` ignores where they sit. */
 const ArrowEnds = () => (
   <>
@@ -85,6 +103,7 @@ const MapLocationNode = ({ id, data }: NodeProps<MapNode>) => (
       data={data}
       className={cn('flex h-full w-full justify-center rounded-md border px-3', data.here && hereRing)}
     />
+    <EntityCount names={data.entities} />
     <ArrowEnds />
   </>
 );
@@ -94,6 +113,7 @@ const MapLocationNode = ({ id, data }: NodeProps<MapNode>) => (
 const MapGroupNode = ({ id, data }: NodeProps<MapNode>) => (
   <div className={cn('h-full w-full rounded-md border bg-muted/40', data.here && hereRing)}>
     <TravelButton id={id} data={data} className="flex w-full rounded-t-md border-b px-3 py-1.5" />
+    <EntityCount names={data.entities} />
     <ArrowEnds />
   </div>
 );
@@ -101,10 +121,13 @@ const MapGroupNode = ({ id, data }: NodeProps<MapNode>) => (
 const nodeTypes = { location: MapLocationNode, locationGroup: MapGroupNode };
 const edgeTypes = { floating: FloatingEdge };
 
-const LocationMap = ({ locations, connections, currentLocationId, onTravel }: {
+const LocationMap = ({ locations, connections, currentLocationId, entitiesAt, background, onTravel }: {
   locations: GameLocation[];
   connections: Connection[];
   currentLocationId: string | null;
+  entitiesAt?: MetRoster;
+  /** The Map Background's visible image, drawn where the author placed it. */
+  background?: MapBackdrop;
   onTravel: (location: GameLocation) => void;
 }) => {
   // The same shape the canvas draws arrows in — presentation, and one person's own preference, so someone who
@@ -147,8 +170,8 @@ const LocationMap = ({ locations, connections, currentLocationId, onTravel }: {
     // A box nothing can be done *to* is a box xyflow stops sending clicks to — and being clicked is the
     // whole of what a box on the Map is for, so it takes its pointer events back.
     style: { pointerEvents: 'auto' as const },
-    data: { label: node.data.label, here: node.id === currentLocationId },
-  })), [map, currentLocationId]);
+    data: { label: node.data.label, here: node.id === currentLocationId, entities: entitiesAt?.[node.id] },
+  })), [map, currentLocationId, entitiesAt]);
 
   const edges = useMemo<Edge[]>(
     // Travel hints often spoil the route, so the player sees only the lines.
@@ -202,6 +225,7 @@ const LocationMap = ({ locations, connections, currentLocationId, onTravel }: {
         >
           {/* The grid is an authoring aid — what a location snaps to. The player gets the plain ground. */}
           <Background className="!bg-background" color="transparent" gap={CANVAS_GRID} />
+          {background && <MapBackgroundLayer src={background.data} frame={background.frame} opacity={background.opacity} />}
           <CanvasControls />
         </ReactFlow>
       </TravelContext.Provider>

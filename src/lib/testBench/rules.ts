@@ -31,7 +31,7 @@ import { matchKey } from '@/lib/entityMatch';
 import { activeDescriptor } from '@/lib/statContext';
 import {
   describeInThresholdUnits, describeThreshold, descriptorSpans, isThresholdOutOfRange, sortedDescriptors,
-  statStartValue, thresholdValue, uncoveredSpan, valueThreshold,
+  statAuthoredStart, statStartValue, thresholdValue, uncoveredSpan, valueThreshold,
 } from '@/lib/statDescriptorGeometry';
 import { statCodeName } from '@/lib/statCodeNames';
 import { filledCodeBoxes, noBoxes, TIMING_LABEL } from '@/lib/statCodeTiming';
@@ -43,6 +43,7 @@ import {
 import { worldScriptList, type ListedScript } from '@/lib/worldScripts';
 import { estimateTokens } from '@/lib/memoryUtils';
 import { entityImageData, entityImages } from '@/lib/entityImages';
+import { locationImages } from '@/lib/locationImages';
 import {
   dataUrlBytes, dataUrlMime, dataUrlRealMime, imageFormatLabel, isConvertibleImage, isRemoteImage,
   relabelDataUrl, sniffDataUrlMime,
@@ -89,7 +90,7 @@ export const SEVERITIES: readonly Severity[] = ['error', 'warning', 'info'] as c
 
 /** The editor tab that owns a finding's items — where Open navigates to. */
 export type FindingSection =
-  | 'overview' | 'stats' | 'entities' | 'locations' | 'traits' | 'dictionary' | 'placeholders' | 'scripts' | 'tools';
+  | 'overview' | 'stats' | 'entities' | 'locations' | 'traits' | 'dictionary' | 'placeholders' | 'scripts' | 'tools' | 'media';
 
 /** One item a finding names, labeled as the editor's own lists label it. */
 export interface FindingItem {
@@ -1347,8 +1348,9 @@ const statDisabledForever: Rule = {
 
 // ── Stat sanity: numbers that can't mean what the author wrote ────────────────────────────────────────────
 
+// The sanity rules judge the number the author typed, not the clamped value play opens at.
 const startsInRange = (stat: Stat): boolean => {
-  const value = statStartValue(stat);
+  const value = statAuthoredStart(stat);
   return value >= stat.min && value <= stat.max;
 };
 
@@ -1364,7 +1366,7 @@ const statStartingOutOfRange: Rule = {
     const item = namedItem(stat.id, stat.name, world);
     return finding(
       statStartingOutOfRange,
-      `${quote(item.name)} starts at ${statStartValue(stat)}, outside its range of ${stat.min} to ${stat.max}`,
+      `${quote(item.name)} starts at ${statAuthoredStart(stat)}, outside its range of ${stat.min} to ${stat.max}`,
       [item],
     );
   }),
@@ -1379,7 +1381,7 @@ const statStartNoDescriptor: Rule = {
   check: (world) => (world.stats ?? [])
     // A start outside the range is the sharper diagnosis and already fires; its band is nobody's question.
     .filter((stat) => (stat.descriptors ?? []).length > 0 && startsInRange(stat)
-      && !activeDescriptor(stat, statStartValue(stat)))
+      && !activeDescriptor(stat, statAuthoredStart(stat)))
     .map((stat) => {
       const item = namedItem(stat.id, stat.name, world);
       const spans = descriptorSpans(stat);
@@ -1388,7 +1390,7 @@ const statStartNoDescriptor: Rule = {
       // is exactly the reading that made this message unreadable.
       return finding(
         statStartNoDescriptor,
-        `${quote(item.name)} starts at ${describeInThresholdUnits(stat, statStartValue(stat))}, above its top band, `
+        `${quote(item.name)} starts at ${describeInThresholdUnits(stat, statAuthoredStart(stat))}, above its top band, `
         + `which stops at ${describeInThresholdUnits(stat, top.to)} — the AI is told no status for it until the value drops`,
         [item],
       );
@@ -2400,7 +2402,7 @@ const gateReportOf = (world: RuleWorld): GateReport => {
     : req.kind !== 'playingAs' && editor.owners.some((o) => (req.kind === 'trait' ? o.traits : o.groups).some((x) => x.id === req.id)));
   const crossings = held.filter((gate) => gate.owner.id === null && global.traits.some((t) => t.id === gate.trait.id))
     .flatMap((gate) => (gate.trait.requires ?? []).flatMap((row, i) => row.all.flatMap((req, j) => {
-      if (req.kind === 'playingAs' || req.owner) return [];
+      if (req.kind === 'playingAs' || req.kind === 'time' || req.owner) return [];
       const isGlobal = req.kind === 'stat' ? !!stats.global[req.id] : globalIds.has(req.id);
       return !isGlobal && entityHolds(req) ? [{ gate, condition: quote(gate.rows[i][j]) }] : [];
     })));
@@ -3545,9 +3547,9 @@ const embeddedImageSlots = (world: RuleWorld): Array<{ item: FindingItem; url: s
   ...(world.entities ?? []).flatMap((e) => entityImageData(e).map((url) => ({
     item: { ...asItem(e, world), section: 'entities' as const }, url, cap: IMAGE_CAPS.entity,
   }))),
-  ...(world.locations ?? []).flatMap((l) => (l.backgroundImage
-    ? [{ item: namedItem(l.id, l.name, world, 'locations'), url: l.backgroundImage, cap: IMAGE_CAPS.background }]
-    : [])),
+  ...(world.locations ?? []).flatMap((l) => locationImages(l).map((img) => ({
+    item: namedItem(l.id, l.name, world, 'locations'), url: img.data, cap: IMAGE_CAPS.background,
+  }))),
 ];
 
 const worldOversizedImages: Rule = {
@@ -3620,8 +3622,12 @@ const imageMislabeled: Rule = {
       return next === images ? entity : { ...entity, images: next };
     }));
     out = withSlice(out, 'locations', mapChanged(world.locations ?? [], (location) => {
-      const next = location.backgroundImage ? relabelDataUrl(location.backgroundImage) : location.backgroundImage;
-      return next === location.backgroundImage ? location : { ...location, backgroundImage: next };
+      const images = locationImages(location);
+      const next = mapChanged(images, (img) => {
+        const data = relabelDataUrl(img.data);
+        return data === img.data ? img : { ...img, data };
+      });
+      return next === images ? location : { ...location, images: next };
     }));
     return out;
   },
@@ -3690,7 +3696,7 @@ export const SCRIPT_UNKNOWN_NAME: RuleHead = {
 export const WORLD_TOO_LARGE: RuleHead = {
   id: 'world-too-large',
   severity: 'warning',
-  section: 'overview',
+  section: 'media',
   summary: () => 'The world is over the publish limit',
 };
 

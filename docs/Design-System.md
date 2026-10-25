@@ -36,6 +36,7 @@ Cards use `card` rather than inventing a second panel color. Destructive, succes
 - Put a short description below its control or beside a checkbox. Keep necessary detail behind the information control.
 - Use several suitable widget types. Do not convert every setting into the same control for visual uniformity.
 - Use the responsive option switcher for mutually exclusive choices: segmented options at `sm` and wider, a select below `sm`.
+- Inside a dense control, a short pick-many set can use the [segmented multi-select](#pattern-segmented-multi-select).
 - Keep long values inside the control column. Select triggers truncate instead of widening the row.
 
 ### Production mapping
@@ -169,7 +170,7 @@ Open `#dev?modal=designSystem&tab=prompt-chips` for the production-backed [Promp
 
 ### Built-in Placeholder chips
 
-Built-in Placeholders (**Player Name**, **Character Name**) keep the chip shape and accent. Each carries a leading `Sparkles` icon from [`BuiltinMark`](../src/components/prompt/BuiltinMark.tsx) in the palette, the `{` menu, and the field.
+Built-in Placeholders (**Persona Name**, **Character Name**) keep the chip shape and accent. Each carries a leading `Sparkles` icon from [`BuiltinMark`](../src/components/prompt/BuiltinMark.tsx) in the palette, the `{` menu, and the field.
 
 A blueprint chip keeps the chip shape and its placeholder's accent. It carries a leading `LayoutTemplate` icon, the Blueprint element icon, from [`BlueprintMark`](../src/components/prompt/BlueprintMark.tsx) in the same three places. `Link2` keeps the linked-copy meaning. The showcase's **Blueprint Chips** card shows it.
 
@@ -183,7 +184,7 @@ Preview reads each Built-in chip by one rule:
 | --- | --- |
 | **Character Name** | The owning entity's name |
 | **Character Name**, blank owner name or no owner | Its label |
-| **Player Name** | Its label |
+| **Persona Name** | Its label |
 
 The Prompt Chips reference's placeholder palette sits over a sample entity, Oren, so it lists both Built-in chips. Its Entity Description field belongs to Oren, and its Preview shows Character Name as Oren. Description and Notes are world text, so Character Name stays dimmed while one of them holds focus.
 
@@ -477,7 +478,7 @@ The reference preserves production density and panel placement. Dense labels can
 - Action rows never fold. They carry an icon to stay apart from set rows.
 - Separators divide kinds, not topics.
 - Arranging sections, such as Tile Size and grouping, come first.
-- The item's own actions form the final section. Check for Updates, Publish, and the default-persona action are item actions.
+- The item's own actions form the final section. Check for Updates, Publish, and the default-persona and default-Avatar actions are item actions.
 - Each item action carries an icon. Delete is last in the final section.
 - A context-dependent action section sits where the fixed action section sits. It keeps its icons.
 
@@ -500,7 +501,7 @@ The reference preserves production density and panel placement. Dense labels can
 | --- | --- |
 | Full tile-triggered composition | `LibraryTileContextMenu` in [`LibraryTileContextMenu.tsx`](../src/components/library/LibraryTileContextMenu.tsx) |
 | Main Menu host, Group membership, and tile preferences | `LibraryTileGrid` in [`LibraryTileGrid.tsx`](../src/components/library/LibraryTileGrid.tsx) and `useLibraryTiles` in [`useLibraryTiles.ts`](../src/lib/useLibraryTiles.ts) |
-| Default-persona action and its card badge | `DefaultPersonaMenuItem` and `DefaultPersonaBadge` in [`DefaultPersona.tsx`](../src/components/library/DefaultPersona.tsx) |
+| Default-persona and default-Avatar actions and their card badge | `DefaultPersonaMenuItem`, `DefaultAvatarMenuItem` and `DefaultBadge` in [`LibraryDefault.tsx`](../src/components/library/LibraryDefault.tsx) |
 | Menu primitives, checkmarks, focus, dismissal, and touch hold | [`context-menu.tsx`](../src/components/ui/context-menu.tsx) |
 | Destructive confirmation and cancellation | `ConfirmDialog` in [`ConfirmDialog.tsx`](../src/components/ConfirmDialog.tsx), controlled by [`MainMenu.tsx`](../src/views/MainMenu.tsx) |
 | Isolated reference | [`MainMenuContextMenuReference.tsx`](../src/components/design-system/MainMenuContextMenuReference.tsx) |
@@ -1040,12 +1041,11 @@ The live reference draws the World Editor's registry as the rail beside sample p
 
 ### Composition
 
-- The World Editor reads: back, **World Editor**, a chevron, the world's name; the **Search World** field; the History pill; the Mode Select; Optimize Images as an icon button in Advanced; the Test Bench; Save with its menu.
+- The World Editor reads: back, **World Editor**, a chevron, the world's name; the **Search World** field; the History pill; the Mode Select; the Test Bench; Save with its menu.
 - The title is the surface's name. The world is the surface's subject, so its name follows the title. No tab's open item ever does.
 - Save is a split button. The face saves, and the chevron opens a menu that holds Export World and the Autosave checkbox in both modes. A checkbox row toggles in place and leaves the menu open.
 - Every Save label stacks in one grid cell, so the face is as wide as **Saving…** in every state. Saved uses the full `success` fill with `success-foreground` text and icon. After about 2 s it eases over 700ms to the muted Save. Failed uses the destructive fill and does not fade.
 - A polite live region beside Save announces Saving, Saved and Save failed. Mobile's icon-only face swaps its icon the same way.
-- Optimize Images shows a spinner while it runs, and its tooltip shows the progress.
 - Tour anchors, tutorial notes and Take Me There targets ride the controls they always named.
 
 ### Production mapping
@@ -1083,8 +1083,7 @@ The bar is desktop-only. On mobile the surface keeps its card header, and its fo
 | Saved | After the hold the face fades to the muted, disabled Save. The chevron stays enabled. |
 | Save failed | An alert icon and **Failed** on the destructive fill, enabled. Its tooltip and its accessible description say the save failed and a click tries again. It stays until a save succeeds. |
 | Simple | The Save menu holds Export World and Autosave. No other world action shows. |
-| Advanced | The Save menu holds Export World and Autosave. Optimize Images is an icon button before the Test Bench. |
-| Optimizing | The Optimize Images icon turns into a spinner, and its tooltip shows the count. A second click does nothing. |
+| Advanced | The Save menu holds Export World and Autosave. No other world action shows. |
 | Tour running | The Mode Select is disabled; its tooltip says to end the tour. |
 
 The live reference draws the World Editor's bar over sample controls and a sample world name. Its Save runs a short sample save through every state; **Make a Change** gives it something to save, and **Fail Saves** makes the next save fail. Every control changes only the reference's own state, and it never reads or writes authored worlds, saves, library data, or storage.
@@ -1290,6 +1289,61 @@ The live reference opens the production line in a store of its own under a sampl
 ### Writing review
 
 - **Unverified:** "Choose One", the reference description, its sample labels, and its status lines have terminology review only; vocabulary and grammar evidence is not recorded. The sample questions are creative prose and exempt.
+
+## Pattern: Request Status Strip
+
+> 📝 **Proposal.** The placement was settled with the user in the Request Status Glyphs spec (rulings Q12 to Q15). The user has not yet approved it in the showcase. Production already uses it, so approval is the next step.
+
+**Purpose:** Show which AI request is running without moving the footer.
+
+**Rule:**
+
+- One row at a time: the turn's request, a Tool round, or a background pass. **Show Silent Requests** gates the Tool and background rows.
+- The strip floats over the bottom edge of the narration frame, anchored to the top of the footer. It is out of flow, so the like prompt, the Pager and the action box never move.
+- The strip spans the frame's inner width. It has no fill. While it shows, the narration fades out above it: clear under the strip's bottom 1rem, then a 2.5rem fade. The fade stays at every scroll position.
+- The narration also fades at both edges as it scrolls, like the Formaquestion column. Each fade grows in over the first 32px of content past its edge and is gone at that edge. While the strip shows, its fixed fade takes the bottom edge.
+- The narration gets no reserved padding. The strip can cover the newest line while a request runs.
+- The strip takes no pointer events, so the narration under it still scrolls and selects.
+
+**Density:** Compact. The label uses `text-meta` in the muted color. The bar is 4px tall and is the one accent.
+
+### Composition
+
+| Part | Holds | Notes |
+| --- | --- | --- |
+| **Glyph slot** | The request's animated glyph, 16px, hidden from assistive technology | Each glyph loops with a 400 ms pause, in the label's muted color. A new glyph waits until the old one has shown 300 ms, then crossfades in over 150 ms. With reduced motion on, it holds still. |
+| **Label** | The request's name, such as *Generating Narration…* | It truncates at 60% of the row. |
+| **Bar** | The indeterminate progress bar | It fills the rest of the row. |
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| The row and the strip | `RequestStatusRow` and `RequestStatusStrip` in [`RequestStatusRow.tsx`](../src/components/game/RequestStatusRow.tsx) |
+| The background pass row | [`BackgroundPassStatus.tsx`](../src/components/game/BackgroundPassStatus.tsx) |
+| The host, in Pages and Chat | [`GamePanels.tsx`](../src/components/game/GamePanels.tsx) |
+| The glyph map and the glyphs | [`glyphMap.ts`](../src/components/game/statusGlyphs/glyphMap.ts) and [`StatusGlyph.tsx`](../src/components/game/statusGlyphs/StatusGlyph.tsx), over animate-ui's icons in `statusGlyphs/animate-ui/` and ours (quill, masks, split, thought cloud) in `statusGlyphs/icons/` |
+| The Thinking header's thought cloud | `ThinkingGlyph`, shown by `ThinkingLabel` in [`ReasoningBlock.tsx`](../src/components/game/ReasoningBlock.tsx) in the game and in Formaquestion |
+| Isolated reference | [`RequestStatusStripReference.tsx`](../src/components/design-system/RequestStatusStripReference.tsx) |
+
+### Responsive behavior
+
+Pages, Chat, desktop and mobile use the same strip. The label truncates before the bar shrinks.
+
+### State reference
+
+| State | Treatment |
+| --- | --- |
+| Turn request | *Generating* and the request's name, such as *Generating Choices…* |
+| Tool round | *Calling* and the Tool names. It shows only with **Show Silent Requests** on, and it takes the row over the turn request |
+| Background pass | One pass name by precedence, such as *Summarizing turn…*. It shows only between turns, with **Show Silent Requests** on |
+| Idle | No strip. The narration shows to the frame's bottom edge |
+
+The live reference shows each row in its strip over a sample frame, above a Pager that stays still. Its Turn row steps through a turn's requests every 2 s, so the glyph swap shows. Below it, the glyph set loops with the requests each glyph serves, and the Thinking header's thought cloud.
+
+### Writing review
+
+- **Unverified:** the reference description and its toggle labels have terminology review only; vocabulary and grammar evidence is not recorded. The sample narration is creative prose and exempt.
 
 ## Pattern: Nested Prompt Navigation
 
@@ -1939,6 +1993,123 @@ Build a new card row in the card model. Do not draw a row in the DOM by hand.
 Every label is AP title case, and both parts of a hyphenated label are capitalized: **Starts At**, **Shown To**, **Find All Uses**, **Read-Only**, **Writable After This Run**. Descriptions use the Writing Guide voice. A single sentence has no period. This review is local; it does not certify STE compliance.
 
 Open `#dev?modal=designSystem&tab=code-card` for a global, a stat, a trait, a placeholder, a Read-Only name and a declared name, then a pinned card with its list and an empty list, in both themes. The controls only report what they do.
+
+## Pattern: Variable Menu Rows
+
+**Purpose:** Show what each row of a code editor's **Variable** menu inserts, its type and whether code can write it, without opening the tooltip.
+
+> ✅ **Approved.** The user approved the row from static frames in the Script Surface spec (ruling R9, ticket 15): the mark in a leading slot, the lock icon and the 18rem menu. Production: every code box with a **Variable** menu.
+
+**Density:** Compact. The menu is 18rem wide. Rows use the menu's row size and padding, and each field row stays one line.
+
+### Composition
+
+- 🔒 **Read-only mark.** A muted lock icon, 0.75rem, in a leading slot as wide as the Back row's arrow. A writable row, a row that is writable after this run, and a method leave the slot empty.
+- 📏 **One slot per level.** A level with a read-only row gives every row the slot, drill rows and the empty marker too, so labels line up. A level with no read-only row has no slot.
+- 🔤 **Type.** The row's type sits on the right in the code font, at the tooltip's text size, in the muted color. A method shows its function type, such as `(line) => void`, and no other mark.
+- ✂️ **Long type.** A type that doesn't fit ends in an ellipsis. Its tooltip then starts with the whole type on its own line.
+- 💬 **Tooltip.** The help line, then the access sentence.
+- 📇 **Name levels.** The entity, stat and other name lists show no type and no mark.
+- 🔊 **Name.** A field row's accessible name is its label alone. The mark carries the image name **Read-Only**.
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| Rows, slot and type | `FieldRow` and `Gutter` in [`VariableMenu.tsx`](../src/components/prompt/VariableMenu.tsx) |
+| Each row's type and access | `VariableField` in [`statCodeVariableTree.ts`](../src/lib/statCodeVariableTree.ts) |
+| Menu row | `MENU_ROW` in [`menuRow.ts`](../src/components/menuRow.ts) |
+| Isolated reference | [`VariableMenuReference.tsx`](../src/components/design-system/VariableMenuReference.tsx) |
+
+Open `#dev?modal=designSystem&tab=variable-menu`. The reference builds a world script's real tree with no world, so each name list is one type-over row. A pick only reports what it would insert.
+
+### Responsive behavior
+
+The menu is 18rem wide at every screen size, and it drills in place, so a phone shows the same rows. A long label and a long type each end in an ellipsis, so a row never wraps.
+
+### State reference
+
+| State | Treatment |
+| --- | --- |
+| Read-only field | The lock, the label and the type. |
+| Writable, or writable after this run | An empty slot, the label and the type. |
+| Method | The label and its function type. |
+| Drill row in a level with a mark | An empty slot, the label and a chevron. |
+| Long type | The type cut with an ellipsis; the tooltip leads with the whole type. |
+
+### Writing review
+
+The rows reuse the surface's names and types, and the tooltip reuses its help lines. The mark's name, **Read-Only**, matches the hover card's badge. This review is local; it does not certify STE compliance.
+
+## Pattern: You Pill
+
+**Purpose:** Mark the played persona, so the player finds their own entity at a glance.
+
+> ✅ **Approved.** The user approved the pill in the Persona Labels spec (rulings Q1, Q2 and Q3). Production: the **Entities** tab, the persona row, the played owner's stat heading, the stats panel picker, the **Traits** tab, Enter World and requirement lines in play.
+
+**Density:** None of its own. The pill sits inside the host row's line box and adds no height.
+
+### Composition
+
+- 💊 **Pill.** A rounded primary fill that reads **You**. It is 14px tall, with 9px semibold text and 4px side padding.
+- 📏 **Line box.** The pill sits in a box one line tall, so it centers on the name's line in flex and inline hosts alike.
+- 🔤 **After the name.** The pill follows the name with a 6px gap. It never replaces the name. The host renders the name.
+- 🔁 **On a fill.** A selected row on the primary fill passes `onFill`, which inverts the pill's colors.
+
+### Where it goes
+
+| Surface | Mark |
+| --- | --- |
+| In game, after the played persona's name | The You pill |
+| Editor surfaces | The word **Persona**, never the pill |
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| The pill | `YouMark` in [`YouMark.tsx`](../src/components/game/YouMark.tsx) |
+| The **Entities** tab row | `EntityListRow` in [`EntityListRow.tsx`](../src/components/game/EntityListRow.tsx), with `you` |
+| The persona row | `PersonaRow` in [`PersonaRow.tsx`](../src/components/game/PersonaRow.tsx) |
+| The played owner's stat heading and the picker item | `RightPanel` in [`GamePanels.tsx`](../src/components/game/GamePanels.tsx); the picker reads `you` on a `StatPanelOption` |
+| The **Traits** tab's played owner headings | `TraitsTab` in [`TraitsTab.tsx`](../src/components/game/TraitsTab.tsx) |
+| Enter World's category list and entity heading | `EnterWorldWorkspace` in [`EnterWorldWorkspace.tsx`](../src/views/EnterWorldWorkspace.tsx), with `onFill` on the selected category |
+| A requirement line in play | `GateLineText` in [`GateLineText.tsx`](../src/components/game/GateLineText.tsx), from `gateLineParts` |
+| Isolated reference | [`YouMarkReference.tsx`](../src/components/design-system/YouMarkReference.tsx) |
+
+Use `YouMark` for every new surface. Do not draw another mark.
+
+### Responsive behavior
+
+The pill is the same size on desktop and mobile. The reference shows its three panels side by side from `lg`.
+
+### State reference
+
+| State | Treatment |
+| --- | --- |
+| Plain row | Primary fill, primary-foreground text. |
+| Selected row | `onFill`: primary-foreground fill, primary text. |
+| No persona | No pill and no empty badge. |
+| Long name on the **Entities** row | The name truncates. The pill stays whole. |
+
+### Writing review
+
+The pill reads **You**. A screen reader hears it after the name.
+
+Open `#dev?modal=designSystem&tab=you-mark` for a plain row and a selected row in light, dark and the Purple palette.
+
+## Pattern: Segmented multi-select
+
+✅ Approved by the user on 2026-10-24 (media-tab Q66).
+
+A segmented control whose options turn on and off one by one, for a short pick-many set inside a dense control such as a Condition chip. A settings row with a pick-many choice still uses checkboxes.
+
+- 🧩 **Component.** `ToggleGroup` with `type="multiple"` in [`toggle-group.tsx`](../src/components/ui/toggle-group.tsx), at the chip's `h-6 px-2 text-helper` size. The production use is [`TimeConditionControls.tsx`](../src/components/editor/TimeConditionControls.tsx).
+- 🔢 **Order.** Options keep one fixed order, such as clock order, whatever was picked first.
+- 🔒 **Never empty.** When one option is left on, it is disabled, so the value can't empty.
+- 📱 **Width.** The group wraps inside its chip on a narrow screen, and the chip's remove button stays beside it. It does not switch to a select.
+- 🔊 **Name.** The group carries an `aria-label`; each option is a pressed or unpressed button.
+
+Open `#dev?modal=designSystem&tab=segmented-multi-select` for the time chip's controls with local state.
 
 ## UI and prototype workflow
 

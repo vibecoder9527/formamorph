@@ -116,8 +116,15 @@ A location where a new game can begin, flagged by its author. When no location i
 _Avoid_: start location, spawn point
 
 **Avatar**:
-A VRM 3D model — in the local Model Library, chosen for a world, or published as a listing. The kind id in code is `model`; "avatar" in code means Profile Image.
+A VRM 3D model — in the local Model Library, held in a world's Avatar store, chosen for an entity, or published as a listing. The kind id in code is `model`; "avatar" in code means Profile Image.
 _Avoid_: model (in copy), VRM (the file format, not the thing)
+
+**User's Default**:
+The Avatar choice that shows the player's default Avatar: the library Avatar marked Default, or the bundled one when none is marked. Device-local, never exported.
+_Avoid_: default avatar (as the choice's name)
+
+**Default Avatar**:
+The library Avatar the player marks with **Set as Default Avatar**. User's Default shows it. Copy names it "Default Avatar", matching Default Persona.
 
 **Profile Image**:
 The image on an account, shown beside a username. Code calls it an avatar; copy never does.
@@ -243,6 +250,10 @@ _Avoid_: linter (internal only), validator
 The Test Bench instrument where an author pastes prose and sees what would fire — entity presence and dictionary activation — including non-activations with their near-miss reason.
 _Avoid_: matcher preview, dry run
 
+**Media tab**:
+The World Editor tab that lists every media item in a world (images, sounds, 3D Models and Avatars) with its stored size. A view over the fields that keep them, not a store. Copy names the entity, location or dictionary that keeps an item by its name, never as its owner; "owner" is the glossary term for traits, stats and placeholders.
+_Avoid_: assets tab, files, owner (for the entity, location or dictionary that keeps a media item)
+
 **Authoring Tour**:
 A guided run through the World Editor's Simple tabs in which a new author builds a new world one field at a time, seeing each field's effect in the In Game pane.
 _Avoid_: tutorial world, walkthrough, world-building tutorial
@@ -342,7 +353,7 @@ One field a Link or a Copy sets for itself, stored with the Blueprint's value it
 _Avoid_: local value, patch, delta
 
 **Owner**:
-The entity or dictionary whose tree holds a trait, stat or placeholder, as its own item or through a Link or Copy. The played persona is the owner **You**; so is the entity with the **Custom Persona** mark under None and a library persona. Global scope is never an owner: an item with no owner is global. Requirements and pins resolve per owner. Where it matters, the editor says **Own** or **Linked**.
+The entity or dictionary whose tree holds a trait, stat or placeholder, as its own item or through a Link or Copy. The played persona is the owner **Persona**; so is the entity with the **Custom Persona** mark under None and a library persona. Global scope is never an owner: an item with no owner is global. Requirements and pins resolve per owner. Where it matters, the editor says **Own** or **Linked**.
 _Avoid_: bearer, holder
 
 **Global Stat**:
@@ -368,6 +379,10 @@ _Avoid_: stat code, code box, formula (a returned number is one use), macro
 **Timing**:
 When a Script runs: Before the AI, After the AI, During AI Output, At Game Start or When a Trait Switches. The Timing menu is the only way to move a script between timings. Inside one timing, an optional `order` decides who runs first.
 _Avoid_: hook, phase, trigger (a Test Bench Instrument), event
+
+**Sandbox Snapshot**:
+A frozen read of one playthrough state that every Script of a turn or a check runs against: the stats and which are on, the Owners and their stats, the traits in force, the placeholders, the dictionaries, the places, the discovered cast and the clock. Play takes one per turn. Test Code and the Test Bench take one of the authored world at turn one, so an editor run and a real turn read the same board. Taken once, read by every run.
+_Avoid_: sandbox context, run options, script world, code scene
 
 **Before the AI**:
 The Timing that runs at the start of a turn, before the prompt is built. Its writes are in that turn's prompt. No AI change, regen or clock time exists yet, so `previous` reads as the stat and every `delta` reads zero.
@@ -405,12 +420,16 @@ One alternative in a Requirement. A row holds when every Condition in it holds (
 _Avoid_: clause, branch, group (a group is a trait group)
 
 **Condition**:
-One check in a Requirement Row: a trait, any trait in a group, a persona the player plays as, or a stat, with an optional owner. A Condition can carry the Not flag, and then it holds while its target is off. Not is a flag on a Condition, not a separate item.
+One check in a Requirement Row: a trait, any trait in a group, a persona the player plays as, or a stat, with an optional owner, or the time of day. A Condition can carry the Not flag, and then it holds while its target is off. Not is a flag on a Condition, not a separate item. A Time Condition has no Not.
 _Avoid_: exclusion, negation, rule, requirement (a Requirement is the whole gate)
 
 **Stat Condition**:
 A Condition that compares an owner's stat to a number with one of six operators (`>`, `<`, `>=`, `<=`, `=`, `≠`). The number is raw, in the stat's units, or a percent of the stat's min-to-max span; the author picks per Condition. Traits and image Visibility rules share it. The game reads stats once per turn commit, after the stat pass, and a Condition on an inert or missing stat does not hold.
 _Avoid_: stat gate, stat requirement, threshold (a descriptor's word)
+
+**Time Condition**:
+A Condition that holds while the story clock's daypart is one of a set: night, dawn, morning, midday, afternoon, evening. Dayparts split the day by fraction, as the narration's do. It has no owner and no Not, and it never tests the day number or an hour. The game reads it once per turn commit, after the turn's time passes. Outside play it reads the opening hour, which is morning. Traits and image Visibility rules share it.
+_Avoid_: time gate, schedule, hour condition
 
 **Visibility rule**:
 Requirement Rows on one gallery image. In play the image shows while any row holds, and an image with no rows always shows. The primary is the first visible image in author order. Outside play slot 0 shows and rules are ignored. The summary reads "Shown while …". The trait side of the same rows is a Requirement.

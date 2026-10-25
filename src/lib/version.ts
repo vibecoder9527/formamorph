@@ -4,15 +4,17 @@ import type {
   Opening, TraitRequirement,
 } from '@/types';
 import { isImplicitPair, parentIndex } from './locationGraph';
-import { normalizeCustomVRM } from './worldImport';
+import { LEGACY_DEFAULT_AVATAR_VALUES, migrateLegacyPlayerAvatar, type LegacyCharacterData } from './legacyVrm';
 import { autoBindLegacyBodyStats } from './bodyMorphs';
 import { appendCurrentToHistory } from './turnHistory';
 import { migrateGlobalFields } from './globalSaveFields';
-import { DEFAULT_AVATAR_ID, LEGACY_DEFAULT_AVATAR_ID, LEGACY_DEFAULT_AVATAR_SENTINEL } from './defaultAvatar';
+import { DEFAULT_AVATAR_ID } from './defaultAvatar';
 import { migrateEntityImages } from './entityImages';
+import { migrateLocationImages } from './locationImages';
 import { normalizeLinkedItem } from './contentLink';
 import { migrateStatLookups } from './statLookupMigration';
 import { migrateStatCodeRoutes } from './statCodeRoutes';
+import { migrateWorldScriptText } from './scriptTextMigration';
 import { migrateStatBoxes, migrateStatLinkBoxes, type OriginalOf } from './scripts';
 import { allPlaceholders, placeholderOwners, type PlaceholderHomesWorld } from './placeholderHomes';
 import { blueprintItemIds, offeredWorldTraits } from './traitTree';
@@ -101,6 +103,15 @@ function migrateEntityGalleries(world: Record<string, unknown>): void {
   if (!Array.isArray(world.entities)) return;
   world.entities = world.entities.map((e) =>
     e && typeof e === 'object' ? migrateEntityImages(e as Record<string, unknown>) : e,
+  );
+}
+
+/** Move every location's pre-gallery `backgroundImage` into slot 0 of `images` (Q47). Not version-gated, like
+ *  the entity fold: worlds stamped with the current version still carry the old field. */
+function migrateLocationGalleries(world: Record<string, unknown>): void {
+  if (!Array.isArray(world.locations)) return;
+  world.locations = world.locations.map((l) =>
+    l && typeof l === 'object' ? migrateLocationImages(l as Record<string, unknown>) : l,
   );
 }
 
@@ -618,6 +629,17 @@ function dropRootTraitLinks(world: Record<string, unknown>): void {
   });
 }
 
+/** Drop the retired `startingLocationId` from every entity: a persona's `locations` are its starts (Persona
+ *  Q28). Not version-gated, since 3.3.3 worlds carry the key under the current version. */
+function dropEntityStartLocations(world: Record<string, unknown>): void {
+  if (!Array.isArray(world.entities)) return;
+  world.entities = world.entities.map((raw) => {
+    if (!raw || typeof raw !== 'object' || !('startingLocationId' in raw)) return raw;
+    const { startingLocationId: _s, ...rest } = raw as Record<string, unknown>;
+    return rest;
+  });
+}
+
 const hasStringId = (v: unknown): v is { id: string } => !!v && typeof v === 'object' && typeof (v as { id?: unknown }).id === 'string';
 
 const groupRecords = (groups: unknown): StatGroup[] => (Array.isArray(groups) ? groups.filter(hasStringId) : []) as StatGroup[];
@@ -748,11 +770,10 @@ function migrateStatScripts(world: Record<string, unknown>): void {
 
 /**
  * Bring an imported world up to the current format and stamp it with `APP_VERSION`. The dictionary→books
- * fold, the keyword-array migration, the entity-gallery fold, the entity-location flip, the
+ * fold, the keyword-array migration, the entity- and location-gallery folds, the entity-location flip, the
  * connection-record pair-merge, the Connection-leg conversion, the start-flag rename, the placeholder value-record conversion, the
- * opening-cue move, the player-setting split, the requirement-row wrap, the global-scope rewrite, the entity-stat shape guard, the stat-group shape guard, the content-link guard, the code-box-to-scripts rewrite and the stat-code route rewrite run unconditionally (they aren't version-gated — see `foldDictionaryIntoBooks`); the
- * rest is skipped for a world already at `APP_VERSION`. Moves the legacy root `customPlayerVRM` bare
- * data-URL into `worldOverview.customPlayerVRM` as a `MediaAsset`, auto-binds legacy body stats to morphs,
+ * opening-cue move, the player-setting split, the requirement-row wrap, the global-scope rewrite, the entity-stat shape guard, the stat-group shape guard, the content-link guard, the code-box-to-scripts rewrite, the stat-code route rewrite, the persona start-location drop and the legacy player-Avatar move run unconditionally (they aren't version-gated — see `foldDictionaryIntoBooks`); the
+ * rest is skipped for a world already at `APP_VERSION`. Auto-binds legacy body stats to morphs,
  * and renames v1.2 description keys on entities/locations/traits to the audience-based keys. Remaining field defaults are left to `loadWorldData`. Add further 2.0 → 2.x steps here when the shape changes — a version
  * bump is the user's call (see the export-shape-versioning note); shipped worlds are only reshaped through
  * this load-time path, never autonomously re-persisted.
@@ -762,6 +783,7 @@ export function migrateWorld(raw: unknown): World {
   foldDictionaryIntoBooks(world);
   migrateDictionaryKeys(world);
   migrateEntityGalleries(world);
+  migrateLocationGalleries(world);
   flipEntityLocationMembership(world);
   migrateLocationConnections(world);
   migrateConnectionLegs(world);
@@ -772,16 +794,14 @@ export function migrateWorld(raw: unknown): World {
   migrateExclusiveGroups(world);
   migrateRequirementRows(world);
   dropRootTraitLinks(world);
+  dropEntityStartLocations(world);
   migrateStatLists(world);
   migrateGlobalScope(world);
   normalizeContentLinks(world);
   migrateStatScripts(world);
+  migrateWorldScriptText(world);
+  migrateLegacyPlayerAvatar(world);
   if (world.version === APP_VERSION) return world as unknown as World;
-
-  const overview = { ...((world.worldOverview as Record<string, unknown>) ?? {}) };
-  overview.customPlayerVRM = normalizeCustomVRM(overview.customPlayerVRM ?? world.customPlayerVRM);
-  world.worldOverview = overview;
-  delete world.customPlayerVRM; // drop the stray v1.2 root key
 
   if (Array.isArray(world.stats)) {
     world.stats = autoBindLegacyBodyStats(coerceLegacyListStats(world.stats as Stat[]));
@@ -842,19 +862,14 @@ export function stripSnapshotHistory(state: GameState): GameState {
   return rest as GameState;
 }
 
-/**
- * Point a snapshot's player avatar at the seeded library record, from either older value: the pre-library
- * `'default'` sentinel, which has no referent now that the bundled avatar is an ordinary library entry, and
- * the `'default-model'` id it was seeded under before the library was renamed to avatars. Every other
- * value — a library id, `'world'`, or unset — is already meaningful and passes through.
- */
-const LEGACY_DEFAULT_AVATAR_VALUES: readonly string[] = [LEGACY_DEFAULT_AVATAR_SENTINEL, LEGACY_DEFAULT_AVATAR_ID];
-
+/** Point a snapshot's `playerModelId` at the seeded library record when it holds either older id of the
+ *  bundled Avatar. Every other value passes through. */
 function migrateDefaultAvatarId(state: GameState): GameState {
-  const character = state?.characterData;
+  const character = state?.characterData as LegacyCharacterData | null;
   const current = character?.playerModelId;
   if (!character || !current || !LEGACY_DEFAULT_AVATAR_VALUES.includes(current)) return state;
-  return { ...state, characterData: { ...character, playerModelId: DEFAULT_AVATAR_ID } };
+  const migrated: LegacyCharacterData = { ...character, playerModelId: DEFAULT_AVATAR_ID };
+  return { ...state, characterData: migrated };
 }
 
 /** The legacy fixed body fields, before they were folded into the generic `bodyMorphs` map. */

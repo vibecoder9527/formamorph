@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { phMap, phNode } from '@/test/sandboxPlaceholders';
 import { executeStatCode, type CodeBoundField } from './statCodeExecutor';
 import {
-  BUILTIN_MEMBERS, CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, LOCATION_MEMBERS, DELTA_FIELDS, DICTIONARY_FIELDS, DELTA_MEMBERS, ENTITY_FIELDS, LANGUAGE_NAMES, PERSONA_FIELDS, placeholderEntryFields, PREVIOUS_FIELDS, SANDBOX_BUILTINS, SANDBOX_GLOBALS,
+  BUILTIN_MEMBERS, CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, LOCATION_ENTRY_FIELDS, LOCATION_MEMBERS, DELTA_FIELDS, DICTIONARY_FIELDS, DELTA_MEMBERS, ENTITY_FIELDS, LANGUAGE_NAMES, PERSONA_FIELDS, placeholderEntryFields, PREVIOUS_FIELDS, SANDBOX_BUILTINS, SANDBOX_GLOBALS,
   SELF_WRITABLE_FIELDS, STAT_FIELDS, TRAIT_ENTRY_FIELDS, nearestSurfaceName,
 } from './statCodeSurface';
 import { runStatCodeTurn } from './statCodeTurn';
 import { STAT_CODE_TIMINGS, type StatCodeTiming } from './statCodeTiming';
 import type { PlayerStat, Stat } from '@/types';
 import { boxScripts } from '@/test/scriptFixtures';
+import { statCodeTurnOf } from '@/test/statCodeTurnFixture';
 
 const stat = (over: Partial<Stat>): Stat => ({
   id: 'a', name: 'Health', type: 'number', description: '', min: 0, max: 100, value: 50, regen: 0, ...over,
@@ -71,6 +72,13 @@ describe('the described surface against the sandbox that provides it', () => {
         .resolves.toEqual({ value: 1, error: null });
     },
   );
+
+  it('describes every field on a locations entry, and no field it does not', async () => {
+    const expected = LOCATION_ENTRY_FIELDS.map(entry => entry.name).sort().join(',');
+    const places = { locations: [{ id: 'l1', name: 'Mill' }], location: null };
+    await expect(executeStatCode(`return Object.keys(locations.Mill).sort().join(',') === ${JSON.stringify(expected)} ? 1 : 0;`, stats, stats[0], { places }))
+      .resolves.toEqual({ value: 1, error: null });
+  });
 
   // Retired routes; the load rewrite moves released code off them.
   it.each(['deltaHours', 'elapsedHours', 'day', 'daypart', 'startDay', 'startDaypart', 'currentStatId'])(
@@ -191,7 +199,7 @@ describe('the described surface against the sandbox that provides it', () => {
  */
 const turnProbe = async (timing: StatCodeTiming, code: string): Promise<number | undefined> => {
   const probe: PlayerStat = { ...stats[0], value: 50, descriptors: [], scripts: boxScripts({ [timing]: code }) };
-  const out = await runStatCodeTurn({
+  const out = await runStatCodeTurn(statCodeTurnOf({
     timing,
     stats: [probe],
     enabled: {},
@@ -202,7 +210,7 @@ const turnProbe = async (timing: StatCodeTiming, code: string): Promise<number |
     ownerTraits: { acquired: [], disabledTraitIds: [], appliedValues: {}, world: { traits: [], groups: [] } },
     statNameOf: (stat) => stat.name,
     traitNameOf: (trait) => trait.name,
-  });
+  }));
   return out.stats[0].value;
 };
 
@@ -238,7 +246,7 @@ describe('the described surface in each of the two boxes', () => {
       ...stats[0], value: 50, descriptors: [], scripts: boxScripts({ before: 'return 11;', after: 'return 22;' }),
     };
     const valueFrom = async (timing: StatCodeTiming) => {
-      const out = await runStatCodeTurn({
+      const out = await runStatCodeTurn(statCodeTurnOf({
         timing,
         stats: [both],
         enabled: {},
@@ -249,7 +257,7 @@ describe('the described surface in each of the two boxes', () => {
         ownerTraits: { acquired: [], disabledTraitIds: [], appliedValues: {}, world: { traits: [], groups: [] } },
         statNameOf: (entry) => entry.name,
         traitNameOf: (entry) => entry.name,
-      });
+      }));
       return out.stats[0].value;
     };
     expect(await valueFrom('before')).toBe(11);

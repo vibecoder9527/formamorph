@@ -12,7 +12,7 @@ import { gateStates, gateTreeOf, settle, switchTrait, type SettleResult } from '
 import { scoped } from '@/lib/scope';
 import { cascadeOffInput } from '@/lib/traitRuntime';
 import type { TraitCascade } from '@/components/game/SetupTraitList';
-import { namedStartLocation, offeredStartLocations, withoutPersona } from '@/lib/personaPick';
+import { offeredStartLocations, personaStartLocation, withoutPersona } from '@/lib/personaPick';
 import type { Entity, EntityMetadata, GameLocation, PersonaRef, Stat, Trait } from '@/types';
 
 const identity = (text: string) => text;
@@ -154,7 +154,7 @@ function Harness({ initialDictionaryItems = dictionaryItems, ...props }: Partial
       onIntroduction={vi.fn()}
       onCancel={vi.fn()}
       onContinue={vi.fn()}
-      continueLabel="Start game"
+      continueLabel="Start Game"
       {...props}
     />
   );
@@ -578,7 +578,7 @@ describe('Begin and group minimums', () => {
   it('stays disabled while any group is short, on any page, and enables once every group meets its minimum', async () => {
     const user = userEvent.setup();
     render(<Harness traitGroups={counted} />);
-    const begin = screen.getByRole('button', { name: 'Start game' });
+    const begin = screen.getByRole('button', { name: 'Start Game' });
     expect(begin).toBeDisabled();
 
     await user.click(screen.getByRole('button', { name: /^Practice/ }));
@@ -600,7 +600,7 @@ describe('Begin and group minimums', () => {
     render(<Harness traitGroups={[...groups, omens]} traits={[...traits, ...unseen]} />);
     expect(screen.queryByRole('button', { name: /^Omens/ })).toBeNull();
     expect(within(screen.getByRole('button', { name: /^Practice/ })).getByLabelText('0 of 1 selected')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start game' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start Game' })).toBeDisabled();
   });
 });
 
@@ -899,16 +899,18 @@ describe('the Persona category', () => {
 
 const worldEntities: Entity[] = [
   { id: 'warden', name: 'Harbor Warden', aiDescription: '', persona: true, locations: ['inn', 'dock'] },
-  { id: 'drifter', name: 'Road Drifter', aiDescription: '', persona: true, locations: ['road'], startingLocationId: 'road' },
+  { id: 'drifter', name: 'Road Drifter', aiDescription: '', persona: true, locations: ['road'] },
+  { id: 'stranger', name: 'Stranger', aiDescription: '', persona: true },
 ];
 const worldLocations: GameLocation[] = [
   { id: 'gate', name: 'Town Gate', description: '', isStarting: true },
   { id: 'road', name: 'Old Road', description: '' },
   { id: 'dock', name: 'Harbor Dock', description: '', isStarting: true },
 ];
-const worldPersonas = worldEntities.map((entity) => (
-  { id: entity.id, name: entity.name, startsAt: namedStartLocation(entity, worldLocations)?.name }
-));
+const worldPersonas = worldEntities.map((entity) => {
+  const start = personaStartLocation(entity, worldLocations);
+  return { id: entity.id, name: entity.name, startsAt: worldLocations.find((l) => l.id === start)?.name };
+});
 
 // The host's side of the pick rules, through the same draft functions the main menu uses.
 function WorldPersonaHarness(props: Partial<ComponentProps<typeof EnterWorldWorkspace>>) {
@@ -933,7 +935,7 @@ describe('world personas in the Persona category', () => {
     render(<WorldPersonaHarness />);
     const picker = screen.getByRole('radiogroup', { name: 'Persona' });
     const order = [...picker.querySelectorAll('[role="radio"], h3')].map((el) => el.getAttribute('aria-label') ?? el.textContent);
-    expect(order).toEqual(['None', 'From This World', 'Harbor Warden', 'Road Drifter', 'Your Personas', 'Mara Vale', 'Quiet Cartographer']);
+    expect(order).toEqual(['None', 'From This World', 'Harbor Warden', 'Road Drifter', 'Stranger', 'Your Personas', 'Mara Vale', 'Quiet Cartographer']);
   });
 
   it('shows the category for world personas alone, with no library heading', () => {
@@ -963,15 +965,17 @@ describe('world personas in the Persona category', () => {
     expect(screen.getByRole('radio', { name: 'Town Gate' })).toBeChecked();
   });
 
-  it('says where a persona that names its start begins', () => {
+  it('says where each persona with a location begins', () => {
     render(<WorldPersonaHarness />);
     const drifter = screen.getByRole('radio', { name: 'Road Drifter' }).closest('div')!;
     expect(within(drifter).getByText('Starts at Old Road')).toBeInTheDocument();
     const warden = screen.getByRole('radio', { name: 'Harbor Warden' }).closest('div')!;
-    expect(within(warden).queryByText(/Starts at/)).not.toBeInTheDocument();
+    expect(within(warden).getByText('Starts at Harbor Dock')).toBeInTheDocument();
+    const stranger = screen.getByRole('radio', { name: 'Stranger' }).closest('div')!;
+    expect(within(stranger).queryByText(/Starts at/)).not.toBeInTheDocument();
   });
 
-  it('lists an unflagged start only while its persona is picked, and a switch away drops it', async () => {
+  it("lists a persona's unflagged location only while it is picked, and a switch away drops it", async () => {
     const user = userEvent.setup();
     render(<WorldPersonaHarness />);
     await user.click(screen.getByRole('button', { name: 'Starting Location' }));
@@ -1042,6 +1046,8 @@ describe('EnterWorldWorkspace cast pages', () => {
   }
 
   const nav = () => screen.getByRole('navigation', { name: 'World setup categories' });
+  /** The You pill inside `host`, found by what the player reads. */
+  const pill = (host: HTMLElement) => within(host).getByText('You');
 
   it("opens an entity's page with its portrait, name, description and owned traits, defaults picked", async () => {
     const user = userEvent.setup();
@@ -1109,17 +1115,23 @@ describe('EnterWorldWorkspace cast pages', () => {
     expect(ashRow.querySelector('svg.lucide-user')).not.toBeNull();
   });
 
-  it('marks the played entity "You" in its place, and moves the mark on a persona switch', async () => {
+  it('marks the played entity with the You pill in its place, and moves the pill on a persona switch', async () => {
     const user = userEvent.setup();
     render(<CastHarness />);
-    expect(within(nav()).getByRole('button', { name: /^Ash/ })).toHaveTextContent('You');
+    const ashRow = within(nav()).getByRole('button', { name: /^Ash/ });
+    expect(ashRow).toHaveTextContent(/^AshYou/);
+    expect(pill(ashRow)).toBeInTheDocument();
     expect(within(nav()).getByRole('button', { name: /^Bob/ })).not.toHaveTextContent('You');
 
     await user.click(within(nav()).getByRole('button', { name: 'Persona' }));
     await user.click(screen.getByRole('radio', { name: 'Bob' }));
     expect(within(nav()).getByRole('button', { name: /^Ash/ })).not.toHaveTextContent('You');
     await user.click(within(nav()).getByRole('button', { name: /^Bob/ }));
-    expect(within(screen.getByRole('main')).getByRole('heading', { name: /^Bob/ })).toHaveTextContent('You');
+    // The selected row's pill inverts its colors, which no DOM read shows; the static frames carry that.
+    expect(pill(within(nav()).getByRole('button', { name: /^Bob/ }))).toBeInTheDocument();
+    const heading = within(screen.getByRole('main')).getByRole('heading', { name: /^Bob/ });
+    expect(heading).toHaveTextContent(/^BobYou$/);
+    expect(pill(heading)).toBeInTheDocument();
   });
 
   it("disables Begin while an entity owner's group is short, and enables it once that owner picks enough", async () => {
@@ -1129,7 +1141,7 @@ describe('EnterWorldWorkspace cast pages', () => {
     };
     const user = userEvent.setup();
     render(<CastHarness cast={{ ...castWorld, entities: [bonded, bob] }} />);
-    const begin = screen.getByRole('button', { name: 'Start game' });
+    const begin = screen.getByRole('button', { name: 'Start Game' });
     expect(begin).toBeDisabled();
     await user.click(within(nav()).getByRole('button', { name: /^Bond/ }));
     await user.click(screen.getByRole('checkbox', { name: 'Wild' }));

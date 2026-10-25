@@ -41,8 +41,7 @@ export const FIELD_LABELS: Partial<Record<SliceName | "*", Record<string, string
     thumbnail: "Thumbnail",
     bgm: "Background Music",
     systemPrompt: "System Prompt",
-    use3DModel: "3D Player Avatar",
-    customPlayerVRM: "Custom Player Avatar",
+    vrmStore: "Avatars",
     readme: "Readme",
     introReadme: "Intro Readme",
     promptOverrides: "Prompt Overrides",
@@ -50,6 +49,7 @@ export const FIELD_LABELS: Partial<Record<SliceName | "*", Record<string, string
     openingsEnabled: "Openings",
     allowedPersonas: "Allowed Personas",
     startPersona: "Starts On",
+    mapBackground: "Map Background",
   },
   stats: {
     type: "Type",
@@ -64,12 +64,13 @@ export const FIELD_LABELS: Partial<Record<SliceName | "*", Record<string, string
     scripts: "Scripts",
   },
   locations: {
-    backgroundImage: "Background Image",
+    images: "Background Image",
     ambientSound: "Ambient Sound",
     isStarting: "Starting Location",
     canvasPosition: "Position",
   },
   connections: { aToB: "Travel Hint", bToA: "Travel Hint" },
+  entities: { vrmPick: "Avatar" },
   statUpdates: { prompt: "Prompt", stats: "Stats" },
   // A book's own fields fall through to "*"; these are its entries'.
   dictionaries: {

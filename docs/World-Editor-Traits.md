@@ -35,7 +35,7 @@ A new trait goes to the top level of the list. Drag it to put it in a group.
 2. Open the **Availability** tab.
 3. Under **Requires**, select **Add Requirement**.
 4. Pick a target in the **Traits**, **Any Trait in a Group** or **Playing As** list.
-5. Pick whose trait counts: **Same Owner**, **You**, or an entity. A **Playing As** target skips this step, and so does a target that only one owner can have.
+5. Pick whose trait counts: **Same Owner**, **Persona**, or an entity. A **Playing As** target skips this step, and so does a target that only one owner can have.
 6. Optional: to need a second target as well, select **And** in the same row and pick it. The trait then needs both.
 7. Optional: to open the trait another way, select **Or Another Way** and pick a target for the new row. Any one row is enough.
 
@@ -231,7 +231,7 @@ A group with a maximum of one shows radio buttons. In **Up to One**, pick anothe
 On the setup screen:
 
 - A group that's short of its minimum says how many more picks it needs, such as *Choose 2 more traits*.
-- **Start game** stays disabled until every group meets its minimum. In a world with a 3D model, the button reads **Continue to Avatar**. **Quick Start** never blocks, and it leaves the gap in place.
+- **Start Game** stays disabled until every group meets its minimum. When the persona you play has an Avatar, the button reads **Continue to Avatar**. **Quick Start** never blocks, and it leaves the gap in place.
 - At a maximum above one, the unchecked rows disable. Uncheck one to pick another.
 
 During the game:
@@ -252,7 +252,7 @@ During the game:
 
 A **row** is one way to open the trait. It holds when every condition in it holds, so a row means **and**. The trait opens when any one row holds, so rows mean **or**.
 
-- **Add Requirement** adds the first condition. It opens a search with these lists: **Traits**, **Any Trait in a Group**, **Playing As**, and one list of **Stats** for each owner.
+- **Add Requirement** adds the first condition. It opens a search with these lists: **Traits**, **Any Trait in a Group**, **Playing As**, one list of **Stats** for each owner, and **Time of Day**.
 - **And** (in a row) adds another condition to that row.
 - **Or Another Way** (below the rows) adds a new row.
 - The **X** at the end of a row removes the whole row. Remove the last condition in a row, and the row goes too.
@@ -261,7 +261,7 @@ For example, two rows read *Knight and Heavy Build*, then *Mercenary*. The trait
 
 ### Conditions
 
-A **condition** checks one target. A target is a trait, any trait in a group, a persona the player plays as, or a stat. Select a condition to open its target. A [stat condition](#stat-conditions) has nowhere to open, so it reads as plain text.
+A **condition** checks one target. A target is a trait, any trait in a group, a persona the player plays as, a stat, or the [time of day](#time-conditions). Select a condition to open its target. A [stat condition](#stat-conditions) or a time condition has nowhere to open, so it shows its controls instead.
 
 Select **Require it to be off** on a condition's chip to make it **Not**. A Not condition shows a **NOT** mark and a dashed border, and it holds while its target is off. Select the button again to require the target instead.
 
@@ -316,13 +316,38 @@ A trait's own stat changes don't make the game check again in the same turn. A t
 
 > 💡 **Gate on a different stat than the trait changes.** *Berserk* requires *Rage >= 80* and adds Strength. It's safe. If it also lowered Rage, it could turn itself off.
 
+### Time conditions
+<!-- keywords: time of day, only at night, daytime, evening, dawn, dusk, day night cycle, nocturnal, night form, works at night, story clock, daypart -->
+<!-- route: worldEditorTrait.availability -->
+
+A **time condition** checks the story's time of day. *Night Hunter* requires *evening or night*, so it opens when the evening starts.
+
+1. Open the trait's **Availability** tab.
+2. Under **Requires**, select **Add Requirement**, then pick **Time of Day**.
+3. Turn on each daypart that counts: **Night**, **Dawn**, **Morning**, **Midday**, **Afternoon** or **Evening**.
+
+| Daypart | On a 24-hour day, to the nearest hour |
+|---|---|
+| 🌙 Night | 20:00 to 6:00 |
+| 🌅 Dawn | 6:00 to 8:00 |
+| ☀️ Morning | 8:00 to 11:00 |
+| 🕛 Midday | 11:00 to 13:00 |
+| 🌤️ Afternoon | 13:00 to 17:00 |
+| 🌆 Evening | 17:00 to 20:00 |
+
+- The narration's time of day uses the same split, so the condition matches what the story says.
+- At least one daypart stays on. To exclude a daypart, turn on the others. A time condition has no **Not**.
+- A row holds one time condition. It never checks the day number or an hour.
+- The game checks once per turn, after the turn's time passes, like a [stat condition](#when-the-game-checks). With the AI clock off, each turn is one hour.
+- Outside play, the [Test Bench](#test-bench-checks) reads the time the story opens at, which is morning.
+
 ### What the player reads
 
 A locked trait shows its requirements as one line: *Requires Knight and not Paladin, or Mercenary*. Stat conditions read the same way: *Requires Rage >= 80*, with **%** after a percent. Conditions join with **and** and rows join with **or**. A trait that opens shows the rows that opened it, as *Unlocked by …*. Conditions on a [Hidden](#hidden-traits) trait are left out of the line the player reads, and so are conditions on a hidden stat or a switched-off stat. A row with nothing left to show is dropped. A trait with no row left to show reads **Locked**.
 
 ### Whose trait counts
 
-The entity that has a trait, as its own or through a link, is its *owner*. The entity the player plays is one owner, marked **You**. Each entity in the cast is another.
+The entity that has a trait, as its own or through a link, is its *owner*. The entity the player plays is one owner, named **Persona**. Each entity in the cast is another.
 
 A trait outside every entity, such as one the player picks at the start, is a *global trait*. A global trait has no owner. It never counts as the persona's trait, so no persona trait can use it as its same-owner target.
 
@@ -333,12 +358,12 @@ To check another owner, pick one after you pick the target. When only one owner 
 | Owner | The condition holds when |
 |---|---|
 | **Same Owner** | Whoever has the trait also has the target. This is the default. It never pairs a global trait with an entity's trait. |
-| **You** | The entity the player plays has the target. With no entity played, it never holds. |
+| **Persona** | The entity the player plays has the target. With no entity played, it never holds. |
 | An entity | That entity has the target. The list shows only entities that can have it. |
 
-For example, *Squire* requires **You**: *Paladin*. A squire entity gets its Squire trait only when the player plays a Paladin.
+For example, *Squire* requires **Persona**: *Paladin*. A squire entity gets its Squire trait only when the player plays a Paladin.
 
-> ⚠️ **A global trait can't use Same Owner with an entity's trait.** A global *Duelist* that requires an entity's *Paladin* from the same owner never opens. The [Test Bench](Test-Bench) warns about it. Pick **You** or the entity.
+> ⚠️ **A global trait can't use Same Owner with an entity's trait.** A global *Duelist* that requires an entity's *Paladin* from the same owner never opens. The [Test Bench](Test-Bench) warns about it. Pick **Persona** or the entity.
 
 A condition that names an entity describes a relationship to someone else. When the player plays that entity, the relationship can't apply to themself, so the row with that condition can never hold. The game drops that row. *Squire to Albus* requires *Albus: Paladin*, so it is offered to every player except Albus. A trait with a second row, such as *Paladin* on the same owner, stays and opens by that row. A trait with no row left is not offered. An entity's own traits keep every row, so Albus can still gate his own trait on *Albus: Paladin*.
 
@@ -506,8 +531,8 @@ It shows a warning when:
 
 - More **Automatic** traits can be active together than a group's maximum allows. The check can report a group that never fills, because it ignores the maximums of other groups.
 - A group marks more traits as default than its maximum allows. Some defaults won't apply.
-- A row can never hold, such as *Paladin and not Paladin*. Remove the row or change a condition.
-- A global trait requires an entity's trait, group or stat from the same owner. Only entities have the target, so the row never holds. Pick **You** or the entity.
+- A row can never hold, such as *Paladin and not Paladin*, or *night* and *midday*. Remove the row or change a condition.
+- A global trait requires an entity's trait, group or stat from the same owner. Only entities have the target, so the row never holds. Pick **Persona** or the entity.
 - A trait requires a stat that the trait changes itself, including the stat's min, max or on/off state. Its own effect can flip the requirement.
 - A **%** condition, in a trait's rule or an image's Visibility rule, reads a stat whose min and max are equal. It always reads 0%.
 - Every image of an entity has a Visibility rule, and no two images have opposite conditions. The entity can end up with no image.

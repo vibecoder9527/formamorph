@@ -12,13 +12,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Eye, Plus, Star, TriangleAlert } from "lucide-react";
-import { ImageRuleCog, ImageRuleSummary, useHasRuleSource } from '@/components/editor/ImageRuleCog';
+import { ImageRuleCog, ImageRuleSummary, useHasRuleSource, type RuleHost } from '@/components/editor/ImageRuleCog';
 import AiGenerateButton from "@/components/AiGenerateButton";
 import TagField from "@/components/prompt/TagField";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ImageUpload } from '../lib/UtilityComponents';
 import { fileToDataUrl } from '@/lib/imageDrop';
 import { followReorder } from '@/lib/imageGalleryOrder';
+import { withImageRule } from '@/lib/entityImages';
 import { useStableIds } from '@/lib/useStableIds';
 import { useImageDropTarget } from '@/lib/useImageDropTarget';
 import { RemoteImg } from '@/lib/useRemoteImage';
@@ -61,10 +62,18 @@ interface ImageWidgetProps {
   placeholders?: Placeholder[];
   /** The entity or location whose tags these are — see `ownerId` on `PlaceholderField`. */
   ownerId?: string;
-  /** The entity whose images carry Visibility rules. Set, each tile gets a cog, a badge and a summary where a
-   *  rule source exists; a location, whose one background has no rule, leaves it out. */
-  ruleOwnerId?: string;
+  /** Whose images carry Visibility rules. Set, each tile gets a cog, a badge and a summary where a rule source
+   *  exists. Keep the object stable across renders. */
+  ruleHost?: RuleHost;
+  /** The framed slot, for a host that shows the framed image's details. Unset, the gallery keeps its own. */
+  framed?: number;
+  onFramedChange?: (index: number) => void;
+  /** False hides the strip's rule cog and the framed rule's summary, for a host that edits the rule itself. */
+  ruleCog?: boolean;
 }
+
+/** The inputs a host passes to control the gallery's frame and cog. */
+export type GalleryFrameProps = Pick<ImageWidgetProps, 'framed' | 'onFramedChange' | 'ruleCog'>;
 
 const WidgetContext = createContext<ImageWidgetProps | null>(null);
 
@@ -95,7 +104,7 @@ const FRAME_WIDTH = { portrait: 'mx-auto max-w-[300px]', landscape: 'mx-auto max
 
 /** One image's Visibility rule as a tile edits it. */
 interface TileRule {
-  ownerId: string;
+  host: RuleHost;
   rows: TraitRequirementRow[];
   onChange: (rows: TraitRequirementRow[]) => void;
 }
@@ -104,17 +113,18 @@ interface TileRule {
  *  single picture is shown, so dragging to the front is the whole promote gesture. A cog on hover sets the
  *  picture's Visibility rule, and a badge marks one that has a rule. The cog sits beside the tile's button,
  *  not inside it, and the button alone drags. */
-const ImageTile = ({ id, url, index, framed, onSelect, rule }: {
+const ImageTile = ({ id, url, index, framed, onSelect, ruled, rule }: {
   id: string;
   url: string;
   index: number;
   framed: boolean;
   onSelect: () => void;
+  /** Whether the image has a rule, badged even where the cog is hidden. */
+  ruled: boolean;
   rule?: TileRule;
 }) => {
   const { setNodeRef, setActivatorNodeRef, transform, transition, isDragging, attributes, listeners } = useSortable({ id });
   const primary = index === 0;
-  const ruled = !!rule?.rows.length;
   const name = primary ? 'Primary image' : `Image ${index + 1}`;
   return (
     <div
@@ -219,7 +229,8 @@ function withSlotData(list: readonly GalleryImage[], index: number, data: string
  */
 export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
   const {
-    label, images, onImagesChange, slots = 1, imageId, cap, description, kind, fileSubject, tags, onTagsChange, tourAnchor, ruleOwnerId,
+    label, images, onImagesChange, slots = 1, imageId, cap, description, kind, fileSubject, tags, onTagsChange, tourAnchor, ruleHost,
+    framed, onFramedChange, ruleCog = true,
   } = useImageWidget();
   const ruleSourced = useHasRuleSource();
   // SD prompt pulled from an uploaded image, pending the user's OK to use it as Image Tags.
@@ -249,7 +260,9 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
 
   // Which slot the big frame is showing. Stays in range as pictures are added and removed — a removed last
   // picture would otherwise leave the frame pointing past the end and showing nothing at all.
-  const [selected, setSelected] = useState(0);
+  const [ownSelected, setOwnSelected] = useState(0);
+  const selected = framed ?? ownSelected;
+  const setSelected = (i: number) => { setOwnSelected(i); onFramedChange?.(i); };
   const showing = Math.min(selected, rows.length - 1);
   const setShowing = (i: number) => setSelected(Math.max(0, i));
 
@@ -263,19 +276,15 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
   const setSlot = (index: number, value: string) => onImagesChange(withSlotData(shownImages, index, value));
 
   /** Write one slot's Visibility rule; an emptied rule drops the field. */
-  const setRule = (index: number, requires: TraitRequirementRow[]) => onImagesChange(shownImages.map((img, i) => {
-    if (i !== index) return img;
-    const next = { ...img };
-    if (requires.length) next.requires = requires;
-    else delete next.requires;
-    return next;
-  }));
-  const rulable = gallery && !!ruleOwnerId;
-  const tileRule = (i: number): TileRule | undefined => (rulable && ruleSourced
-    ? { ownerId: ruleOwnerId, rows: shownImages[i].requires ?? [], onChange: (rows) => setRule(i, rows) }
+  const setRule = (index: number, requires: TraitRequirementRow[]) => onImagesChange(withImageRule(shownImages, index, requires));
+  const rulable = gallery && !!ruleHost;
+  const tileRule = (i: number): TileRule | undefined => (rulable && ruleSourced && ruleCog
+    ? { host: ruleHost, rows: shownImages[i].requires ?? [], onChange: (rows) => setRule(i, rows) }
     : undefined);
-  const framedRule = rulable && ruleSourced ? shownImages[showing]?.requires : undefined;
-  const coverRuled = rulable && !!shownImages[0]?.requires?.length;
+  const framedRule = rulable && ruleSourced && ruleCog ? shownImages[showing]?.requires : undefined;
+  const tileRuled = (i: number) => rulable && ruleSourced && !!shownImages[i].requires?.length;
+  // Only an entity's primary stands in outside play, where no rule reads.
+  const coverRuled = rulable && ruleHost.kind === 'entity' && !!shownImages[0]?.requires?.length;
 
   /** Take a generated picture. It fills the open slot where there is one, and otherwise asks which picture it
    *  replaces, resolving false if the author decides it replaces none of them. */
@@ -414,6 +423,7 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
                   index={i}
                   framed={i === showing}
                   onSelect={() => setShowing(i)}
+                  ruled={tileRuled(i)}
                   rule={tileRule(i)}
                 />
               ))}
@@ -431,7 +441,7 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
           )}
         </div>
       )}
-      {ruleOwnerId && framedRule?.length ? <ImageRuleSummary ownerId={ruleOwnerId} rows={framedRule} /> : null}
+      {ruleHost && framedRule?.length ? <ImageRuleSummary host={ruleHost} rows={framedRule} /> : null}
       {coverRuled && (
         <p data-image-rule-cover-warning="" className="flex items-start gap-1 text-helper text-warning">
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

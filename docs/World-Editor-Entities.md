@@ -11,7 +11,7 @@ Entities are the people, creatures and things in your world: a ferryman, an eel-
 
 Without entities, the narrator invents a stranger, names them, and forgets both by the next turn. An entity is a fixed person or thing the story can come back to. The AI reads about it again each time the player is at one of its locations.
 
-The default prompt introduces entities as "Characters and things that **may** appear in this location". That wording is a hint to the AI. The game doesn't enforce it, and the narrator can use anyone on the list. You can change the wording in the [prompt editor](Prompts#how-to-edit-a-prompt).
+The default prompt lists the entities that **may** appear in the current location. That wording is a hint to the AI. The game doesn't enforce it, and the narrator can use anyone on the list. You can change the wording in the [prompt editor](Prompts#how-to-edit-a-prompt).
 
 ## How to Add an Entity
 <!-- keywords: character, npc, create, new character, make, person, monster, companion, creature, bot, villain, love interest, pet, party member, enemy, add someone -->
@@ -65,14 +65,14 @@ Select an entity to open its panel.
 
 | Tab | Holds | Mode |
 |---|---|---|
-| **Profile** | **Name**, **Pronouns**, **Locations** and the **Image**. In Advanced mode, also **Aliases**, the **Persona** control, **Type**, **Image Tags** and the **3D Model**. | Simple and Advanced |
+| **Profile** | **Name**, **Pronouns**, **Locations** and the **Image**. In Advanced mode, also **Aliases**, the **Persona** control, **Type**, **Image Tags**, the **3D Model** and the **Avatar** dropdown (**None**, **User's Default**, or an Avatar of the world; see [World Avatars](Avatars#world-avatars)). | Simple and Advanced |
 | **Descriptions** | **Player-Facing Description** and **AI-Facing Description**. In Advanced mode, also **AI-Facing Summary**. | Simple and Advanced |
 | **Traits** | The entity's own [traits](World-Editor-Traits#entity-traits) | Advanced only |
 | **Stats** | The entity's own [stats](#entity-stats) | Advanced only |
 | **Placeholders** | The entity's own [placeholders](World-Editor-Placeholders#placeholders-that-belong-to-an-entity-or-a-dictionary) | Advanced only |
 | **Openings** | The entity's own openings, including Self openings for a playable entity | Advanced only |
 
-The **Persona** control has four choices: **Cast**, **Playable**, **Persona-Only** and **Custom Persona**. It decides whether the player can play as the entity. See [Personas for Authors](Persona-Authoring#how-to-make-an-entity-playable). An entity marked **Playable**, **Persona-Only** or **Custom Persona** also shows a **Starting Location** picker: where the player starts as this persona.
+The **Persona** control has four choices: **Cast**, **Playable**, **Persona-Only** and **Custom Persona**. It decides whether the player can play as the entity. See [Personas for Authors](Persona-Authoring#how-to-make-an-entity-playable). For an entity marked **Playable** or **Persona-Only**, its **Locations** are also where the player can start as it.
 
 ## What reaches the AI
 <!-- keywords: npc secret, hidden motive, character ignored, npc never appears, spoilers, does ai see image, private notes -->
@@ -207,21 +207,21 @@ A generated image goes into the first free slot. With no free slot, **Replace wh
 
 A **Visibility rule** makes an image show only in the right state. Give the wounded portrait a rule that reads *Health < 20%*, and it shows while the entity is hurt.
 
-An image with no rule always shows. In play, the entity shows the **first image that is visible**, counting from the left. The rule uses the same [requirement rows](World-Editor-Traits#requirements) as a trait's **Requires** field, including [stat conditions](World-Editor-Traits#stat-conditions).
+An image with no rule always shows. In play, the entity shows the **first image that is visible**, counting from the left. The rule uses the same [requirement rows](World-Editor-Traits#requirements) as a trait's **Requires** field, including [stat conditions](World-Editor-Traits#stat-conditions) and [time conditions](World-Editor-Traits#time-conditions). Give a night portrait the rule *night*, and it shows only at night.
 
 ### How to add a rule
 <!-- keywords: cog on thumbnail, add visibility rule, edit rule, shown while, badge on image, eye badge -->
 
 1. Select the entity, then open its **Profile** tab.
 2. Hover over the image's thumbnail, then select the cog on its corner. Its tooltip reads **Visibility Rule**. On a touch screen, the cog always shows.
-3. Select **Add Requirement**, then pick a trait or a stat.
+3. Select **Add Requirement**, then pick a trait, a stat or **Time of Day**.
 4. Select **And** to add a condition to the same row. Select **Or Another Way** to add a row.
 
 An image shows while **any one row** holds. A row holds when **all** its conditions hold.
 
 A thumbnail with a rule carries an eye badge. The line under the selected thumbnail reads the rule: *Shown while Health < 20% and not Healed*.
 
-A condition checks the entity that owns the image, unless you pick another owner. To read the traits or stats of the entity the player plays, pick **You**. A global trait or stat needs no owner. *Shown while You: Night Vision* shows the true form to a player who has Night Vision.
+A condition checks the entity that owns the image, unless you pick another owner. To read the traits or stats of the entity the player plays, pick **Persona**. A global trait or stat needs no owner. *Shown while Persona: Night Vision* shows the true form to a player who has Night Vision.
 
 ### Order sets priority
 
@@ -230,7 +230,7 @@ Put the special states first and the fallback last. For a rule on each of *Wound
 | Place | Image | Rule | Shows |
 |---|---|---|---|
 | 1 | Wounded | *Health < 20%* | While Health is under 20% |
-| 2 | Armored | *Knight and You: Trusted Ally* | While both hold, and Wounded doesn't |
+| 2 | Armored | *Knight and Persona: Trusted Ally* | While both hold, and Wounded doesn't |
 | 3 | Plain | None | The rest of the time |
 
 - Drag a thumbnail to reorder. The rule goes with its image.
@@ -258,6 +258,8 @@ In play, the first visible image takes its place. The editor warns when the prim
 
 The narrator never sees the images or their rules.
 
+> 💡 **Locations have rules too.** A location's background images take the same rules. There, a condition with no owner reads the persona. See [Background Visibility rules](World-Editor-Locations#background-visibility-rules).
+
 ## SillyTavern cards
 <!-- keywords: field mapping, what converts, card fields, alternate greetings, example dialogue, v2 spec, user tag, char tag -->
 
@@ -268,13 +270,13 @@ Import a SillyTavern PNG or JSON card, and it becomes an entity. The card's desc
 | **First message** | The entity's first Opening Narration |
 | Each **alternate greeting** | One more Opening Narration, in card order, at weight 1 |
 | The name macro, `{{char}}` | The **Character Name** chip, in the entity's description and openings. In the card's lorebook, the entity's name as plain text. |
-| The user macro, `{{user}}` | The [Player Name chip](Persona-Authoring#the-player-name-chip) |
+| The user macro, `{{user}}` | The [Persona Name chip](Persona-Authoring#the-persona-name-chip) |
 
 When these openings are in the draw, **Re-generate** on page one shows another greeting, like a swipe in SillyTavern. A card with no first message and no alternate greetings imports with no openings.
 
 > 💡 **The Character Name chip shows the entity's name, and it follows a rename.** Rename the entity, and its description and openings use the new name.
 
-> 💡 **`{{user}}` stays in the stored text, as the Player Name chip.** The shown page says the persona's name, or "you" with no persona. The entity's descriptions and the card's lorebook keep the chip too, and there it reads "the player" with no persona.
+> 💡 **`{{user}}` stays in the stored text, as the Persona Name chip.** The shown page says the persona's name, or "you" with no persona. The entity's descriptions and the card's lorebook keep the chip too, and there it reads "the player" with no persona.
 
 ## In the library
 <!-- keywords: standalone character, edit outside world, reusable npc, my characters list, saved character editor, credit and labels, library character stats -->

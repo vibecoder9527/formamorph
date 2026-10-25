@@ -16,7 +16,7 @@ const world = (): World => ({
     { id: 'e1', name: 'A', images: [{ data: 'https://host/a1.png', requires: KNIGHT }, { data: 'data:image/webp;base64,KEEP' }] },
     { id: 'e2', name: 'B', images: [{ data: 'data:image/webp;base64,ONLY' }] },
   ],
-  locations: [{ id: 'l1', name: 'L', backgroundImage: 'https://host/bg.png' }],
+  locations: [{ id: 'l1', name: 'L', images: [{ data: 'https://host/bg.png' }] }],
 } as unknown as World);
 
 beforeEach(() => {
@@ -37,8 +37,30 @@ describe('remoteWorldImages', () => {
     const w = world();
     w.worldOverview.thumbnail = 'data:image/webp;base64,T';
     w.entities[0].images = [{ data: 'data:image/webp;base64,A' }];
-    w.locations[0].backgroundImage = 'data:image/webp;base64,B';
+    w.locations[0].images = [{ data: 'data:image/webp;base64,B' }];
     expect(remoteWorldImages(w)).toEqual([]);
+  });
+});
+
+describe('Map Background links', () => {
+  const frame = { x: 0, y: 0, width: 400, height: 300 };
+  const mapped = (): World => {
+    const w = world();
+    w.worldOverview.mapBackground = { images: [{ data: 'https://host/map.png' }, { data: 'https://host/ruin.png', requires: KNIGHT }], frame, opacity: 0.5 };
+    return w;
+  };
+
+  it('are found and embedded with their rules, frame and opacity kept', async () => {
+    expect(remoteWorldImages(mapped()).slice(-2)).toEqual(['https://host/map.png', 'https://host/ruin.png']);
+    const { world: out } = await embedWorldRemoteImages(mapped());
+    expect(out.worldOverview.mapBackground).toEqual({
+      images: [
+        { data: 'data:image/webp;base64,EMBEDDED(https://host/map.png)' },
+        { data: 'data:image/webp;base64,EMBEDDED(https://host/ruin.png)', requires: KNIGHT },
+      ],
+      frame,
+      opacity: 0.5,
+    });
   });
 });
 
@@ -59,7 +81,7 @@ describe('embedWorldRemoteImages', () => {
       { data: 'data:image/webp;base64,KEEP' },
     ]);
     expect(out.entities[1].images).toEqual([{ data: 'data:image/webp;base64,ONLY' }]);
-    expect(out.locations[0].backgroundImage).toBe('data:image/webp;base64,EMBEDDED(https://host/bg.png)');
+    expect(out.locations[0].images).toEqual([{ data: 'data:image/webp;base64,EMBEDDED(https://host/bg.png)' }]);
   });
 
   it('keeps the link and reports the failure rather than emptying a slot it could not download', async () => {
@@ -68,7 +90,7 @@ describe('embedWorldRemoteImages', () => {
       return `data:image/webp;base64,EMBEDDED(${url})`;
     });
     const { world: out, failures } = await embedWorldRemoteImages(world());
-    expect(out.locations[0].backgroundImage).toBe('https://host/bg.png');
+    expect(out.locations[0].images).toEqual([{ data: 'https://host/bg.png' }]);
     expect(failures).toEqual([{ url: 'https://host/bg.png', reason: "Couldn't download the image from host." }]);
     // The rest of the world still embedded — one dead link must not abandon the whole export.
     expect(out.worldOverview.thumbnail).toContain('EMBEDDED');

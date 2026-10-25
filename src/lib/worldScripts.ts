@@ -112,8 +112,8 @@ export function worldScriptEntries(world: ScriptTreeWorld): ScriptEntry[] {
   const stats = listed.flatMap((entry) => (entry.kind === 'stat' ? [entry.box] : []));
   const traits = listed.flatMap((entry) => (entry.kind === 'trait' ? [entry.box] : []));
   const worldScripts = listed.flatMap((entry) => (entry.kind === 'world' ? [entry.box] : []));
-  const statEntry = (box: StatCodeBox) => entryOf(box.home, box, box.stat.name, box.entity, box);
-  const traitEntry = (box: TraitCodeBox) => entryOf(box.home, box, box.trait.name, box.entity, box);
+  const statEntry = (box: StatCodeBox) => entryOf(box.home, box.script, box.stat.name, box.entity, box);
+  const traitEntry = (box: TraitCodeBox) => entryOf(box.home, box.script, box.trait.name, box.entity, box);
   const blueprint = (box: StatCodeBox | TraitCodeBox) => (box.home.kind === 'stat' || box.home.kind === 'trait') && box.owner !== null;
   const global = (box: StatCodeBox | TraitCodeBox) => (box.home.kind === 'stat' || box.home.kind === 'trait') && box.owner === null;
   // The runner reaches global traits in the Traits tab's order (Q50); the sort is stable within one trait's scripts.
@@ -128,7 +128,7 @@ export function worldScriptEntries(world: ScriptTreeWorld): ScriptEntry[] {
     return traits.filter(onEntity(entity.id)).sort((a, b) => at(a) - at(b));
   };
   return [
-    ...worldScripts.map(({ home, owner, runs, ...script }) => entryOf(home, script, WORLD_SCRIPT_OWNER, null)),
+    ...worldScripts.map((box) => entryOf(box.home, box.script, WORLD_SCRIPT_OWNER, null)),
     ...stats.filter(global).map(statEntry),
     ...globalTraits().map(traitEntry),
     ...world.entities.flatMap((entity) => [

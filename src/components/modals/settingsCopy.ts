@@ -169,6 +169,12 @@ Useful for world authoring and debugging.`,
     description: 'Resolves the move before the scene is written',
     info: 'Applies your action\'s move first, so the scene is narrated in the new location. Skips the **Move to…?** confirmation.',
   },
+  entityMovement: {
+    label: 'Entity Movement',
+    description: 'Asks the AI each turn whether entities here come with you',
+    info: `- Each entity that can follow you adds its **own request**
+- Without it, followers still follow and fixed entities keep their places`,
+  },
 
   // ── Output · Reasoning ──────────────────────────────────────────────────────
   thinking: {
@@ -185,7 +191,7 @@ Useful for world authoring and debugging.`,
     label: 'Native Reasoning',
     description: 'Sets whether reasoning models think, and how hard',
     // The caveat that used to close all eight effort levels, said once for the whole control.
-    info: 'Some models think privately before they answer. Uncheck to stop that. The dropdown sets how much effort they spend, and **Model Default** sends no hint. **Unlimited** sets no token cap on the thought. Every prompt set to **Global** follows this row. Models without native reasoning ignore it.',
+    info: 'Some models think privately before they answer. Uncheck to stop that on every prompt. Each prompt keeps its own setting for when you check it again. The dropdown sets how much effort they spend, and **Model Default** sends no hint. **Unlimited** sets no token cap on the thought. Every prompt set to **Global** uses this strength. Models without native reasoning ignore it.',
   },
 
   // ── Output · Tools ──────────────────────────────────────────────────────────
@@ -419,6 +425,11 @@ You can still generate a single scene yourself from the button above the story.`
     label: 'Sampler',
     description: 'Selects the sampling algorithm',
   },
+  cleanTags: {
+    label: 'Clean Up Tags',
+    description: 'Rewrites scene and generated tags as plain lowercase words',
+    info: 'Also removes weights and other prompt syntax, such as NovelAI’s `{tag}` or `1.5::tag ::`. Turn off to send your entity and location tags as you wrote them. Never changes the **Prompt Prefix** or **Negative Prompt**.',
+  },
   faceFix: {
     label: 'Face Fix',
     description: 'Re-renders faces in a second pass',
@@ -507,7 +518,44 @@ Turn it off only if an old GPU or backend can't run it.`,
     description: 'Sets how many requests the model answers at once',
     info: `After the narration, a turn sends several follow-up requests: choices, stat changes, the location check. Sets how many of them the model answers at the same time instead of one after another.
 
-A higher value speeds up a turn, but the requests split the context between them, and each uses more VRAM.`,
+A higher value speeds up a turn. With **Unified KV Cache** on, the requests share one context, so a long request leaves less room for the others. With it off, each request gets the full **Context Size**, and the context uses more VRAM.`,
+  },
+  localUnifiedKvCache: {
+    label: 'Unified KV Cache',
+    description: 'Lets parallel requests share one context',
+    info: `Keeps one context that all parallel requests share, so extra requests add no VRAM. A long request leaves less room for the others.
+
+Turn it off to give each request the full **Context Size**. The context then uses **Parallel Requests** times more VRAM.`,
+  },
+  localKCacheType: {
+    label: 'K Cache Type',
+    description: 'Trades a little quality for a longer context',
+    info: `Sets the precision of the context's key half. **Q8_0** and **Q4_0** shrink it, so a longer **Context Size** fits in the same VRAM.
+
+**F16** is full precision. Lower values can make the story read a little worse over a long context.`,
+  },
+  localVCacheType: {
+    label: 'V Cache Type',
+    description: 'Trades a little quality for a longer context',
+    info: `Sets the precision of the context's value half. **Q8_0** and **Q4_0** shrink it, so a longer **Context Size** fits in the same VRAM.
+
+A lower value needs **Flash Attention** on.`,
+  },
+  localKvCacheInRam: {
+    label: 'KV Cache in RAM',
+    description: 'Frees VRAM, but replies get much slower as the story grows',
+    info: `Moves the context from VRAM to system RAM, so the model's weights get the VRAM. Replies get much slower, and the slowdown grows as the context fills.
+
+Try a smaller **K Cache Type** and **V Cache Type** first. Use this only when the model still doesn't fit.`,
+  },
+  localContextOverflow: {
+    label: 'Context Overflow',
+    description: 'Chooses what happens when the story is longer than the context',
+    info: `- **Truncate Middle** keeps the system prompt and your first message, and drops messages from the middle
+- **Rolling Window** keeps the system prompt and drops the oldest messages first
+- **Stop at Limit** drops nothing and stops the request with an error
+
+The model never sees part of a message.`,
   },
   localAutoLoad: {
     label: 'Auto-Load',
@@ -577,7 +625,7 @@ Small steps matter: 1.05 to 1.15 is typical. High values can break names and pun
   promptNativeReasoning: {
     label: 'Native Reasoning',
     description: 'Sets whether this prompt reasons, and how hard',
-    info: 'Uncheck and this prompt does no reasoning. **Global** follows the **Native Reasoning** row under Settings → Output, its switch included. **Model Default** sends no hint. **Unlimited** sets no token cap on the thought. Only applies to models with native reasoning.',
+    info: 'Uncheck and this prompt does no reasoning. The **Native Reasoning** row under Settings → Output turns reasoning off on every prompt, and **Global** uses its strength. **Model Default** sends no hint. **Unlimited** sets no token cap on the thought. Only applies to models with native reasoning.',
   },
   promptEndpoint: {
     label: 'Endpoint',
@@ -615,7 +663,7 @@ Small steps matter: 1.05 to 1.15 is typical. High values can break names and pun
     label: 'Direction Message',
     description: 'Marks bracketed text as your direction, not speech',
     sentWhen: 'Sent with your action whenever it contains [square brackets]',
-    info: 'Tells the AI the bracketed text is you directing the scene as the author, not something your character says',
+    info: 'Tells the AI the bracketed text is you directing the scene as the author, not something your persona says',
   },
 
   // ── Prompts · Overview ──────────────────────────────────────────────────────
@@ -785,6 +833,7 @@ export const SETTINGS_OPTIONS = {
 export const REASONING_NOTES = {
   never: 'This model doesn’t support reasoning, so there’s nothing to configure',
   always: 'This model always reasons, so it can’t be switched off',
+  globalOff: 'Off on every prompt while Native Reasoning under Settings → Output is unchecked',
 } as const;
 
 export const TOOLS_NOTES = {

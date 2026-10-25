@@ -4,21 +4,21 @@
  * names, so each name list is one `Name` row to type over.
  */
 
-import type { AnalysisOptions, CodeEntityNames, CodeTraitPlace } from '@/lib/statCodeAnalysis';
+import type { AnalysisOptions, CodeDictionaryNames, CodeEntityNames, CodeTraitPlace } from '@/lib/statCodeAnalysis';
 import { WORLD_BREADCRUMB } from '@/lib/traitGates';
-import { surfaceHasGlobal, type CodeAccess, type CodeSurface, type SurfaceEntry } from '@/lib/codeSurface';
+import { isMethodEntry, surfaceHasGlobal, type CodeAccess, type CodeSurface, type SurfaceEntry } from '@/lib/codeSurface';
 import { placeholderKindNoun, type PlaceholderKindNoun } from '@/lib/placeholders';
 import {
   isPlaceholderEntryMember, memberStep, placeholderPathMap, type PlaceholderPathMap, type PlaceholderPathNode,
 } from '@/lib/statCodePaths';
 import {
-  CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, LOCATION_MEMBERS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_FIELDS, ENTITY_FIELDS, NARRATION_FIELDS,
+  CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, LOCATION_ENTRY_FIELDS, LOCATION_MEMBERS, MEMORY_ENTRY_FIELDS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_ENTRY_FIELDS, DICTIONARY_FIELDS, ENTITY_FIELDS, NARRATION_FIELDS,
   NARRATION_GLOBAL, PERSONA_FIELDS, PLAYER_CALL_ENTRIES, PLAYER_GLOBAL, PREVIOUS_FIELDS, SANDBOX_GLOBALS, SELF_TRAIT_FIELDS,
-  STAT_FIELDS, SWITCHED_TRAIT_FIELDS, SWITCHED_TRAIT_GLOBAL, TRAIT_ENTRY_FIELDS, TRAIT_SCRIPT_SURFACE, placeholderEntryFields,
+  STAT_CODE_SURFACE, STAT_FIELDS, SWITCHED_TRAIT_FIELDS, SWITCHED_TRAIT_GLOBAL, TRAIT_ENTRY_FIELDS, TRAIT_SCRIPT_SURFACE, placeholderEntryFields,
 } from '@/lib/statCodeSurface';
 
 /** The names the tree lists, as the editor's session holds them, with each world trait in its groups. */
-export type VariableTreeNames = Pick<AnalysisOptions, 'statNames' | 'placeholders' | 'entities'> & {
+export type VariableTreeNames = Pick<AnalysisOptions, 'statNames' | 'placeholders' | 'entities' | 'locations'> & {
   traits?: readonly CodeTraitPlace[];
 };
 
@@ -87,12 +87,20 @@ export const TEMPLATE_NAME = 'Name';
 interface Path {
   text: string;
   selection?: VariableSelection;
+  /** Set on an array element, so a field read on an empty list gives `undefined`. */
+  optional?: true;
 }
 
 const root = (text: string): Path => ({ text });
 
 /** `path` one key deeper: dot form for a plain identifier, bracket form otherwise. */
 const keyed = (path: Path, name: string): Path => ({ text: path.text + memberStep(name), selection: path.selection });
+
+/** `path`'s first element, its index selected to type over unless an earlier name is. */
+function indexed(path: Path): Path {
+  const from = path.text.length + 1;
+  return { text: `${path.text}[0]`, selection: path.selection ?? { from, to: from + 1 }, optional: true };
+}
 
 /** `path` one key deeper by the template's type-over name, which is selected unless an earlier one is. */
 function typeOver(path: Path): Path {
@@ -104,7 +112,7 @@ function typeOver(path: Path): Path {
 }
 
 const field = (path: Path, entry: SurfaceEntry, call = ''): VariableField => ({
-  kind: 'field', label: entry.name, detail: entry.detail, info: entry.info, insert: `${path.text}.${entry.name}${call}`,
+  kind: 'field', label: entry.name, detail: entry.detail, info: entry.info, insert: `${path.text}${path.optional ? '?.' : '.'}${entry.name}${call}`,
   ...(entry.access ? { access: entry.access } : {}),
   ...(path.selection ? { selection: path.selection } : {}),
 });
@@ -134,6 +142,7 @@ interface OwnLists {
   traits?: (at: Path) => readonly VariableNameRow[];
   placeholders: (at: Path) => readonly VariableNameRow[];
   stats?: (at: Path) => readonly VariableNameRow[];
+  entries?: (at: Path) => readonly VariableNameRow[];
 }
 
 /** An entity's, the persona's or a dictionary's fields, its maps as name lists. `where` ends their empty messages. */
@@ -142,6 +151,8 @@ const ownerFields = (path: Path, entries: readonly SurfaceEntry[], lists: OwnLis
     if (entry.name === 'traits' && lists.traits) return nameList('Traits', lists.traits(at), `No traits ${where}`, entry.info);
     if (entry.name === 'placeholders') return nameList('Placeholders', lists.placeholders(at), `No placeholders ${where}`, entry.info);
     if (entry.name === 'stats' && lists.stats) return nameList('Stats', lists.stats(at), `No stats ${where}`, entry.info);
+    if (entry.name === 'diary') return lineCallField(path, entry);
+    if (entry.name === 'entries' && lists.entries) return nameList('Entries', lists.entries(at), `No entries ${where}`, entry.info);
     return undefined;
   });
 
@@ -164,14 +175,33 @@ const callField = ({ access: _method, ...call }: VariableField, arg: string): Va
   return { ...call, insert, selection: { from, to: from + arg.length } };
 };
 
+/** A call that takes a line, `path.entry("Line")`. A type-over name in `path` stays selected; else the line is. */
+const lineCallField = (path: Path, entry: SurfaceEntry): VariableField => {
+  const call = callField(field(path, entry), '"Line"');
+  return path.selection ? { ...call, selection: path.selection } : call;
+};
+
 const clockFields = (path: Path): VariableNode[] => fields(path, CLOCK_MEMBERS, (entry, at) => {
   if (entry.name === 'advance') return callField(field(path, entry), '30');
   return entry.name === 'previous' ? group(entry, fields(at, CLOCK_PREVIOUS_FIELDS)) : undefined;
 });
 
+// The persona has no verbs and stands first where the player is, so an element lists the fields only.
+const PRESENT_ELEMENT_FIELDS = ENTITY_FIELDS.filter((entry) => !isMethodEntry(entry));
+
+/** `present`: the list itself, then an entity entry's fields on its first element. */
+const presentGroup = (path: Path, entry: SurfaceEntry, at: Path): VariableGroup =>
+  group(entry, [field(path, entry), ...fields(indexed(at), PRESENT_ELEMENT_FIELDS)]);
+
+/** A locations entry's fields, `present` opening to its element's. */
+const locationEntryFields = (path: Path): VariableNode[] =>
+  fields(path, LOCATION_ENTRY_FIELDS, (entry, at) => (entry.name === 'present' ? presentGroup(path, entry, at) : undefined));
+
 // A move to where the turn stands runs as inserted in any turn with a location.
-const locationFields = (): VariableNode[] => LOCATION_MEMBERS.map((entry) =>
-  (entry.name === 'move' ? callField(field(root('location'), entry), 'location.name') : field(root('location'), entry)));
+const locationFields = (): VariableNode[] => fields(root('location'), LOCATION_MEMBERS, (entry, at) => {
+  if (entry.name === 'move') return callField(field(root('location'), entry), 'location.name');
+  return entry.name === 'present' ? presentGroup(root('location'), entry, at) : undefined;
+});
 
 /** A call at the top level, `name(arg)`. */
 const topCallField = (name: string, arg: string): VariableField => {
@@ -179,14 +209,23 @@ const topCallField = (name: string, arg: string): VariableField => {
   return callField({ kind: 'field', label: name, detail: entry?.detail ?? '', info: entry?.info ?? '', insert: name }, arg);
 };
 
-/** `diary` for `name`, the world's first entity, which stays selected to type over. */
-const diaryField = (name: string): VariableField => {
-  const call = topCallField('diary', `${JSON.stringify(name)}, "Line"`);
-  const from = 'diary("'.length;
-  return { ...call, selection: { from, to: from + JSON.stringify(name).length - 2 } };
-};
+const MEMORY_ELEMENT_INFO = 'One memory in the list, by its place from 0, with the fields of a memories entry';
 
-const memoryFields = (): VariableNode[] => MEMORY_MEMBERS.map((entry) => callField(field(root('memory'), entry), '"Line"'));
+/** A memory's verb, called complete with the index left selected: `memories[0]?.edit("Text")`. */
+const memoryVerb = (path: Path, entry: SurfaceEntry): VariableField =>
+  ({ ...callField(field(path, entry), entry.detail.startsWith('()') ? '' : '"Text"'), selection: path.selection });
+
+/** The list's calls, then one memory's fields and verbs. */
+const memoryFields = (): VariableNode[] => {
+  const element = indexed(root('memories'));
+  return [
+    ...MEMORY_MEMBERS.map((entry) => callField(field(root('memories'), entry), '"Line"')),
+    {
+      kind: 'group', label: 'memories[0]', info: MEMORY_ELEMENT_INFO,
+      children: fields(element, MEMORY_ENTRY_FIELDS, (entry) => (isMethodEntry(entry) ? memoryVerb(element, entry) : undefined)),
+    },
+  ];
+};
 
 /** A placeholder entry's members by its kind. The calls insert complete; `pin` leaves its text selected. */
 function placeholderFields(path: Path, kind: PlaceholderKindNoun): VariableNode[] {
@@ -282,8 +321,9 @@ function timingGroups(globals: TimingGlobals): VariableNode[] {
   ];
 }
 
-/** The Owner group's header. */
-const OWNER_INFO = 'The entity that owns this stat, with its own stats, traits and placeholders. A Blueprint stat’s code runs once for each owner. It’s empty in a global stat.';
+/** The Owner group's line is the `owner` card's line on the surface the menu serves. */
+const ownerInfo = (self: 'stat' | 'trait' | 'empty'): string | undefined =>
+  (self === 'trait' ? TRAIT_SCRIPT_SURFACE : STAT_CODE_SURFACE).globals.find((entry) => entry.name === 'owner')?.info;
 
 /**
  * Builds the Variable menu's top level. Without `names`, every name list is one type-over row. `stats` lists the
@@ -312,8 +352,12 @@ export function buildVariableTree(
     stats: (at) => statNameRows(at, (entity.stats ?? []).map((name) => ({ name, trail: [] }))),
   } : typeOverLists, 'on this entity');
 
-  const dictionaryFields = (path: Path, dictionaryId: string | null) => ownerFields(path, DICTIONARY_FIELDS, {
-    placeholders: (at) => (dictionaryId === null ? typeOverPlaceholders(at) : ownedRows(dictionaryId, at, [])),
+  const entryFields = (at: Path) => fields(at, DICTIONARY_ENTRY_FIELDS);
+  const dictionaryFields = (path: Path, dictionary: CodeDictionaryNames | null) => ownerFields(path, DICTIONARY_FIELDS, {
+    placeholders: (at) => (dictionary === null ? typeOverPlaceholders(at) : ownedRows(dictionary.id, at, [])),
+    entries: (at) => (dictionary?.entries
+      ? keyedLastWins(dictionary.entries).map((entry) => ({ name: entry.name, trail: [], children: entryFields(keyed(at, entry.name)) }))
+      : templateRows(at, entryFields)),
   }, 'in this dictionary');
 
   // Any persona entity can be played, so the persona's lists hold each one's names once, its owner as the trail.
@@ -334,6 +378,7 @@ export function buildVariableTree(
   const entities = root('entities');
   const placeholders = root('placeholders');
   const dictionaries = root('dictionaries');
+  const locations = root('locations');
 
   const statRows = names
     ? firstOfEach((names.statNames ?? []).filter((name) => name !== ''), (name) => name)
@@ -352,9 +397,13 @@ export function buildVariableTree(
   const placeholderList = names ? placeholderRows(pathMap?.top ?? [], placeholders, []) : typeOverPlaceholders(placeholders);
   const dictionaryRows = names
     ? keyedLastWins(names.placeholders?.dictionaries ?? []).map((dictionary) => ({
-      name: dictionary.name, trail: [], children: dictionaryFields(keyed(dictionaries, dictionary.name), dictionary.id),
+      name: dictionary.name, trail: [], children: dictionaryFields(keyed(dictionaries, dictionary.name), dictionary),
     }))
     : templateRows(dictionaries, (at) => dictionaryFields(at, null));
+  const locationRows = names
+    ? keyedLastWins((names.locations ?? []).map((name) => ({ name })))
+      .map(({ name }) => ({ name, trail: [], children: locationEntryFields(keyed(locations, name)) }))
+    : templateRows(locations, locationEntryFields);
 
   // A Blueprint group holds stats only, so its Owner has no traits or placeholders.
   const ownerChildren = (at: VariableTreeOwner): VariableNode[] => {
@@ -373,9 +422,9 @@ export function buildVariableTree(
     : self === 'trait'
       ? [{ kind: 'group', label: 'This Trait', info: TRAIT_SCRIPT_SURFACE.globals.find((entry) => entry.name === 'self')?.info, children: fields(root('self'), SELF_TRAIT_FIELDS) }]
       : [{ kind: 'group', label: 'This Stat', info: globalInfo('self'), children: statFields(root('self')) }];
-  return [
+  const top: VariableNode[] = [
     ...selfGroup,
-    ...(owner ? [{ kind: 'group' as const, label: 'Owner', info: OWNER_INFO, children: ownerChildren(owner) }] : []),
+    ...(owner ? [{ kind: 'group' as const, label: 'Owner', info: ownerInfo(self), children: ownerChildren(owner) }] : []),
     nameList('Stats', statRows, 'No stats in this world', globalInfo('stats')),
     nameList('Traits', traitList, 'No traits in this world', globalInfo('traits')),
     nameList('Entities', entityRows, 'No entities in this world', globalInfo('entities')),
@@ -383,12 +432,57 @@ export function buildVariableTree(
     nameList('Placeholders', placeholderList, 'No placeholders in this world', globalInfo('placeholders')),
     nameList('Dictionaries', dictionaryRows, 'No dictionaries in this world', globalInfo('dictionaries')),
     { kind: 'group', label: 'Clock', info: globalInfo('clock'), children: clockFields(root('clock')) },
+    nameList('Locations', locationRows, 'No locations in this world', globalInfo('locations')),
     { kind: 'group', label: 'Location', info: globalInfo('location'), children: locationFields() },
     { kind: 'group', label: 'Discover', info: globalInfo('discover'), children: [topCallField('discover', '"Name"')] },
-    { kind: 'group', label: 'Memory', info: globalInfo('memory'), children: memoryFields() },
-    { kind: 'group', label: 'Diary', info: globalInfo('diary'), children: [diaryField(names?.entities?.[0]?.name ?? 'Name')] },
+    { kind: 'group', label: 'Memories', info: globalInfo('memories'), children: memoryFields() },
+    { kind: 'field', label: 'notes', detail: 'string', info: globalInfo('notes') ?? '', access: 'readOnly', insert: 'notes' },
     ...timingGroups(timing),
   ];
+  return top.map(verbsLast).map(leafForOneChild);
+}
+
+/** Whether a leaf is a verb: its insert ends in a call, or its detail is a function type. */
+export const isVerbLeaf = (node: VariableNode): boolean =>
+  node.kind === 'field' && (node.insert.endsWith(')') || isMethodEntry(node));
+
+/** `nodes` with the verbs after everything else, each set keeping its order. */
+const fieldsThenVerbs = (nodes: readonly VariableNode[]): VariableNode[] =>
+  [...nodes.filter((node) => !isVerbLeaf(node)), ...nodes.filter(isVerbLeaf)];
+
+/** `node` with the verbs last in every group, at any depth (R7). */
+function verbsLast(node: VariableNode): VariableNode {
+  if (node.kind === 'names') return { ...node, rows: node.rows.map((row) => ({ ...row, children: fieldsThenVerbs(row.children.map(verbsLast)) })) };
+  if (node.kind !== 'group') return node;
+  return { ...node, children: fieldsThenVerbs(node.children.map(verbsLast)) };
+}
+
+/** `node` with every group of one field drawn as that field, at any depth. */
+function leafForOneChild(node: VariableNode): VariableNode {
+  if (node.kind === 'names') return { ...node, rows: node.rows.map((row) => ({ ...row, children: row.children.map(leafForOneChild) })) };
+  if (node.kind !== 'group') return node;
+  const children = node.children.map(leafForOneChild);
+  return children.length === 1 && children[0].kind === 'field' ? children[0] : { ...node, children };
+}
+
+/** `nodes` as a read-only surface lists them (Q24): no method, every field read-only, and no level left empty. */
+export function readOnlyTree(nodes: readonly VariableNode[]): VariableNode[] {
+  return nodes.flatMap((node): VariableNode[] => {
+    if (node.kind === 'field') return isMethodEntry(node) ? [] : [{ ...node, access: 'readOnly' }];
+    if (node.kind === 'group') {
+      const children = readOnlyTree(node.children);
+      return children.length ? [{ ...node, children }] : [];
+    }
+    if (node.kind === 'names') {
+      const rows = node.rows.flatMap((row) => {
+        const field = row.field && !isMethodEntry(row.field) ? { ...row.field, access: 'readOnly' as const } : undefined;
+        const children = readOnlyTree(row.children);
+        return field || children.length ? [{ ...row, children, ...(field ? { field } : {}) }] : [];
+      });
+      return rows.length ? [{ ...node, rows }] : [];
+    }
+    return [node];
+  });
 }
 
 /** Every leaf under `nodes`, depth first. */

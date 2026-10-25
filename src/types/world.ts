@@ -214,7 +214,23 @@ export type TraitRequirement =
   | { kind: 'trait'; id: string; name?: string; owner?: RequirementOwner; not?: true }
   | { kind: 'group'; id: string; name?: string; owner?: RequirementOwner; not?: true }
   | { kind: 'playingAs'; id: string; name?: string; not?: true }
-  | StatRequirement;
+  | StatRequirement
+  | TimeRequirement;
+
+/** A coarse time of day, as the story clock splits its day by fractions. */
+export type Daypart = 'night' | 'dawn' | 'morning' | 'midday' | 'afternoon' | 'evening';
+
+/** A time Condition: it holds while the story clock's daypart is one of `dayparts`. It names no target and
+ *  no owner. */
+export interface TimeRequirement {
+  kind: 'time';
+  dayparts: Daypart[];
+  // Absent, so code that reads any Condition's target finds none here.
+  id?: undefined;
+  name?: undefined;
+  owner?: undefined;
+  not?: undefined;
+}
 
 /** A stat Condition: see {@link TraitRequirement}. */
 export interface StatRequirement {
@@ -360,9 +376,6 @@ export interface Entity {
    *  never in the cast (see lib/owners). At most one per world, at the root. Excludes the Persona marks and
    *  implies persona-only. */
   customPersona?: boolean;
-  /** Where a world persona begins, flagged as a starting location or not. Absent = Automatic: the first of
-   *  its locations that is a starting location. Read only for a world entity with the Persona mark. */
-  startingLocationId?: string;
   type?: string;
   /** Shown to the player in game. */
   playerDescription?: string;
@@ -385,9 +398,22 @@ export interface Entity {
   imageTags?: string;
   sound?: MediaAsset;
   model?: MediaAsset;
+  /** The entity's Avatar. Absent = none. */
+  vrmPick?: VrmPick;
   /** Ids of the locations this entity belongs to. The entity is present at every one of them
-   *  simultaneously. Read it through `lib/entityPresence`, which inverts it into per-location rosters. */
+   *  simultaneously. Read it through `lib/entityPresence`, which inverts it into per-location rosters. Under
+   *  the Persona mark they are also where the player can start as it (see `lib/personaPick`). */
   locations?: string[];
+  /** `random`: one individual, placed at one of `locations` at random in each new game. Absent = present at
+   *  every listed location at once. The persona ignores it. */
+  presence?: EntityPresence;
+  /** How the entity moves during play. Absent = Free: no position, no AI request. The persona ignores it. */
+  movement?: EntityMovement;
+  /** Where the AI knows of the entity while it isn't present: `nowhere`, or the picked location ids, each
+   *  covering its whole subtree. Absent = Nearby, one step from where it is. */
+  knownIn?: 'nowhere' | string[];
+  /** The entity's links to other entities, at most one per target, in author order. Absent or empty = none. */
+  relationships?: EntityRelationship[];
   /** Editor-only folder this entity lives in; null/absent = ungrouped. Purely organizational — never sent
    *  to the AI (grouping does not change the entity context). Reset to ungrouped on character-card import. */
   groupId?: string | null;
@@ -440,6 +466,19 @@ export interface Entity {
   link?: ContentLink;
 }
 
+/** An entity's Presence beyond the default, Everywhere Listed. */
+export type EntityPresence = 'random';
+
+/** An entity's Movement beyond the default, Free. */
+export type EntityMovement = 'stays' | 'between' | 'follow';
+
+/** One authored link from an entity to another. `label` is the target's role toward the owner, read as
+ *  "<target> is <owner>'s <label>". */
+export interface EntityRelationship {
+  targetId: string;
+  label: string;
+}
+
 /** One location a piece of off-world content expects, as the world it left named it. The id is the key its
  *  connection is stored under, so the source renaming the location keeps the connection. */
 export interface ContentLocationRef {
@@ -470,7 +509,10 @@ export interface GameLocation {
   aiSummary?: string;
   /** Legacy alias some views fall back to when `playerDescription` is absent. */
   description?: string;
-  backgroundImage?: Base64Data;
+  /** The location's gallery, in author order. In play the backdrop shows the first visible image. A rule's
+   *  owner-less Condition reads the played persona. Read it through `lib/locationImages`, which also covers
+   *  records written before the gallery. */
+  images?: GalleryImage[];
   /** Booru tags used for AI image generation; editor-only, not sent to the narrative AI. */
   imageTags?: string;
   ambientSound?: MediaAsset;
@@ -483,6 +525,9 @@ export interface GameLocation {
    *  nested, as the canvas reads a child's position. Editor-only: never sent to the AI. Absent means the
    *  canvas lays it out itself. */
   canvasPosition?: { x: number; y: number };
+  /** `true`: the entities reachable from here are the ones at the router's effective destinations (tree
+   *  neighbors plus Connection legs). Absent = the parent and siblings only. */
+  nearbyUsesConnections?: boolean;
   /** Placeholders held at a fixed value while the player is here. Released on leaving; a child location
    *  inherits nothing through `parentId`. */
   placeholderPins?: PlaceholderPin[];
@@ -630,7 +675,23 @@ export interface WorldPromptOverrides {
   statUpdatesPromptEnabled?: boolean;
 }
 
-/** World-level metadata and global settings (system prompt, media, 3D toggle) shared across all saves. */
+/** One Avatar in a world's store: its display name and the embedded file. */
+export interface WorldVrm {
+  name: string;
+  file: MediaAsset;
+  /** The file's content hash, which matches it to a library Avatar. Absent on entries added before it; read
+   *  through `lib/libraryVrm`, which computes it. */
+  hash?: string;
+}
+
+/** A world's Avatars, keyed by id. */
+export type WorldVrmStore = Record<string, WorldVrm>;
+
+/** Which Avatar an entity shows: the player's default, one from the world's store, or one from the player's
+ *  Avatar library (library entities). Absent = none. */
+export type VrmPick = { kind: 'default' } | { kind: 'world'; id: string } | { kind: 'library'; id: string };
+
+/** World-level metadata and global settings (system prompt, media, Avatars) shared across all saves. */
 export interface WorldOverview {
   name: string;
   description: string;
@@ -638,10 +699,12 @@ export interface WorldOverview {
   thumbnail: Base64Data | null;
   bgm: Base64Data | null;
   systemPrompt: string;
-  use3DModel: boolean;
   tags: string[];
-  /** v1.2.0: optional per-world custom player VRM model. */
-  customPlayerVRM?: MediaAsset | null;
+  /** The world's Avatars, keyed by id. Entities refer to one through `Entity.vrmPick`. */
+  vrmStore?: WorldVrmStore;
+  /** The played side's last resort, set only by the migration of a world whose old 3D Player Avatar flag
+   *  was on (see lib/legacyVrm). Never shown in the editor. */
+  legacyVrmFallback?: VrmPick;
   /** Optional markdown shown to the player on entering gameplay (per-world "Show Readme" toggle). */
   readme?: string;
   /** Optional markdown shown over the first enter-world setup screen, before any choice is made. Shares
@@ -659,6 +722,29 @@ export interface WorldOverview {
   allowedPersonas?: AllowedPersonas;
   /** The persona a new player starts on. Absent = the player's default persona. */
   startPersona?: StartPersona;
+  /** The picture behind the Locations canvas and the player's Map. Absent = none. */
+  mapBackground?: MapBackground;
+}
+
+/** A box on the Locations canvas, in canvas units. */
+export interface MapFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The world map art behind the location boxes. Every image fits inside the one frame at its own aspect
+ * ratio. In play the Map shows the first visible image; authoring shows slot 0. An owner-less rule row reads
+ * the played persona, as on a location.
+ */
+export interface MapBackground {
+  /** At least one image; the field goes with the last one. */
+  images: GalleryImage[];
+  frame: MapFrame;
+  /** 0 to 1. */
+  opacity: number;
 }
 
 /** `world` limits the pickers to this world's personas and its Custom Persona. Applied by lib/personaPick. */
@@ -895,6 +981,8 @@ export interface EntityMetadata extends CommunityLink {
   tags?: string[];
   /** The entity carries the Persona mark, so the tab's Personas filter shows it. */
   persona?: boolean;
+  /** The library Avatar the entity picks, so a library delete can name its users. */
+  vrmLibraryId?: string;
   /** Imported attribution and tags kept outside world content. */
   libraryDetails?: LibraryDetails;
 }

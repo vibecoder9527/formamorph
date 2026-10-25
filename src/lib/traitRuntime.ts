@@ -11,10 +11,11 @@
 //   that trait reverses it, rather than the authored number.
 
 import type {
-  CascadeOffTraitIds, CodeBoundDeltas, CodeBounds, EntityStatValues, LegacyCodeBoundsStat, OwnedTraitPicks, OwnedTraitStates, PersonaRef,
+  CascadeOffTraitIds, CodeBoundDeltas, CodeBounds, Daypart, EntityStatValues, LegacyCodeBoundsStat, OwnedTraitPicks, OwnedTraitStates, PersonaRef,
   PlayerStat, Stat, StatChange, Trait, TraitGroup,
 } from '@/types';
 import { clamp } from './utils';
+import { statStartValue } from './statDescriptorGeometry';
 import { ownedTraitStatesFrom, ownStatsRecordKey, recordKey } from './ownedTraitState';
 import { activeOwnedTraitIds } from './ownedTraitsInPlay';
 import { activeStatEnabled, exclusiveSiblings, inAuthoredOrder, isAlwaysOn, isHidden } from './traitEffects';
@@ -53,6 +54,8 @@ export type TraitWorld = {
   /** A commit's one stat snapshot, which every settle in that commit reads (Q19). Absent ⇒ gates read the
    *  state's live stats. */
   gateStats?: GateStats;
+  /** The story clock's daypart, which every time Condition reads. Absent ⇒ the opening hour's. */
+  daypart?: Daypart;
 } & (
   | { entities?: readonly GateEntity[]; global?: undefined; owners?: undefined }
   /** Global scope's tree and every present entity owner as the gate module reads them (see lib/owners).
@@ -281,13 +284,13 @@ export function codeBoundsToDeltas(stats: readonly LegacyCodeBoundsStat[], activ
 
 /**
  * The stats a fresh playthrough opens with, before any trait: the authored defaults, each with its live
- * value and its game-start baseline (`starting`) settled so the opening turn's deltas read from the world
- * value rather than 0/min. Authored, chips and all — names resolve on the way out of state, never in.
+ * value and its game-start baseline (`starting`) set to that value, so the opening turn shows no change
+ * the author did not make (Q8). Authored, chips and all — names resolve on the way out of state, never in.
  */
 export function seedNewGameStats(authored: readonly Stat[]): PlayerStat[] {
   return seedStatBases(authored.map((stat) => {
-    const value = stat.value || stat.min || 0;
-    return { ...stat, value, starting: stat.starting ?? value };
+    const value = statStartValue(stat);
+    return { ...stat, value, starting: value };
   }));
 }
 
@@ -490,9 +493,11 @@ function flipOwnerTrait(state: TraitRuntimeState, ownerId: OwnerId, trait: Trait
 /**
  * Apply every entity's active traits' global rows, owner by owner in tree order, as picking them at creation
  * would. For a new game and the Enter World preview, whose owned picks are already chosen. `applied` is the
- * played entities' traits alone: the start log never names another entity's.
+ * played entities' traits alone: the start log never names another entity's. `appliedRows` pairs each with its owner.
  */
-export function applyGlobalRowTraits(state: TraitRuntimeState, world: TraitWorld): { state: TraitRuntimeState; applied: Trait[] } {
+export function applyGlobalRowTraits(
+  state: TraitRuntimeState, world: TraitWorld,
+): { state: TraitRuntimeState; applied: Trait[]; appliedRows: { trait: Trait; ownerId: string }[] } {
   const rows = globalRowTraitsByOwner(state, world);
   let next = state;
   const on: Trait[] = [];
@@ -500,7 +505,8 @@ export function applyGlobalRowTraits(state: TraitRuntimeState, world: TraitWorld
     on.push(trait);
     next = moveStats(next, trait, true, recordKey(ownerId, trait.id), [...activeTraits(next.traits, next.disabledTraitIds), ...on]);
   }
-  return { state: next, applied: rows.filter(([ownerId]) => isPlayedOwner(world, ownerId)).map(([, t]) => t) };
+  const appliedRows = rows.filter(([ownerId]) => isPlayedOwner(world, ownerId)).map(([ownerId, trait]) => ({ trait, ownerId }));
+  return { state: next, applied: appliedRows.map((row) => row.trait), appliedRows };
 }
 
 /**
@@ -689,9 +695,11 @@ export const traitGateInput = (state: GateStatState, world: TraitWorld): GateInp
     activeOwnedTraitIds(state.ownedTraits ?? {}),
   ),
   stats: world.gateStats ?? gateStatsOf(state, world),
+  ...(world.daypart ? { daypart: world.daypart } : {}),
   entities: world.entities ?? [],
   persona: world.persona ?? { source: 'none' },
   originals: { traits: world.traits, groups: world.groups },
+  reader: 'player',
 });
 
 /** Every owner's gate on each of its traits, for one read of the state. */

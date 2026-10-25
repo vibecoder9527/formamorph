@@ -7,6 +7,7 @@ import { entityIdsAt } from './entityPresence';
 import { buildEntityContext, navigableDestinationEntries } from './locationContext';
 import { effectiveDestinations } from './locationGraph';
 import type { Connection, Entity, GameLocation, Placeholder, SaveObject, World } from '@/types';
+import { LEGACY_VRM_ID } from './legacyVrm';
 import { codeAt } from '@/test/scriptFixtures';
 
 // Loose view of a migrated world for assertions (avoids `any`).
@@ -19,7 +20,7 @@ type DescItem = {
 type MigratedWorld = {
   version?: string;
   customPlayerVRM?: unknown;
-  worldOverview: { customPlayerVRM?: unknown };
+  worldOverview: { customPlayerVRM?: unknown; vrmStore?: Record<string, { name: string; file: unknown }>; legacyVrmFallback?: unknown };
   stats?: { name: string; morphBindings?: string[] }[];
   entities?: DescItem[];
   locations?: DescItem[];
@@ -162,6 +163,22 @@ describe('migrateWorld — entity-owned location membership (ADR-0003)', () => {
       entities: [{ id: 'alice', name: 'Alice', locations: ['bar', 'docks'] }],
     }) as unknown as { entities: Entity[] };
     expect(out.entities[0].locations).toEqual(['bar', 'docks']);
+  });
+});
+
+describe('migrateWorld — entity presence fields', () => {
+  const entitiesOf = (w: unknown) => (w as { entities: Entity[] }).entities;
+  const world = (entities: Entity[]) => ({ worldOverview: {}, locations: [{ id: 'keep', name: 'Keep' }, { id: 'tower', name: 'Tower' }], entities });
+
+  it('adds no presence field to an old world', () => {
+    const [guard] = entitiesOf(migrateWorld(world([{ id: 'guard', name: 'Guard', locations: ['keep'] }])));
+    expect(['presence', 'movement', 'knownIn'].filter((key) => key in guard)).toEqual([]);
+  });
+
+  it('keeps the fields an author set', () => {
+    const set: Entity = { id: 'cap', name: 'Captain', locations: ['keep', 'tower'], presence: 'random', movement: 'between', knownIn: ['keep'] };
+    const [cap] = entitiesOf(migrateWorld(world([set])));
+    expect([cap.presence, cap.movement, cap.knownIn]).toEqual(['random', 'between', ['keep']]);
   });
 });
 
@@ -352,24 +369,26 @@ describe('migrateWorld — Connection legs', () => {
 describe('migrateWorld', () => {
   const vrmUrl = 'data:application/octet-stream;base64,Z2xURgIAAAD45iEB';
 
-  it('moves a v1.2 root customPlayerVRM string into worldOverview and stamps the version', () => {
+  it('moves a v1.2 root customPlayerVRM string into the Avatar store and stamps the version', () => {
     const legacy = { worldOverview: { name: 'W' }, customPlayerVRM: vrmUrl, stats: [] };
     const out = migrateWorld(legacy) as unknown as MigratedWorld;
     expect(out.version).toBe(APP_VERSION);
     expect(out.customPlayerVRM).toBeUndefined(); // stray root key removed
-    expect(out.worldOverview.customPlayerVRM).toEqual({ data: vrmUrl, type: 'model/vrm' });
+    expect(out.worldOverview.customPlayerVRM).toBeUndefined();
+    expect(out.worldOverview.vrmStore?.[LEGACY_VRM_ID]?.file).toEqual({ data: vrmUrl, type: 'model/vrm' });
   });
 
-  it('treats an unversioned world without a VRM as legacy and stamps it (VRM null)', () => {
+  it('treats an unversioned world without a VRM as legacy and stamps it (no Avatar)', () => {
     const out = migrateWorld({ worldOverview: { name: 'W' } }) as unknown as MigratedWorld;
     expect(out.version).toBe(APP_VERSION);
-    expect(out.worldOverview.customPlayerVRM).toBeNull();
+    expect(out.worldOverview.vrmStore).toBeUndefined();
+    expect(out.worldOverview.legacyVrmFallback).toBeUndefined();
   });
 
   it('passes through a world already at the current version (books preserved)', () => {
     const current = {
       version: APP_VERSION,
-      worldOverview: { name: 'W', customPlayerVRM: { data: vrmUrl, type: 'model/vrm' } },
+      worldOverview: { name: 'W', vrmStore: { a: { name: 'Wren', file: { data: vrmUrl, type: 'model/vrm' } } } },
       dictionaries: [{ id: 'b1', name: 'Default', enabled: true, entries: [] }],
     };
     expect(migrateWorld(current)).toEqual(current);
@@ -1296,5 +1315,18 @@ describe('migrateWorld — stat Blueprints and links', () => {
     const out = migrateWorld(grouped([], [second])).statGroups!;
     expect(out.filter((g) => g.system === 'blueprints').map((g) => g.id)).toEqual(['bp']);
     expect(out.find((g) => g.id === 'bp2')).toEqual({ id: 'bp2', name: 'Blueprints', parentId: 'bp', order: 2 });
+  });
+});
+
+describe('migrateWorld — persona start locations', () => {
+  it('drops the retired startingLocationId from every entity, and leaves the rest of each alone', () => {
+    const raw = {
+      version: APP_VERSION,
+      entities: [{ id: 'a', name: 'A', persona: true, locations: ['x'], startingLocationId: 'x' }, { id: 'b', name: 'B' }],
+    };
+    const [a, b] = migrateWorld(raw).entities;
+    expect(a).not.toHaveProperty('startingLocationId');
+    expect(a).toMatchObject({ id: 'a', name: 'A', persona: true, locations: ['x'] });
+    expect(b).toMatchObject({ id: 'b', name: 'B' });
   });
 });

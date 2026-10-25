@@ -11,6 +11,9 @@ import { LandingPulseReference } from '@/components/design-system/LandingPulseRe
 import { PanelCrashCardReference } from '@/components/design-system/PanelCrashCardReference';
 import { ChipOptionsReference } from '@/components/design-system/ChipOptionsReference';
 import { CodeCardReference } from '@/components/design-system/CodeCardReference';
+import { VariableMenuReference } from '@/components/design-system/VariableMenuReference';
+import { YouMarkReference } from '@/components/design-system/YouMarkReference';
+import { SegmentedMultiSelectReference } from '@/components/design-system/SegmentedMultiSelectReference';
 import { useDevRoute } from '@/lib/devRouter';
 import { BookOpen, MonitorCog } from 'lucide-react';
 import { OptionSwitcher, Row, Section } from '@/components/SettingsRows';
@@ -46,6 +49,7 @@ import { ContextMenuReferences } from '@/components/design-system/ContextMenuRef
 import { FooterActionOrderReference } from '@/components/design-system/FooterActionOrderReference';
 import { NarrationTurnReference } from '@/components/design-system/NarrationTurnReference';
 import { ScriptPromptLineReference } from '@/components/design-system/ScriptPromptLineReference';
+import { RequestStatusStripReference } from '@/components/design-system/RequestStatusStripReference';
 import { PanelTabStripReference } from '@/components/design-system/PanelTabStripReference';
 import { SectionsBarReference } from '@/components/design-system/SectionsBarReference';
 import { NavRailReference } from '@/components/design-system/NavRailReference';
@@ -381,6 +385,12 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     Component: ScriptPromptLineReference,
   },
   {
+    id: 'status-strip',
+    label: 'Request Status Strip',
+    description: 'The running request’s row, floated over the narration',
+    Component: RequestStatusStripReference,
+  },
+  {
     id: 'owner-flyouts',
     label: 'Owner Flyouts',
     description: 'Drill-down entity pickers in a menu and on a button',
@@ -445,6 +455,24 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     label: 'Code Hover Card',
     description: 'The card a code editor shows for a name, and its Find All Uses list',
     Component: CodeCardReference,
+  },
+  {
+    id: 'variable-menu',
+    label: 'Variable Menu Rows',
+    description: 'The code Variable menu’s rows: type, read-only mark and method',
+    Component: VariableMenuReference,
+  },
+  {
+    id: 'you-mark',
+    label: 'You Pill',
+    description: 'The mark after the played persona’s name, on a plain row and a selected row',
+    Component: YouMarkReference,
+  },
+  {
+    id: 'segmented-multi-select',
+    label: 'Segmented Multi-Select',
+    description: 'A segmented control where each option turns on by itself, as the time chip uses',
+    Component: SegmentedMultiSelectReference,
   },
 ];
 

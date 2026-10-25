@@ -112,6 +112,24 @@ The **Locations** tab has two views. Switch between them with the **List** and *
 
 Nothing on the canvas moves until you move it or ask for a layout. With nothing selected, **Auto Arrange All** in the toolbar lays out every box. With a box selected, the button reads **Auto Arrange** and lays out only its group. Right-click a location with sub-locations and select **Auto Arrange** to lay out only its children. The in-game map uses your canvas layout.
 
+### Map Background
+<!-- keywords: world map image, map art, picture behind canvas, trace a map, background image on map, map opacity, ruined map, map changes -->
+
+A **Map Background** is a picture behind the boxes, such as a hand-drawn world map. The player's in-game Map shows it in the same place, at the same size and opacity.
+
+1. Right-click open canvas and select **Set Background Image…**.
+2. Upload a file, or paste an image address. The image covers your locations.
+3. The **Adjust Background** card opens. Drag the image to move it. Drag a corner to resize it; it keeps its shape.
+4. Set **Opacity**, then close the card.
+
+- 🔒 **Locked.** Outside Adjust, the image never moves. Dragging, selecting and connecting boxes work as before.
+- 🎚️ **Adjust Background.** Right-click open canvas to turn it on or off. The boxes stay on top but don't move, so a drag anywhere on the image moves it. The card also holds **Remove Image**.
+- 🖼️ **Replace Background Image…** opens the map's gallery, the same one the **Media** tab shows. Select a tile to frame it, drag a tile to reorder, or select **x** to remove the framed image. The canvas shows the first image.
+- 🗑️ Removing the last image also clears its place and opacity. The next image lands like a first one: over your locations, or over the visible canvas when there are none.
+- ↩️ Each drag, resize, removal, or opacity change is one undo step.
+
+The **Media** tab can hold more than one map image, each with its own [Visibility rule](World-Editor-Entities#visibility-rules). In play, the Map shows the first visible image, all in the same frame. A condition with no owner reads the persona, as on a location. The canvas always shows the first image. See [Map Background in the Media tab](World-Editor-Media#map-background).
+
 ## The panel
 <!-- keywords: backdrop, wallpaper, scenery picture, looping noise, atmosphere audio, generate scenery, rain sfx -->
 <!-- route: worldEditorLocation.details -->
@@ -132,9 +150,20 @@ Simple mode also hides **AI-Facing Summary**.
 
 | Field | What it does |
 |---|---|
-| **Background Image** | The image behind the story while the player is here. Upload a file, or paste an address into **Or paste an image URL**. See [Upload or link](World-Editor-Overview#upload-or-link). **Generate with AI** makes one when [image generation](Image-Generation#how-to-turn-on-image-generation) is on in Settings. |
+| **Background Image** | A gallery of images behind the story while the player is here. Upload a file, or paste an address into **Or paste an image URL**. See [Upload or link](World-Editor-Overview#upload-or-link). **Generate with AI** makes one when [image generation](Image-Generation#how-to-turn-on-image-generation) is on in Settings. Drag a thumbnail to reorder. |
 | **Image Tags** | **Advanced mode only.** Booru tags for AI image generation |
 | **Ambient Sound** | **Advanced mode only.** A sound that plays while the player is here. Select **Add Sound** to pick a file. |
+
+### Background Visibility rules
+<!-- keywords: change background in game, wounded backdrop, night backdrop, conditional background, background per state, backdrop follows story -->
+
+Each background image can carry a [Visibility rule](World-Editor-Entities#visibility-rules), the same as an entity image. Select the cog on a thumbnail to set one.
+
+- 🖼️ In play, the backdrop shows the **first visible image**, counting from the left.
+- 🧍 A condition with no owner reads the **persona** the player plays. A location has no traits or stats of its own. Pick an entity to read that entity instead. A global trait or stat needs no owner.
+- 🌫️ When no image is visible, the story shows no backdrop.
+
+Example: put a *wounded* backdrop first with the rule *Health < 20%*, and a calm one after it with no rule. The backdrop swaps while the persona is hurt.
 
 ## What reaches the AI
 <!-- keywords: random events list, choices ignore rules, narrator vs other steps, hidden room details, short form used, ai misses details -->

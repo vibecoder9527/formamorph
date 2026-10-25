@@ -13,9 +13,10 @@ import type {
 } from '@/lib/codeWorldLookup';
 import { placeholderKindNoun, placeholderWeight } from '@/lib/placeholders';
 import { REGEN_UNIT_LABELS, regenPer, regenUnitOf } from '@/lib/regenUnits';
+import { statMin, statStartValue } from '@/lib/statDescriptorGeometry';
 import { isUnknownEntry, memberEntries, placeholderAt, type SurfaceAnalysisOptions } from '@/lib/statCodeAnalysis';
 import { isIdentifier } from '@/lib/statCodePaths';
-import { parseCode, resolveCodeName, type CodeMapOwner, type CodeValue, type PlaceholderOwner } from '@/lib/statCodeResolver';
+import { parseCode, resolveCodeName, type ArrayElement, type CodeMapOwner, type CodeValue, type PlaceholderOwner } from '@/lib/statCodeResolver';
 import { DAYPART_OPTIONS, parseTemplateSlots } from '@/lib/statCodeTemplates';
 import type { Placeholder, Stat, TraitMode } from '@/types';
 
@@ -25,7 +26,7 @@ export type DeclarationKind = 'const' | 'let' | 'var' | 'function' | 'class' | '
 /** What a card names: a sandbox global, a member of one, an entry of one of the world's maps, a name the
  *  code declares, or a template slot. */
 export type CodeCardKind =
-  | 'global' | 'property' | 'method' | 'stat' | 'trait' | 'placeholder' | 'entity' | 'dictionary' | 'location'
+  | 'global' | 'property' | 'method' | 'stat' | 'trait' | 'placeholder' | 'entity' | 'dictionary' | 'entry' | 'location'
   | DeclarationKind | 'slot';
 
 /** The card's first line: what the name is, the path it reads as, and its type. A declared name has no type. */
@@ -108,6 +109,9 @@ function ownerPrefix(owner: CodeMapOwner): string {
   }
 }
 
+/** The type an element of each array shape has. */
+const ELEMENT_ROOT: Record<ArrayElement, string> = { memory: 'Memory', entity: 'Entity' };
+
 /** What a member's path starts with: the type an entry of a map has, or the exact path of a one-off object. */
 function memberRootName(value: CodeValue): string {
   switch (value.is) {
@@ -119,8 +123,12 @@ function memberRootName(value: CodeValue): string {
     case 'placeholders': return 'Placeholder';
     case 'entity': case 'owner': return 'Entity';
     case 'dictionary': return 'Dictionary';
+    case 'dictionaryEntry': return 'DictionaryEntry';
+    case 'locationEntry': return 'Location';
     case 'persona': return 'persona';
     case 'clock': case 'listed': return value.path;
+    case 'array': return value.path ?? 'Array';
+    case 'element': return ELEMENT_ROOT[value.of];
     default: return value.is;
   }
 }
@@ -130,9 +138,6 @@ const STAT_TYPE_LABEL: Record<Stat['type'], string> = { number: 'Number', percen
 /** A stat amount in the stat's own units. */
 const amount = (stat: Stat, n: number) => `${n}${stat.type === 'percentage' ? '%' : ''}`;
 const signed = (stat: Stat, n: number) => (n < 0 ? `−${amount(stat, -n)}` : `+${amount(stat, n)}`);
-
-/** The value a stat seeds with. */
-const startsAt = (stat: Stat) => stat.starting ?? stat.value ?? stat.min;
 
 /** The tag and the Owners value where no one owns an item. */
 export const NO_OWNERS_LABEL = 'No Owners';
@@ -153,7 +158,7 @@ const STAT_ROWS: readonly {
 }[] = [
   { label: 'Type', value: ({ stat }) => STAT_TYPE_LABEL[stat.type] ?? stat.type },
   { label: 'Range', value: ({ stat }) => `${stat.min} – ${amount(stat, stat.max)}` },
-  { label: 'Starts At', value: ({ stat }) => amount(stat, startsAt(stat)), drops: ({ stat }) => startsAt(stat) === stat.min },
+  { label: 'Starts At', value: ({ stat }) => amount(stat, statStartValue(stat)), drops: ({ stat }) => statStartValue(stat) === statMin(stat) },
   {
     label: 'Regen',
     value: ({ stat }) => {
@@ -273,7 +278,7 @@ export function reachedPlaceholderOwners(
 export function entityRows({ entity, stats, traits, placeholders }: CodeEntityRecord): CodeCardRow[] {
   return [
     ...(entity.type ? [{ label: 'Type', value: entity.type }] : []),
-    ...(canBePlayer(entity) ? [{ label: 'Persona', value: 'Can be played' }] : []),
+    ...(canBePlayer(entity) ? [{ label: 'Persona', value: 'Playable' }] : []),
     { label: 'Stats', value: listText(stats) },
     { label: 'Traits', value: listText(traits) },
     { label: 'Placeholders', value: listText(placeholders) },
@@ -449,6 +454,16 @@ export function codeCard(code: string, pos: number, options: SurfaceAnalysisOpti
       const card = world('dictionary', keyPath('dictionaries', name.key), 'Dictionary');
       const record = options.lookup?.dictionary(name.key);
       return record ? { ...card, ...dictionaryDetails(record) } : card;
+    }
+    case 'dictionaryEntry': {
+      const card = world('entry', keyPath(`${keyPath('dictionaries', name.dictionary)}.entries`, name.key), 'DictionaryEntry');
+      const id = options.placeholders?.dictionaries?.findLast((book) => book.name === name.dictionary)
+        ?.entries?.findLast((entry) => entry.name === name.key)?.id;
+      const record = options.lookup?.dictionary(name.dictionary);
+      const entry = id === undefined ? undefined : record?.dictionary.entries.find((each) => each.id === id);
+      return entry && record
+        ? { ...card, rows: [{ label: 'Trigger Keywords', value: listText(entry.key) }], item: { kind: 'dictionary', dictionaryId: record.dictionary.id } }
+        : card;
     }
     case 'location': {
       const card = world('location', name.key, 'Location');

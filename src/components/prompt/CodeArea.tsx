@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Columns2, Maximize2, Minimize2, Redo2, Square, Undo2, Braces, type LucideIcon } from 'lucide-react';
+import { Columns2, Maximize2, Redo2, Square, Undo2, Braces, type LucideIcon } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tip } from '@/components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -10,10 +10,10 @@ import { InsertMenuButton } from '@/components/prompt/InsertMenuButton';
 import { VariableMenu } from '@/components/prompt/VariableMenu';
 import { resolveLayout, usePromptSplitMode, useContainerWidth, MIN_PANE_WIDTH } from '@/lib/promptLayout';
 import { useMorphFullscreen } from '@/lib/useMorphFullscreen';
-import { FullscreenShell } from '@/components/FullscreenShell';
+import { FullscreenShell, FULLSCREEN_CORNER_CLEAR } from '@/components/FullscreenShell';
 import { cn } from '@/lib/utils';
 import { SLOT_SNIPPETS, snippetSelection, type InsertSelection, type InsertSnippet } from '@/lib/codeSnippets';
-import { buildVariableTree, timingGlobalsOf, type VariableNode, type VariableTreeOwner } from '@/lib/statCodeVariableTree';
+import { buildVariableTree, readOnlyTree, timingGlobalsOf, type VariableNode, type VariableTreeOwner } from '@/lib/statCodeVariableTree';
 import type { CodeSurface } from '@/lib/codeSurface';
 import type { CodeWorldLookup } from '@/lib/codeWorldLookup';
 import type { CodeCardNavigation } from '@/lib/codeCardNavigation';
@@ -85,6 +85,8 @@ interface CodeAreaProps {
   traits?: readonly CodeTraitPlace[];
   /** The world's entities and their trait names, completed after `entities` and `persona.traits` and checked by name. */
   entities?: readonly CodeEntityNames[];
+  /** The world's location code names, completed after `locations` and listed by the Variable menu. */
+  locations?: readonly string[];
   /** The Variable menu's tree where the surface has no stat maps, built on each open. Absent there, no menu. With stat
    *  maps, these groups come before the stat tree's. */
   variables?: () => readonly VariableNode[];
@@ -187,11 +189,13 @@ function CodeAreaBody({
     </div>
   );
 
+  const canSplit = showTabs && fullscreen && effectiveWidth - 12 >= MIN_PANE_WIDTH * 2;
+
   return (
     <div ref={measureRef} className={cn('flex flex-col gap-1 min-h-0', className)}>
       {/* Same three-part chrome as PromptField: what you insert on the left, the field's own history and
           view controls on the right, one rule between them. */}
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className={cn('flex items-center gap-1 flex-shrink-0', fullscreen && FULLSCREEN_CORNER_CLEAR)}>
         <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           {label && <Label className="leading-none">{label}</Label>}
           {info}
@@ -219,8 +223,8 @@ function CodeAreaBody({
               <Redo2 className="h-4 w-4" />
             </button>
           </Tip>
-          <span className="mx-0.5 w-hairline self-stretch bg-border" />
-          {showTabs && fullscreen && effectiveWidth - 12 >= MIN_PANE_WIDTH * 2 && (
+          {(canSplit || !fullscreen) && <span className="mx-0.5 w-hairline self-stretch bg-border" />}
+          {canSplit && (
             <Tip tip={split ? 'Show one pane at a time' : 'Show edit and preview side by side'}>
               <button
                 type="button"
@@ -231,15 +235,17 @@ function CodeAreaBody({
               </button>
             </Tip>
           )}
-          <Tip tip={fullscreen ? 'Exit full screen' : 'Edit full screen'}>
-            <button
-              type="button"
-              className={TOOLBAR_BTN}
-              onMouseDown={(event) => { event.preventDefault(); onToggleFullscreen(); }}
-            >
-              {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </button>
-          </Tip>
+          {!fullscreen && (
+            <Tip tip="Edit full screen">
+              <button
+                type="button"
+                className={TOOLBAR_BTN}
+                onMouseDown={(event) => { event.preventDefault(); onToggleFullscreen(); }}
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+            </Tip>
+          )}
         </div>
       </div>
       {!showTabs ? editSurface : split ? (
@@ -300,15 +306,18 @@ export function CodeArea(props: CodeAreaProps) {
 
   // A template has no world, so its tree types over each name.
   const variableTree = useCallback(() => {
-    const { slots: template, statNames, owner, placeholders, traits, entities, surface, variables } = latest.current;
+    const { slots: template, statNames, owner, placeholders, traits, entities, locations, surface, variables } = latest.current;
     if (!surface.statMaps) return variables?.() ?? [];
     // A box that gives a menu beside stat maps, such as a World Tool's arguments, lists it first.
-    return [
+    const tree = [
       ...variables?.() ?? [],
-      ...buildVariableTree(template ? undefined : { statNames, placeholders, traits, entities }, owner, surface.selfIs ?? 'stat', timingGlobalsOf(surface)),
+      ...buildVariableTree(template ? undefined : { statNames, placeholders, traits, entities, locations }, owner, surface.selfIs ?? 'stat', timingGlobalsOf(surface)),
     ];
+    return surface.readOnly ? readOnlyTree(tree) : tree;
   }, []);
 
+  // Texts the editor reported that the parent has not handed back yet.
+  const echoes = useRef<string[]>([]);
   const { ariaLabel, placeholder, slots } = props;
   useEffect(() => {
     let live = true;
@@ -328,6 +337,7 @@ export function CodeArea(props: CodeAreaProps) {
         placeholders: latest.current.placeholders,
         traits: latest.current.traits?.map((trait) => trait.name),
         entities: latest.current.entities,
+        locations: latest.current.locations,
         lookup: () => latest.current.lookup,
         navigation: () => {
           const navigation = latest.current.navigation;
@@ -338,7 +348,7 @@ export function CodeArea(props: CodeAreaProps) {
             goToUse: (use) => { leaveFullscreen(); navigation.goToUse(use); },
           };
         },
-        onChange: (next) => latest.current.onChange(next),
+        onChange: (next) => { echoes.current.push(next); latest.current.onChange(next); },
         onUpdate,
       });
       setSession(created);
@@ -347,7 +357,18 @@ export function CodeArea(props: CodeAreaProps) {
   }, [ariaLabel, placeholder, slots, onUpdate]);
 
   // The parent stays the single owner of the text: anything it writes lands in the editor here.
-  useEffect(() => { session?.setValue(props.value); }, [session, props.value]);
+  // A render that lags typing hands back an older text of the editor's own; writing it would erase the newer keys.
+  useEffect(() => {
+    const at = echoes.current.indexOf(props.value);
+    if (at >= 0) {
+      const stale = at < echoes.current.length - 1;
+      echoes.current = echoes.current.slice(at + 1);
+      if (stale) return;
+    } else {
+      echoes.current = [];
+    }
+    session?.setValue(props.value);
+  }, [session, props.value]);
   // A second gutter column is worth its width only where there is width to spare; inline, a problem is
   // read by hovering its squiggle.
   useEffect(() => { session?.setLintGutter(morph.mounted); }, [session, morph.mounted]);
@@ -363,6 +384,7 @@ export function CodeArea(props: CodeAreaProps) {
   const traitNames = useMemo(() => props.traits?.map((trait) => trait.name), [props.traits]);
   useEffect(() => { session?.setTraits(traitNames); }, [session, traitNames]);
   useEffect(() => { session?.setEntities(props.entities); }, [session, props.entities]);
+  useEffect(() => { session?.setLocations(props.locations); }, [session, props.locations]);
   const { revealLine, autoFocus } = props;
   useEffect(() => {
     if (session && autoFocus) session.focus();

@@ -2,7 +2,10 @@
 // own active set. A Condition reads the owner it names when that owner holds the target, else global scope
 // for a global target (Q10, Q29).
 
-import type { PersonaRef, RequirementOwner, StatComparison, StatRequirement, Trait, TraitGroup, TraitRequirement, TraitRequirementRow } from '@/types';
+import type {
+  Daypart, PersonaRef, RequirementOwner, StatComparison, StatRequirement, TimeRequirement, Trait, TraitGroup, TraitRequirement, TraitRequirementRow,
+} from '@/types';
+import { DAYPARTS, OPENING_DAYPART, daypartSet } from './gameClock';
 import { defaultPicks, exclusiveSiblings, isAlwaysOn, isHidden, traitOrderIndex } from './traitEffects';
 // The generic tree, not traitTree: that module reads the owner resolver, which reads this one.
 import { buildTree, flattenTree } from './groupTree';
@@ -89,16 +92,24 @@ export interface GateInput {
   active: GateActive;
   /** Absent, every stat Condition is unresolved. */
   stats?: GateStats;
+  /** The story clock's daypart, which a time Condition reads. Absent, the opening hour's: what authoring
+   *  lenses read. */
+  daypart?: Daypart;
   entities: readonly GateEntity[];
   persona: PersonaRef;
   /** Every world trait and group a requirement can name, whether or not a present owner holds it. Absent,
    *  only the owners' items resolve. */
   originals?: { traits: readonly Trait[]; groups: readonly TraitGroup[] };
+  /** Who reads the Condition text. The author reads the persona owner as "Persona"; the player reads the
+   *  played persona's name, which the line marks (Q7, Q11). Absent, the author. */
+  reader?: 'author' | 'player';
 }
 
 /** One Condition's state against the active sets. */
 export interface ConditionState {
   text: string;
+  /** The played persona's name the text opens with, for the You pill on the player's line. */
+  persona?: string;
   holds: boolean;
   unresolved: boolean;
   /** The target is a Hidden trait, or a hidden or inert stat, so player-facing lines leave it out (Q14, Q21). */
@@ -157,11 +168,14 @@ export const requirementOwnerOf = (req: TraitRequirement): RequirementOwner | un
 export const requirementOwnerKey = (owner?: RequirementOwner): string =>
   (owner === undefined ? 'same' : owner.kind === 'you' ? 'you' : `entity:${owner.id}`);
 
+const sameDayparts = (a: TimeRequirement, b: TimeRequirement): boolean => daypartSet(a.dayparts).join() === daypartSet(b.dayparts).join();
+
 /** Whether two requirements add the same gate: the same target under the same owner, both plain or both Not,
- *  and for a stat the same comparison. */
+ *  for a stat the same comparison, and for a time the same dayparts. */
 export const sameRequirement = (a: TraitRequirement, b: TraitRequirement): boolean =>
   a.kind === b.kind && a.id === b.id && requirementOwnerKey(requirementOwnerOf(a)) === requirementOwnerKey(requirementOwnerOf(b)) && !a.not === !b.not
-  && (a.kind !== 'stat' || (b.kind === 'stat' && a.operator === b.operator && a.value === b.value && a.unit === b.unit));
+  && (a.kind !== 'stat' || (b.kind === 'stat' && a.operator === b.operator && a.value === b.value && a.unit === b.unit))
+  && (a.kind !== 'time' || (b.kind === 'time' && sameDayparts(a, b)));
 
 interface Located<T> { owner: GateScopeTree; item: T }
 
@@ -221,6 +235,10 @@ function index(input: GateInput) {
   }
   const entities = new Map(input.entities.map((entity) => [entity.id, entity]));
   const played = playedEntityIds(input.persona, input.entities);
+  // The owner carries the name the player entered under None; the entity list has the authored one.
+  const personaName = input.reader === 'player' && played.length > 0
+    ? owners.get(played[0])?.owner.name || entities.get(played[0])?.name || null
+    : null;
   const stats = input.stats;
   const global = globalItems(input);
   const holds = (ownerId: OwnerId, req: Targeted): boolean => (req.kind === 'stat' ? !!statsIn(stats, ownerId)?.[req.id]
@@ -251,16 +269,20 @@ function index(input: GateInput) {
     return null;
   };
   return {
-    owners, traitNames, groupNames, hiddenTraits, statNames, entities, global, isGlobal, ownerSet, traitsBelow, statOf, persona: input.persona,
+    owners, traitNames, groupNames, hiddenTraits, statNames, entities, global, isGlobal, ownerSet, traitsBelow, statOf, persona: input.persona, personaName,
+    daypart: input.daypart ?? OPENING_DAYPART,
   };
 }
 
 /** A Condition that names a trait, a group or a stat. */
-type Targeted = Exclude<TraitRequirement, { kind: 'playingAs' }>;
+type Targeted = Exclude<TraitRequirement, { kind: 'playingAs' } | TimeRequirement>;
+
+/** A Condition whose target is a trait, a group or a persona: one an active set or the persona decides. */
+type Switched = Exclude<TraitRequirement, StatRequirement | TimeRequirement>;
 
 /** The global traits and groups: the world's own, outside Blueprints. Read from the originals, else from the
  *  global tree. */
-function globalItems(input: Pick<GateInput, 'global' | 'originals'>): { traits: ReadonlySet<string>; groups: ReadonlySet<string> } {
+export function globalItems(input: Pick<GateInput, 'global' | 'originals'>): { traits: ReadonlySet<string>; groups: ReadonlySet<string> } {
   const world = input.originals ?? input.global;
   const groups = world.groups;
   const blueprints = blueprintsSubtreeIds(groups);
@@ -284,7 +306,7 @@ const activeSets = (input: GateInput): ActiveIn => {
 
 /** Whether a Condition's target is on for `trait`. The trait itself and its exclusive siblings in its own tree
  *  never count (Q26); another owner's copy of a sibling does. */
-function targetOn(req: Exclude<TraitRequirement, StatRequirement>, trait: Located<{ id: string }>, activeIn: ActiveIn, idx: Index): boolean {
+function targetOn(req: Switched, trait: Located<{ id: string }>, activeIn: ActiveIn, idx: Index): boolean {
   if (req.kind === 'playingAs') return idx.persona.source === 'world' && idx.persona.entityId === req.id;
   const set = idx.ownerSet(req, trait.owner);
   const rivals = idx.owners.get(trait.owner.id)?.rivals.get(trait.item.id);
@@ -326,6 +348,7 @@ function statHolds(req: StatRequirement, from: GateScopeTree, idx: Index): boole
 /** Whether one Condition holds for `trait` against `activeIn`: its target is on, or off under Not. */
 function requirementHolds(req: TraitRequirement, trait: Located<{ id: string }>, activeIn: ActiveIn, idx: Index): boolean {
   if (req.kind === 'stat') return statHolds(req, trait.owner, idx);
+  if (req.kind === 'time') return req.dayparts.includes(idx.daypart);
   return req.not ? !targetOn(req, trait, activeIn, idx) : targetOn(req, trait, activeIn, idx);
 }
 
@@ -335,14 +358,16 @@ function requirementHolds(req: TraitRequirement, trait: Located<{ id: string }>,
 const growthHolds = (trait: Located<Trait>, activeIn: ActiveIn, idx: Index) => (req: TraitRequirement): boolean =>
   (req.not && req.kind !== 'stat' ? resolves(req, idx) : requirementHolds(req, trait, activeIn, idx));
 
-/** The owner's name as the text reads it, or null when the named entity is gone. */
-function ownerName(owner: RequirementOwner, idx: Index): string | null {
-  if (owner.kind === 'you') return 'You';
-  return idx.entities.get(owner.id)?.name ?? idx.owners.get(owner.id)?.owner.name ?? null;
+/** The owner's name as the reader's text reads it, or null when the named entity is gone. The persona owner
+ *  reads "Persona" to the author and the played persona's name to the player, which `persona` marks. */
+function ownerName(owner: RequirementOwner, idx: Index): { name: string; persona?: string } | null {
+  if (owner.kind === 'you') return idx.personaName ? { name: idx.personaName, persona: idx.personaName } : { name: 'Persona' };
+  const name = idx.entities.get(owner.id)?.name ?? idx.owners.get(owner.id)?.owner.name;
+  return name === undefined ? null : { name };
 }
 
 /** Whether a Condition's target, and its named owner, still exist. A global target's owner is inert (Q10). */
-function resolves(req: Exclude<TraitRequirement, StatRequirement>, idx: Index): boolean {
+function resolves(req: Switched, idx: Index): boolean {
   if (req.kind === 'playingAs') return idx.entities.has(req.id);
   const target = req.kind === 'trait' ? idx.traitNames.has(req.id) : idx.groupNames.has(req.id);
   return target && (!req.owner || idx.isGlobal(req) || ownerName(req.owner, idx) !== null);
@@ -351,8 +376,21 @@ function resolves(req: Exclude<TraitRequirement, StatRequirement>, idx: Index): 
 /** What follows the stat's name in a stat Condition's text: the operator, then the number, with `%` under percent. */
 export const statTail = (req: StatRequirement): string => `${req.operator} ${req.value}${req.unit === 'percent' ? '%' : ''}`;
 
-/** "Paladin", "not any Class", "Ash: not Tamed" (Q11). */
-function requirementText(req: TraitRequirement, idx: Index): { text: string; unresolved: boolean } {
+const DAYPARTS_OR = new Intl.ListFormat('en', { type: 'disjunction' });
+
+/** A time Condition's dayparts in words, from the first one after a daypart it leaves out, so a stretch across
+ *  midnight reads in order: "evening or night". */
+export function timeText(req: TimeRequirement): string {
+  if (!req.dayparts.length) return 'no time of day';
+  const on = (i: number) => req.dayparts.includes(DAYPARTS[(i + DAYPARTS.length) % DAYPARTS.length]);
+  const start = Math.max(0, DAYPARTS.findIndex((_, i) => on(i) && !on(i - 1)));
+  return DAYPARTS_OR.format([...DAYPARTS.slice(start), ...DAYPARTS.slice(0, start)].filter((d) => req.dayparts.includes(d)));
+}
+
+/** "Paladin", "not any Class", "Ash: not Tamed" (Q11). `persona` is the played persona's name the text opens
+ *  with, for the player's line to mark. */
+function requirementText(req: TraitRequirement, idx: Index): { text: string; unresolved: boolean; persona?: string } {
+  if (req.kind === 'time') return { text: timeText(req), unresolved: !req.dayparts.length };
   const not = req.not ? 'not ' : '';
   if (req.kind === 'playingAs') {
     const entity = idx.entities.get(req.id);
@@ -374,9 +412,9 @@ function requirementText(req: TraitRequirement, idx: Index): { text: string; unr
       };
   const target = { ...named, text: `${not}${named.text}` };
   if (!req.owner) return target;
-  const name = ownerName(req.owner, idx);
-  return name
-    ? { text: `${name}: ${target.text}`, unresolved: target.unresolved }
+  const owner = ownerName(req.owner, idx);
+  return owner
+    ? { text: `${owner.name}: ${target.text}`, unresolved: target.unresolved, persona: owner.persona }
     : {
       text: `${req.owner.kind === 'entity' && req.owner.name ? req.owner.name : 'a missing entity'}: ${target.text}`,
       unresolved: target.unresolved || !idx.isGlobal(req),
@@ -391,6 +429,8 @@ export function conditionTexts(input: Omit<GateInput, 'active' | 'persona'>): (r
 
 /** `req` with its Not flag flipped. */
 export const flipped = (req: TraitRequirement): TraitRequirement => {
+  // A time Condition has no Not: its complement is the other dayparts.
+  if (req.kind === 'time') return { kind: 'time', dayparts: DAYPARTS.filter((d) => !req.dayparts.includes(d)) };
   const { not, ...plain } = req;
   // The rest of a union loses its discriminant link; `plain` keeps every field of `req`'s own kind.
   return (not ? plain : { ...plain, not: true }) as TraitRequirement;
@@ -401,8 +441,9 @@ const COMPLEMENT: Record<StatComparison, StatComparison> = { '>': '<=', '<=': '>
 /** The operator a stat Condition holds under once its Not is folded in. */
 const effectiveOperator = (req: StatRequirement): StatComparison => (req.not ? COMPLEMENT[req.operator] : req.operator);
 
-/** Whether exactly one of the two Conditions holds in every state: a Condition and its Not, or two stat
- *  Conditions on one reading whose operators split the number line (`> n` and `<= n`, `= n` and `≠ n`). */
+/** Whether exactly one of the two Conditions holds in every state: a Condition and its Not, two time
+ *  Conditions that split the day between them, or two stat Conditions on one reading whose operators split the
+ *  number line (`> n` and `<= n`, `= n` and `≠ n`). */
 export const complementary = (a: TraitRequirement, b: TraitRequirement): boolean => {
   if (sameRequirement(a, flipped(b))) return true;
   if (a.kind !== 'stat' || b.kind !== 'stat') return false;
@@ -433,7 +474,7 @@ function rowStatesOf(rows: readonly TraitRequirementRow[], host: Located<{ id: s
       const stat = req.kind === 'stat' ? idx.statOf(req, host.owner) : null;
       const unresolved = named.unresolved || (req.kind === 'stat' && (!stat || !!stat.inert));
       const hidden = req.kind === 'trait' ? idx.hiddenTraits.has(req.id) : !!stat && (!!stat.hidden || !!stat.inert);
-      return { text: named.text, unresolved, hidden, holds: !unresolved && requirementHolds(req, host, activeIn, idx) };
+      return { text: named.text, persona: named.persona, unresolved, hidden, holds: !unresolved && requirementHolds(req, host, activeIn, idx) };
     });
     return { holds: conditions.every((c) => c.holds), conditions };
   });
@@ -479,7 +520,7 @@ const byRank = <T extends Located<Trait>>(items: readonly T[], rank: ReadonlyMap
 
 /** The traits a Condition on `from` names, in the owners it reads, either polarity. */
 function targetsOf(req: TraitRequirement, from: GateScopeTree, idx: Index): Located<Trait>[] {
-  if (req.kind === 'playingAs' || req.kind === 'stat') return [];
+  if (req.kind === 'playingAs' || req.kind === 'stat' || req.kind === 'time') return [];
   const set = idx.ownerSet(req, from);
   const ids = req.kind === 'trait' ? [req.id] : [...new Set(idx.traitsBelow(set, req.id))];
   return [...set].flatMap((ownerId) => ids.flatMap((id) => idx.owners.get(ownerId)?.traits.get(id) ?? []));
@@ -749,8 +790,9 @@ export function neverUnlockable(input: Omit<GateInput, 'active'>): GateTraitRef[
   const personas = new Set(input.entities.filter((e) => e.persona).map((e) => e.id));
   const open = new Set<string>();
   const activeIn: ActiveIn = (ownerId, id) => open.has(key(ownerId, id));
-  // A stat can move either way in play, so its Condition counts as holding (Q20).
+  // A stat can move either way in play, so its Condition counts as holding (Q20); the clock reaches any daypart.
   const canHold = (trait: Located<Trait>) => (req: TraitRequirement) => (req.kind === 'stat' ? true
+    : req.kind === 'time' ? req.dayparts.length > 0
     : req.kind === 'playingAs' && !req.not ? personas.has(req.id)
       : growthHolds(trait, activeIn, idx)(req));
   const all = [...idx.owners.values()].flatMap((o) => [...o.traits.values()]);
@@ -859,15 +901,18 @@ export interface RowRef extends GateTraitRef {
 
 /**
  * Every row that can never hold: it names one target both plain and Not, or a trait plain and a group above it
- * Not, under the same owner (Q14, Q34). The group reads the owner's own tree, as the gate does.
+ * Not, under the same owner (Q14, Q34), or two time Conditions with no daypart in common. The group reads the
+ * owner's own tree, as the gate does.
  */
 export function deadRows(input: Omit<GateInput, 'active'>): RowRef[] {
   const idx = index({ ...input, active: NO_ACTIVE });
   // Two Conditions share an owner set when they read the same owners, however each names them.
   const sameOwners = (a: ReadonlySet<OwnerId>, b: ReadonlySet<OwnerId>) => a.size === b.size && [...a].every((id) => b.has(id));
-  // A stat Condition is satisfiable both ways, so it clashes with nothing (Q20).
+  // A stat Condition is satisfiable both ways, so it clashes with nothing (Q20). Two time Conditions clash
+  // when they share no daypart.
   const clash = (owner: GateScopeTree) => (plain: TraitRequirement, not: TraitRequirement): boolean => {
-    if (plain.not || !not.not || plain.kind === 'stat' || not.kind === 'stat') return false;
+    if (plain.kind === 'time' && not.kind === 'time') return !plain.dayparts.some((d) => not.dayparts.includes(d));
+    if (plain.not || !not.not || plain.kind === 'stat' || not.kind === 'stat' || plain.kind === 'time') return false;
     if (plain.kind === 'playingAs' || not.kind === 'playingAs') return plain.kind === not.kind && plain.id === not.id;
     const set = idx.ownerSet(plain, owner);
     if (!sameOwners(set, idx.ownerSet(not, owner))) return false;
@@ -941,7 +986,7 @@ function opensTogether(targets: Located<Trait>[], idx: Index, stuck: ReadonlySet
   const pending = new Set<string>();
   const clashes = (t: Located<Trait>) =>
     [...(idx.owners.get(t.owner.id)?.rivals.get(t.item.id) ?? [])].some((id) => picked.has(key(t.owner.id, id)));
-  const satisfiers = (req: Exclude<TraitRequirement, { kind: 'playingAs' } | StatRequirement>, t: Located<Trait>): Located<Trait>[] => {
+  const satisfiers = (req: Targeted, t: Located<Trait>): Located<Trait>[] => {
     const set = idx.ownerSet(req, t.owner);
     const rivals = idx.owners.get(t.owner.id)?.rivals.get(t.item.id);
     const ids = req.kind === 'trait' ? [req.id] : [...new Set(idx.traitsBelow(set, req.id))];
@@ -963,8 +1008,8 @@ function opensTogether(targets: Located<Trait>[], idx: Index, stuck: ReadonlySet
       return false;
     };
     // Each Condition of a row opens in turn before the next; the trait itself joins after the last. A Not
-    // Condition and a stat Condition count as met, as in `neverUnlockable`.
-    const meet = (req: TraitRequirement, then: () => boolean) => (req.not || req.kind === 'stat' ? then() : req.kind === 'playingAs'
+    // Condition, a stat Condition and a time Condition count as met, as in `neverUnlockable`.
+    const meet = (req: TraitRequirement, then: () => boolean) => (req.not || req.kind === 'stat' || req.kind === 'time' ? then() : req.kind === 'playingAs'
       ? idx.persona.source === 'world' && idx.persona.entityId === req.id && then()
       : satisfiers(req, t).some((s) => open(s, then)));
     const rows = t.item.requires ?? [];
@@ -1002,7 +1047,7 @@ export interface RequirementOptions {
 
 /** `requirement` scoped to `owner`; the same owner when `owner` is absent. */
 export const withRequirementOwner = (requirement: TraitRequirement, owner?: RequirementOwner): TraitRequirement =>
-  (requirement.kind === 'playingAs' || !owner ? requirement : { ...requirement, owner });
+  (requirement.kind === 'playingAs' || requirement.kind === 'time' || !owner ? requirement : { ...requirement, owner });
 
 /**
  * Every requirement an author can give `traitId`, each target once, in tree order per owner. The trait
@@ -1032,7 +1077,7 @@ export function requirementOptions(input: Omit<GateInput, 'active' | 'persona'>,
   };
   // A global item reads global scope whoever is named (Q10), so it offers no owner.
   const ownersOf = (id: string, kind: 'trait' | 'group'): RequirementOwnerOption[] => ((kind === 'trait' ? idx.global.traits : idx.global.groups).has(id) ? [] : [
-    { owner: { kind: 'you' }, name: 'You' },
+    { owner: { kind: 'you' }, name: 'Persona' },
     ...input.owners
       .filter((o) => (kind === 'trait' ? o.traits : o.groups).some((item) => item.id === id))
       .map((o): RequirementOwnerOption => ({ owner: { kind: 'entity', id: o.id, name: o.name }, name: o.name })),

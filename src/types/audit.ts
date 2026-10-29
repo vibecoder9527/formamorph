@@ -14,9 +14,12 @@ export const AUDIT_ACTIONS = [
   'quarantine_updated',
   'quarantine_released',
   'quarantine_expired',
+  'listing_pinned',
+  'listing_unpinned',
   'avatar_removed',
   'role_changed',
   'feedback_edited',
+  'feedback_answer_set',
   'event_created',
   'event_edited',
   'event_cancelled',
@@ -28,10 +31,24 @@ export const AUDIT_ACTIONS = [
   'report_dismissed',
   'like_removed',
   'likes_cleared',
+  'anonymous_likes_removed',
+  'anonymous_likes_cleared',
   'account_deletion_requested',
   'account_deletion_canceled',
   'account_deleted',
+  'username_changed',
   'signals_viewed',
+  'listing_approved',
+  'listing_rejected',
+  'update_approved',
+  'update_rejected',
+  'listing_auto_approved',
+  'author_trusted',
+  'author_untrusted',
+  'listing_supporter_only',
+  'listing_supporter_only_cleared',
+  'supporter_access_revoked',
+  'supporter_access_restored',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -57,7 +74,7 @@ export interface AuditEntry {
   targetUser: { id: string | null; username: string | null } | null;
   /** What it was done to: a kind (`world`, `entity`, `dictionary`, `comment`, `account`, `bug`,
    *  `suggestion`) and its name. */
-  target: { kind: string | null; name: string | null } | null;
+  target: { kind: string | null; name: string | null; id?: string | null } | null;
   /** Enough of what was removed to know what it was; never the whole of it. */
   snippet: string | null;
   createdAt: string;

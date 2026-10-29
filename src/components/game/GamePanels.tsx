@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { useRequestKey } from '@/lib/surface/useRequestKey';
 import { useGameplay } from '@/contexts/GameplayContext';
 import { useGameplayText, setGameplayText } from '@/lib/gameplayTextStore';
 import { revealActive, revealAnimName, revealVars } from '@/lib/narrationRevealConfig';
@@ -39,8 +40,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { TokenAutocomplete } from "@/components/TokenAutocomplete";
 import { COMMON_LANGUAGES } from "@/lib/languages";
-import { Send, RefreshCw, Languages, Loader2, Headphones, Square, ChevronUp, ChevronDown, X, MoreHorizontal, NotebookPen, Brain, ScrollText, type LucideIcon } from "lucide-react";
-import { AvatarIcon, EntitiesIcon, LocationIcon, StatIcon, TraitIcon } from '@/lib/elementIcons';
+import { Send, RefreshCw, Languages, Loader2, Headphones, Square, ChevronUp, ChevronDown, X, MoreHorizontal, NotebookPen, Brain, ScrollText } from "lucide-react";
+import { AvatarIcon, EntitiesIcon, ItemIcon, LocationIcon, StatIcon, TraitIcon } from '@/lib/elementIcons';
+import { InventoryTab } from './InventoryTab';
+import { PanelTab, PanelTabList } from './PanelTabList';
+import { useInventoryPanel, type InventoryPanelSettle } from './useInventoryPanel';
 import { targetAttribute } from '@/lib/surface/surfaceTargets';
 import { pageTurnId, withoutAttachment, setTurnAttachments, turnAttachments } from '@/lib/actionAttachments';
 import { useAttachmentIntake } from '@/lib/useAttachmentIntake';
@@ -52,7 +56,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { CONTINUE_CHOICE } from "@/lib/choices";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tip } from "@/components/ui/tooltip";
@@ -66,13 +70,14 @@ import TtsPlaybackBar from './TtsPlaybackBar';
 import { MemoryPanel } from './MemoryPanel';
 import { SceneImagePanel } from './SceneImagePanel';
 import { ScenePlate } from './ScenePlate';
-import { GAME_LEFT_PANEL_TABS } from './leftPanelTabs';
+import { GAME_LEFT_PANEL_TABS, GAME_RIGHT_PANEL_TABS } from './panelTabs';
 import { useDevRoute } from '@/lib/devRouter';
 import type { TTSProgress } from './TTSModal';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { HelpButton } from '../HelpButton';
 import { EditTextModal } from '../modals/EditTextModal';
-import type { Entity, PersonaRef, SceneEntity, Stat, StatGroup, Trait } from '@/types';
+import { visibleItemImage } from '@/lib/imageVisibility';
+import type { Entity, ItemCopy, PersonaRef, SceneEntity, Stat, StatGroup, Trait } from '@/types';
 import { gateStates } from '@/lib/traitGates';
 import { worldEntitiesOf } from '@/lib/persona';
 import type { TraitCascade } from './SetupTraitList';
@@ -107,16 +112,6 @@ type EntityViewSubject = { kind: 'entity'; entity: Entity } | { kind: 'played' }
 /** The played side's visual source, which shows the played side's Avatar and nothing else. */
 const PLAYED_SIDE: Pick<Entity, 'id' | 'name'> = { id: '__you', name: 'You' };
 
-/** One side-panel tab: an icon, and the label where the panel is wide enough to hold it. */
-const PanelTab = ({ value, icon: Icon, label }: { value: string; icon: LucideIcon; label: string }) => (
-  // The label's own text names the tab; the tip shows it where the label is hidden.
-  <Tip tip={label} labelsChild={false}>
-    <TabsTrigger value={value} className="min-w-0 gap-1.5 px-1">
-      <Icon className="h-4 w-4 shrink-0" aria-hidden />
-      <span className="sr-only truncate max-md:not-sr-only xl:not-sr-only">{label}</span>
-    </TabsTrigger>
-  </Tip>
-);
 
 export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrationPrompt, requestedTab, requestKey }: {
   entities: Entity[];
@@ -183,7 +178,8 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
   const isMobile = useIsMobile();
   const [showEntityView, setShowEntityView] = React.useState(true);
   const [leftTab, setLeftTab] = React.useState(requestedTab ?? (isMobile ? "model" : "notes"));
-  React.useEffect(() => { if (requestedTab) setLeftTab(requestedTab); }, [requestedTab, requestKey]);
+  const landingKey = useRequestKey(requestKey);
+  React.useEffect(() => { if (requestedTab) setLeftTab(requestedTab); }, [requestedTab, landingKey]);
 
   // The shared pick when it has something to show, else the played entity, else the first showable scene
   // entity. The stat panel's (None) and a pick with nothing to show both leave the view on that fallback.
@@ -288,13 +284,13 @@ export const LeftPanel = ({ entities, onEntityClick, onRegenerateMemory, narrati
       )}
 
       <Tabs surfaceTabs="gameViewer" value={leftTab} onValueChange={setLeftTab} className="w-full flex-grow flex flex-col overflow-hidden">
-        <TabsList className="grid w-full flex-shrink-0 auto-cols-fr grid-flow-col">
+        <PanelTabList>
           {isMobile && <PanelTab value="model" icon={AvatarIcon} label="View" />}
           <PanelTab value="entities" icon={EntitiesIcon} label="Entities" />
           <PanelTab value="notes" icon={NotebookPen} label="Notes" />
           <PanelTab value="memory" icon={Brain} label="Memory" />
           <PanelTab value="logs" icon={ScrollText} label={`Logs (${logEntries.reduce((sum, entry) => sum + 1 + (entry.repeat || 0), 0)})`} />
-        </TabsList>
+        </PanelTabList>
         {isMobile && (
           <TabsContent value="model" className="flex-grow overflow-hidden min-h-[100px]">
             {entityView}
@@ -1216,9 +1212,11 @@ const entityItems = (options: StatPanelOption[]) =>
 
 export const RightPanel = ({
   onLocationClick, onToggleTrait, onPersonaChange, traitCascade, onDismissTraitCascade, onRegenerateStats, sceneImageJob,
-  language, setLanguage,
+  language, setLanguage, inventorySettle,
 }: {
   onLocationClick: () => void;
+  /** The live game's equip check and inventory settle for a panel write. Absent ⇒ the operations alone land. */
+  inventorySettle?: InventoryPanelSettle;
   /** Switch an owner's trait on or off mid-play; owned by GameViewer, which reverses its stat changes. */
   onToggleTrait: (traitId: string, enabled: boolean, ownerId: OwnerId) => void;
   /** Settle the traits after the player picks another persona. `name` is that persona's; null for None. */
@@ -1259,7 +1257,9 @@ export const RightPanel = ({
     statDeltas,
     personaRef,
     setSelectedEntityId,
+    itemCopies,
   } = useGameplay();
+  const worldItems = useGameDataOptional()?.items;
   const {
     locations, connections, traits, traitGroups, viewStats: globalStats, currentLocation, resolveTraitText, resolveEntityText,
     entities: cast, persona, traitEntities, traitLibrary,
@@ -1267,6 +1267,12 @@ export const RightPanel = ({
   // In Chat a scroll moves the viewed turn, so the stat rows snap to it.
   const snapStats = useStatsSnap({ page: currentPage, totalPages }, useNarrationLayout() === 'chat');
   const resolvePH = usePlaceholderResolver();
+  const devRoute = useDevRoute();
+  React.useEffect(() => {
+    if (!devRoute?.modal && devRoute?.tab && (GAME_RIGHT_PANEL_TABS as readonly string[]).includes(devRoute.tab)) {
+      setActiveTab(devRoute.tab);
+    }
+  }, [devRoute?.modal, devRoute?.tab, setActiveTab]);
   const [isEditMode, setIsEditMode] = React.useState(false);
   // The traits actually in force on the viewed turn, and the stats they leave live. A switched-off trait
   // keeps its row (so it can be switched back on) but stops contributing anything.
@@ -1318,8 +1324,9 @@ export const RightPanel = ({
   const daypart = daypartAt(gameTime, calendar);
   const gateWorld = React.useMemo<TraitWorld>(() => ({
     traits, groups: traitGroups, entities: worldEntitiesOf(cast, persona), persona: personaRef ?? { source: 'none' }, daypart,
+    ...(worldItems ? { items: worldItems } : {}), itemCopies,
     ...inPlayOwners(ownerWorld, personaRef, traitLibrary),
-  }), [traits, traitGroups, cast, persona, personaRef, daypart, ownerWorld, traitLibrary]);
+  }), [traits, traitGroups, cast, persona, personaRef, daypart, worldItems, itemCopies, ownerWorld, traitLibrary]);
   const viewTraitState = React.useMemo(
     () => ({ traits: globalTraits, disabledTraitIds: viewDisabledTraitIds, ownedTraits: viewOwnedTraits }),
     [globalTraits, viewDisabledTraitIds, viewOwnedTraits],
@@ -1330,15 +1337,24 @@ export const RightPanel = ({
     [globalStats, viewTraitState, viewEntityStats, gateWorld],
   );
   // Stat Conditions read the viewed turn's stats.
-  const traitGates = React.useMemo(
-    () => gateStates(traitGateInput({ ...viewTraitState, stats: globalStats, entityStats: viewEntityStats }, gateWorld)),
+  const gateInput = React.useMemo(
+    () => traitGateInput({ ...viewTraitState, stats: globalStats, entityStats: viewEntityStats }, gateWorld),
     [viewTraitState, globalStats, viewEntityStats, gateWorld],
   );
+  const traitGates = React.useMemo(() => gateStates(gateInput), [gateInput]);
   // Each entity's own traits switch its stats on and off, on the viewed turn.
   const entityInForce = React.useCallback(
     (ownerId: string) => entityStatTraitsInForce(viewOwnedTraits, gateWorld, ownerId),
     [viewOwnedTraits, gateWorld],
   );
+  const itemImageOf = React.useCallback((copy: ItemCopy) => {
+    const ref = copy.item;
+    const item = ref.kind === 'item' ? worldItems?.find((i) => i.id === ref.itemId) : undefined;
+    return item && visibleItemImage(item, copy, gateInput);
+  }, [worldItems, gateInput]);
+  const inventory = useInventoryPanel(inventorySettle, itemImageOf);
+  // A world without items keeps its three tabs.
+  const hasInventory = inventory.items.length > 0 || inventory.copies.length > 0;
   const {
     options: entityOptions, shown: shownEntity, section: entitySection, players: playedOwners, showPicker: entitiesShowStats,
   } = useStatPanelEntity(entityInForce);
@@ -1358,7 +1374,7 @@ export const RightPanel = ({
   // stat the player never sees can't put the line there for the ones they do.
   // A world with no stat the player can see gets no Stats tab; the panel then opens on Traits.
   const hasShownStats = globalStats.some((stat) => stat.hidden !== true) || ownersShowStats;
-  const shownTab = !hasShownStats && activeTab === 'stats' ? 'traits' : activeTab;
+  const shownTab = (!hasShownStats && activeTab === 'stats') || (!hasInventory && activeTab === 'inventory') ? 'traits' : activeTab;
   const anyDescriptors = visibleStats.some(({ stat }) => (stat.descriptors?.length ?? 0) > 0);
   // The author's groups decide where each row sits, so a save made before a regrouping follows it.
   const playerLayout = statPanelLayout(
@@ -1416,11 +1432,12 @@ export const RightPanel = ({
       </div>
 
       <Tabs value={shownTab} onValueChange={setActiveTab} className="w-full flex-grow flex flex-col overflow-hidden">
-        <TabsList className="grid w-full flex-shrink-0 auto-cols-fr grid-flow-col">
+        <PanelTabList>
           {hasShownStats && <PanelTab value="stats" icon={StatIcon} label="Stats" />}
           <PanelTab value="traits" icon={TraitIcon} label="Traits" />
+          {hasInventory && <PanelTab value="inventory" icon={ItemIcon} label="Inventory" />}
           <PanelTab value="location" icon={LocationIcon} label="Location" />
-        </TabsList>
+        </PanelTabList>
         {/* `flex` is state-scoped for the same reason as on the Entities tab. */}
         <TabsContent value="stats" className="flex-grow overflow-hidden flex-col data-[state=active]:flex">
           {entitiesShowStats && (
@@ -1534,6 +1551,11 @@ export const RightPanel = ({
             onDismissCascade={onDismissTraitCascade}
           />
         </TabsContent>
+        {hasInventory && (
+          <TabsContent value="inventory" className="flex-grow overflow-hidden">
+            <InventoryTab {...inventory} />
+          </TabsContent>
+        )}
         <TabsContent value="location" className="flex-grow overflow-hidden">
           <ScrollArea className="h-[calc(100%-1rem)]">
             <LocationTabBody

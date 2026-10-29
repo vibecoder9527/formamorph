@@ -3,11 +3,26 @@ import { sanitizeTag, collectSanitizedTags } from "@/lib/tagUtils";
 import { type DownloadState } from "@/lib/downloadState";
 import { toEpoch } from "@/lib/thumbnailCache";
 import { likesForSort } from "@/lib/likeCount";
+import { comparePinned } from "@/lib/pinning";
 import { kindOf, listingModels } from "@/lib/catalogKinds";
 import { BROWSE_TABS, catalogKindOfTab, type BrowseTab } from "@/lib/browseTabs";
-import { asStatusFacet, matchesStatusFacets, type StatusFacet } from "@/lib/communityStatusFacets";
+import { asStatusFacet, isViewersListing, matchesStatusFacets, type StatusFacet } from "@/lib/communityStatusFacets";
 import { extractFilterPrefixes } from "@/lib/filterPrefixes";
+import { awaitsFirstReview, awaitsReview, pendingFaceOf, reviewQueuedTime } from "@/lib/listingModeration";
+import { listingIdOf } from "@/lib/reviewRows";
 import { type WorldRecord } from "@/components/WorldDetails";
+
+/**
+ * How the pipeline treats listings that await review: `none` keeps them in their normal slot, `pin` lifts
+ * them into the pinned group, and `playerView` drops new and resubmitted ones except the viewer's own.
+ */
+export type ReviewPinning = 'none' | 'pin' | 'playerView';
+
+const NO_PINNED: WorldRecord[] = [];
+
+/** Oldest-queued first, then id, whatever the browser's sort. */
+const byQueueTime = (a: WorldRecord, b: WorldRecord): number =>
+  reviewQueuedTime(a) - reviewQueuedTime(b) || listingIdOf(a).localeCompare(listingIdOf(b));
 
 const DEFAULT_PAGE_SIZE = 12;
 const ROWS_PER_PAGE = 3; // the grid shows this many full rows per page…
@@ -112,15 +127,24 @@ function readStoredFilters(storageKey: string, defaultSortField: string): Record
  * `order` replaces the sort stage for a tab whose order is not the reader's to choose — the contest tab,
  * whose entries are shuffled until results are announced and stand by likes after. The filters still apply;
  * only what happens after them changes.
+ *
+ * `review` splits listings that await review out of the paged rows. Pinned rows pass the same filters,
+ * show on page 1 only, and do not count toward the page size.
  */
+export interface CommunityBrowserFilterOptions {
+  tab?: BrowseTab;
+  viewerId?: string;
+  /** Replaces the sort, for a list with its own order. */
+  order?: (list: WorldRecord[]) => WorldRecord[];
+  preferences?: CommunityFilterPreferences;
+  review?: ReviewPinning;
+}
+
 export function useCommunityBrowserFilters(
   remoteWorlds: WorldRecord[],
   downloadStateOf: (record: WorldRecord) => DownloadState,
   open: boolean,
-  tab: BrowseTab = 'world',
-  viewerId?: string,
-  order?: (list: WorldRecord[]) => WorldRecord[],
-  preferences?: CommunityFilterPreferences,
+  { tab = 'world', viewerId, order, preferences, review = 'none' }: CommunityBrowserFilterOptions = {},
 ) {
   const storageKey = preferences?.storageKey ?? FILTERS_KEY;
   const defaultSortField = preferences?.defaultSortField ?? 'updated_at';
@@ -322,7 +346,7 @@ export function useCommunityBrowserFilters(
   // Every include filter must hold — status facets stack with each other and with author and tag alike.
   // With "updates first" on, listings with an available update are floated to the front, each group then
   // ordered by the chosen sort field/direction.
-  const filteredRemoteWorlds = useMemo(() => {
+  const { pinnedRows, filteredRemoteWorlds } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const authors = authorFilter.map((a) => a.toLowerCase());
     const tags = tagFilter.map((t) => sanitizeTag(t)).filter(Boolean);
@@ -332,7 +356,9 @@ export function useCommunityBrowserFilters(
       if (hiddenWorldIds.includes(id)) return false;
       if ((world.tags || []).some((t: string) => hiddenTags.includes(sanitizeTag(t)))) return false;
       if (hiddenAuthors.some((a) => a.toLowerCase() === (world.author?.username || '').toLowerCase())) return false;
-      if (q && !`${world.name || ''} ${world.description || ''}`.toLowerCase().includes(q)) return false;
+      // A pinned update shows its pending name, so search finds that name too.
+      const pendingName = pendingFaceOf(world, review === 'pin')?.name;
+      if (q && !`${world.name || ''} ${pendingName || ''} ${world.description || ''}`.toLowerCase().includes(q)) return false;
       if (authors.length && !authors.includes((world.author?.username || '').toLowerCase())) return false;
       if (tags.length) {
         const worldTags = new Set((world.tags || []).map((t: string) => sanitizeTag(t)).filter(Boolean));
@@ -348,9 +374,21 @@ export function useCommunityBrowserFilters(
       }
       return true;
     });
-    if (order) return order(list);
+
+    let pinned = NO_PINNED;
+    let rows = list;
+    if (review === 'pin') {
+      pinned = list.filter(awaitsReview).sort(byQueueTime);
+      rows = list.filter((world) => !awaitsReview(world));
+    } else if (review === 'playerView') {
+      rows = list.filter((world) => !awaitsFirstReview(world) || isViewersListing(world, viewerId));
+    }
+
+    if (order) return { pinnedRows: pinned, filteredRemoteWorlds: order(rows) };
     const dir = sortOrder === 'asc' ? 1 : -1;
-    return [...list].sort((a, b) => {
+    const sorted = [...rows].sort((a, b) => {
+      const pinOrder = comparePinned(a, b); // pins lead under every sort, as on the server
+      if (pinOrder !== 0) return pinOrder;
       if (sortUpdatesFirst) {
         const au = downloadStateOf(a) === 'update' ? 1 : 0;
         const bu = downloadStateOf(b) === 'update' ? 1 : 0;
@@ -360,7 +398,9 @@ export function useCommunityBrowserFilters(
       const bv = sortValue(b, sortField);
       return (av - bv) * dir;
     });
-  }, [kindWorlds, searchQuery, authorFilter, tagFilter, tagMode, modelFilter, statusFilter, viewerId, hiddenWorldIds, hiddenTags, hiddenAuthors, sortField, sortOrder, sortUpdatesFirst, downloadStateOf, order]);
+
+    return { pinnedRows: pinned, filteredRemoteWorlds: sorted };
+  }, [kindWorlds, searchQuery, authorFilter, tagFilter, tagMode, modelFilter, statusFilter, viewerId, hiddenWorldIds, hiddenTags, hiddenAuthors, sortField, sortOrder, sortUpdatesFirst, downloadStateOf, order, review]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRemoteWorlds.length / pageSize));
   // Memoized: the browser defers this list, and a fresh array each render would never settle.
@@ -368,6 +408,7 @@ export function useCommunityBrowserFilters(
     () => filteredRemoteWorlds.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [filteredRemoteWorlds, currentPage, pageSize],
   );
+  const pinnedRemoteWorlds = currentPage === 1 ? pinnedRows : NO_PINNED;
 
   /** How many narrowings are in force on this tab — what the mobile "Filters" badge counts. Hides are
    *  included: an empty-looking grid is as often a hide as a filter. */
@@ -392,7 +433,8 @@ export function useCommunityBrowserFilters(
 
   // Reset to page 1 when the result set changes; clamp if hiding shrinks it below the current page.
   // `kind` included: switching tabs shortens the list, so a page-5 view would otherwise land on nothing.
-  useEffect(() => { setCurrentPage(1); }, [searchQuery, authorFilter, tagFilter, tagMode, modelFilter, statusFilter, sortField, sortOrder, kind]);
+  // `review` included: turning Show Pending on from a later page would leave the pinned group out of sight.
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, authorFilter, tagFilter, tagMode, modelFilter, statusFilter, sortField, sortOrder, kind, review]);
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
 
   return {
@@ -412,6 +454,6 @@ export function useCommunityBrowserFilters(
     setHiddenTagsList, setHiddenAuthorsList,
     resetHiddenWorlds, unhideWorld, unhideTag, unhideAuthor, hiddenWorldName,
     allAuthors, allTags, allModels,
-    filteredRemoteWorlds, totalPages, pagedRemoteWorlds,
+    filteredRemoteWorlds, totalPages, pagedRemoteWorlds, pinnedRemoteWorlds,
   };
 }

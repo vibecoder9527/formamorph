@@ -141,10 +141,18 @@ describe('fetchComfyMeta', () => {
   });
 
   it('throws when the server responds with an error', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403 } as Response)));
-    await expect(fetchComfyMeta('http://127.0.0.1:8188')).rejects.toThrow(/403/);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 } as Response)));
+    await expect(fetchComfyMeta('http://127.0.0.1:8188')).rejects.toThrow(/500/);
+  });
+
+  it('points at the API Token when the server refuses the request', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => auth403()));
+    await expect(fetchComfyMeta('http://127.0.0.1:8188')).rejects.toThrow(/API Token/);
   });
 });
+
+// An auth extension or proxy turning down the token.
+const auth403 = () => ({ ok: false, status: 403, statusText: 'Forbidden', text: async () => '{"error":"invalid token"}' } as Response);
 
 // The /prompt 400 body ComfyUI sends for a checkpoint that isn't installed (shape from execution.py).
 const missingCheckpointRejection = {
@@ -278,6 +286,23 @@ describe('comfyuiProvider', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) } as Response)));
     const error = await comfyuiProvider({ ...params, model: '' }, { endpointUrl: 'http://127.0.0.1:8188', apiToken: '' }).catch((e: unknown) => e);
     expect((error as Error).message).toBe('ComfyUI could not list its checkpoints: HTTP 500');
+  });
+
+  it('points at the API Token when the server refuses the checkpoint lookup', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => auth403()));
+    const error = await comfyuiProvider({ ...params, model: '' }, { endpointUrl: 'http://127.0.0.1:8188', apiToken: '' }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DetailedError);
+    expect((error as DetailedError).message).toMatch(/API Token/);
+    expect((error as DetailedError).details).toContain('Request: GET http://127.0.0.1:8188/object_info/CheckpointLoaderSimple');
+  });
+
+  it('points at the API Token when the server refuses the workflow', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => auth403()));
+    const error = await comfyuiProvider(params, { endpointUrl: 'http://127.0.0.1:8188', apiToken: '' }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DetailedError);
+    expect((error as DetailedError).message).toMatch(/API Token/);
+    expect((error as DetailedError).details).toContain('Request: POST http://127.0.0.1:8188/prompt');
+    expect((error as DetailedError).details).toContain('invalid token');
   });
 
   it('says so when Model is empty and the server has no checkpoints', async () => {

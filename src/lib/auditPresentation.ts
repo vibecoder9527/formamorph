@@ -20,6 +20,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   avatar_removed: 'Image removed',
   role_changed: 'Role changed',
   feedback_edited: 'Feedback edited',
+  feedback_answer_set: 'Answer set',
   event_created: 'Event scheduled',
   event_edited: 'Event edited',
   event_cancelled: 'Event canceled',
@@ -35,6 +36,22 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   account_deletion_canceled: 'Deletion canceled',
   account_deleted: 'Account deleted',
   signals_viewed: 'Linked accounts viewed',
+  listing_approved: 'Approved',
+  listing_rejected: 'Rejected',
+  update_approved: 'Update approved',
+  update_rejected: 'Update rejected',
+  listing_auto_approved: 'Auto-approved',
+  author_trusted: 'Trusted',
+  author_untrusted: 'Trust removed',
+  listing_pinned: 'Pinned',
+  listing_unpinned: 'Unpinned',
+  anonymous_likes_removed: 'Anonymous Likes removed',
+  anonymous_likes_cleared: 'Anonymous Likes cleared',
+  username_changed: 'Username changed',
+  listing_supporter_only: 'Supporter-only',
+  listing_supporter_only_cleared: 'Supporter-only cleared',
+  supporter_access_revoked: 'Supporter access revoked',
+  supporter_access_restored: 'Supporter access restored',
 };
 
 /** The tint each action carries, so a scan down the list separates removals from the rest. */
@@ -58,6 +75,7 @@ export const AUDIT_ACTION_STYLES: Record<AuditAction, string> = {
   avatar_removed: 'bg-destructive/10 text-destructive',
   role_changed: 'bg-info/10 text-info',
   feedback_edited: 'bg-info/10 text-info',
+  feedback_answer_set: 'bg-success/10 text-success',
   event_created: 'bg-info/10 text-info',
   event_edited: 'bg-info/10 text-info',
   event_cancelled: 'bg-warning/10 text-warning',
@@ -75,6 +93,24 @@ export const AUDIT_ACTION_STYLES: Record<AuditAction, string> = {
   account_deleted: 'bg-destructive/10 text-destructive',
   // Nothing was done to anybody — somebody looked. Tinted as the neutral entry it is.
   signals_viewed: 'bg-muted text-muted-foreground',
+  listing_approved: 'bg-success/10 text-success',
+  listing_rejected: 'bg-warning/10 text-warning',
+  update_approved: 'bg-success/10 text-success',
+  update_rejected: 'bg-warning/10 text-warning',
+  // Nobody decided it: the author's standing skipped review.
+  listing_auto_approved: 'bg-muted text-muted-foreground',
+  author_trusted: 'bg-info/10 text-info',
+  author_untrusted: 'bg-muted text-muted-foreground',
+  listing_pinned: 'bg-info/10 text-info',
+  listing_unpinned: 'bg-muted text-muted-foreground',
+  anonymous_likes_removed: 'bg-destructive/10 text-destructive',
+  anonymous_likes_cleared: 'bg-destructive/10 text-destructive',
+  // A flagged account doing what it was asked, like an author answering a quarantine.
+  username_changed: 'bg-info/10 text-info',
+  listing_supporter_only: 'bg-info/10 text-info',
+  listing_supporter_only_cleared: 'bg-muted text-muted-foreground',
+  supporter_access_revoked: 'bg-destructive/10 text-destructive',
+  supporter_access_restored: 'bg-success/10 text-success',
 };
 
 /** The filter's options, in the order the server declares them. */
@@ -104,6 +140,7 @@ const KIND_NOUNS: Record<string, string> = {
   account: 'account',
   bug: 'bug report',
   suggestion: 'suggestion',
+  question: 'question',
 };
 
 /** The actions the clock does: a deadline passing, and the sweeper erasing an account. */
@@ -202,6 +239,13 @@ export function auditPredicate(entry: AuditEntry): string {
       return target
         ? `edited the ${noun ?? 'thread'}${name ? ` “${name}”` : ''} by ${target}`
         : `edited a ${noun ?? 'thread'}${name ? ` “${name}”` : ''}`;
+    // A null snippet is a clear; no target means the asker's account is gone.
+    case 'feedback_answer_set': {
+      const verb = entry.snippet === null ? 'cleared' : 'set';
+      return target
+        ? `${verb} the answer on the ${noun ?? 'question'}${name ? ` “${name}”` : ''} by ${target}`
+        : `${verb} the answer on a ${noun ?? 'question'}${name ? ` “${name}”` : ''}`;
+    }
     case 'event_created':
       return `scheduled the event${name ? ` “${name}”` : ''}`;
     case 'event_edited':
@@ -259,6 +303,41 @@ export function auditPredicate(entry: AuditEntry): string {
         ? `viewed the accounts linked to ${target}`
         : 'viewed the accounts linked to their own account';
     }
+    case 'listing_approved':
+      return `approved ${name ? `the ${noun ?? 'listing'} “${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''}`;
+    case 'listing_rejected':
+      return `rejected ${name ? `the ${noun ?? 'listing'} “${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''}`;
+    case 'update_approved':
+      return `approved an update to ${name ? `“${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''}`;
+    case 'update_rejected':
+      return `rejected an update to ${name ? `“${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''}`;
+    // The actor is the author, whose standing skipped review.
+    case 'listing_auto_approved':
+      return `published ${name ? `the ${noun ?? 'listing'} “${name}”` : `a ${noun ?? 'listing'}`} without review`;
+    case 'author_trusted':
+      return `trusted ${target || 'an account'}`;
+    case 'author_untrusted':
+      return `removed trust from ${target || 'an account'}`;
+    case 'listing_pinned':
+      return `pinned ${name ? `the ${noun ?? 'listing'} “${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''}`;
+    case 'listing_unpinned':
+      return `unpinned ${name ? `the ${noun ?? 'listing'} “${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''}`;
+    // How many went is the snippet; the address itself is never recorded.
+    case 'anonymous_likes_removed':
+      return `removed the Anonymous Likes from one address on ${name ? `“${name}”` : `a ${noun ?? 'listing'}`}`;
+    case 'anonymous_likes_cleared':
+      return `cleared every Anonymous Like on ${name ? `“${name}”` : `a ${noun ?? 'listing'}`}`;
+    // The actor's snapshot holds the old name; the new one is the snippet.
+    case 'username_changed':
+      return entry.snippet ? `changed their username to ${entry.snippet}` : 'changed their username';
+    case 'listing_supporter_only':
+      return `made ${name ? `the ${noun ?? 'listing'} “${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''} Supporter-only`;
+    case 'listing_supporter_only_cleared':
+      return `opened ${name ? `the ${noun ?? 'listing'} “${name}”` : `a ${noun ?? 'listing'}`}${target ? ` by ${target}` : ''} to everyone`;
+    case 'supporter_access_revoked':
+      return `took Supporter content away from ${target || 'an account'}`;
+    case 'supporter_access_restored':
+      return `gave Supporter content back to ${target || 'an account'}`;
     // Unreachable while the switch covers `AuditAction`; kept for a server newer than this build.
     default: {
       const unhandled: never = entry.action;
@@ -278,6 +357,19 @@ export function describeAuditEntry(entry: AuditEntry): string {
   const actor = auditActorName(entry);
 
   return actor ? `${actor} ${auditPredicate(entry)}` : auditPredicate(entry);
+}
+
+/** The audit actions whose `target.id` is a listing id. */
+const LISTING_LINKED_ACTIONS: ReadonlySet<AuditAction> = new Set([
+  'listing_approved', 'listing_rejected', 'update_approved', 'update_rejected', 'listing_auto_approved',
+]);
+
+/** The listing an entry opens, or null when it names none. */
+export function auditListingId(entry: AuditEntry): string | null {
+  if (!LISTING_LINKED_ACTIONS.has(entry.action)) return null;
+
+  const id = entry.target?.id;
+  return typeof id === 'string' && id ? id : null;
 }
 
 // An entry timestamp is a server timestamp like any other — see `lib/serverDate`.

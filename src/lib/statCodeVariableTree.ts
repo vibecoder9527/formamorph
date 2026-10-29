@@ -12,7 +12,7 @@ import {
   isPlaceholderEntryMember, memberStep, placeholderPathMap, type PlaceholderPathMap, type PlaceholderPathNode,
 } from '@/lib/statCodePaths';
 import {
-  CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, LOCATION_ENTRY_FIELDS, LOCATION_MEMBERS, MEMORY_ENTRY_FIELDS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_ENTRY_FIELDS, DICTIONARY_FIELDS, ENTITY_FIELDS, NARRATION_FIELDS,
+  CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, TURN_MEMBERS, LOCATION_ENTRY_FIELDS, LOCATION_EXIT_FIELDS, LOCATION_MEMBERS, MEMORY_ENTRY_FIELDS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_ENTRY_FIELDS, DICTIONARY_FIELDS, ENTITY_FIELDS, NARRATION_FIELDS,
   NARRATION_GLOBAL, PERSONA_FIELDS, PLAYER_CALL_ENTRIES, PLAYER_GLOBAL, PREVIOUS_FIELDS, SANDBOX_GLOBALS, SELF_TRAIT_FIELDS,
   STAT_CODE_SURFACE, STAT_FIELDS, SWITCHED_TRAIT_FIELDS, SWITCHED_TRAIT_GLOBAL, TRAIT_ENTRY_FIELDS, TRAIT_SCRIPT_SURFACE, placeholderEntryFields,
 } from '@/lib/statCodeSurface';
@@ -193,14 +193,22 @@ const PRESENT_ELEMENT_FIELDS = ENTITY_FIELDS.filter((entry) => !isMethodEntry(en
 const presentGroup = (path: Path, entry: SurfaceEntry, at: Path): VariableGroup =>
   group(entry, [field(path, entry), ...fields(indexed(at), PRESENT_ELEMENT_FIELDS)]);
 
-/** A locations entry's fields, `present` opening to its element's. */
+/** `exits`: the list itself, then an exit's fields on its first element. */
+const exitsGroup = (path: Path, entry: SurfaceEntry, at: Path): VariableGroup =>
+  group(entry, [field(path, entry), ...fields(indexed(at), LOCATION_EXIT_FIELDS)]);
+
+/** The drill of a location's lists: `present` and `exits` open to their element's fields. */
+const locationListGroup = (path: Path, entry: SurfaceEntry, at: Path): VariableGroup | undefined =>
+  entry.name === 'present' ? presentGroup(path, entry, at) : entry.name === 'exits' ? exitsGroup(path, entry, at) : undefined;
+
+/** A locations entry's fields, `present` and `exits` opening to their element's. */
 const locationEntryFields = (path: Path): VariableNode[] =>
-  fields(path, LOCATION_ENTRY_FIELDS, (entry, at) => (entry.name === 'present' ? presentGroup(path, entry, at) : undefined));
+  fields(path, LOCATION_ENTRY_FIELDS, (entry, at) => locationListGroup(path, entry, at));
 
 // A move to where the turn stands runs as inserted in any turn with a location.
 const locationFields = (): VariableNode[] => fields(root('location'), LOCATION_MEMBERS, (entry, at) => {
   if (entry.name === 'move') return callField(field(root('location'), entry), 'location.name');
-  return entry.name === 'present' ? presentGroup(root('location'), entry, at) : undefined;
+  return locationListGroup(root('location'), entry, at);
 });
 
 /** A call at the top level, `name(arg)`. */
@@ -293,14 +301,20 @@ export interface TimingGlobals {
   narration: boolean;
   player: boolean;
   trait: boolean;
+  /** `turn`'s members with the access the timing gives them. Absent, every one is read-only. */
+  turn?: readonly SurfaceEntry[];
 }
 
 /** The timing globals of a surface, read off the one list the editor and the menu share. */
-export const timingGlobalsOf = (surface: CodeSurface): TimingGlobals => ({
-  narration: surfaceHasGlobal(surface, 'narration'),
-  player: surfaceHasGlobal(surface, 'player'),
-  trait: surfaceHasGlobal(surface, 'trait'),
-});
+export const timingGlobalsOf = (surface: CodeSurface): TimingGlobals => {
+  const turn = surface.members.get('turn');
+  return {
+    narration: surfaceHasGlobal(surface, 'narration'),
+    player: surfaceHasGlobal(surface, 'player'),
+    trait: surfaceHasGlobal(surface, 'trait'),
+    ...(turn && { turn }),
+  };
+};
 
 /** A call on `player` inserts complete, with the caret between the quotes of its question. */
 function playerFields(): VariableNode[] {
@@ -425,6 +439,7 @@ export function buildVariableTree(
   const top: VariableNode[] = [
     ...selfGroup,
     ...(owner ? [{ kind: 'group' as const, label: 'Owner', info: ownerInfo(self), children: ownerChildren(owner) }] : []),
+    ...timingGroups(timing),
     nameList('Stats', statRows, 'No stats in this world', globalInfo('stats')),
     nameList('Traits', traitList, 'No traits in this world', globalInfo('traits')),
     nameList('Entities', entityRows, 'No entities in this world', globalInfo('entities')),
@@ -432,14 +447,20 @@ export function buildVariableTree(
     nameList('Placeholders', placeholderList, 'No placeholders in this world', globalInfo('placeholders')),
     nameList('Dictionaries', dictionaryRows, 'No dictionaries in this world', globalInfo('dictionaries')),
     { kind: 'group', label: 'Clock', info: globalInfo('clock'), children: clockFields(root('clock')) },
+    { kind: 'group', label: 'Turn', info: globalInfo('turn'), children: fields(root('turn'), timing.turn ?? TURN_MEMBERS) },
     nameList('Locations', locationRows, 'No locations in this world', globalInfo('locations')),
     { kind: 'group', label: 'Location', info: globalInfo('location'), children: locationFields() },
     { kind: 'group', label: 'Discover', info: globalInfo('discover'), children: [topCallField('discover', '"Name"')] },
     { kind: 'group', label: 'Memories', info: globalInfo('memories'), children: memoryFields() },
     { kind: 'field', label: 'notes', detail: 'string', info: globalInfo('notes') ?? '', access: 'readOnly', insert: 'notes' },
-    ...timingGroups(timing),
   ];
-  return top.map(verbsLast).map(leafForOneChild);
+  return groupsFieldsVerbs(top.map(verbsLast).map(leafForOneChild));
+}
+
+/** The top level with groups first, then fields, then verbs, each set keeping its order. */
+function groupsFieldsVerbs(nodes: readonly VariableNode[]): VariableNode[] {
+  const rank = (node: VariableNode): number => (node.kind !== 'field' ? 0 : isVerbLeaf(node) ? 2 : 1);
+  return [0, 1, 2].flatMap((at) => nodes.filter((node) => rank(node) === at));
 }
 
 /** Whether a leaf is a verb: its insert ends in a call, or its detail is a function type. */

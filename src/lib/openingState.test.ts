@@ -67,7 +67,7 @@ describe('openingStateOf', () => {
     expect(state.clock).toEqual({ deltaHours: 0, elapsedHours: 0 });
     expect(state.placeholders).toMatchObject({ rolls: {} });
     expect(state.placeholders?.pins).toBeUndefined();
-    expect(state.places).toEqual({ locations: world.locations, location: { id: 'gate', name: 'Gate' } });
+    expect(state.places).toEqual({ locations: world.locations, location: { id: 'gate', name: 'Gate' }, connections: [] });
     expect(state.ownerTraits.discovered).toBeUndefined();
   });
 
@@ -84,7 +84,7 @@ describe('openingStateOf', () => {
   });
 
   it('stands nowhere in a world with no locations', () => {
-    expect(openingStateOf({ ...world, locations: [] }).places).toEqual({ locations: [], location: null });
+    expect(openingStateOf({ ...world, locations: [] }).places).toEqual({ locations: [], location: null, connections: [] });
   });
 
   it('hands play every seeded entity and the traits its log names', () => {
@@ -97,5 +97,40 @@ describe('openingStateOf', () => {
     expect(Object.keys(fold.entityStats)).toEqual(['bram', 'albus']);
     expect(fold.startingTraits.map(({ trait: t, ownerId }) => [t.id, ownerId])).toEqual([['tough', null], ['albus-boast', 'albus']]);
     expect(fold.traitState.entityStats).toBe(fold.entityStats);
+  });
+
+  it("carries the seeded Item Copies, with the played Persona entity's placements on the player", () => {
+    const lamp = { id: 'lamp', name: 'Lamp', statEffects: [], traitEffects: [], equipRequires: [] };
+    const state = openingStateOf({
+      ...world,
+      items: [lamp],
+      placements: [
+        { id: 'p1', where: { kind: 'entity', id: 'albus' }, quantity: 1, source: { kind: 'item', itemId: 'lamp' } },
+        { id: 'p2', where: { kind: 'location', id: 'gate' }, quantity: 2, hidden: true, source: { kind: 'item', itemId: 'lamp' } },
+      ],
+    }, undefined, { ref: { source: 'world', entityId: 'albus' } });
+    expect(state.itemCopies?.map(({ where, quantity, visibility }) => ({ where, quantity, visibility }))).toEqual([
+      { where: { kind: 'you' }, quantity: 1, visibility: 'visible' },
+      { where: { kind: 'location', id: 'gate' }, quantity: 2, visibility: 'hidden' },
+    ]);
+  });
+  it("puts the seeded Item Copies' effects in place on the first turn, On First Obtain included (Q59)", () => {
+    const row = (id: string, statId: string, amount: number, timing: 'owned' | 'firstObtain', facet: 'value' | 'max' = 'value') =>
+      ({ id, statId, amount, timing, facet, op: 'add' as const });
+    const ledger = { id: 'ledger', name: 'Ledger', statEffects: [row('r1', 'stock', 2, 'owned')], traitEffects: [], equipRequires: [] };
+    const charm = { id: 'charm', name: 'Charm', statEffects: [row('r2', 'vigor', 5, 'firstObtain', 'max'), row('r3', 'vigor', 1, 'firstObtain')], traitEffects: [], equipRequires: [] };
+    const fold = openingFold({
+      ...world,
+      items: [ledger, charm],
+      placements: [
+        { id: 'p1', where: { kind: 'you' }, quantity: 3, source: { kind: 'item', itemId: 'ledger' } },
+        { id: 'p2', where: { kind: 'entity', id: 'bram' }, quantity: 1, source: { kind: 'item', itemId: 'charm' } },
+      ],
+    }, { traits: [], owned: { bram: ['hardy'] } }, { ref: { source: 'world', entityId: 'albus' } });
+    // Albus's Stock 4 + the ledger once, for three Item Copies; Bram's Vigor 3 + Hardy 2 + the charm 1, under a cap raised by 5.
+    expect(valueOf(fold.entityStats.albus, 'stock')).toBe(6);
+    expect(fold.entityStats.bram.find((s) => s.id === 'vigor')).toMatchObject({ value: 6, max: 105 });
+    expect(fold.itemEffects.ledger.firstObtained).toEqual({ bram: ['charm'] });
+    expect(ownerStats(fold.state, 'bram')?.find((s) => s.id === 'vigor')?.value).toBe(6);
   });
 });

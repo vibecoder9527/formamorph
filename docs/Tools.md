@@ -232,15 +232,16 @@ A script reads `args` and the same globals a world script reads. Each entry has 
 | `locations` | Every location by name, with `present` | [Location](ScriptsGuide#location) |
 | `location` | The entry of the current location | [Location](ScriptsGuide#location) |
 | `memories` | The Memory panel's rows, oldest first | [Memory](ScriptsGuide#memory) |
-| `dictionaries` | Every dictionary, with `entries` | [Dictionaries](ScriptsGuide#dictionaries) |
+| `dictionaries` | Every dictionary, with `entries`. Disabled entries read `enabled: false` | [Dictionaries](ScriptsGuide#dictionaries) |
 | `stats`, `traits`, `placeholders`, `persona` | The global stats and traits, the placeholders, and the persona | [Stats](ScriptsGuide#stats), [Traits](ScriptsGuide#traits), [Placeholders](ScriptsGuide#placeholders), [Persona](ScriptsGuide#persona) |
 | `clock` | The story clock. It reads the opening outside a game | [The Story Clock](ScriptsGuide#the-story-clock) |
+| `turn` | The player's action and the turn number. A call the AI makes in a turn reads that turn | [Turn](ScriptsGuide#turn) |
 | `notes` | The player's notes as one text | [Notes](ScriptsGuide#notes) |
 | `console` | `log()` | None |
 
 A Tool script has none of the calls that write. A call to `memories.add`, `memories.pin`, an entry verb, `location.move`, `entities.<Entity>.move`, `follow`, `unfollow` or `diary` is a "not a function" error. A write to a field is ignored and the read keeps its value. The Tool does not fail, and **Try It** lists the write as ignored. `self`, `owner`, `trait`, `narration`, `player`, `discover` and `clock.advance` are not available.
 
-In the World Editor and outside a game, `memories` is an empty list and `clock` reads the opening. The sample world in Settings keeps a played state with a persona, notes, three memories and day 3 evening.
+In the World Editor and outside a game, `memories` is an empty list and `clock` reads the opening. The sample world in Settings keeps a played state with a persona, notes, three memories and day 3 evening. Its `turn` reads `"Look around."` at turn `4`.
 
 #### Args
 
@@ -270,7 +271,7 @@ A form with no exact new one stays as written. The editor underlines it and name
 | `scene.present` | `location.present` |
 | `scene.inScene` | `inScene` on each `entities` entry |
 
-The rewrite leaves a `world.entities` or `world.locations` read as it is when the script returns, stringifies or spreads an item from it, or reads `.placeholders` off one. An item has a new shape: a location has `starting` and full `present` entries, and an entity has more fields. Check such a script by hand. The rewrite never changes `world.dictionary`. The new `entries` map keys by entry name, so an entry with no name has no key, and of entries with one name only the later one stays.
+The rewrite leaves a `world.entities` or `world.locations` read as it is when the script returns, stringifies or spreads an item from it, or reads `.placeholders` off one. An item has a new shape: a location has `starting` and full `present` entries, and an entity has more fields. Check such a script by hand. The rewrite never changes `world.dictionary`. The new `entries` map keys by entry name, so an entry with no name has no key. Of entries with one name, an enabled one stays, else the later one. The map lists disabled entries too, which `world.dictionary` left out, so filter on `enabled` to match it.
 
 The same load also rewrites `memory.add(` to `memories.add(`, `memory.pin(` to `memories.pin(`, and `diary("Mira", line)` to `entities.Mira.diary(line)`. A `diary` call with a computed first argument becomes `entities[expr].diary(line)`.
 ## Try It

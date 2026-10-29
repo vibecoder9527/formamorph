@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useDeferredValue, useEffect, useMemo, useRef } from 'react';
+import { useRequestKey } from '@/lib/surface/useRequestKey';
 import { toast } from 'react-toastify';
 import { toastError } from '@/lib/linkToast';
+import { isSupporterOnly } from '@/lib/supporterListingAction';
 import { responseError } from '@/services/responseError';
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -9,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   RotateCcw, ArrowDownWideNarrow, ArrowUpNarrowWide, X, SlidersHorizontal, ChevronDown,
-  ShieldAlert, Trophy,
+  ShieldAlert, Trophy, Eye,
   type LucideIcon,
 } from "lucide-react";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
@@ -38,6 +40,7 @@ import { useContestWithdrawal } from "@/lib/useContestWithdrawal";
 import { useDownloadCoordinator, type DownloadPlan } from "@/lib/useDownloadCoordinator";
 import { useLibraryDownload, type LibraryTarget } from "@/lib/useLibraryDownload";
 import type { PromptLibrary, PromptListingContent } from "@/lib/promptDownload";
+import type { MascotLibrary, MascotListingContent } from "@/lib/mascotDownload";
 import { useDeviceDownload } from "@/lib/useDeviceDownload";
 import { useDownscalePrompt } from "@/lib/useDownscalePrompt";
 import EntityStorageService from "@/services/EntityStorageService";
@@ -50,13 +53,19 @@ import type {
 import { EventBanner, EventBannerChips } from "@/components/events/EventBanner";
 import { useEventBanners } from "@/components/events/useEventBanners";
 import { useClosingSnapshot } from "@/lib/useClosingSnapshot";
-import { useCommunityBrowserFilters, type CommunityFilterPreferences } from "@/lib/useCommunityBrowserFilters";
+import { useCommunityBrowserFilters, type CommunityFilterPreferences, type ReviewPinning } from "@/lib/useCommunityBrowserFilters";
+import { useDevReviewViewer } from "@/lib/dev/devReviewViewer";
+import { PinnedReviewGroup } from "@/components/community/PinnedReviewGroup";
+import { useReviewDecision } from "@/components/community/useReviewDecision";
+import { decidedRow, listingIdOf, reviewSubjectOf } from "@/lib/reviewRows";
+import type { ReviewOutcome, ReviewRejection, ReviewSubject } from "@/services/ReviewService";
 import { MessageComposerDialog } from "@/components/menu/MessageComposerDialog";
 import { takedownTargetFor, takedownTemplate, type TakedownTarget } from "@/lib/takedownNotice";
 import {
   isQuarantined, quarantineTargetFor, quarantineTemplate, type QuarantineTarget,
 } from "@/lib/quarantine";
 import { isStaff } from "@/lib/roles";
+import { isPinned } from "@/lib/pinning";
 import { ManageAddonsDialog } from "@/components/community/ManageAddonsDialog";
 import { WorldUpdateReviewDialog } from "@/components/modals/WorldUpdateReviewDialog";
 import { QuarantineDialog } from "@/components/community/QuarantineDialog";
@@ -95,6 +104,7 @@ import { likeStateOf, optimisticLikeState, type LikeState } from "@/lib/likeCoun
 // Persisted preference to force the single-column (portrait) layout of the details modal at any width.
 // Key string kept as-is so an existing user's saved preference survives the rename.
 const COMMUNITY_BROWSER_MODAL_COLLAPSED_KEY = 'FORMAMORPH_discoverModalCollapsed';
+const SHOW_PENDING_KEY = 'FORMAMORPH_communityShowPending';
 
 /** One shared empty list, so a closed browser hands the grid the same identity every render. */
 const NO_ROWS: WorldRecord[] = [];
@@ -102,6 +112,11 @@ const NO_ROWS: WorldRecord[] = [];
 /** The prompt target for a host without the preset store. `downloadFor` never hands it a listing. */
 const NO_PROMPT_LIBRARY: LibraryTarget<PromptListingContent> = {
   kind: 'prompt', records: [], store: async () => {}, refresh: () => {},
+};
+
+/** The Mascot target for a host without the preset store. `downloadFor` never hands it a listing. */
+const NO_MASCOT_LIBRARY: LibraryTarget<MascotListingContent> = {
+  kind: 'mascot', records: [], store: async () => {}, refresh: () => {},
 };
 
 /** A row in the section switcher: one per catalog kind, plus Contest while a contest exists. */
@@ -175,6 +190,28 @@ const PageHeading = ({ className, children }: { className?: string; children: Re
   <h1 className={className}>{children}</h1>
 );
 
+/** A staff view toggle in the filter row: outline when off, filled when on. */
+const StaffToggle = ({ tip, icon: Icon, pressed, onToggle, children }: {
+  tip: string;
+  icon: LucideIcon;
+  pressed: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) => (
+  <Tip tip={tip} labelsChild={false}>
+    <Button
+      variant={pressed ? 'default' : 'outline'}
+      size="sm"
+      className="shrink-0 gap-1"
+      aria-pressed={pressed}
+      onClick={onToggle}
+    >
+      <Icon className="h-4 w-4" />
+      {children}
+    </Button>
+  </Tip>
+);
+
 interface CommunityCreationsBrowserProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -219,6 +256,8 @@ interface CommunityCreationsBrowserProps {
   detailsAction?: React.ReactNode;
   /** The preset store prompt listings download into. Absent offers no prompt download. */
   promptLibrary?: PromptLibrary;
+  /** The preset store Mascot listings download into. Absent offers no Mascot download. */
+  mascotLibrary?: MascotLibrary;
   /** Running community events, announced in the header the same way the main menu announces them. */
   events?: ServerEvent[];
   /** Open the place an event's content lives — the contest tab, for a contest. */
@@ -234,10 +273,12 @@ interface CommunityCreationsBrowserProps {
 const CommunityCreationsBrowser = ({
   open, onOpenChange, presentation = 'dialog', capabilities = APP_COMMUNITY_CAPABILITIES, filterPreferences, worlds, setWorlds, entities, dictionaries, models,
   refreshEntities, refreshDictionaries, refreshModels,
-  isAuthenticated, currentUser, onGuestLike, openImageViewer, initialTab, requestKey, openListing, onListingOpened, listing: controlledListing,
-  onListingChange, onListingUnavailable, detailsAction, promptLibrary,
+  isAuthenticated, currentUser: signedInUser, onGuestLike, openImageViewer, initialTab, requestKey: landingKey, openListing, onListingOpened, listing: controlledListing,
+  onListingChange, onListingUnavailable, detailsAction, promptLibrary, mascotLibrary,
   events = [], onOpenEvent, openLikersOnMount = false, openManageAddonsOnMount = false,
 }: CommunityCreationsBrowserProps) => {
+  const currentUser = useDevReviewViewer(signedInUser);
+  const requestKey = useRequestKey(landingKey);
   // Stated here rather than in an effect, because the catalog request below goes out in an effect of
   // its own: a shell that sends its guests to sign-in is not an Install and must name none.
   setShellOffersGuestLikes(capabilities.guestLikes);
@@ -249,7 +290,7 @@ const CommunityCreationsBrowser = ({
   const catalogReader = readerKey(isAuthenticated, currentUser?.id ?? AuthService.token);
   const {
     remoteWorlds, setRemoteWorlds, isLoadingRemoteWorlds, isSyncingCatalog, catalogSettled, loadCatalog,
-    anonymousLikes, setAnonymousLikes,
+    resyncCatalog, anonymousLikes, setAnonymousLikes,
   } = useCatalogSync(open, catalogReader);
   const [remoteWorldToDelete, setRemoteWorldToDelete] = useState<string | null>(null);
   // Set once someone else's item has been deleted, offering to tell its author why. The takedown itself
@@ -263,6 +304,8 @@ const CommunityCreationsBrowser = ({
   // Admin-only view of just what is hidden — the whole catalog is already in memory, so this is a filter
   // over it rather than another request.
   const [quarantinedOnly, setQuarantinedOnly] = useState(false);
+  // Staff only: off shows the browser as players see it.
+  const [showPending, setShowPending] = usePersistentState(SHOW_PENDING_KEY, true, boolCodec);
   // The published world whose add-on offers the author is reviewing.
   const [managingAddons, setManagingAddons] = useState<ListingRef | null>(null);
   const [selectedRemoteWorld, setSelectedRemoteWorld] = useState<WorldRecord | null>(null);
@@ -336,6 +379,7 @@ const CommunityCreationsBrowser = ({
   });
   // Prompt listings download into the preset store, which only the app host can reach.
   const promptDownload = useLibraryDownload<PromptListingContent>(promptLibrary?.target ?? NO_PROMPT_LIBRARY);
+  const mascotDownload = useLibraryDownload<MascotListingContent>(mascotLibrary?.target ?? NO_MASCOT_LIBRARY);
   const deviceDownload = useDeviceDownload();
 
   /**
@@ -347,7 +391,7 @@ const CommunityCreationsBrowser = ({
    */
   const downloadFor = (kind: CatalogKind) => (
     kind === 'entity' ? entityDownload : kind === 'dictionary' ? dictionaryDownload : kind === 'model' ? modelDownload
-      : kind === 'prompt' && promptLibrary ? promptDownload : null
+      : kind === 'prompt' && promptLibrary ? promptDownload : kind === 'mascot' && mascotLibrary ? mascotDownload : null
   );
 
   /**
@@ -362,7 +406,7 @@ const CommunityCreationsBrowser = ({
     // A kind with no library holds no copy, so it is never downloaded and never out of date.
     return downloadFor(kind)?.downloadStateFor(record) ?? 'none';
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [localCopiesBySource, entityDownload.copyBySource, dictionaryDownload.copyBySource, modelDownload.copyBySource, promptDownload.copyBySource]);
+  }, [localCopiesBySource, entityDownload.copyBySource, dictionaryDownload.copyBySource, modelDownload.copyBySource, promptDownload.copyBySource, mascotDownload.copyBySource]);
 
   // Every in-flight bar, keyed by listing id — unique across kinds, so the four sources merge cleanly.
   const allDownloadProgress = {
@@ -371,6 +415,7 @@ const CommunityCreationsBrowser = ({
     ...dictionaryDownload.downloadProgress,
     ...modelDownload.downloadProgress,
     ...promptDownload.downloadProgress,
+    ...mascotDownload.downloadProgress,
     ...deviceDownload.downloadProgress,
   };
 
@@ -497,6 +542,10 @@ const CommunityCreationsBrowser = ({
     ? entriesOf(remoteWorlds, shownContest?.id)
     : catalogForKinds;
 
+  // Staff review from the catalog tabs only; the contest tab and the Quarantined view keep every row in place.
+  const reviewsHere = capabilities.moderation && viewerIsStaff && browseTab !== 'contest' && !quarantinedOnly;
+  const reviewPinning: ReviewPinning = !reviewsHere ? 'none' : showPending ? 'pin' : 'playerView';
+
   const {
     searchQuery, applySearchInput, authorFilter, setAuthorFilter, tagFilter, setTagFilter,
     tagMode, setTagMode, modelFilter, setModelFilter, statusFilter, toggleStatus, clearFilters, activeFilterCount,
@@ -506,17 +555,20 @@ const CommunityCreationsBrowser = ({
     hideRemoteWorld, hideRemoteTag, hideRemoteAuthor,
     setHiddenTagsList, setHiddenAuthorsList,
     resetHiddenWorlds, unhideWorld, hiddenWorldName,
-    allAuthors, allTags, allModels, filteredRemoteWorlds, totalPages, pagedRemoteWorlds,
+    allAuthors, allTags, allModels, filteredRemoteWorlds, totalPages, pagedRemoteWorlds, pinnedRemoteWorlds,
   } = useCommunityBrowserFilters(
-    catalogInView, downloadStateForRecord, open, browseTab,
-    currentUser?.id ? String(currentUser.id) : undefined,
-    browseTab === 'contest' ? contestOrder : undefined,
-    filterPreferences,
+    catalogInView, downloadStateForRecord, open, {
+      tab: browseTab,
+      viewerId: currentUser?.id ? String(currentUser.id) : undefined,
+      order: browseTab === 'contest' ? contestOrder : undefined,
+      preferences: filterPreferences,
+      review: reviewPinning,
+    },
   );
 
   // One read for the whole page's stored thumbnails, so a page of seen cards paints together rather
   // than opening a database read per card.
-  useThumbnailPreload(pagedRemoteWorlds.filter((w) => kindHasThumbnail(kindOf(w)) && !showsMorphArt(w)).map((w) => ({
+  useThumbnailPreload([...pinnedRemoteWorlds, ...pagedRemoteWorlds].filter((w) => kindHasThumbnail(kindOf(w)) && !showsMorphArt(w)).map((w) => ({
     file: w.thumbnail_file as string | null | undefined,
     updatedAt: w.updated_at as string | null | undefined,
   })));
@@ -542,18 +594,25 @@ const CommunityCreationsBrowser = ({
   // Admin-only, and only once something is actually quarantined: a toggle that can only ever show an
   // empty list is a control that teaches nothing.
   const quarantineControl = capabilities.moderation && viewerIsStaff && quarantinedCount > 0 && browseTab !== 'contest' ? (
-    <Tip tip="Show only what is hidden pending changes" labelsChild={false}>
-      <Button
-        variant={quarantinedOnly ? 'default' : 'outline'}
-        size="sm"
-        className="shrink-0 gap-1"
-        aria-pressed={quarantinedOnly}
-        onClick={() => setQuarantinedOnly((prev) => !prev)}
-      >
-        <ShieldAlert className="h-4 w-4" />
-        Quarantined ({quarantinedCount})
-      </Button>
-    </Tip>
+    <StaffToggle
+      tip="Show only what is hidden pending changes"
+      icon={ShieldAlert}
+      pressed={quarantinedOnly}
+      onToggle={() => setQuarantinedOnly((prev) => !prev)}
+    >
+      Quarantined ({quarantinedCount})
+    </StaffToggle>
+  ) : null;
+
+  const showPendingControl = reviewsHere ? (
+    <StaffToggle
+      tip="Show listings that wait for review"
+      icon={Eye}
+      pressed={showPending}
+      onToggle={() => setShowPending((prev) => !prev)}
+    >
+      Show Pending
+    </StaffToggle>
   ) : null;
 
   // On mobile the sort/filter controls collapse behind a "Filters" toggle; on desktop they stay inline.
@@ -720,6 +779,14 @@ const CommunityCreationsBrowser = ({
     setSelectedRemoteWorld((prev) => (prev && (prev._id || prev.id) === worldId ? { ...prev, likes } : prev));
   };
 
+  const handlePendingUpdateChange = (world: WorldRecord, pending: boolean) => {
+    const worldId = String(world._id || world.id);
+    const patch = (w: WorldRecord) => ({ ...w, has_pending_update: pending, ...(pending ? {} : { pending_update: null }) });
+
+    setRemoteWorlds((prev) => prev.map((w) => ((w._id || w.id) === worldId ? patch(w) : w)));
+    setSelectedRemoteWorld((prev) => (prev && (prev._id || prev.id) === worldId ? patch(prev) : prev));
+  };
+
   const handleRelease = async (world: WorldRecord) => {
     const worldId = String(world._id || world.id);
     const noun = KIND_LABELS[kindOf(world)].one;
@@ -734,6 +801,74 @@ const CommunityCreationsBrowser = ({
       toastError(error, `Failed to release the ${noun.toLowerCase()}`);
     }
   };
+
+  // Patched in place on both copies, like a quarantine: the grid re-sorts from the patched row, so the
+  // order changes at once without re-fetching the catalog.
+  const pinning = useRef(new Set<string>());
+  const handleTogglePin = async (world: WorldRecord) => {
+    const worldId = String(world._id || world.id);
+    const noun = KIND_LABELS[kindOf(world)].one;
+    const pin = !isPinned(world);
+    if (pinning.current.has(worldId)) return; // a second press waits for the first answer
+    pinning.current.add(worldId);
+
+    try {
+      const pinnedAt = await WorldStorageService.setRemoteWorldPinned(worldId, pin);
+      const patch = (w: WorldRecord) => ({ ...w, pinned_at: pinnedAt });
+      setRemoteWorlds((prev) => prev.map((w) => ((w._id || w.id) === worldId ? patch(w) : w)));
+      setSelectedRemoteWorld((prev) => (prev && (prev._id || prev.id) === worldId ? patch(prev) : prev));
+      toast.success(`${noun} ${pin ? 'pinned' : 'unpinned'}`);
+    } catch (error) {
+      toastError(error, `Failed to ${pin ? 'pin' : 'unpin'} the ${noun.toLowerCase()}`);
+    } finally {
+      pinning.current.delete(worldId);
+    }
+  };
+
+  const markingSupporterOnly = useRef(new Set<string>());
+  // Opening a listing to all makes its clean files public, and a copy taken then can't be taken back.
+  const [openingToAll, setOpeningToAll] = useState<WorldRecord | null>(null);
+  const handleToggleSupporterOnly = (world: WorldRecord) => {
+    if (isSupporterOnly(world)) setOpeningToAll(world);
+    else void applySupporterOnly(world);
+  };
+  const applySupporterOnly = async (world: WorldRecord) => {
+    const worldId = String(world._id || world.id);
+    const noun = KIND_LABELS[kindOf(world)].one;
+    if (markingSupporterOnly.current.has(worldId)) return;
+    markingSupporterOnly.current.add(worldId);
+
+    try {
+      const held = await WorldStorageService.setRemoteWorldSupporterOnly(worldId, !isSupporterOnly(world));
+      const patch = (w: WorldRecord) => ({ ...w, supporter_only: held });
+      setRemoteWorlds((prev) => prev.map((w) => ((w._id || w.id) === worldId ? patch(w) : w)));
+      setSelectedRemoteWorld((prev) => (prev && (prev._id || prev.id) === worldId ? patch(prev) : prev));
+      toast.success(`${noun} ${held ? 'limited to Supporters' : 'open to everyone'}`);
+    } catch (error) {
+      toastError(error, `Failed to change who can download the ${noun.toLowerCase()}`);
+    } finally {
+      markingSupporterOnly.current.delete(worldId);
+    }
+  };
+
+  // A decision patches the row at once, so the card moves now; the re-sync then takes the server's rows.
+  // Stable, so a decision that settles after a close reads the current `open`.
+  const onReviewOutcome = useStableCallback((subject: ReviewSubject, outcome: ReviewOutcome, rejection?: ReviewRejection) => {
+    const isSubject = (w: WorldRecord) => listingIdOf(w) === subject.id;
+    if (outcome === 'dropped') {
+      // Its real state is unknown here; the re-sync brings it back where it belongs.
+      setRemoteWorlds((prev) => prev.filter((w) => !isSubject(w)));
+    } else if (outcome !== 'kept') {
+      const patch = (w: WorldRecord) => decidedRow(w, subject, outcome, rejection);
+      setRemoteWorlds((prev) => prev.map((w) => (isSubject(w) ? patch(w) : w)));
+      setSelectedRemoteWorld((prev) => (prev && isSubject(prev) ? patch(prev) : prev));
+    }
+    // Closed, the next open asks anyway, and it must settle for itself.
+    if (open) void resyncCatalog();
+  });
+  const review = useReviewDecision({ viewer: currentUser, onOutcome: onReviewOutcome });
+  const approveCard = useStableCallback((world: WorldRecord) => { void review.approve(reviewSubjectOf(world)); });
+  const rejectCard = useStableCallback((world: WorldRecord) => review.startReject(reviewSubjectOf(world)));
 
   // Handle viewing remote world details
   const handleViewRemoteWorldDetails = (world: WorldRecord) => {
@@ -1074,6 +1209,8 @@ const CommunityCreationsBrowser = ({
   const likeCard = useStableCallback(handleLike);
   const guestLikeCard = useStableCallback((world: WorldRecord) => onGuestLike?.(world));
   const releaseCard = useStableCallback(handleRelease);
+  const pinCard = useStableCallback(handleTogglePin);
+  const supporterOnlyCard = useStableCallback(handleToggleSupporterOnly);
   const withdrawCard = useStableCallback((entry: WorldRecord) => withdrawal.ask({
     id: String(entry._id || entry.id),
     name: String(entry.name ?? 'That world'),
@@ -1092,9 +1229,64 @@ const CommunityCreationsBrowser = ({
     };
   }, [contests]);
 
+  // One card for both the pinned group and the grid.
+  const renderCard = (world: WorldRecord, inReviewGroup = false) => {
+    const worldId = world._id || world.id;
+    const likeTutorial = tutorial?.id === 'community-like' && worldId === likeAnchorId ? tutorial : null;
+    // Decided from the pinned group only.
+    const decides = inReviewGroup && review.mayDecide(reviewSubjectOf(world));
+    return (
+      <RemoteWorldCard
+        key={worldId}
+        world={world}
+        downloadState={downloadStateForRecord(world)}
+        downloadProgress={allDownloadProgress[worldId]}
+        isAuthenticated={isAuthenticated}
+        currentUser={currentUser}
+        onView={viewCard}
+        onHideWorld={capabilities.hiddenFilters ? hideCardWorld : undefined}
+        onHideAuthor={capabilities.hiddenFilters ? hideCardAuthor : undefined}
+        onHideTag={capabilities.hiddenFilters ? hideCardTag : undefined}
+        onContextualDownload={capabilities.localLibrary && savesLocally(world) ? downloadCard : undefined}
+        onDeviceDownload={capabilities.deviceDownloads ? deviceDownload.download : undefined}
+        onDelete={capabilities.authorManagement ? setRemoteWorldToDelete : undefined}
+        onLike={capabilities.likes ? likeCard : undefined}
+        onGuestLike={capabilities.likes && onGuestLike ? guestLikeCard : undefined}
+        guestLikes={capabilities.likes && capabilities.guestLikes}
+        serverTakesLikes={anonymousLikes}
+        onQuarantine={capabilities.moderation ? setQuarantining : undefined}
+        onRelease={capabilities.moderation ? releaseCard : undefined}
+        onTogglePin={capabilities.moderation ? pinCard : undefined}
+        onToggleSupporterOnly={capabilities.moderation ? supporterOnlyCard : undefined}
+        placements={placementsOf(world)}
+        onOpenContest={openContest}
+        // Only where the entry is the subject, and only while it is still an entry: a
+        // decided contest keeps its podium, and the server refuses to release a placed world.
+        onWithdraw={capabilities.contestParticipation && browseTab === 'contest' && shownContest && contestPhase(shownContest) !== 'decided'
+          ? withdrawCard
+          : undefined}
+        onManageAddons={capabilities.authorManagement ? manageCardAddons : undefined}
+        likeTutorial={likeTutorial}
+        likeTutorialNav={likeTutorial ? tutorialNav : undefined}
+        inReviewGroup={inReviewGroup}
+        onApprove={decides ? approveCard : undefined}
+        onReject={decides ? rejectCard : undefined}
+        reviewBusy={decides && review.busyId !== null}
+      />
+    );
+  };
+
+  const gridClassName = cn(
+    'grid grid-cols-1 gap-4 px-6 py-4',
+    // Split cards are about twice as wide, so they take fewer columns.
+    gridLayout === 'split' ? 'lg:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5',
+  );
+  const showPinned = open && !gridLoading && pinnedRemoteWorlds.length > 0;
+
   return (
     <>
       {downscaleDialog}
+      {review.dialogs}
 
       {/* Updating an entity, dictionary or preset replaces the single local copy, so an edited one asks first —
           there's no second copy for the edits to survive in (unlike worlds). ConfirmDialog holds its text
@@ -1121,6 +1313,28 @@ const CommunityCreationsBrowser = ({
         title="Replace your edited preset?"
         description={`You've edited your copy of "${promptDownload.dirtyConfirm?.name ?? ''}". Downloading again replaces it with the published version, and your changes are lost.`}
         onConfirm={promptDownload.confirmDirtyDownload}
+      />
+
+      <ConfirmDialog
+        open={!!mascotDownload.dirtyConfirm}
+        onOpenChange={(v) => { if (!v) mascotDownload.setDirtyConfirm(null); }}
+        title="Replace your edited Mascot?"
+        description={`You've edited your copy of "${mascotDownload.dirtyConfirm?.name ?? ''}". Downloading again replaces it with the published version, and your changes are lost.`}
+        onConfirm={mascotDownload.confirmDirtyDownload}
+      />
+
+      <ConfirmDialog
+        open={!!openingToAll}
+        onOpenChange={(v) => { if (!v) setOpeningToAll(null); }}
+        title="Open to everyone?"
+        description={`Anyone can download "${openingToAll?.name ?? ''}", without a watermark. You can't take back a copy someone downloads.`}
+        confirmLabel="Open to All"
+        destructive
+        onConfirm={() => {
+          const world = openingToAll;
+          setOpeningToAll(null);
+          if (world) void applySupporterOnly(world);
+        }}
       />
       {/* Community Creations browser, in whichever shell the host asked for */}
       <BrowserShell presentation={presentation} open={open} onOpenChange={onOpenChange}>
@@ -1171,7 +1385,9 @@ const CommunityCreationsBrowser = ({
                     </CollapsibleTrigger>
                     </TutorialPopover>
                   </div>
-                  {quarantineControl && <div className="flex flex-wrap items-center gap-2">{quarantineControl}</div>}
+                  {(showPendingControl || quarantineControl) && (
+                    <div className="flex flex-wrap items-center gap-2">{showPendingControl}{quarantineControl}</div>
+                  )}
                 </>
               ) : (
                 // The title row fills its header, so the search box grows into the free space. Refresh ends
@@ -1183,6 +1399,7 @@ const CommunityCreationsBrowser = ({
                       <Heading className="ml-1 whitespace-nowrap text-title font-semibold">Community Creations</Heading>
                     </div>
                     {searchControl}
+                    {showPendingControl}
                     {quarantineControl}
                     <div className="flex items-center gap-1">
                       {sortControl}
@@ -1237,11 +1454,10 @@ const CommunityCreationsBrowser = ({
           {/* Scrollable results */}
           <TabsContent value={browseTab} className="contents">
           <ScrollArea className="flex-1 min-h-0">
-            {/* World grid. Split cards are about twice as wide, so they take fewer columns. */}
-            <div className={cn(
-              'grid grid-cols-1 gap-4 px-6 py-4',
-              gridLayout === 'split' ? 'lg:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5',
-            )}>
+            {showPinned && (
+              <PinnedReviewGroup gridClassName={gridClassName}>{pinnedRemoteWorlds.map((world) => renderCard(world, true))}</PinnedReviewGroup>
+            )}
+            <div className={gridClassName}>
               {gridLoading ? (
                 gridLayout === 'split' ? Array(4).fill(0).map((_, index) => (
                   <WorldCardShell key={index} layout="split" loading name="" frameClassName="bg-card" />
@@ -1253,7 +1469,7 @@ const CommunityCreationsBrowser = ({
                     </div>
                   </div>
                 ))
-              ) : deferredRows.length === 0 ? (
+              ) : deferredRows.length === 0 ? (showPinned ? null : (
                 <div className="col-span-full text-center py-12 text-muted-foreground">
                   {/* Filters now outlive the session, so an empty grid names them rather than reading as an
                       empty catalog. */}
@@ -1267,44 +1483,8 @@ const CommunityCreationsBrowser = ({
                       `No ${BROWSE_TAB_LABELS[browseTab].many.toLowerCase()} match your filters. Clear them to see everything.` :
                       `No ${BROWSE_TAB_LABELS[browseTab].many.toLowerCase()} available. Be the first to publish one!`}
                 </div>
-              ) : (
-                deferredRows.map((world) => {
-                  const worldId = world._id || world.id;
-                  const likeTutorial = tutorial?.id === 'community-like' && worldId === likeAnchorId ? tutorial : null;
-                  return (
-                    <RemoteWorldCard
-                      key={worldId}
-                      world={world}
-                      downloadState={downloadStateForRecord(world)}
-                      downloadProgress={allDownloadProgress[worldId]}
-                      isAuthenticated={isAuthenticated}
-                      currentUser={currentUser}
-                      onView={viewCard}
-                      onHideWorld={capabilities.hiddenFilters ? hideCardWorld : undefined}
-                      onHideAuthor={capabilities.hiddenFilters ? hideCardAuthor : undefined}
-                      onHideTag={capabilities.hiddenFilters ? hideCardTag : undefined}
-                      onContextualDownload={capabilities.localLibrary && savesLocally(world) ? downloadCard : undefined}
-                      onDeviceDownload={capabilities.deviceDownloads ? deviceDownload.download : undefined}
-                      onDelete={capabilities.authorManagement ? setRemoteWorldToDelete : undefined}
-                      onLike={capabilities.likes ? likeCard : undefined}
-                      onGuestLike={capabilities.likes && onGuestLike ? guestLikeCard : undefined}
-                      guestLikes={capabilities.likes && capabilities.guestLikes}
-                      serverTakesLikes={anonymousLikes}
-                      onQuarantine={capabilities.moderation ? setQuarantining : undefined}
-                      onRelease={capabilities.moderation ? releaseCard : undefined}
-                      placements={placementsOf(world)}
-                      onOpenContest={openContest}
-                      // Only where the entry is the subject, and only while it is still an entry: a
-                      // decided contest keeps its podium, and the server refuses to release a placed world.
-                      onWithdraw={capabilities.contestParticipation && browseTab === 'contest' && shownContest && contestPhase(shownContest) !== 'decided'
-                        ? withdrawCard
-                        : undefined}
-                      onManageAddons={capabilities.authorManagement ? manageCardAddons : undefined}
-                      likeTutorial={likeTutorial}
-                      likeTutorialNav={likeTutorial ? tutorialNav : undefined}
-                    />
-                  );
-                })
+              )) : (
+                deferredRows.map((world) => renderCard(world))
               )}
             </div>
           </ScrollArea>
@@ -1355,6 +1535,9 @@ const CommunityCreationsBrowser = ({
         serverTakesLikes={anonymousLikes}
         onAnonymousLikes={setAnonymousLikes}
         onLikesChanged={handleLikesChanged}
+        onPendingUpdateChange={handlePendingUpdateChange}
+        onTogglePin={handleTogglePin}
+        onToggleSupporterOnly={handleToggleSupporterOnly}
         openLikersOnMount={openLikersOnMount}
         contests={contests}
         capabilities={capabilities}

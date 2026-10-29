@@ -1,10 +1,10 @@
 import { useId, useState, type ReactElement, type ReactNode } from 'react';
-import { ArrowLeftRight, ChevronLeft, Plus, X } from 'lucide-react';
+import { ArrowLeftRight, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Tip } from '@/components/ui/tooltip';
 import {
-  BreadcrumbPicker, BreadcrumbPickerList, type BreadcrumbPickerRow, type BreadcrumbPickerSection,
+  BreadcrumbPicker, BreadcrumbPickerHeader, BreadcrumbPickerList, type BreadcrumbPickerNode, type BreadcrumbPickerRow, type BreadcrumbPickerSection,
 } from '@/components/ui/breadcrumb-picker';
 import PlaceholderText from '@/components/prompt/PlaceholderText';
 import { StatConditionControls } from '@/components/editor/StatConditionControls';
@@ -121,7 +121,7 @@ export function RequirementRowsField({
     heading,
     rows: list.map((option) => ({
       // One stat can sit under several owners.
-      key: `${option.requirement.kind}:${option.requirement.id}${option.requirement.kind === 'stat' ? `:${requirementOwnerKey(requirementOwnerOf(option.requirement))}` : ''}`,
+      key: `${option.requirement.kind}:${option.requirement.id}${option.requirement.kind === 'stat' ? `:${requirementOwnerKey(requirementOwnerOf(option.requirement))}` : ''}${option.requirement.kind === 'item' ? `:${option.requirement.status}` : ''}`,
       value: option,
       name: option.label,
       breadcrumb: option.breadcrumb,
@@ -129,14 +129,36 @@ export function RequirementRowsField({
     })),
   });
   // Off-world only the entity's own stats exist to read.
-  const statTargets = statSections.filter((s) => !offWorld || s.own).map((s) => targets(s.heading, s.options));
-  const searchable = joinAnd(['traits', 'groups', ...(statTargets.length ? ['stats'] : []), 'time of day', ...(offWorld ? [] : ['personas'])]);
-  const sections = [
-    targets('Traits', options.traits),
-    targets('Any Trait in a Group', options.groups),
-    ...statTargets,
-    targets('Time of Day', [TIME_OPTION]),
-    ...(offWorld ? [] : [targets('Playing As', options.personas)]),
+  const shownStats = statSections.filter((s) => !offWorld || s.own);
+  const shownItems = offWorld ? [] : options.items ?? [];
+  const searchable = joinAnd(['traits', 'groups', ...(shownStats.length ? ['stats'] : []), ...(shownItems.length ? ['items'] : []), 'time of day', ...(offWorld ? [] : ['personas'])]);
+  // One owner page per home, the world first and then in tree order; pages key on the owner's id, not its name.
+  const ownerPages = (prefix: string, list: RequirementOption[]): BreadcrumbPickerNode<RequirementOption>[] => {
+    const homes = new Map<string, { heading: string; list: RequirementOption[] }>();
+    for (const option of list) {
+      const id = option.home?.id ?? '';
+      const home = homes.get(id) ?? { heading: option.home?.name ?? 'World', list: [] };
+      home.list.push(option);
+      homes.set(id, home);
+    }
+    return [...homes].sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : 0)).map(([id, home]): BreadcrumbPickerNode<RequirementOption> => ({
+      kind: 'page', key: `${prefix}:${id}`, heading: home.heading, children: [{ kind: 'section', rows: targets('', home.list).rows }],
+    }));
+  };
+  const category = (key: string, heading: string, children: BreadcrumbPickerNode<RequirementOption>[]): BreadcrumbPickerNode<RequirementOption>[] =>
+    (children.length ? [{ kind: 'page', key, heading, children }] : []);
+  const tree: BreadcrumbPickerNode<RequirementOption>[] = [
+    ...category('traits', 'Traits', ownerPages('traits', options.traits)),
+    ...category('groups', 'Any Trait in a Group', ownerPages('groups', options.groups)),
+    ...category('stats', 'Stats', shownStats.map((s, i): BreadcrumbPickerNode<RequirementOption> => ({
+      kind: 'page', key: `stats:${i}`, heading: s.owner, children: [{ kind: 'section', ...targets(s.heading, s.options) }],
+    }))),
+    ...category('items', 'Items', (['owned', 'equipped'] as const).flatMap((status) => {
+      const list = shownItems.filter((o) => o.requirement.kind === 'item' && o.requirement.status === status);
+      return list.length ? [{ kind: 'section' as const, ...targets(status === 'owned' ? 'Owned' : 'Equipped', list) }] : [];
+    })),
+    ...category('time', 'Time of Day', [{ kind: 'section', ...targets('Time of Day', [TIME_OPTION]) }]),
+    ...(offWorld ? [] : category('playingAs', 'Playing As', [{ kind: 'section', ...targets('Playing As', options.personas) }])),
   ];
 
   const ownerRow = (option: RequirementOption, choice: RequirementOwnerOption | null): BreadcrumbPickerRow<TraitRequirement> => {
@@ -145,21 +167,16 @@ export function RequirementRowsField({
       key: requirementOwnerKey(choice?.owner),
       value: requirement,
       name: choice?.name ?? hostName ?? 'Same Owner',
-      hint: choice || hostName ? undefined : 'Whoever has the trait',
+      hint: choice || hostName ? undefined : option.requirement.kind === 'item' ? 'Whoever has the item' : 'Whoever has the trait',
       disabled: listed(requirement),
     };
   };
   // Its own list, so the target search never carries over to the owner page.
   const ownerPage = picked && (
     <div>
-      <div className="flex items-center gap-1 border-b px-2 py-1.5 text-label">
-        <Button type="button" variant="ghost" size="xs" className="h-7 w-7 shrink-0 p-0" aria-label="Back to targets" onClick={() => setPicked(null)}>
-          <ChevronLeft className="h-4 w-4" aria-hidden />
-        </Button>
-        <span className="min-w-0 truncate">
-          Requires <PlaceholderText text={picked.label} placeholders={placeholders} /> on
-        </span>
-      </div>
+      <BreadcrumbPickerHeader backLabel="Back to targets" onBack={() => setPicked(null)}>
+        Requires <PlaceholderText text={picked.label} placeholders={placeholders} /> on
+      </BreadcrumbPickerHeader>
       <BreadcrumbPickerList
         sections={[{ rows: [ownerRow(picked, null), ...picked.owners.map((choice) => ownerRow(picked, choice))] }]}
         onPick={add}
@@ -214,7 +231,7 @@ export function RequirementRowsField({
               />
             </span>
           </>
-        ) : unresolved || !opens(requirement) ? (
+        ) : unresolved || requirement.kind === 'item' || !opens(requirement) ? (
           <span className="min-w-0 truncate">{mark}{targetLabel}</span>
         ) : (
           <button
@@ -250,7 +267,7 @@ export function RequirementRowsField({
   };
   const picker = (key: AddTarget, trigger: ReactElement) => (
     <BreadcrumbPicker
-      sections={sections}
+      tree={tree}
       onPick={pick}
       open={target === key}
       onOpenChange={(next) => changeTarget(next ? key : null)}

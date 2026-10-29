@@ -28,6 +28,7 @@ export const ALWAYS_RUN = {
   'src/components/FullscreenShell.test.tsx': 'reads view sources and src/index.css',
   'src/components/formaquestion/searchNaming.test.ts': 'reads AskParts.tsx, helpSession.ts and three docs pages, which it does not import',
   'src/components/menu/WebVersionChangelog.test.tsx': 'reads src/index.css',
+  'src/components/menu/feedbackCapabilities.test.tsx': 'reads six feedback component sources for toast imports',
   'src/lib/aiRequest/localEngineImageDrop.test.ts': 'reads electron/llmEngine.cjs',
   'src/lib/bundledFingerprint.test.ts': 'scans src/defaultworlds and reads the shipped avatars',
   'src/lib/codeHighlight.test.ts': 'reads src/index.css',
@@ -55,11 +56,12 @@ export const GRAPH_COVERED = {
   'electron/modelMove.test.mjs': 'reads only its own temp folder',
   'electron/modelScan.test.mjs': 'reads only its own temp folder',
   'scripts/typecheck.test.mjs': 'reads only its own temp folder',
+  'scripts/slowTestReporter.mjs': 'reads only its timing cache in node_modules/.cache',
   'scripts/versionSiteImages.test.mjs': 'reads only its own temp folder',
   'scripts/fetchLlamaServer.test.mjs': 'reads its recorded asset list and its own temp folders',
   'scripts/moveReach.test.mjs':'reads its own temp folder and walks src/lib/uuid.ts, whose closure it never asserts',
   'testing/baseline/harness/planning-parser-probe.test.ts': 'reads files only under PARSER_PROBE=1',
-  'src/test/preRefreshWorlds.ts': 'reads the worlds from one fixed commit, which no change alters',
+  'src/test/bundledRevisions.ts': 'reads the worlds from fixed commits, which no change alters',
   'electron/modelDownload.cjs': 'reads only the paths its caller passes',
   'electron/modelMove.cjs': 'reads only the paths its caller passes',
   'electron/modelScan.cjs': 'reads only the paths its caller passes',
@@ -75,6 +77,11 @@ export const GRAPH_COVERED = {
   'scripts/testSelection.mjs': 'runs git only in the helpers the gate scripts call',
   'vite.config.js': 'a change to it runs the full suite',
   'scripts/zhTw.mjs': 'reads the locale file only when the Vite plugin loads; the unit test passes its own dictionary',
+  'scripts/shipBundledWorlds.mjs': 'reads only the world file its caller names; a change to it runs the full suite',
+  'scripts/stripSeededWorlds.mjs': 'reads only the world file an import names; a change to it runs the full suite',
+  'scripts/stripWorldImages.mjs': 'reads files only in its command-line run, which no test calls; a change to it runs the full suite',
+  'src/lib/shippedWorld.ts': 'reads its own import graph and its cache in node_modules/.cache',
+  'scripts/bundledRevisions.ts': 'reads src/defaultworlds and its git history, which change only with a world file; the world trigger runs its test',
 };
 
 /**
@@ -86,15 +93,15 @@ export const PATH_TRIGGERS = {
   'docs/*.md': ['src/lib/docs/bundledDocsIndex.ts', 'src/lib/docs/docsCoverage.test.ts', 'src/lib/docs/bundledDocsIndex.test.ts', 'src/lib/codeGuideLinks.test.ts'],
   'src/index.css': ['src/lib/landingPulse.test.ts'],
   'index.html': ['src/components/themeBootstrap.test.ts'],
-  'src/defaultworlds/*.json': ['src/services/WorldStorageService.ts', 'src/lib/perTurnSettle.parity.test.ts', 'src/lib/bundledPlayerStats.test.ts', 'src/lib/bundledWorlds.test.ts', 'src/views/GameViewer.bundledSaves.test.tsx', 'src/lib/ownerTreeParity.test.ts', 'src/lib/seedRule.bundled.test.ts'],
+  'src/defaultworlds/*.json': ['src/lib/bundledWorldText.ts', 'src/test/bundledWorldFiles.ts', 'src/lib/perTurnSettle.parity.test.ts', 'src/lib/bundledPlayerStats.test.ts', 'src/lib/bundledWorlds.test.ts', 'src/views/GameViewer.bundledSaves.test.tsx', 'src/lib/ownerTreeParity.test.ts', 'src/lib/seedRule.bundled.test.ts', 'src/lib/shippedWorld.test.ts', 'scripts/shipBundledWorlds.test.ts', 'scripts/bundledRevisions.test.ts'],
   'src/lib/__parity__/*.json': ['src/lib/ownerTreeParity.test.ts'],
-  'src/defaultworlds/drone.json': ['src/lib/droneWorld.test.ts'],
-  'src/defaultworlds/emberwatch.json': ['src/lib/emberwatchWorld.test.ts', 'src/components/game/GamePrompts.globalBlocks.test.ts'],
+  'src/defaultworlds/drone.json': ['src/lib/droneWorld.test.ts', 'testing/art-harness/artHarness.test.ts'],
+  'src/defaultworlds/emberwatch.json': ['src/lib/emberwatchWorld.test.ts', 'src/lib/emberwatchWorld.scripts.test.ts', 'src/components/game/GamePrompts.globalBlocks.test.ts'],
   'src/defaultworlds/slime.json': ['src/lib/slimeWorld.test.ts'],
   'src/defaultworlds/rampage.json': ['src/lib/rampageWorld.test.ts', 'src/components/game/GamePrompts.globalBlocks.test.ts'],
   'src/defaultworlds/open-chat.json': ['src/lib/openChatWorld.test.ts', 'src/components/game/GamePrompts.globalBlocks.test.ts'],
   'src/defaultworlds/sugarscape.json': ['src/lib/sugarscapeWorld.test.ts'],
-  'src/defaultworlds/valentines.json': ['src/lib/valentinesWorld.test.ts'],
+  'src/defaultworlds/valentines.json': ['src/lib/valentinesWorld.test.ts', 'src/services/WorldStorageService.strippedSeed.test.ts'],
   'src/defaultworlds/veilwood.json': ['src/lib/veilwoodWorld.test.ts'],
   'src/lib/formaquestion/mascotAssets/*.webp': ['src/lib/formaquestion/mascotAssets.ts'],
   'testing/parity/turn-pipeline-parity.json': ['src/lib/turnPipeline/parityFixture.test.ts', 'src/lib/turnPipeline/parityTestInputs.ts'],
@@ -154,4 +161,14 @@ export function relatedFiles(changed, requirers) {
   }
   for (const test of Object.keys(ALWAYS_RUN)) out.add(test);
   return [...out].sort();
+}
+
+/** The gate's options after `<base>`, or null when they do not parse; a project run passes when it has no related file. */
+export function gateOptions(args) {
+  const [flag, name, ...extra] = args;
+  if (extra.length) return null;
+  if (flag === undefined) return { list: false, vitest: [] };
+  if (flag === '--list' && name === undefined) return { list: true, vitest: [] };
+  if (flag === '--project' && name && !name.startsWith('-')) return { list: false, vitest: ['--project', name, '--passWithNoTests'] };
+  return null;
 }

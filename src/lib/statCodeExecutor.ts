@@ -1,14 +1,20 @@
 import type { CodeBounds, Stat } from '@/types';
 import { clamp } from './utils';
+import { activeDescriptor } from './statContext';
 import { runInSandbox, type SandboxEngine, type SandboxHostFunction } from './scriptSandbox';
 import { isPromptCanceled, namesPlayer, scriptPrompts, type ScriptPromptHost, type ScriptPromptRequest } from './scriptPrompts';
+import { sameChoices } from './scriptedChoices';
 import { VALUE_JOIN } from './placeholders';
 import { hasEntityKey, statsByCodeName } from './statCodeNames';
 import {
   PLACEHOLDER_ENTRY_MEMBERS, placeholderPathExpression, placeholderPathLabel, type PlaceholderPathRoot,
 } from './statCodePaths';
-import { dayAndHour, daypart, FLAT_HOURS_PER_TURN, type WorldCalendar } from './gameClock';
+import { clockReading, FLAT_HOURS_PER_TURN, type WorldCalendar } from './gameClock';
 import { SCRIPT_TIMING_LABEL } from './scripts';
+import { namedEntries, type LoreWrite } from './loreToggles';
+
+/** A lore write with the path code wrote it through. */
+export type PathedLoreWrite = LoreWrite & { path: string };
 
 // Stat code sees only the marshalled stat data below.
 
@@ -27,16 +33,18 @@ export interface StatClock {
 const clockObject = (clock?: StatClock) => {
   const deltaHours = Math.max(0, clock?.deltaHours ?? FLAT_HOURS_PER_TURN);
   const elapsedHours = Math.max(0, clock?.elapsedHours ?? deltaHours);
-  const end = dayAndHour(elapsedHours, clock?.calendar);
+  const end = clockReading(elapsedHours, clock?.calendar);
   // A turn spans time, so its start can sit in a different day/daypart than its end — a long sleep begins
   // in the afternoon and ends at night. Both readings are exposed; neither is derivable from the other.
-  const start = dayAndHour(Math.max(0, elapsedHours - deltaHours), clock?.calendar);
+  const start = clockReading(Math.max(0, elapsedHours - deltaHours), clock?.calendar);
   return {
     day: end.day,
-    daypart: daypart(end.hour, clock?.calendar),
+    daypart: end.daypart,
+    hour: end.hour,
+    minute: end.minute,
     deltaHours,
     elapsedHours,
-    previous: { day: start.day, daypart: daypart(start.hour, clock?.calendar) },
+    previous: { day: start.day, daypart: start.daypart, hour: start.hour, minute: start.minute },
   };
 };
 
@@ -49,7 +57,7 @@ export const CODE_BOUND_FIELDS = ['min', 'max', 'regen'] as const satisfies read
 export type CodeBoundField = (typeof CODE_BOUND_FIELDS)[number];
 
 /** The fields a write reaches on every stat, whatever route reaches it. Every other stat field is read-only. */
-export const SELF_WRITABLE_FIELDS: readonly string[] = ['value', ...CODE_BOUND_FIELDS];
+export const SELF_WRITABLE_FIELDS: readonly string[] = ['value', ...CODE_BOUND_FIELDS, 'hidden'];
 
 /** The one field on a trait entry a write reaches. The switch lands after the run. */
 export const TRAIT_WRITABLE_FIELD = 'enabled';
@@ -59,7 +67,7 @@ export const PLACEHOLDER_WRITABLE_FIELD = 'value';
 
 /** What one run wrote to one stat other than `self`. The value is as written: the turn clamps it once every
  *  writer's bounds have landed. */
-export type StatWrite = { id: string; name: string } & Partial<Pick<StatNumbers, 'value' | CodeBoundField>>;
+export type StatWrite = { id: string; name: string } & Partial<Pick<StatNumbers, 'value' | CodeBoundField>> & { hidden?: boolean };
 
 export interface StatCodeResult {
   /** The value the code set, by return or by `self.value`, as written: the turn clamps it once every bound
@@ -70,6 +78,8 @@ export interface StatCodeResult {
   kind?: StatCodeFailure;
   /** The bounds the code assigned on `self`, changed or not. Absent when it assigned none. */
   bounds?: CodeBounds;
+  /** The `hidden` the code assigned on `self`, changed or not. Absent when it assigned none. */
+  hidden?: boolean;
   /** The global stats other than `self` the code wrote through `stats`, in map order. Absent when it wrote none. */
   statWrites?: StatWrite[];
   /** The entity stats other than `self` the code wrote, by owner: the run's own owner first, then each other
@@ -97,8 +107,15 @@ export interface StatCodeResult {
   entities?: EntityTraitWrites[];
   /** Entity names the code switched a trait through that no entity in play has; each switch was dropped. */
   unknownEntities?: string[];
+  /** The dictionary entry fields the code wrote, each entry's in assignment order, with the path code wrote through.
+   *  Absent when it wrote none. */
+  lore?: PathedLoreWrite[];
+  /** Entry fields the code wrote through a name no entry has, as code spelled them; each write was ignored. */
+  unknownLore?: string[];
   /** Read-only fields the code wrote, as code spelled them, such as `traits.Brave.mode`; each write was dropped. */
   readOnlyWrites?: string[];
+  /** The `turn.choices` the run left, when it takes the write and the list differs from the one it read (Q12). */
+  choices?: string[];
   /** The sentence the code left, by return or by `narration.sentence`. Present on a During AI Output run that
    *  succeeded, the sentence as it came when the code did not touch it. */
   sentence?: string;
@@ -116,11 +133,28 @@ export interface SandboxPlace {
   name: string;
 }
 
+/** One place the router offers from a location, under its code name. */
+export interface SandboxExit {
+  name: string;
+  /** The Connection leg's travel hint, its placeholders filled in; empty for implicit travel or a hintless leg. */
+  hint: string;
+}
+
+/** Where a location sits in the tree and where travel from it goes, all by code name. */
+export interface SandboxLocationLinks {
+  /** Empty at the top level. */
+  parent: string;
+  children: readonly string[];
+  exits: readonly SandboxExit[];
+}
+
 /** One `locations` entry's input. Text left out reads empty; `starting` left out reads false. */
 export interface SandboxLocation extends SandboxPlace {
   description?: string;
   summary?: string;
   starting?: boolean;
+  /** Called on the run's first read of `parent`, `children` or `exits`. Left out, they read empty. */
+  links?: () => SandboxLocationLinks;
 }
 
 /** The world's locations a run can name, and where the turn stands. */
@@ -285,8 +319,19 @@ export interface SandboxEntity {
 /** One owner's stats as its `stats` map reads them: each entry's turn inputs and enabled flag by stat id. */
 export interface SandboxStats {
   stats: readonly Stat[];
-  turn?: Readonly<Record<string, StatTurnInputs>>;
+  readings?: Readonly<Record<string, StatTurnInputs>>;
   enabled?: Readonly<Record<string, boolean>>;
+}
+
+/** What `turn` reads: the player's action, the turn number on the `memories[].turn` scale, and the finished
+ *  page and choices, empty until the turn's reply lands. */
+export interface SandboxTurn {
+  action: string;
+  number: number;
+  narration: string;
+  choices: readonly string[];
+  /** The player has choices off: `choices` reads empty and takes no write (Q11). */
+  choicesOff?: boolean;
 }
 
 /** One entry of a book's `entries`, by its code name. */
@@ -295,13 +340,18 @@ export interface SandboxDictionaryEntry {
   name: string;
   keys: readonly string[];
   value: string;
+  /** As the lore overlay leaves it. */
+  enabled: boolean;
+  constant: boolean;
 }
 
 /** One entry of the sandbox's `dictionaries`: a book's code name, its owner node in the placeholder tree, and its
- *  enabled entries in authored order. */
+ *  entries in authored order, disabled ones included. */
 export interface SandboxDictionary {
   name: string;
   id?: string;
+  /** As the lore overlay leaves it; absent, on. */
+  enabled?: boolean;
   /** Absent, its `placeholders` holds no names. */
   placeholders?: SandboxPlaceholderNode;
   entries?: readonly SandboxDictionaryEntry[];
@@ -313,7 +363,7 @@ export interface ValueAndMax {
   max: number;
 }
 
-/** The plain 8-field shape of a stat, with none of the turn-relative parts `self` and `stats` entries add.
+/** The plain shape of a stat, with none of the turn-relative parts `self` and `stats` entries add.
  *  What `previous` marshals down to. */
 export interface StatSnapshot {
   id: string;
@@ -324,6 +374,9 @@ export interface StatSnapshot {
   max: number;
   value: number;
   regen: number;
+  hidden: boolean;
+  /** The active band's text, chips as the caller resolved them; empty when no band applies. */
+  descriptor: string;
 }
 
 /** The numbers a stat carries, and the fields of every `delta` source. */
@@ -358,6 +411,8 @@ const marshalSnapshot = (stat: Stat): StatSnapshot => ({
   max: stat.max || 100,
   value: stat.value || 0,
   regen: stat.regen || 0,
+  hidden: stat.hidden === true,
+  descriptor: activeDescriptor(stat, stat.value || 0)?.description ?? '',
 });
 
 /** `value` clamped to the range an authored `stat` holds after a run's own bound writes, the min floored at
@@ -392,8 +447,8 @@ function marshalStat(stat: Stat, inputs: StatTurnInputs | undefined, enabled: bo
 type StatEntry = ReturnType<typeof marshalStat>;
 
 /** Each owner's entries in stat order. */
-const marshalStats = ({ stats, turn, enabled }: SandboxStats): StatEntry[] =>
-  stats.map((stat) => marshalStat(stat, turn?.[stat.id], enabled?.[stat.id] !== false));
+const marshalStats = ({ stats, readings, enabled }: SandboxStats): StatEntry[] =>
+  stats.map((stat) => marshalStat(stat, readings?.[stat.id], enabled?.[stat.id] !== false));
 
 /** The entries a `stats` map keys, in stat order. */
 function keyedStatEntries(entries: readonly StatEntry[]): StatEntry[] {
@@ -401,8 +456,8 @@ function keyedStatEntries(entries: readonly StatEntry[]): StatEntry[] {
   return entries.filter((entry) => owner.get(entry.name) === entry);
 }
 
-/** A `stats` entry for a name no stat has: every field blank, and off. */
-const blankStatEntry = (template: StatEntry): unknown => ({ ...(blankOf(template) as object), enabled: false });
+/** A `stats` entry for a name no stat has: every field blank, so off and shown. */
+const blankStatEntry = (template: StatEntry): unknown => blankOf(template);
 
 /** One entry of the sandbox's `placeholders` map. `roll` runs on the host; the rest rides in as data.
  *  A list `value` marks an Object, and is what `pin` takes on that entry. */
@@ -574,10 +629,11 @@ const trackedMapPrelude = (spec: TrackedMapSpec): string => [
   `})(JSON.stringify, Object.keys);`,
 ].join('\n');
 
-/** `entry` with every string emptied and every number zeroed, at every depth. */
+/** `entry` with every string emptied, every number zeroed and every boolean false, at every depth. */
 const blankOf = (entry: unknown): unknown => {
   if (typeof entry === 'string') return '';
   if (typeof entry === 'number') return 0;
+  if (typeof entry === 'boolean') return false;
   if (typeof entry !== 'object' || entry === null) return entry;
   return Object.fromEntries(Object.entries(entry).map(([key, value]) => [key, blankOf(value)]));
 };
@@ -864,18 +920,19 @@ const isPlayed = (entity: SandboxEntity, persona: SandboxEntity): boolean =>
   entity === persona || (!!persona.id && entity.id === persona.id);
 
 /** JS source of `(fields, entries, blank, build) => [map, readWrites, entry]`: frozen entries with read-only
- *  `fields`, built by `build(key, data, unknown) => [values, rows, hidden?]`, where `hidden` fields are left
- *  out of the entry's keys; an unknown name builds from `blank`.
+ *  `fields`, built by `build(key, data, unknown) => [values, rows, hidden?, setters?]`, where `hidden` fields are
+ *  left out of the entry's keys and a field in `setters` takes its write there; an unknown name builds from `blank`.
  *  `entry(key, data, unknown, tag)` builds one more, whose reader row carries `tag`. */
 const READ_ONLY_ENTRY_MAP = `(fields, entries, blank, build) => {
   const readers = [];
   const entry = (key, data, unknown, tag = null) => {
-    const [values, rows, hidden = []] = build(key, data, unknown);
+    const [values, rows, hidden = [], setters = {}] = build(key, data, unknown);
     const written = [];
     readers.push([key, unknown, rows, written, tag]);
     const out = {};
     for (const field of fields) {
-      define(out, field, { enumerable: !hidden.includes(field), get: () => values[field], set: () => (${ADD_ONCE})(written, field) });
+      const set = setters[field] || (() => (${ADD_ONCE})(written, field));
+      define(out, field, { enumerable: !hidden.includes(field), get: () => values[field], set });
     }
     return freeze(out);
   };
@@ -978,33 +1035,52 @@ const entitiesPrelude = (
 const ownerIndex = (indexOf: FlatPlaceholderMap['indexOf'], node: SandboxPlaceholderNode | undefined): number =>
   (node ? indexOf.get(node) ?? -1 : -1);
 
-/** The fields on a dictionary entry. None takes a write. */
-const DICTIONARY_READ_ONLY_FIELDS = ['id', 'name', 'entries', 'placeholders'] as const;
+/** The fields on a dictionary entry. Only `DICTIONARY_WRITABLE_FIELD` takes a write. */
+const DICTIONARY_KEYS = ['id', 'name', 'enabled', 'entries', 'placeholders'] as const;
 
-/** The fields on an entry of a book's `entries`. None takes a write. */
-const DICTIONARY_ENTRY_READ_ONLY_FIELDS = ['id', 'name', 'keys', 'value'] as const;
+/** The book field a write sets, through the lore overlay. */
+export const DICTIONARY_WRITABLE_FIELD = 'enabled' satisfies keyof SandboxDictionary;
 
-/** The `dictionaries` prelude, the later of two books or two entries sharing a name winning. A book's `entries` map
- *  comes from the host on its first read (Q48), and each `value` resolves on its own (Q54). A book's reader rows are
- *  its `entries` map's rows. */
+/** The fields on an entry of a book's `entries`. Only `DICTIONARY_ENTRY_WRITABLE_FIELDS` take a write. */
+const DICTIONARY_ENTRY_KEYS = ['id', 'name', 'keys', 'value', 'enabled', 'constant'] as const;
+
+/** The entry fields a write sets, through the lore overlay. */
+export const DICTIONARY_ENTRY_WRITABLE_FIELDS = ['enabled', 'constant'] as const satisfies readonly (keyof SandboxDictionaryEntry)[];
+
+/** Each book under its code name, the later of two sharing one winning. */
+const namedBooks = (dictionaries: readonly SandboxDictionary[]) => new Map(dictionaries.map((book) => [book.name, book]));
+
+/** The `dictionaries` prelude, the later of two books sharing a name winning. A book's `entries` map comes from the
+ *  host on its first read (Q48), and each `value` resolves on its own (Q54). A book's `enabled` and an entry's
+ *  `enabled` and `constant` take writes, which read back in the run; an entry's reader rows are the `[field, value]`
+ *  pairs assigned, in order. A book's reader rows are `[entriesRows, assignedPairs]`, or none when both are empty. */
 const dictionariesPrelude = (
   dictionaries: readonly SandboxDictionary[], { indexOf }: FlatPlaceholderMap, reads: HostReads, resolve?: (value: string) => string,
 ): string => {
-  const entriesOf = (book: SandboxDictionary) =>
-    [...new Map((book.entries ?? []).map(({ id, name, keys, value }) => [name, { id, keys, value: reads.text(value, resolve) }]))];
-  const spec = [...new Map(dictionaries.map((book) =>
-    [book.name, { id: book.id ?? '', ph: ownerIndex(indexOf, book.placeholders), entries: reads.deferred(() => entriesOf(book)) }]))];
+  const entriesOf = (book: SandboxDictionary) => [...namedEntries(book.entries ?? [])]
+    .map(([name, { id, keys, value, enabled, constant }]) => [name, { id, keys, value: reads.text(value, resolve), enabled, constant }]);
+  const spec = [...namedBooks(dictionaries)].map(([name, book]) =>
+    [name, { id: book.id ?? '', on: book.enabled !== false, ph: ownerIndex(indexOf, book.placeholders), entries: reads.deferred(() => entriesOf(book)) }]);
   return readOnlyEntryMapPrelude(`dictionaries, ${DICTIONARY_WRITES}`, spec, [
     `const lazy = ${LAZY_TEXT};`,
-    `const blankEntry = { id: '', keys: [], value: -1 };`,
-    `const [dictionaries, readWrites] = entryMap(${JSON.stringify(DICTIONARY_READ_ONLY_FIELDS)}, spec, { id: '', ph: -1, entries: -1 }, (key, data, unknown) => {`,
+    `const blankEntry = { id: '', keys: [], value: -1, enabled: false, constant: false };`,
+    `const [dictionaries, readWrites] = entryMap(${JSON.stringify(DICTIONARY_KEYS)}, spec, { id: '', on: false, ph: -1, entries: -1 }, (key, data, unknown) => {`,
     `  let built = null;`,
-    `  const entries = () => built || (built = entryMap(${JSON.stringify(DICTIONARY_ENTRY_READ_ONLY_FIELDS)},`,
-    `    data.entries < 0 ? [] : ${HOST_READ}(data.entries), blankEntry, (name, entry, stray) =>`,
-    `    [lazy({ id: entry.id, name: stray ? '' : name, keys: freeze([...entry.keys]), value: entry.value }, ['value'], '', ${NO_NOTE}), () => []]));`,
-    `  const values = { id: data.id, name: unknown ? '' : key, placeholders: ${OWNER_VIEW}(data.ph, ['dictionary', key], unknown) };`,
+    `  const entries = () => built || (built = entryMap(${JSON.stringify(DICTIONARY_ENTRY_KEYS)},`,
+    `    data.entries < 0 ? [] : ${HOST_READ}(data.entries), blankEntry, (name, entry, stray) => {`,
+    `      const values = lazy({ id: entry.id, name: stray ? '' : name, keys: freeze([...entry.keys]), value: entry.value,`,
+    `        enabled: entry.enabled, constant: entry.constant }, ['value'], '', ${NO_NOTE});`,
+    `      const assigned = [];`,
+    `      const setters = {};`,
+    `      for (const field of ${JSON.stringify(DICTIONARY_ENTRY_WRITABLE_FIELDS)}) setters[field] = (next) => { values[field] = next; assigned.push([field, next]); };`,
+    `      return [values, () => assigned, [], setters];`,
+    `    }));`,
+    `  const values = { id: data.id, name: unknown ? '' : key, enabled: data.on, placeholders: ${OWNER_VIEW}(data.ph, ['dictionary', key], unknown) };`,
     `  define(values, 'entries', { get: () => entries()[0] });`,
-    `  return [values, () => (built ? built[3]() : [])];`,
+    `  const assigned = [];`,
+    `  const setters = { ${DICTIONARY_WRITABLE_FIELD}: (next) => { values.${DICTIONARY_WRITABLE_FIELD} = next; assigned.push(next); } };`,
+    `  const rows = () => { const entryRows = built ? built[3]() : []; return entryRows.length || assigned.length ? [entryRows, assigned] : []; };`,
+    `  return [values, rows, [], setters];`,
     `});`,
     `return [dictionaries, readWrites];`,
   ]);
@@ -1029,13 +1105,45 @@ const entryWriteRows = (rows: unknown): EntryWriteRow[] =>
 /** The rows in a read-only entry map's dump. */
 const readEntryWriteRows = (dump: string): EntryWriteRow[] => entryWriteRows(JSON.parse(dump));
 
-/** The read-only fields the run wrote on `dictionaries` entries and their `entries`, as code spelled them. */
-const readDictionaryWrites = (dump: string): string[] =>
-  readEntryWriteRows(dump).flatMap(({ name, fields, mapRows }) => {
-    const book = memberPath('dictionaries', name);
-    return [...readOnlyPaths(book, fields),
-      ...entryWriteRows(mapRows).flatMap((row) => readOnlyPaths(memberPath(`${book}.entries`, row.name), row.fields))];
-  });
+/** What the run wrote through `dictionaries`: the entry fields it set, the ones through a name no entry has and
+ *  the read-only fields, as code spelled them; or why the run fails. */
+function readDictionaryWrites(
+  dump: string, dictionaries: readonly SandboxDictionary[],
+): { writes: PathedLoreWrite[]; unknown: string[]; readOnly: string[] } | { error: string } {
+  const books = namedBooks(dictionaries);
+  const writes: PathedLoreWrite[] = [];
+  const unknown: string[] = [];
+  const readOnly: string[] = [];
+  for (const { name, unknown: stray, fields, mapRows } of readEntryWriteRows(dump)) {
+    const path = memberPath('dictionaries', name);
+    readOnly.push(...readOnlyPaths(path, fields));
+    const book = stray ? undefined : books.get(name);
+    const [entryRows, assigned] = Array.isArray(mapRows) ? mapRows : [];
+    const bookPath = `${path}.${DICTIONARY_WRITABLE_FIELD}`;
+    for (const value of Array.isArray(assigned) ? assigned : []) {
+      if (typeof value !== 'boolean') return { error: `${bookPath} must be true or false` };
+      if (book?.id) writes.push({ book: book.id, field: DICTIONARY_WRITABLE_FIELD, value, path: bookPath });
+      else if (!unknown.includes(bookPath)) unknown.push(bookPath);
+    }
+    const entries = namedEntries(book?.entries ?? []);
+    for (const row of entryWriteRows(entryRows)) {
+      const entryPath = memberPath(`${path}.entries`, row.name);
+      readOnly.push(...readOnlyPaths(entryPath, row.fields));
+      const entry = row.unknown ? undefined : entries.get(row.name);
+      for (const pair of Array.isArray(row.mapRows) ? row.mapRows : []) {
+        const [field, value] = Array.isArray(pair) ? pair : [];
+        if (!isLoreField(field)) continue;
+        if (typeof value !== 'boolean') return { error: `${entryPath}.${field} must be true or false` };
+        if (book?.id && entry) writes.push({ book: book.id, entry: entry.id, field, value, path: `${entryPath}.${field}` });
+        else if (!unknown.includes(`${entryPath}.${field}`)) unknown.push(`${entryPath}.${field}`);
+      }
+    }
+  }
+  return { writes, unknown, readOnly };
+}
+
+const isLoreField = (field: unknown): field is LoreWrite['field'] =>
+  (DICTIONARY_ENTRY_WRITABLE_FIELDS as readonly unknown[]).includes(field);
 
 /** How code names an entry of `root`: dot syntax for an identifier, brackets otherwise. */
 export const memberPath = (root: string, name: string) =>
@@ -1180,8 +1288,11 @@ function readPlaceholderWrites(
   return { writes, unknown, unknownOwned, readOnly };
 }
 
-const isWritableField = (field: unknown): field is 'value' | CodeBoundField =>
+const isWritableField = (field: unknown): field is 'value' | CodeBoundField | 'hidden' =>
   typeof field === 'string' && SELF_WRITABLE_FIELDS.includes(field);
+
+/** Why a stat write fails its run. */
+type StatWriteError = { error: string; kind: StatCodeFailure };
 
 /** What a run wrote through one stat map. */
 interface StatMapWrites {
@@ -1192,15 +1303,16 @@ interface StatMapWrites {
 }
 
 /** What the run wrote through one stat map, from its reader's rows. A value is a write when it changed; a
- *  bound is a write whenever it was assigned. A write is kept on a live stat, and dropped and reported on an
- *  unknown name or a switched-off stat. Any write that is not a finite number fails the run. `readOnly` lists
- *  the read-only fields on the map's entries; a `self` that is an entry reports under its path in the map. */
+ *  bound or `hidden` is a write whenever it was assigned. A write is kept on a live stat, and ignored and
+ *  reported on an unknown name or a switched-off stat. A number field written anything but a finite number,
+ *  or `hidden` anything but a boolean, fails the run. `readOnly` lists the read-only fields on the map's
+ *  entries; a `self` that is an entry reports under its path in the map. */
 function readStatWrites(
   rows: unknown,
   entries: readonly StatEntry[],
   /** How code names the map. */
   root: string,
-): StatMapWrites | { error: string } {
+): StatMapWrites | StatWriteError {
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
   const writes: StatWrite[] = [];
   const unknown: string[] = [];
@@ -1213,14 +1325,21 @@ function readStatWrites(
     if (readOnlyFields === null) { readOnly.push(path); continue; }
     readOnly.push(...readOnlyPaths(path, readOnlyFields));
     const entry = byName.get(name);
-    const fields: Partial<StatNumbers> = {};
+    const fields: Partial<StatNumbers> & { hidden?: boolean } = {};
     for (const pair of Array.isArray(assigned) ? assigned : []) {
       if (!Array.isArray(pair) || !isWritableField(pair[0])) continue;
-      const [field, number] = pair as [keyof StatNumbers, unknown];
+      const [field, written] = pair as [keyof StatNumbers | 'hidden', unknown];
+      if (field === 'hidden') {
+        if (typeof written !== 'boolean') return { error: `${path}.hidden must be true or false`, kind: 'bad-write' };
+        fields.hidden = written;
+        continue;
+      }
       // An unknown name has no value to keep, so any assignment through it is a write.
-      if (field === 'value' && entry && Object.is(number, entry.value)) continue;
-      if (typeof number !== 'number' || !Number.isFinite(number)) return { error: `${path}.${field} must be a finite number` };
-      fields[field] = number;
+      if (field === 'value' && entry && Object.is(written, entry.value)) continue;
+      if (typeof written !== 'number' || !Number.isFinite(written)) {
+        return { error: `${path}.${field} must be a finite number`, kind: 'non-number' };
+      }
+      fields[field] = written;
     }
     const written = Object.keys(fields);
     if (!written.length) continue;
@@ -1239,7 +1358,7 @@ function readEntityStatWrites(
   dump: string,
   { byName, persona }: KeyedEntities,
   statEntriesOf: (entity: SandboxEntity) => StatEntry[],
-): (Omit<StatMapWrites, 'writes'> & { owners: OwnerStatWrites[] }) | { error: string } {
+): (Omit<StatMapWrites, 'writes'> & { owners: OwnerStatWrites[] }) | StatWriteError {
   const parsed: unknown = JSON.parse(dump);
   const out = { owners: [] as OwnerStatWrites[], unknown: [] as string[], disabled: [] as string[], readOnly: [] as string[] };
   for (const row of Array.isArray(parsed) ? parsed : []) {
@@ -1273,7 +1392,12 @@ const nonNumberFailure = (what: string) => failure(what, 'non-number');
  *  reads as its default: a flat hour, an untouched turn, an empty map. */
 export interface StatCodeRunOptions {
   clock?: StatClock;
-  turn?: Readonly<Record<string, StatTurnInputs>>;
+  /** Each stat's turn inputs by stat id. */
+  readings?: Readonly<Record<string, StatTurnInputs>>;
+  /** Absent, `turn` reads an empty action at turn 0. */
+  turn?: SandboxTurn;
+  /** `turn.choices` takes the write: an After the AI script's, with choices on (Q21). A change elsewhere is dropped. */
+  choicesWritable?: boolean;
   /** The live stat-enabled map. A stat set false here reads `enabled: false`. */
   enabled?: Readonly<Record<string, boolean>>;
   /** The map's top-level keys, in authored order. Absent, the map is empty. */
@@ -1324,7 +1448,7 @@ const ADVANCE_CLOCK = '__formamorphAdvanceClock';
 const MOVE_TURN = '__formamorphMoveTurn';
 
 /** The globals a read-only run reads through its view, the surface of a user Tool (Q24). */
-const READ_ONLY_GLOBALS = ['entities', 'persona', 'locations', 'location', 'memories', 'clock', 'stats', 'traits', 'placeholders', 'dictionaries'] as const;
+const READ_ONLY_GLOBALS = ['entities', 'persona', 'locations', 'location', 'memories', 'clock', 'turn', 'stats', 'traits', 'placeholders', 'dictionaries'] as const;
 
 const READ_ONLY_VIEW_OF = '__formamorphReadOnlyView';
 
@@ -1475,6 +1599,26 @@ const worldPrelude = (
 
 const NO_PLACES: SandboxPlaces = { locations: [], location: null };
 
+/** A turn reply with nothing in it: the narration and choices of a turn not yet told. Spread it; never push to it. */
+export const EMPTY_REPLY: { narration: string; choices: string[] } = { narration: '', choices: [] };
+
+const NO_TURN: SandboxTurn = { action: '', number: 0, ...EMPTY_REPLY };
+
+/** The prelude's reader of `turn.choices` at run end: JSON with null for each item that isn't text, or null for no list. */
+const CHOICES_AT_END = '__formamorphChoicesAtEnd';
+
+/** `turn.choices` at run end: the list the run read, or what the scripts left, which is any value until checked. */
+type ChoicesAtEnd = { changed: false } | { changed: true; end: unknown };
+
+function choicesAtEnd(start: readonly string[], dump: string | null): ChoicesAtEnd {
+  const end: unknown = dump === null ? null : JSON.parse(dump);
+  return Array.isArray(end) && sameChoices(end, start) ? { changed: false } : { changed: true, end };
+}
+
+/** Whether `list` is text items with no blank one (Q13). */
+const isTextList = (list: unknown): list is string[] =>
+  Array.isArray(list) && list.every((item) => typeof item === 'string' && item.trim() !== '');
+
 /** Who an unknown entry's diary can name: every entity but the persona, by id, else by name, then the discovered. */
 const diaryCast = (entities: readonly SandboxEntity[], persona: SandboxEntity, discovered: readonly SandboxPlace[]): SandboxPlace[] => [
   ...entities
@@ -1512,12 +1656,28 @@ function standingOf({ locations, location: here }: SandboxPlaces, { byName, pers
   };
 }
 
+/** The link fields of a location entry, in the order its slots hold them. */
+const LINK_FIELDS = ['parent', 'children', 'exits'] as const satisfies readonly (keyof SandboxLocationLinks)[];
+
+const NO_LINKS: SandboxLocationLinks = { parent: '', children: [], exits: [] };
+
 /** The `locations` and `location` prelude, after the entities prelude: `present` holds its entries. The later of
  *  two locations sharing a name wins the key. */
 const locationsPrelude = ({ locations, location: here }: SandboxPlaces, standing: Standing, reads: HostReads): string => {
+  // One build per location, shared by its entry and `location`, on the first read of any link field.
+  const linkSlots = new Map<SandboxLocation, number[]>();
+  const slotsOf = (place: SandboxLocation): number[] => {
+    let slots = linkSlots.get(place);
+    if (!slots) {
+      let built: SandboxLocationLinks | undefined;
+      const { links = () => NO_LINKS } = place;
+      linkSlots.set(place, slots = LINK_FIELDS.map((field) => reads.deferred(() => (built ??= links())[field])));
+    }
+    return slots;
+  };
   const data = (place: SandboxLocation, prefix: string) => ({
     id: place.id, name: place.name, description: reads.text(place.description), summary: reads.text(place.summary), starting: !!place.starting,
-    ...standing.presentAt(place.id), prefix,
+    ...standing.presentAt(place.id), links: slotsOf(place), prefix,
   });
   const current = here ? locations.find((place) => place.id === here.id) ?? here : null;
   const blank = { ...data({ id: '', name: '' }, ''), persona: false, keys: [] };
@@ -1529,10 +1689,24 @@ const locationsPrelude = ({ locations, location: here }: SandboxPlaces, standing
   };
   return [
     `const [locations, location] = ((spec, move, lockEntry, note, entities, persona) => {`,
+    `  const freeze = (value) => {`,
+    `    if (value && typeof value === 'object' && !Object.isFrozen(value)) for (const item of Object.values(Object.freeze(value))) freeze(item);`,
+    `    return value;`,
+    `  };`,
+    `  const linked = (target, slots, prefix) => {`,
+    `    ${JSON.stringify(LINK_FIELDS)}.forEach((field, at) => Object.defineProperty(target, field, {`,
+    `      enumerable: true, get: () => freeze(${HOST_READ}(slots[at])), set: () => note(prefix + field),`,
+    `    }));`,
+    `    return target;`,
+    `  };`,
     `  const entry = (data, extra) => {`,
     `    const present = Object.freeze([...(data.persona ? [persona] : []), ...data.keys.map((key) => entities[key])]);`,
-    `    const out = { id: data.id, name: data.name, description: data.description, summary: data.summary, starting: data.starting, present, ...extra };`,
-    `    return Object.freeze(lockEntry(out, ['description', 'summary'], data.prefix, note));`,
+    `    const out = { id: data.id, name: data.name, description: data.description, summary: data.summary, starting: data.starting, present };`,
+    `    const read = linked(lockEntry(out, ['description', 'summary'], data.prefix, note), data.links, data.prefix);`,
+    `    for (const [field, held] of Object.entries(extra)) {`,
+    `      Object.defineProperty(read, field, { enumerable: true, get: () => held, set: () => note(data.prefix + field) });`,
+    `    }`,
+    `    return Object.freeze(read);`,
     `  };`,
     `  const map = Object.create(null);`,
     `  for (const [key, data] of spec.locations) map[key] = entry(data, {});`,
@@ -1607,7 +1781,7 @@ const PLAYER_PRELUDE = [
   `      if (!list.length) throw new TypeError('player.ask needs at least one option');`,
   `      const multiple = !!(settings && settings.multiple);`,
   `      const picked = call({ kind: 'ask', question: text('ask', 'a question', question), options: list.map((o) => o.label), multiple });`,
-  `      return multiple ? picked.map((at) => list[at].value) : list[picked].value;`,
+  `      return multiple ? picked.map((at) => list[at].value) : picked === null ? null : list[picked].value;`,
   `    },`,
   `    input: (question, placeholder) => call({`,
   `      kind: 'input', question: text('input', 'a question', question),`,
@@ -1637,9 +1811,9 @@ export const executeStatCode = async (
    *  write is ignored. */
   currentStat: Stat | null,
   {
-    clock, turn, enabled, placeholders = [], traits = [], entities = [], persona = EMPTY_PERSONA, owner, dictionaries = [], resolveEntryValue,
-    narration, selfTrait, switchedTrait, prompts = scriptPrompts, places = NO_PLACES, discovered = [], args, openCast = false,
-    memories = [], notes = '', readOnly = false,
+    clock, readings, turn = NO_TURN, choicesWritable = false, enabled, placeholders = [], traits = [], entities = [], persona = EMPTY_PERSONA, owner,
+    dictionaries = [], resolveEntryValue, narration, selfTrait, switchedTrait, prompts = scriptPrompts, places = NO_PLACES, discovered = [], args,
+    openCast = false, memories = [], notes = '', readOnly = false,
   }: StatCodeRunOptions = {},
 ): Promise<StatCodeResult> => {
   // If code is empty, return null (use the manually set value)
@@ -1655,7 +1829,7 @@ export const executeStatCode = async (
     const keyed = keyedEntities(entities, persona);
     const place = ownerPlace(keyed, owner);
     const standing = standingOf(places, keyed);
-    const statsData = marshalStats({ stats, turn, enabled });
+    const statsData = marshalStats({ stats, readings, enabled });
     const keyedStats = keyedStatEntries(statsData);
     const ownerStatsData = owner?.stats ? marshalStats(owner.stats) : [];
     const keyedOwnerStats = keyedStatEntries(ownerStatsData);
@@ -1675,7 +1849,7 @@ export const executeStatCode = async (
     const worldIndex = !currentStat || ownIndex >= 0 ? -1 : stats.findIndex((stat) => stat.id === self.id);
     const selfData = ownIndex >= 0 ? ownerStatsData[ownIndex]
       : worldIndex >= 0 ? statsData[worldIndex]
-        : marshalStat(self, turn?.[self.id], enabled?.[self.id] !== false);
+        : marshalStat(self, readings?.[self.id], enabled?.[self.id] !== false);
     // The sandbox variable of the map `self` is an entry of.
     const selfMap = ownIndex >= 0 ? (keyedOwnerStats.includes(selfData) ? OWNER_STATS : null)
       : worldIndex >= 0 && keyedStats.includes(selfData) ? 'stats' : null;
@@ -1734,11 +1908,22 @@ export const executeStatCode = async (
       worldPrelude(places, diaryCast(entities, persona, discovered), openCast, memories, reads),
       `const clock = ((lock, advance) => {`,
       `  const clock = ${JSON.stringify(clockObject(clock))};`,
-      `  Object.freeze(lock(clock.previous, ['day', 'daypart'], 'clock.previous.', ${LOOSE_NOTE}));`,
+      `  Object.freeze(lock(clock.previous, ['day', 'daypart', 'hour', 'minute'], 'clock.previous.', ${LOOSE_NOTE}));`,
       `  lock(clock, Object.keys(clock), 'clock.', ${LOOSE_NOTE});`,
       `  Object.defineProperty(clock, 'advance', { value: advance, enumerable: true });`,
       `  return Object.freeze(clock);`,
       `})(${LOCK_FIELDS}, ${ADVANCE_CLOCK});`,
+      // `choices` is a plain array at every timing: the run end reads it back, and a change is the write (Q12).
+      `const turn = ((entry, choices) => Object.freeze(Object.defineProperty(entry, 'choices', {`,
+      `  enumerable: true, get: () => choices, set: (next) => { choices = next; },`,
+      `})))((${LOCK_FIELDS})(${JSON.stringify({ action: turn.action, number: turn.number, narration: turn.narration })}, ['action', 'number', 'narration'], 'turn.', ${LOOSE_NOTE}),`,
+      `  ${JSON.stringify(turn.choices)});`,
+      `const ${CHOICES_AT_END} = ((isArray, stringify) => (list) => {`,
+      `  if (!isArray(list)) return null;`,
+      `  const out = [];`,
+      `  for (let i = 0; i < list.length; i += 1) out[i] = typeof list[i] === 'string' ? list[i] : null;`,
+      `  return stringify(out);`,
+      `})(Array.isArray, JSON.stringify);`,
       ...(narration ? [
         // `sent` and `buffered` freeze, so code can neither swap nor grow them.
         `const narration = Object.seal((${LOCK_FIELDS})(((entry) => (Object.freeze(entry.sent), Object.freeze(entry.buffered), entry))(`,
@@ -1765,7 +1950,8 @@ export const executeStatCode = async (
       readOnly ? readOnlyCode(code, !!args) : code,
       `})(), ${selfRead('value')}, ${CODE_BOUND_FIELDS.map(selfRead).join(', ')}, ${PLACEHOLDER_WRITES}(), ${TRAIT_WRITES}(), ${ENTITY_WRITES}(),`,
       `  ${STAT_WRITES}(), ${DICTIONARY_WRITES}(), ${STRINGIFY}(${SELF_ASSIGNED}), ${OWNER_STAT_WRITES}(), ${STRINGIFY}(${LOOSE_WRITES}),`,
-      `  ${ENTITY_STAT_WRITES}(), ${narration ? 'narration.sentence' : 'undefined'}, ${STRINGIFY}(${WORLD_WRITES})];`,
+      `  ${ENTITY_STAT_WRITES}(), ${narration ? 'narration.sentence' : 'undefined'}, ${STRINGIFY}(${WORLD_WRITES}), ${selfRead('hidden')},`,
+      `  ${CHOICES_AT_END}(turn.choices)];`,
     ].join('\n');
 
     return await runInSandbox(program, ({ vm, result, consoleOutput, timedOut }): StatCodeResult => {
@@ -1786,11 +1972,14 @@ export const executeStatCode = async (
 
       // Each half is read by its own handle and typeof, never through a JSON dump: a dump turns
       // `undefined` and `NaN` into `null`, which would erase the difference between them.
-      const readSlot = (index: number): { type: string; number: number; text: string } => {
+      const readSlot = (index: number): { type: string; number: number; text: string; flag: boolean } => {
         const handle = vm.getProp(result.value, index);
         try {
           const type = vm.typeof(handle);
-          return { type, number: type === 'number' ? vm.getNumber(handle) : NaN, text: type === 'string' ? vm.getString(handle) : '' };
+          return {
+            type, number: type === 'number' ? vm.getNumber(handle) : NaN, text: type === 'string' ? vm.getString(handle) : '',
+            flag: type === 'boolean' && vm.dump(handle) === true,
+          };
         } finally {
           handle.dispose();
         }
@@ -1821,12 +2010,14 @@ export const executeStatCode = async (
       const entitiesDump = readDump(4 + CODE_BOUND_FIELDS.length);
       const statsDump = readDump(5 + CODE_BOUND_FIELDS.length);
       const dictionariesDump = readDump(6 + CODE_BOUND_FIELDS.length);
-      const assignedBounds: unknown = JSON.parse(readDump(7 + CODE_BOUND_FIELDS.length));
+      const selfAssigned: unknown = JSON.parse(readDump(7 + CODE_BOUND_FIELDS.length));
       const ownerStatsDump = readDump(8 + CODE_BOUND_FIELDS.length);
       const loose: unknown = JSON.parse(readDump(9 + CODE_BOUND_FIELDS.length));
       const entityStatsDump = readDump(10 + CODE_BOUND_FIELDS.length);
       const assignedSentence = readSlot(11 + CODE_BOUND_FIELDS.length);
       const worldWrites = readWorldWrites(readDump(12 + CODE_BOUND_FIELDS.length));
+      const selfHidden = readSlot(13 + CODE_BOUND_FIELDS.length);
+      const choicesDump = readSlot(14 + CODE_BOUND_FIELDS.length);
 
       if (consoleOutput.trim()) {
         console.log('Console output:', consoleOutput);
@@ -1837,6 +2028,12 @@ export const executeStatCode = async (
       if (narration && assignedSentence.type !== 'string') return failure('narration.sentence must be a string', 'bad-write');
       const sentence = narration && (returnsSentence ? returned.text : assignedSentence.text);
       if ('error' in worldWrites) return failure(worldWrites.error, 'throw');
+      const endChoices = choicesAtEnd(turn.choices, choicesDump.type === 'string' ? choicesDump.text : null);
+      let choices: string[] | undefined;
+      if (endChoices.changed && choicesWritable) {
+        if (!isTextList(endChoices.end)) return failure('turn.choices must be a list of text with no blank item', 'bad-write');
+        choices = endChoices.end;
+      }
       if (currentStat && !returnsSentence && returned.type !== 'number' && returned.type !== 'undefined') {
         return nonNumberFailure('Code must return a number or nothing');
       }
@@ -1844,19 +2041,22 @@ export const executeStatCode = async (
         return nonNumberFailure('self.value must be a number');
       }
       // A bound the code assigned is a write, changed or not; one it left alone keeps the pipeline's result.
+      const wroteSelf = (field: string) => !!currentStat && Array.isArray(selfAssigned) && selfAssigned.includes(field);
       const bounds: CodeBounds = {};
       for (const [field, slot] of currentStat ? boundSlots : []) {
-        const assigned = Array.isArray(assignedBounds) && assignedBounds.includes(field);
-        if (!assigned && slot.type === 'number' && Object.is(slot.number, selfData[field])) continue;
+        if (!wroteSelf(field) && slot.type === 'number' && Object.is(slot.number, selfData[field])) continue;
         if (!Number.isFinite(slot.number)) return nonNumberFailure(`self.${field} must be a finite number`);
         bounds[field] = slot.number;
       }
+      // `hidden` is a write whenever it was assigned, as a bound is.
+      if (wroteSelf('hidden') && selfHidden.type !== 'boolean') return failure('self.hidden must be true or false', 'bad-write');
+      const hidden = wroteSelf('hidden') ? { hidden: selfHidden.flag } : {};
       const statWrites = readStatWrites(JSON.parse(statsDump), keyedStats, 'stats');
-      if ('error' in statWrites) return nonNumberFailure(statWrites.error);
+      if ('error' in statWrites) return failure(statWrites.error, statWrites.kind);
       const ownerStatWrites = readStatWrites(JSON.parse(ownerStatsDump), keyedOwnerStats, 'owner.stats');
-      if ('error' in ownerStatWrites) return nonNumberFailure(ownerStatWrites.error);
+      if ('error' in ownerStatWrites) return failure(ownerStatWrites.error, ownerStatWrites.kind);
       const entityStatWrites = readEntityStatWrites(entityStatsDump, keyed, statEntriesOf);
-      if ('error' in entityStatWrites) return nonNumberFailure(entityStatWrites.error);
+      if ('error' in entityStatWrites) return failure(entityStatWrites.error, entityStatWrites.kind);
       const ownerRows: OwnerStatWrites[] = [
         ...(owner && ownerStatWrites.writes.length ? [{ ownerId: owner.id ?? '', writes: ownerStatWrites.writes }] : []),
         ...entityStatWrites.owners,
@@ -1867,6 +2067,8 @@ export const executeStatCode = async (
       if ('error' in traitWrites) return failure(traitWrites.error, 'bad-write');
       const entityWrites = readEntityWrites(entitiesDump, keyed, place);
       if ('error' in entityWrites) return failure(entityWrites.error, 'bad-write');
+      const loreWrites = readDictionaryWrites(dictionariesDump, dictionaries);
+      if ('error' in loreWrites) return failure(loreWrites.error, 'bad-write');
       const unknownStatWrites = [...statWrites.unknown, ...ownerStatWrites.unknown, ...entityStatWrites.unknown];
       const disabledStatWrites = [...statWrites.disabled, ...ownerStatWrites.disabled, ...entityStatWrites.disabled];
       const readOnlyWrites = [
@@ -1877,13 +2079,15 @@ export const executeStatCode = async (
         ...placeholderWrites.readOnly,
         ...traitWrites.readOnly,
         ...entityWrites.readOnly,
-        ...readDictionaryWrites(dictionariesDump),
+        ...loreWrites.readOnly,
+        ...(endChoices.changed && !choicesWritable ? ['turn.choices'] : []),
       ];
 
       const settled = (value: number | null): StatCodeResult => ({
         value,
         error: null,
         ...(Object.keys(bounds).length ? { bounds } : {}),
+        ...hidden,
         ...(statWrites.writes.length ? { statWrites: statWrites.writes } : {}),
         ...(ownerRows.length ? { ownerStatWrites: ownerRows } : {}),
         ...(unknownStatWrites.length ? { unknownStatWrites } : {}),
@@ -1896,7 +2100,10 @@ export const executeStatCode = async (
         ...(traitWrites.acquired.length ? { acquiredWrites: traitWrites.acquired } : {}),
         ...(entityWrites.writes.length ? { entities: entityWrites.writes } : {}),
         ...(entityWrites.unknown.length ? { unknownEntities: entityWrites.unknown } : {}),
+        ...(loreWrites.writes.length ? { lore: loreWrites.writes } : {}),
+        ...(loreWrites.unknown.length ? { unknownLore: loreWrites.unknown } : {}),
         ...(readOnlyWrites.length ? { readOnlyWrites } : {}),
+        ...(choices ? { choices } : {}),
         ...(sentence === undefined ? {} : { sentence }),
         ...(worldWrites.writes ? { worldWrites: worldWrites.writes } : {}),
         ...(worldWrites.maybeDiary ? { maybeDiary: worldWrites.maybeDiary } : {}),

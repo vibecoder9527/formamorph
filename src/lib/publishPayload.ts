@@ -38,6 +38,8 @@ export interface PublishPayload {
   compatibleWorlds?: string[];
   /** The models a prompt works with. Prompts only; the server refuses a prompt with none. */
   models?: string[];
+  /** Create the listing Supporter-only and pinned. New listings only; the server takes it from an admin alone. */
+  supporterOnly?: boolean;
 }
 
 /**
@@ -149,6 +151,11 @@ export function promptPublishPayload(shared: SharedPreset): PublishPayload {
     tags: overview?.tags ?? [],
     models: overview?.models ?? [],
   };
+}
+
+/** A Mascot publishes its card data. It has no blurb or tags; the thumbnail is the Initial render or the author's own. */
+export function mascotPublishPayload(name: string, card: unknown, thumbnail: string): PublishPayload {
+  return { kind: 'mascot', name: name.trim() || 'Untitled Mascot', description: '', thumbnail, contentData: card, tags: [] };
 }
 
 /** Why a preset can't be published yet: `models` while its Overview names no model, else null. */

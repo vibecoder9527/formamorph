@@ -1,5 +1,9 @@
 import { memo } from "react";
-import { EyeOff, Download, MessageSquare, Puzzle, Trash2, ShieldAlert, ShieldCheck, TicketX } from "lucide-react";
+import { Check, EyeOff, Download, Heart, HeartOff, MessageSquare, Pin, PinOff, Puzzle, Trash2, ShieldAlert, ShieldCheck, TicketX, X } from "lucide-react";
+import { PinnedMark } from "@/components/community/PinnedMark";
+import { SupporterListingButton } from "@/components/community/SupporterListingButton";
+import { isSupporterOnly } from "@/lib/supporterListingAction";
+import { isPinned } from "@/lib/pinning";
 import { ActionIcon } from "@/lib/actionIcons";
 import { Progress } from "@/components/ui/progress";
 import { Tip } from "@/components/ui/tooltip";
@@ -16,14 +20,17 @@ import { KIND_LABELS, kindOf, kindHasMorphArt, kindHasThumbnail, showsMorphArt }
 import { KindArt } from "@/components/community/KindArt";
 import { EntityPlaceholderArt } from "@/components/EntityPlaceholderArt";
 import { cardLayoutFor, thumbAspectFor, thumbFit } from "@/lib/thumbAspect";
-import { isQuarantined, quarantineDaysLeft, quarantineDeadline } from "@/lib/quarantine";
+import { isQuarantined } from "@/lib/quarantine";
+import { ModerationMarker } from "@/components/community/ModerationMarker";
+import { pendingFaceOf } from "@/lib/listingModeration";
+import { usePendingThumbnail } from "@/lib/usePendingThumbnail";
 import WorldStorageService from "@/services/WorldStorageService";
 import { useListingPrefetch } from "@/lib/useListingPrefetch";
 import { UserAvatar } from "@/components/UserAvatar";
 import { RoleBadge } from "@/components/RoleBadge";
 import { SupporterBadge } from "@/components/SupporterBadge";
 import { SUPPORTER_NAME_STYLES, flairTier } from "@/lib/supporterFlair";
-import { canModerate, isStaff } from "@/lib/roles";
+import { canModerate, isAdmin, isStaff } from "@/lib/roles";
 import { TutorialPopover } from "@/components/TutorialPopover";
 import { PlaceBadges } from "@/components/PlaceBadges";
 import type { TutorialEntry, TutorialNav } from "@/lib/tutorials";
@@ -60,6 +67,10 @@ interface RemoteWorldCardProps {
   onQuarantine?: (world: WorldRecord) => void;
   /** Lifts a quarantine. Admin surfaces only. */
   onRelease?: (world: WorldRecord) => void;
+  /** Pins the listing, or unpins it when it is pinned. Staff surfaces only. */
+  onTogglePin?: (world: WorldRecord) => void;
+  /** Marks the listing Supporter-only, or clears the mark. Staff surfaces only. */
+  onToggleSupporterOnly?: (world: WorldRecord) => void;
   /** Where this listing placed — the badge travels with the world, not with the tab it was won in. */
   placements?: ContestPlacement[];
   /** Opens a contest this listing placed in, from its place chip. */
@@ -72,6 +83,14 @@ interface RemoteWorldCardProps {
   /** The like tutorial, when this is the card chosen to anchor it. */
   likeTutorial?: TutorialEntry | null;
   likeTutorialNav?: TutorialNav;
+  /** Whether the card sits in the staff's pinned review group, where its review badge shows its title only. */
+  inReviewGroup?: boolean;
+  /** Approves the waiting listing. Passed only when the viewer may decide it. */
+  onApprove?: (world: WorldRecord) => void;
+  /** Starts the rejection of the waiting listing. Passed only when the viewer may decide it. */
+  onReject?: (world: WorldRecord) => void;
+  /** Whether a review decision is in flight. */
+  reviewBusy?: boolean;
 }
 
 /** A single card in the community browser grid: thumbnail with a contextual download/hide overlay, plus title,
@@ -79,8 +98,9 @@ interface RemoteWorldCardProps {
  *  Memoized: a catalog refresh that keeps a row's object skips its card. */
 export const RemoteWorldCard = memo(function RemoteWorldCard({
   world, downloadState: dlState, downloadProgress, isAuthenticated, currentUser,
-  onView, onHideWorld, onHideAuthor, onHideTag, onContextualDownload, onDeviceDownload, onDelete, onLike, onGuestLike, guestLikes = false, serverTakesLikes = false, onQuarantine, onRelease,
-  placements = [], onOpenContest, onWithdraw, onManageAddons, likeTutorial, likeTutorialNav,
+  onView, onHideWorld, onHideAuthor, onHideTag, onContextualDownload, onDeviceDownload, onDelete, onLike, onGuestLike, guestLikes = false, serverTakesLikes = false, onQuarantine, onRelease, onTogglePin, onToggleSupporterOnly,
+  placements = [], onOpenContest, onWithdraw, onManageAddons, likeTutorial, likeTutorialNav, inReviewGroup = false,
+  onApprove, onReject, reviewBusy = false,
 }: RemoteWorldCardProps) {
   // Get the world ID (server uses _id)
   const worldId = world._id || world.id;
@@ -96,16 +116,18 @@ export const RemoteWorldCard = memo(function RemoteWorldCard({
   // Whether to offer the moderation controls at all. What the server will actually allow is narrower —
   // staff moderate the room, not each other — and is checked per listing below.
   const viewerIsStaff = isStaff(currentUser);
-  // Quarantined listings only reach a card at all for their author or a moderator — the server hides them
-  // from everyone else — so the badge is always addressed to somebody who can act on it.
   const quarantined = isQuarantined(world);
-  const deadline = quarantineDeadline(world);
-  const daysLeft = quarantineDaysLeft(world);
 
   // Check if the world is owned by the current user
   // Staff moderate the room, not each other: whether these controls do anything depends on who published
   // it, so the decision is per listing rather than per viewer.
   const mayModerate = viewerIsStaff && canModerate(currentUser, world.author);
+  // A pin is not a moderation of its author, so every staff account may pin any listing.
+  const canPin = viewerIsStaff && Boolean(onTogglePin);
+  const pinned = isPinned(world);
+  const supporterOnly = isSupporterOnly(world);
+  // Clearing Supporter-only makes the clean files public, so only an admin may change it.
+  const canMarkSupporterOnly = isAdmin(currentUser) && Boolean(onToggleSupporterOnly);
 
   const isOwnedByUser = isAuthenticated &&
     world.author &&
@@ -120,6 +142,11 @@ export const RemoteWorldCard = memo(function RemoteWorldCard({
     : undefined;
 
   const open = () => onView(world);
+
+  // A pinned update shows the change under review; a row without a preview keeps its live face.
+  const preview = pendingFaceOf(world, inReviewGroup);
+  const pendingThumb = usePendingThumbnail(preview?.thumbnail_url);
+  const shownName = preview?.name || world.name;
 
   const likeControl = (
     <LikeButton
@@ -148,7 +175,7 @@ export const RemoteWorldCard = memo(function RemoteWorldCard({
       onOpen={open}
       {...prefetch}
       layout={layout}
-      name={world.name}
+      name={shownName}
       description={world.description}
       // An Avatar's description is its generated credit line, so a file crediting nobody has none to show.
       omitEmptyDescription={isAvatar}
@@ -177,7 +204,10 @@ export const RemoteWorldCard = memo(function RemoteWorldCard({
               <EyeOff className="h-5 w-5" />
             </button>
           </Tip>}
-          {onContextualDownload && <Tip tip={dlState === 'update' ? "Update available — download the newer version" : dlState === 'refresh' ? `Re-download this ${noun}` : `Download this ${noun}`}>
+          {supporterOnly && onContextualDownload && (
+            <SupporterListingButton world={world} kind={kindOf(world)} signedIn={isAuthenticated} onSignIn={onGuestLike} variant="card" />
+          )}
+          {!supporterOnly && onContextualDownload && <Tip tip={dlState === 'update' ? "Update available — download the newer version" : dlState === 'refresh' ? `Re-download this ${noun}` : `Download this ${noun}`}>
             <button
               onClick={(e) => { e.stopPropagation(); onContextualDownload?.(world, dlState); }}
               className="p-1 rounded bg-overlay/50 text-white hover:bg-overlay/70 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -192,7 +222,7 @@ export const RemoteWorldCard = memo(function RemoteWorldCard({
               )}
             </button>
           </Tip>}
-          {!onContextualDownload && onDeviceDownload && <Tip tip={`Download this ${noun}`}>
+          {!supporterOnly && !onContextualDownload && onDeviceDownload && <Tip tip={`Download this ${noun}`}>
             <button
               onClick={(e) => { e.stopPropagation(); onDeviceDownload(world); }}
               className="p-1 rounded bg-overlay/50 text-white hover:bg-overlay/70 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -207,6 +237,8 @@ export const RemoteWorldCard = memo(function RemoteWorldCard({
         <KindArt kind={kindOf(world)} />
       ) : showsMorphArt(world) ? (
         <EntityPlaceholderArt id={worldId} name={world.name ?? ''} />
+      ) : pendingThumb.status === 'ready' ? (
+        <img src={pendingThumb.src} alt={shownName} className={thumbClass} />
       ) : world.thumbnail_file ? (
         <CachedThumbnail
           file={world.thumbnail_file}
@@ -279,24 +311,58 @@ export const RemoteWorldCard = memo(function RemoteWorldCard({
         <CardTags tags={world.tags || []} onHide={onHideTag} omitEmpty={isAvatar} />
       </div>
 
-      {/* Only its author and the admins ever see this card, so the deadline is said plainly rather than
-          hinted at — the author has something to do about it and a date by which to do it. */}
-      {quarantined && (
-        <div className="mb-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-meta">
-          <p className="flex items-center gap-1 font-medium text-warning">
-            <ShieldAlert className="h-3 w-3 shrink-0" /> Quarantined
-          </p>
-          {deadline && (
-            <p className="text-muted-foreground">
-              Deleted on {deadline}{daysLeft !== null && ` — ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`}
-            </p>
-          )}
-        </div>
-      )}
+      <PinnedMark listing={world} className="mb-2" />
+      <ModerationMarker listing={world} titleOnly={inReviewGroup} className="mb-2" />
 
-      {(manageAddons || (onDelete && (isOwnedByUser || mayModerate))) && (
+      {(onApprove || onReject || manageAddons || canPin || canMarkSupporterOnly || (onDelete && (isOwnedByUser || mayModerate))) && (
         <div className="mt-auto pt-1 flex justify-end gap-1">
-          {/* First, because it is the only one of these that is not a removal. */}
+          {onApprove && (
+            <Tip tip="Approve and show it to players">
+              <button
+                className="p-1 text-success hover:text-success/80 disabled:opacity-50 disabled:pointer-events-none"
+                disabled={reviewBusy}
+                onClick={(e) => { e.stopPropagation(); onApprove(world); }}
+                aria-label={`Approve ${shownName || noun}`}
+              >
+                <Check className="h-5 w-5" />
+              </button>
+            </Tip>
+          )}
+          {onReject && (
+            <Tip tip="Reject and message the author">
+              <button
+                className="p-1 text-destructive hover:text-destructive/80 disabled:opacity-50 disabled:pointer-events-none"
+                disabled={reviewBusy}
+                onClick={(e) => { e.stopPropagation(); onReject(world); }}
+                aria-label={`Reject ${shownName || noun}`}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </Tip>
+          )}
+          {canPin && onTogglePin && (
+            <Tip tip={pinned ? "Remove it from the top of its section" : "Keep it at the top of its section"}>
+              <button
+                className="p-1 text-muted-foreground hover:text-foreground"
+                onClick={(e) => { e.stopPropagation(); onTogglePin(world); }}
+                aria-label={`${pinned ? 'Unpin' : 'Pin'} ${world.name || noun}`}
+              >
+                {pinned ? <PinOff className="h-5 w-5" /> : <Pin className="h-5 w-5" />}
+              </button>
+            </Tip>
+          )}
+          {canMarkSupporterOnly && onToggleSupporterOnly && (
+            <Tip tip={supporterOnly ? "Let everyone download it" : "Limit the download to Supporters"}>
+              <button
+                className="p-1 text-muted-foreground hover:text-foreground"
+                onClick={(e) => { e.stopPropagation(); onToggleSupporterOnly(world); }}
+                aria-label={`${supporterOnly ? 'Remove Supporter-only from' : 'Make Supporter-only'} ${world.name || noun}`}
+              >
+                {supporterOnly ? <HeartOff className="h-5 w-5" /> : <Heart className="h-5 w-5" />}
+              </button>
+            </Tip>
+          )}
+          {/* Ahead of the removals, because it is not one. */}
           {manageAddons && (
             <Tip tip="Review the add-ons other authors offer for this world">
               <button

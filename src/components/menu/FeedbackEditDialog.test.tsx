@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { FeedbackEditDialog } from './FeedbackEditDialog';
 import FeedbackService from '@/services/FeedbackService';
 import type { FeedbackThread } from '@/types';
+import { toastFeedbackNotify } from '@/lib/feedbackToast';
 
 vi.mock('react-toastify', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
@@ -26,7 +27,7 @@ const thread = (over: Partial<FeedbackThread> = {}): FeedbackThread => ({
 
 const show = (props: Record<string, unknown> = {}) =>
   render(
-    <FeedbackEditDialog
+    <FeedbackEditDialog notify={toastFeedbackNotify} threadSearchTypes={null}
       open
       onOpenChange={() => {}}
       thread={thread()}
@@ -144,5 +145,63 @@ describe('moving between the branches', () => {
     show({ mayEditProse: false });
 
     expect(screen.getByLabelText('Kind')).toBeTruthy();
+  });
+
+  /** Opens the Kind select by keyboard (Radix ignores jsdom's missing pointer events) and picks `label`. */
+  const pickKind = async (label?: string) => {
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.hasPointerCapture = vi.fn(() => false);
+    fireEvent.keyDown(screen.getByLabelText('Kind'), { key: 'Enter' });
+    const options = await screen.findAllByRole('option');
+    if (label) {
+      const option = options.find((item) => item.textContent === label) as HTMLElement;
+      fireEvent.pointerDown(option, { pointerType: 'mouse' });
+      fireEvent.pointerUp(option, { pointerType: 'mouse' });
+      fireEvent.click(option);
+    }
+    return options.map((option) => option.textContent);
+  };
+
+  it('offers all three branches', async () => {
+    show({ mayEditProse: false });
+
+    expect(await pickKind()).toEqual(['Bug Report', 'Suggestion', 'Question']);
+  });
+
+  it('warns that only the reporter and staff reply once it is a bug', async () => {
+    show({ mayEditProse: false, thread: thread({ type: 'question', category: 'setup' }) });
+
+    await pickKind('Bug Report');
+
+    expect(await screen.findByText(/Moving this to a bug report sets its status back to Open\. Its replies and votes stay\. Only the reporter and staff can reply to a bug\./)).toBeTruthy();
+  });
+
+  it('adds that it clears the accepted answer when the question has one', async () => {
+    const answer = { id: 'c1', body: 'Try this.', createdAt: '2026-08-01T01:00:00.000Z', editedAt: null, author: { id: 'a1', username: 'helper' } };
+    show({ mayEditProse: false, thread: thread({ type: 'question', category: 'setup', status: 'answered', acceptedAnswer: answer }) });
+
+    await pickKind('Suggestion');
+
+    const warning = await screen.findByText(/Moving this to a suggestion sets its status back to Open/);
+    expect(warning.textContent).toContain('back to Open and clears the accepted answer.');
+  });
+
+  it('says nothing of an answer when the question has none', async () => {
+    show({ mayEditProse: false, thread: thread({ type: 'question', category: 'setup' }) });
+
+    await pickKind('Suggestion');
+
+    const warning = await screen.findByText(/Moving this to a suggestion sets its status back to Open/);
+    expect(warning.textContent).not.toContain('accepted answer');
+  });
+
+  it('keeps the plain warning when it becomes a question', async () => {
+    show({ mayEditProse: false });
+
+    await pickKind('Question');
+
+    const warning = await screen.findByText(/Moving this to a question sets its status back to Open/);
+    expect(warning.textContent).toContain('deletes the version and platform it was filed with');
+    expect(warning.textContent).not.toContain('Only the reporter and staff');
   });
 });

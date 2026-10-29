@@ -1,10 +1,11 @@
 import type {
-  CascadeOffTraitIds, CodeBounds, CodePins, Dictionary, Entity, EntityPositions, EntityStatValues, GameLocation, OwnedTraitStates, Placeholder,
-  PlayerStat, Script, Trait,
+  CascadeOffTraitIds, CodeBounds, CodePins, Connection, Dictionary, Entity, EntityPositions, EntityStatValues, GameLocation, ItemCopy, LoreToggles,
+  OwnedTraitStates, Placeholder, PlayerStat, Script, Trait,
 } from '@/types';
+import { bareLoreWrite, withLoreWrites, type LoreWrite } from './loreToggles';
 import {
   CODE_BOUND_FIELDS, type EntityTraitWrites, type NarrationInput, type PlaceholderWrite, type StatClock, type StatCodeResult,
-  type StatTurnInputs, type StatWrite, type TraitWrite, type ValueAndMax, type SandboxMemory, type SandboxPlace, type WorldWrites,
+  type StatTurnInputs, type StatWrite, type SandboxTurn, type TraitWrite, type ValueAndMax, type SandboxMemory, type SandboxPlace, type WorldWrites,
 } from './statCodeExecutor';
 import { mergeWorldWrites } from './worldWrites';
 import { statCodeNamed } from './statCodeNames';
@@ -12,7 +13,7 @@ import type { StatCodePlaceholderSet } from './statCodePlaceholders';
 import { recordKey } from './ownedTraitState';
 import type { StatCodeOwners } from './statCodeTraits';
 import {
-  applyCodeTraitSwitches, codeDeltaFor, gateStatsOf, ownerStatTraitsInForce, sameCodeDelta, traitForceScope, traitSwitchEvents, withCodeDelta,
+  applyCodeTraitSwitches, codeDeltaFor, gateStatsOf, ownerStatTraitsInForce, sameCodeDelta, sameHidden, traitForceScope, traitSwitchEvents, withCodeDelta,
   type AppliedTraitValues, type CodeTraitSwitch, type TraitForceState, type TraitSwitchEvent, type TraitWorld,
 } from './traitRuntime';
 import {
@@ -24,7 +25,8 @@ import { filledScriptsAt, inRunOrder, SCRIPT_TIMING_LABEL, scriptLabel } from '.
 import { inAuthoredOrder, traitOrderIndex } from './traitEffects';
 import { clamp } from './utils';
 import type { OwnerId, Scoped } from './scope';
-import type { ScriptPromptHost } from './scriptPrompts';
+import { silentPrompts, type ScriptPromptHost } from './scriptPrompts';
+import { sameChoices } from './scriptedChoices';
 
 /** The trait state a run's switches left, and the log lines they wrote. */
 export interface StatCodeTraitResult {
@@ -43,8 +45,10 @@ export interface StatCodeTraitResult {
 
 /** The world's locations as authored, and where the turn stands. */
 export interface StatePlaces {
-  locations: readonly Pick<GameLocation, 'id' | 'name' | 'aiDescription' | 'aiSummary' | 'isStarting'>[];
+  locations: readonly Pick<GameLocation, 'id' | 'name' | 'aiDescription' | 'aiSummary' | 'isStarting' | 'parentId'>[];
   location: SandboxPlace | null;
+  /** The world's Connections, which the exits read as the router does. Absent ⇒ none. */
+  connections?: readonly Connection[];
 }
 
 /** Authored text as the AI reads it: chips resolved, an entity's own against that entity. */
@@ -82,6 +86,12 @@ export interface SandboxState {
   memories?: readonly SandboxMemory[];
   /** The player's notes. Absent, `notes` is empty, as in the editor. */
   notes?: string;
+  /** What `turn` reads. Absent, an empty action at turn 0. */
+  turn?: SandboxTurn;
+  /** What scripts switched on the books' entries in play. Absent ⇒ none. */
+  loreToggles?: LoreToggles;
+  /** Every Item Copy in play. Absent ⇒ none. */
+  itemCopies?: readonly ItemCopy[];
 }
 
 /** One entity owner's stats in the state, in the same terms as the global ones. */
@@ -142,6 +152,9 @@ export interface StatCodeTurn {
   triggers?: readonly ScriptTrigger[];
   /** Runs `triggers` and `replayed` alone, as an On Call Tool does. */
   triggersOnly?: boolean;
+  /** Runs the scripts alone, as Re-generate Choices does: `choices` is the one thing the result carries, and every
+   *  `player` call answers through {@link silentPrompts} (Q10, Q20). */
+  choicesOnly?: boolean;
   /** Saved World Tool writes laid on ahead of `triggers`, in this order, with no script run (Q41). */
   replayed?: readonly ReplayedTrigger[];
 }
@@ -159,6 +172,8 @@ export interface SavedScriptWrites {
   stats?: { owner: OwnerId; writes: TargetWrite[] }[];
   placeholders?: PlaceholderWrite[];
   traits?: StatTraitWrites;
+  /** Absent ⇒ none (Q50). */
+  lore?: LoreWrite[];
 }
 
 /** A World Tool call replayed from its saved writes: the Tool's name, for the switch log, and the writes. */
@@ -182,7 +197,7 @@ export function splitOwnerTurns(rows: readonly OwnerCodeTurn[]): { owners: Owner
 }
 
 /** What one entity owner's code and the run's trait switches did to its stats. */
-export type OwnerCodeResult = Pick<StatCodeTurnResult, 'stats' | 'moved' | 'boundsChanged'> & {
+export type OwnerCodeResult = Pick<StatCodeTurnResult, 'stats' | 'moved' | 'boundsChanged' | 'hiddenChanged'> & {
   /** The owner's stat traits in force after the switches; absent when code switched no trait. */
   inForce?: Trait[];
 };
@@ -195,6 +210,8 @@ export interface StatCodeTurnResult {
   moved: string[];
   /** Ids of the stats whose code delta the run changed, in stat order. */
   boundsChanged: string[];
+  /** Ids of the stats the run hid or showed, in stat order. */
+  hiddenChanged: string[];
   /** Where two stats touched one placeholder, the later stat's action is the one here. */
   pinWrites: PinWrites;
   /** Absent when code switched no trait. */
@@ -206,8 +223,12 @@ export interface StatCodeTurnResult {
   gateStats: GateStats;
   /** The sentence an `output` run left: as it came when no script changed it. Absent on any other run. */
   sentence?: string;
+  /** The `turn.choices` an `after` run's scripts left, in run order. Absent when none changed it. */
+  choices?: readonly string[];
   /** The run's location, clock and discovery writes, merged in run order. Absent when no script wrote one. */
   worldWrites?: WorldWrites;
+  /** Every entry field the run's scripts wrote, in run order, so the later write wins. Absent when none wrote one. */
+  loreWrites?: LoreWrite[];
   /** Present on a run with triggers. */
   reply?: TriggerReply;
   /** What the run's first trigger wrote, when it ran clean. */
@@ -240,8 +261,8 @@ export function withPinWrites(codePins: CodePins, pinWrites: PinWrites): CodePin
 }
 
 /** Lay a turn's code result onto the latest stats, which may have moved since the run read its snapshot:
- *  only a value the run moved and the code delta it changed carry over, re-derived onto the latest bases.
- *  After a trait switch every stat re-derives, under the traits the switch left in force. */
+ *  only a value the run moved, the code delta it changed and the `hidden` it flipped apply, re-derived
+ *  onto the latest bases. After a trait switch every stat re-derives, under the traits the switch left in force. */
 export function overlayStatCodeResult(
   latest: readonly PlayerStat[],
   result: OwnerCodeResult & { traits?: Pick<StatCodeTraitResult, 'inForce'> },
@@ -253,9 +274,10 @@ export function overlayStatCodeResult(
   return latest.map((stat) => {
     const run = coded.get(stat.id);
     const value = run && result.moved.includes(stat.id) ? run.value : stat.value;
-    if (run && result.boundsChanged.includes(stat.id)) return withCodeDelta(stat, run.codeDelta, value, inForce);
-    if (switched) return withCodeDelta(stat, stat.codeDelta, value, inForce);
-    return value === stat.value ? stat : { ...stat, value };
+    const withHidden = run && result.hiddenChanged.includes(stat.id) ? { ...stat, hidden: run.hidden === true } : stat;
+    if (run && result.boundsChanged.includes(stat.id)) return withCodeDelta(withHidden, run.codeDelta, value, inForce);
+    if (switched) return withCodeDelta(withHidden, stat.codeDelta, value, inForce);
+    return value === stat.value ? withHidden : { ...withHidden, value };
   });
 }
 
@@ -277,6 +299,7 @@ const RESULT_WARNINGS = {
   unknownStatWrites: 'wrote stats that do not exist',
   disabledStatWrites: 'wrote switched-off stats',
   unknownEntities: 'switched traits of entities not in the game',
+  unknownLore: 'wrote dictionary entries the game does not have',
 } as const satisfies Partial<Record<keyof StatCodeResult, string>>;
 
 /** Each entity row field that lists dropped writes, and how the warning describes it for `whose` traits. */
@@ -334,13 +357,14 @@ interface ScriptWrites {
   placeholders: readonly PlaceholderWrite[];
   traits?: StatTraitWrites;
   world?: WorldWrites;
+  lore?: readonly LoreWrite[];
 }
 
 /** One stat's fields a box wrote. */
-type TargetWrite = Pick<StatWrite, 'id' | 'value' | keyof CodeBounds>;
+type TargetWrite = Pick<StatWrite, 'id' | 'value' | keyof CodeBounds | 'hidden'>;
 
 /** A target's merged write, as `settleWrites` lays it on. */
-type SettledWrite = { value: number | null; bounds: CodeBounds | null };
+type SettledWrite = { value: number | null; bounds: CodeBounds | null; hidden: boolean | null };
 
 /** What one run wrote, by target scope: its own stat first, under `ownerId`; its `stats` writes under global
  *  scope; then each entity's. A world script has no stat of its own. */
@@ -349,8 +373,11 @@ function targetWrites(stat: PlayerStat | null, result: StatCodeResult, ownerId: 
   const add = (id: OwnerId, writes: readonly TargetWrite[] = []) => {
     if (writes.length) out.set(id, [...out.get(id) ?? [], ...writes]);
   };
-  if (stat && (result.value !== null || result.bounds)) {
-    add(ownerId, [{ id: stat.id, ...result.bounds, ...(result.value === null ? {} : { value: result.value }) }]);
+  if (stat && (result.value !== null || result.bounds || result.hidden !== undefined)) {
+    add(ownerId, [{
+      id: stat.id, ...result.bounds, ...(result.value === null ? {} : { value: result.value }),
+      ...(result.hidden === undefined ? {} : { hidden: result.hidden }),
+    }]);
   }
   add(null, result.statWrites);
   for (const row of result.ownerStatWrites ?? []) add(row.ownerId, row.writes);
@@ -358,17 +385,18 @@ function targetWrites(stat: PlayerStat | null, result: StatCodeResult, ownerId: 
 }
 
 /** `writes` as a save keeps them; empty fields are left out. */
-function savedWrites({ stats, placeholders, traits }: ScriptWrites): SavedScriptWrites {
+function savedWrites({ stats, placeholders, traits, lore }: ScriptWrites): SavedScriptWrites {
   return {
     ...(stats.size ? { stats: [...stats].map(([owner, writes]) => ({ owner, writes: [...writes] })) } : {}),
     ...(placeholders.length ? { placeholders: [...placeholders] } : {}),
     ...(traits ? { traits } : {}),
+    ...(lore?.length ? { lore: [...lore] } : {}),
   };
 }
 
 /** Saved writes as a run lays them on. */
-const scriptWritesOf = ({ stats = [], placeholders = [], traits }: SavedScriptWrites): ScriptWrites => ({
-  stats: new Map(stats.map(({ owner, writes }) => [owner, writes])), placeholders, ...(traits ? { traits } : {}),
+const scriptWritesOf = ({ stats = [], placeholders = [], traits, lore }: SavedScriptWrites): ScriptWrites => ({
+  stats: new Map(stats.map(({ owner, writes }) => [owner, writes])), placeholders, ...(traits ? { traits } : {}), ...(lore ? { lore } : {}),
 });
 
 /** Each target scope's writes, each target stat's merged field by field in run order, the later script
@@ -379,12 +407,13 @@ function statWritesByOwner(writers: readonly (ScriptWrites | undefined)[]): Map<
     for (const [ownerId, targets] of writes?.stats ?? []) {
       const owner = out.get(ownerId) ?? new Map<string, SettledWrite>();
       out.set(ownerId, owner);
-      for (const { id, value, ...bounds } of targets) {
-        const at = owner.get(id) ?? { value: null, bounds: null };
+      for (const { id, value, hidden, ...bounds } of targets) {
+        const at = owner.get(id) ?? { value: null, bounds: null, hidden: null };
         const written = Object.fromEntries(CODE_BOUND_FIELDS.flatMap((field) => (bounds[field] === undefined ? [] : [[field, bounds[field]]])));
         owner.set(id, {
           value: value ?? at.value,
           bounds: Object.keys(written).length ? { ...at.bounds, ...written } : at.bounds,
+          hidden: hidden ?? at.hidden,
         });
       }
     }
@@ -433,8 +462,10 @@ export async function runStatCodeTurn(turn: StatCodeTurn): Promise<StatCodeTurnR
   const result = await runScripts(turn);
   if (turn.timing === 'output') return result;
   const switched = await withSwitchRuns(turn, result);
-  const { reply, triggerWrites } = result;
-  return reply ? { ...switched, reply, ...(triggerWrites ? { triggerWrites } : {}) } : switched;
+  const { reply, triggerWrites, choices } = result;
+  return {
+    ...switched, ...(choices ? { choices } : {}), ...(reply ? { reply, ...(triggerWrites ? { triggerWrites } : {}) } : {}),
+  };
 }
 
 /** `result` with the switch runs fired by the switches it made over `turn`, as one result over `turn`. */
@@ -515,22 +546,34 @@ export function afterRun(turn: StatCodeTurn, result: StatCodeTurnResult): StatCo
       }),
       ownerTraits,
       placeholders: set && { ...set, codePins, ...(pins ? { pins } : {}) },
+      ...(result.loreWrites ? { loreToggles: withLoreWrites(state.loreToggles ?? {}, result.loreWrites) } : {}),
+      // The switch runs read the choices the batch left.
+      ...(result.choices && state.turn ? { turn: { ...state.turn, choices: result.choices } } : {}),
     },
   };
 }
 
-/** The ids of the stats in `now` whose value or code delta differs from `start`, matched by id. */
-function changedStats(start: readonly PlayerStat[], now: readonly PlayerStat[]): { moved: string[]; boundsChanged: string[] } {
+/** The stat ids a run changed: its value, its code delta, or its `hidden`. */
+export type ChangedStats = Pick<StatCodeTurnResult, 'moved' | 'boundsChanged' | 'hiddenChanged'>;
+
+/** Whether a run changed any stat. */
+export const changedAnyStat = ({ moved, boundsChanged, hiddenChanged }: ChangedStats): boolean =>
+  moved.length > 0 || boundsChanged.length > 0 || hiddenChanged.length > 0;
+
+/** The ids of the stats in `now` whose value, code delta or `hidden` differs from `start`, matched by id. */
+function changedStats(start: readonly PlayerStat[], now: readonly PlayerStat[]): ChangedStats {
   const was = new Map(start.map((stat) => [stat.id, stat]));
   const moved: string[] = [];
   const boundsChanged: string[] = [];
+  const hiddenChanged: string[] = [];
   for (const stat of now) {
     const before = was.get(stat.id);
     if (!before) continue;
     if (stat.value !== before.value) moved.push(stat.id);
     if (!sameCodeDelta(before.codeDelta, stat.codeDelta)) boundsChanged.push(stat.id);
+    if (!sameHidden(before, stat)) hiddenChanged.push(stat.id);
   }
-  return { moved, boundsChanged };
+  return { moved, boundsChanged, hiddenChanged };
 }
 
 /** Runs chained from `start` to `now`, one after the other, as one run's result over `start`. The later step
@@ -540,6 +583,7 @@ export function chainedResult(start: StatCodeTurn, steps: readonly StatCodeTurnR
   if (!finalStep) throw new Error('A chained result needs a step');
   const pinWrites: PinWrites = Object.assign({}, ...steps.map((step) => step.pinWrites));
   const worldWrites = mergedWorldWrites(steps.map((step) => step.worldWrites));
+  const loreWrites = steps.flatMap((step) => step.loreWrites ?? []);
   const last = steps.findLast((step) => step.traits)?.traits;
   const logs = steps.map((step) => step.traits?.log ?? []);
   const traits: StatCodeTraitResult | undefined = last && {
@@ -554,6 +598,7 @@ export function chainedResult(start: StatCodeTurn, steps: readonly StatCodeTurnR
   return {
     stats: now.state.stats, ...changedStats(start.state.stats, now.state.stats), pinWrites, gateStats: finalStep.gateStats,
     ...(traits ? { traits } : {}), ...(owners ? { owners } : {}), ...(worldWrites ? { worldWrites } : {}),
+    ...(loreWrites.length ? { loreWrites } : {}),
   };
 }
 
@@ -622,13 +667,14 @@ async function runScripts(turn: StatCodeTurn): Promise<StatCodeTurnResult> {
   const toolUnit = (name: string, code: string, rest: Pick<ScriptUnit, 'args' | 'writes'>): { unit: ScriptUnit; run: OwnerRun } => ({
     unit: { home: { kind: 'tool' }, stat: null, script: { id: `tool:${name}`, name, timing, code }, ...rest }, run: globalRun,
   });
-  const triggers = (turn.triggers ?? []).map(({ name, code, args }) => toolUnit(name, code, { args }));
-  const replayed = (turn.replayed ?? []).map(({ name, writes }) => toolUnit(name, '', { writes: scriptWritesOf(writes) }));
+  // A choices-only run runs no World Tool: its choice writes drop (Q21), and nothing else it writes lands.
+  const triggers = (turn.choicesOnly ? [] : turn.triggers ?? []).map(({ name, code, args }) => toolUnit(name, code, { args }));
+  const replayed = (turn.choicesOnly ? [] : turn.replayed ?? []).map(({ name, writes }) => toolUnit(name, '', { writes: scriptWritesOf(writes) }));
   const gateStatsAt = (mainStats: PlayerStat[], ownerStats: EntityStatValues): GateStats => {
     return withStateGateStats(state, gateStatsOf({ ...before, stats: mainStats, entityStats: ownerStats }, world));
   };
   const snapshot = snapshotOf(state, {
-    turn: { global: globalRun.inputs, owners: Object.fromEntries(entityRuns.map((run) => [run.owner.id, run.inputs])) },
+    readings: { global: globalRun.inputs, owners: Object.fromEntries(entityRuns.map((run) => [run.owner.id, run.inputs])) },
   });
   /** A script's name in the logs: its stat's or trait's, else its own name or the world-and-timing fallback. */
   const whoRan = ({ stat, trait, script, args }: ScriptUnit) => (stat ? `Stat ${stat.name}`
@@ -641,14 +687,18 @@ async function runScripts(turn: StatCodeTurn): Promise<StatCodeTurnResult> {
   ];
   // The sentence a During AI Output run hands from one script to the next.
   let sentence = timing === 'output' ? turn.narration?.sentence : undefined;
+  // The choices an After the AI script left, which the next one reads (Q14). Unset until a script changes them.
+  let choices: readonly string[] | undefined;
   let reply: TriggerReply | undefined;
+  const prompts = turn.choicesOnly ? silentPrompts : turn.prompts;
   const runUnit = async ({ unit, run }: (typeof ordered)[number]) => {
     // A replayed unit holds its saved writes already and runs no script.
     if (unit.writes) return;
     const { stat, script, args } = unit;
     const result = await snapshot.run({
-      home: unit.home, timing, code: script.code, ...switchInput, ...(args && { args }), ...(turn.prompts && { prompts: turn.prompts }),
+      home: unit.home, timing, code: script.code, ...switchInput, ...(args && { args }), ...(prompts && { prompts }),
       ...(sentence === undefined || !turn.narration ? {} : { narration: { ...turn.narration, sentence } }),
+      ...(choices && { choices }),
     });
     const first = args && unit === triggers[0]?.unit;
     if (result.error) {
@@ -658,23 +708,27 @@ async function runScripts(turn: StatCodeTurn): Promise<StatCodeTurnResult> {
     }
     if (first) reply = { text: result.reply ?? null };
     if (result.sentence !== undefined) sentence = result.sentence;
+    if (result.choices) choices = result.choices;
+    if (turn.choicesOnly) return;
     unit.writes = {
       stats: targetWrites(stat, result, run.owner.id),
       placeholders: result.placeholders ?? [],
       ...(result.traits || result.entities ? { traits: { world: result.traits ?? [], entities: result.entities ?? [] } } : {}),
       ...(result.worldWrites ? { world: result.worldWrites } : {}),
+      ...(result.lore ? { lore: result.lore.map(bareLoreWrite) } : {}),
     };
     warnDroppedWrites(whoRan(unit), result);
   };
-  // A sentence chains through its scripts, so they run one after the other; every other timing runs them together.
-  if (timing === 'output') for (const entry of ordered) await runUnit(entry);
+  // The sentence and the choices chain, so those timings run their scripts in turn; the rest run together.
+  if (timing === 'output' || timing === 'after') for (const entry of ordered) await runUnit(entry);
   else await Promise.all(ordered.map(runUnit));
   const inOrder = ordered.map(({ unit }) => unit);
   const pinWrites = pinWritesInRunOrder(inOrder.map(({ writes }) => writes?.placeholders ?? []));
   const worldWrites = mergedWorldWrites(inOrder.map(({ writes }) => writes?.world));
+  const loreWrites = inOrder.flatMap(({ writes }) => writes?.lore ?? []);
   const firstWrites = triggers[0]?.unit.writes;
   const withWorld = {
-    ...(worldWrites ? { worldWrites } : {}), ...(reply ? { reply } : {}),
+    ...(worldWrites ? { worldWrites } : {}), ...(loreWrites.length ? { loreWrites } : {}), ...(reply ? { reply } : {}),
     ...(firstWrites ? { triggerWrites: savedWrites(firstWrites) } : {}),
   };
 
@@ -722,17 +776,22 @@ async function runScripts(turn: StatCodeTurn): Promise<StatCodeTurnResult> {
     const result = settleWrites(
       owner.stats, switched.state.entityStats?.[owner.id] ?? owner.stats, ownerWrites.get(owner.id) ?? new Map(), inForce,
     );
-    const settled = result.moved.length || result.boundsChanged.length ? result : { ...result, stats: owner.stats };
+    const settled = changedAnyStat(result) ? result : { ...result, stats: owner.stats };
     return [owner.id, traitResult ? { ...settled, inForce } : settled];
   }));
   const withOwners = owners ? { owners } : {};
-  const withSentence = sentence === undefined ? {} : { sentence };
-  const { stats, moved, boundsChanged } = settleWrites(state.stats, switched.state.stats, mainWrites, active);
-  if (!traitResult && moved.length === 0 && boundsChanged.length === 0) {
-    return { stats: state.stats, moved, boundsChanged, pinWrites, gateStats, ...withOwners, ...withSentence, ...withWorld };
+  // What the chained scripts left: the sentence, and the choices once a script changed them.
+  // Scripts that restore the list between them leave no change.
+  const read = state.turn?.choices ?? [];
+  const changedChoices = choices && !sameChoices(choices, read) ? { choices } : {};
+  const withChained = { ...(sentence === undefined ? {} : { sentence }), ...changedChoices };
+  const settledMain = settleWrites(state.stats, switched.state.stats, mainWrites, active);
+  const { stats, moved, boundsChanged, hiddenChanged } = settledMain;
+  if (!traitResult && !changedAnyStat(settledMain)) {
+    return { stats: state.stats, moved, boundsChanged, hiddenChanged, pinWrites, gateStats, ...withOwners, ...withChained, ...withWorld };
   }
   return {
-    stats, moved, boundsChanged, pinWrites, gateStats, ...(traitResult ? { traits: traitResult } : {}), ...withOwners, ...withSentence,
+    stats, moved, boundsChanged, hiddenChanged, pinWrites, gateStats, ...(traitResult ? { traits: traitResult } : {}), ...withOwners, ...withChained,
     ...withWorld,
   };
 }
@@ -758,23 +817,26 @@ function settleWrites(
   current: readonly PlayerStat[],
   writes: ReadonlyMap<string, SettledWrite>,
   active: readonly Trait[],
-): { stats: PlayerStat[]; moved: string[]; boundsChanged: string[] } {
+): ChangedStats & { stats: PlayerStat[] } {
   const moved: string[] = [];
   const boundsChanged: string[] = [];
+  const hiddenChanged: string[] = [];
   const stats = current.map((stat, i) => {
     const write = writes.get(stat.id);
     const codeDelta = write?.bounds && codeDeltaFor(stat, write.bounds, active);
     // A value-only write keeps the bounds as they stand, which a trait switch may have moved.
-    const next = !write ? stat
+    const landed = !write ? stat
       : !codeDelta ? { ...stat, value: clamp(write.value ?? stat.value, stat.min, stat.max) }
         : withCodeDelta(stat, codeDelta, write.value ?? stat.value, active);
+    const hiddenWrite = write?.hidden ?? null;
+    const next = hiddenWrite === null || sameHidden(stat, { hidden: hiddenWrite }) ? landed : { ...landed, hidden: hiddenWrite };
     if (codeDelta && !sameCodeDelta(codeDelta, stat.codeDelta)) boundsChanged.push(stat.id);
     if (next.value !== start[i].value) moved.push(stat.id);
-    return next.value === stat.value && !boundsChanged.includes(stat.id) ? stat : next;
+    if (!sameHidden(next, start[i])) hiddenChanged.push(stat.id);
+    return next.value === stat.value && !boundsChanged.includes(stat.id) && next.hidden === stat.hidden ? stat : next;
   });
-  return { stats, moved, boundsChanged };
+  return { stats, moved, boundsChanged, hiddenChanged };
 }
-
 /** One stat's switches: through `traits`, then through each entity's `traits`. */
 interface StatTraitWrites {
   world: readonly TraitWrite[];

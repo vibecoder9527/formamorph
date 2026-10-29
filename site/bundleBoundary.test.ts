@@ -13,6 +13,31 @@ import { DIRECTORIES, FILES } from '../tailwind.site.content.cjs';
 
 const SITE = resolve(__dirname);
 const COMMUNITY_PAGE = resolve(SITE, 'pages', 'CommunityPage.tsx');
+const FEEDBACK_PAGE = resolve(SITE, 'pages', 'FeedbackPage.tsx');
+
+/** What the lazy feedback route may name inside `src/`: the app's feedback components and their seams. */
+const FEEDBACK_ALLOWED = [
+  '@/components/menu/MyFeedbackSection',
+  '@/components/menu/FeedbackThreadView',
+  '@/components/menu/feedbackTabs',
+  '@/components/ui/button',
+  '@/contexts/userProfileStore',
+  '@/lib/feedbackCapabilities',
+  '@/lib/errorDetails',
+  '@/lib/usernameRule',
+  '@/services/AuthService',
+  '@/types',
+];
+
+/** Context modules the feedback route reaches, each reviewed: none mounts a provider or pulls a store along. */
+const FEEDBACK_REVIEWED_CONTEXTS = [
+  // `createContext` and a hook only; the page supplies its own provider so a name opens `/u/<name>`.
+  '@/contexts/userProfileStore',
+  // Read by `chipVocabulary` for the prompt field; with no provider it yields an empty placeholder store.
+  '@/contexts/PlaceholderStoreContext',
+  // Read by `chipVocabulary` too; with no provider it yields no placement letters.
+  '@/contexts/PlacementLettersContext',
+];
 
 /** What `site/` may reach for inside `src/`. Everything here is a leaf the game does not drag along. */
 const ALLOWED = [
@@ -37,7 +62,11 @@ const ALLOWED = [
   '@/lib/apiBase',
   '@/lib/communityCaches',
   '@/lib/deletionCancellation',
+  '@/lib/refusalWatch',
   '@/lib/serverDate',
+  '@/lib/useMountedRef',
+  '@/lib/useRenameSubmit',
+  '@/lib/usernameRule',
   '@/lib/utils',
   '@/types',
 ];
@@ -73,8 +102,8 @@ const sourceFiles = (dir: string): string[] =>
     return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : [];
   });
 
-/** The community page is lazy by design; this boundary protects the account entry chunk, not its route chunk. */
-const accountSourceFiles = () => sourceFiles(SITE).filter((path) => path !== COMMUNITY_PAGE);
+/** The community and feedback pages are lazy by design; this boundary protects the account entry chunk, not their route chunks. */
+const accountSourceFiles = () => sourceFiles(SITE).filter((path) => path !== COMMUNITY_PAGE && path !== FEEDBACK_PAGE);
 
 /** Where an `@/...` specifier's file actually is, or null when it resolves to nothing readable. */
 const resolveApp = (specifier: string): string | null => {
@@ -158,7 +187,11 @@ describe('the site entry stays out of the game bundle', () => {
     // 62: `uuid`, the one ID helper, which the age gate flow now reads.
     // 63: `filesFrom`, the file-input reset the profile image picker reads; a type-only leaf, no toast.
     // 64: `responseBody`, the string-only leaf `responseError` reads to cut an HTML error page to its title.
-    expect(reachableFromSite().size).toBeLessThanOrEqual(64);
+    // 66: `listingModeration` and the `quarantine` date helpers it reads, for the review badges in the creations list.
+    // 67: `usernameRule`, the one username check the register page and `AuthService` share; a pure leaf.
+    // 69: `refusalWatch` and the `fetchTarget` leaf it reads, so the rename page can watch for the rename refusal.
+    // 70: `useRenameSubmit`, the rename flow the game dialog and the rename page share; it reads only the service and the rule.
+    expect(reachableFromSite().size).toBeLessThanOrEqual(70);
   });
 
   it('reaches the gesture group helper through the slider and color picker, and nothing behind it', () => {
@@ -227,6 +260,71 @@ describe('the site entry stays out of the game bundle', () => {
       .filter((path) => !scanned(path));
 
     expect(unscanned).toEqual([]);
+  });
+
+  it('keeps the feedback route to its own allow list', () => {
+    const strays = appImports(readFileSync(FEEDBACK_PAGE, 'utf-8'))
+      .filter((specifier) => !FEEDBACK_ALLOWED.some((prefix) => specifier.startsWith(prefix)));
+
+    expect(strays).toEqual([]);
+  });
+
+  it('does not reach the game through the feedback route, past its reviewed contexts', () => {
+    const strays = [...reachableFrom([FEEDBACK_PAGE])]
+      .filter(([specifier]) => FORBIDDEN_DOWNSTREAM.some((prefix) => specifier.startsWith(prefix)))
+      .filter(([specifier]) => !FEEDBACK_REVIEWED_CONTEXTS.includes(specifier))
+      .map(([specifier, via]) => `${via} → ${specifier}`);
+
+    expect(strays).toEqual([]);
+  });
+
+  it('reaches a countable number of app modules from the feedback route', () => {
+    // Raise the ceiling deliberately, having looked at what moved.
+    // 93: the feedback components, the markdown renderer, the prompt field and the username rule, plus the
+    // link layer (its markdown, grammar and remark plugin).
+    // 95: the listing chip's kind labels and icons (`catalogKinds` and the element icons it wears).
+    // 101: the editors' @ and # suggestions (the plugin, its query rule, the shared suggestion list and its
+    // wheel hook, the caret anchor).
+    expect(reachableFrom([FEEDBACK_PAGE]).size).toBeLessThanOrEqual(101);
+  });
+
+  it('scans every shared component the lazy feedback route reaches', () => {
+    const root = resolve(SITE, '..');
+    const scanned = (path: string) =>
+      FILES.includes(path) || DIRECTORIES.some((directory) => path.startsWith(directory));
+
+    const unscanned = [...reachableFrom([FEEDBACK_PAGE]).keys()]
+      .map((specifier) => resolveApp(specifier))
+      .filter((file): file is string => !!file)
+      // A class prop, or a class table in a lib file such as the status badges.
+      .filter((file) => /(?:className|class)\s*[:=]|['"`](?:[a-z-]+:)*(?:bg|text|border|grid-cols)-[a-z0-9]/.test(readFileSync(file, 'utf-8')))
+      .map((file) => file.slice(root.length + 1).replace(/\\/g, '/'))
+      .filter((path) => !scanned(path));
+
+    expect(unscanned).toEqual([]);
+  });
+
+  it('keeps the feedback route behind a lazy import', () => {
+    const app = readFileSync(resolve(SITE, 'App.tsx'), 'utf-8');
+
+    expect(app).toContain("import('./pages/FeedbackPage')");
+    expect(app).not.toMatch(/from ['"]\.\/pages\/FeedbackPage['"]/);
+  });
+
+  it('bundles no world file through any route, lazy ones included', () => {
+    // A bundled world runs to tens of MB; one in the site output breaks the Cloudflare Pages per-file cap.
+    const reached = reachableFrom(sourceFiles(SITE));
+    expect(reached.has('@/services/WorldStorageService')).toBe(true);
+
+    // An import, a dynamic import or a glob whose path names the worlds folder; a comment does not count.
+    const WORLDS_IMPORT = /(?:from\s*|import\s*\(\s*|import\.meta\.glob\s*\(\s*)['"`][^'"`]*defaultworlds/;
+    const namesWorlds = (specifier: string) => {
+      const file = resolveApp(specifier);
+      return /defaultworlds|bundledWorldText/.test(specifier) || (!!file && WORLDS_IMPORT.test(readFileSync(file, 'utf-8')));
+    };
+    const strays = [...reached].filter(([specifier]) => namesWorlds(specifier)).map(([specifier, via]) => `${via} → ${specifier}`);
+
+    expect(strays).toEqual([]);
   });
 
   it('has an allow list that really is a list, not everything under src', () => {

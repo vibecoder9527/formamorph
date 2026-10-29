@@ -187,6 +187,16 @@ describe('what each entry reads as', () => {
       .toBe('root-admin edited the bug report “Save button spins” by trouble');
   });
 
+  it('names whose question had its answer set', () => {
+    expect(line({ action: 'feedback_answer_set', target: { kind: 'question', name: 'How do I use a local model?' }, snippet: 'Point it at the models folder.' }))
+      .toBe('root-admin set the answer on the question “How do I use a local model?” by trouble');
+  });
+
+  it('reads an answer entry with no snippet as a clear', () => {
+    expect(line({ action: 'feedback_answer_set', target: { kind: 'question', name: 'How do I use a local model?' } }))
+      .toBe('root-admin cleared the answer on the question “How do I use a local model?” by trouble');
+  });
+
   it('names the role somebody was given', () => {
     expect(line({ action: 'role_changed', target: { kind: 'account', name: 'trouble' }, snippet: 'normal to mod' }))
       .toBe('root-admin made trouble a mod');
@@ -253,6 +263,11 @@ describe('what each entry reads as', () => {
       action: 'feedback_deleted',
       target: { kind: 'suggestion', name: 'Let me rename a save' },
     })).toBe('root-admin deleted the suggestion “Let me rename a save” by trouble');
+
+    expect(line({
+      action: 'feedback_deleted',
+      target: { kind: 'question', name: 'How do I use a local model?' },
+    })).toBe('root-admin deleted the question “How do I use a local model?” by trouble');
   });
 
   it('reads the whole arc of a quarantine', () => {
@@ -552,5 +567,124 @@ describe('the rendered line', () => {
 
     const line = (await screen.findByText(/quarantine ran out/)).closest('p') as HTMLElement;
     expect(line.textContent).toBe('The quarantine ran out on the world “Sedge Landing” by trouble, and it was deleted');
+  });
+});
+
+describe('review entries', () => {
+  const reviewed = (action: AuditEntry['action'], id: string | null = 'w1') => entry({
+    action,
+    targetUser: { id: 'u1', username: 'wren_hallow' },
+    target: { kind: 'world', name: 'Sedge Landing', id },
+  });
+
+  it('says what each review decision did', () => {
+    expect(describeAuditEntry(reviewed('listing_approved'))).toBe('root-admin approved the world “Sedge Landing” by wren_hallow');
+    expect(describeAuditEntry(reviewed('listing_rejected'))).toBe('root-admin rejected the world “Sedge Landing” by wren_hallow');
+    expect(describeAuditEntry(reviewed('update_approved'))).toBe('root-admin approved an update to “Sedge Landing” by wren_hallow');
+    expect(describeAuditEntry(reviewed('update_rejected'))).toBe('root-admin rejected an update to “Sedge Landing” by wren_hallow');
+    expect(describeAuditEntry(reviewed('listing_auto_approved'))).toBe('root-admin published the world “Sedge Landing” without review');
+  });
+
+  it('says what each trust change did to the account', () => {
+    const trust = (action: AuditEntry['action']) => entry({
+      action,
+      targetUser: { id: 'u1', username: 'wren_hallow' },
+      target: { kind: 'account', name: 'wren_hallow', id: 'u1' },
+    });
+
+    expect(describeAuditEntry(trust('author_trusted'))).toBe('root-admin trusted wren_hallow');
+    expect(describeAuditEntry(trust('author_untrusted'))).toBe('root-admin removed trust from wren_hallow');
+  });
+
+  it('labels the trust actions in the entry and offers both in the filter', async () => {
+    stubLog([entry({
+      action: 'author_untrusted',
+      targetUser: { id: 'u1', username: 'wren_hallow' },
+      target: { kind: 'account', name: 'wren_hallow', id: 'u1' },
+    })]);
+
+    render(<AuditLogTab active onOpenListing={vi.fn()} />);
+
+    expect(await screen.findByText('Trust removed')).toBeTruthy();
+    // An account id is not a listing id, so the entry offers nothing to open.
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
+    expect(AUDIT_ACTION_OPTIONS.map((option) => option.label)).toEqual(expect.arrayContaining(['Trusted', 'Trust removed']));
+  });
+
+  it('opens the listing a review entry names', async () => {
+    const onOpenListing = vi.fn();
+    stubLog([reviewed('listing_rejected', 'w42')]);
+
+    render(<AuditLogTab active onOpenListing={onOpenListing} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'View' }));
+
+    expect(onOpenListing).toHaveBeenCalledWith('w42');
+  });
+
+  it('offers nothing to open on an entry without a listing id', async () => {
+    stubLog([
+      reviewed('listing_approved', null),
+      entry({ action: 'listing_quarantined', target: { kind: 'world', name: 'Elsewhere', id: 'w9' } }),
+    ]);
+
+    render(<AuditLogTab active onOpenListing={vi.fn()} />);
+    await screen.findByText(/approved/);
+
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
+  });
+});
+
+describe('pin, Supporter, Anonymous Like and rename entries', () => {
+  const onListing = (action: AuditEntry['action'], over: Partial<AuditEntry> = {}) => entry({
+    action,
+    targetUser: { id: 'u1', username: 'wren_hallow' },
+    target: { kind: 'world', name: 'Sedge Landing', id: 'w1' },
+    ...over,
+  });
+
+  it('says what a pin did to a listing', () => {
+    expect(describeAuditEntry(onListing('listing_pinned'))).toBe('root-admin pinned the world “Sedge Landing” by wren_hallow');
+    expect(describeAuditEntry(onListing('listing_unpinned', { targetUser: null })))
+      .toBe('root-admin unpinned the world “Sedge Landing”');
+  });
+
+  it('says what the Supporter-only mark did to a listing', () => {
+    expect(describeAuditEntry(onListing('listing_supporter_only')))
+      .toBe('root-admin made the world “Sedge Landing” by wren_hallow Supporter-only');
+    expect(describeAuditEntry(onListing('listing_supporter_only_cleared')))
+      .toBe('root-admin opened the world “Sedge Landing” by wren_hallow to everyone');
+  });
+
+  it('names whose Supporter content was taken away or given back', () => {
+    const access = (action: AuditEntry['action']) => entry({
+      action,
+      targetUser: { id: 'u1', username: 'wren_hallow' },
+      target: { kind: 'account', name: 'wren_hallow', id: 'u1' },
+    });
+
+    expect(describeAuditEntry(access('supporter_access_revoked'))).toBe('root-admin took Supporter content away from wren_hallow');
+    expect(describeAuditEntry(access('supporter_access_restored'))).toBe('root-admin gave Supporter content back to wren_hallow');
+  });
+
+  it('says which listing lost its Anonymous Likes, and never an address', () => {
+    const snippet = 'Removed 3 Anonymous Likes from one address';
+
+    expect(describeAuditEntry(onListing('anonymous_likes_removed', { snippet })))
+      .toBe('root-admin removed the Anonymous Likes from one address on “Sedge Landing”');
+    expect(describeAuditEntry(onListing('anonymous_likes_cleared', { snippet: 'Removed 9 Anonymous Likes' })))
+      .toBe('root-admin cleared every Anonymous Like on “Sedge Landing”');
+  });
+
+  it('reads a rename under the old name, with the new one from the snippet', () => {
+    const renamed = (snippet: string | null) => entry({
+      action: 'username_changed',
+      actor: { id: 'u1', username: 'old_name', wasAdmin: false },
+      targetUser: { id: 'u1', username: 'old_name' },
+      target: { kind: 'account', name: 'old_name' },
+      snippet,
+    });
+
+    expect(describeAuditEntry(renamed('new_name'))).toBe('old_name changed their username to new_name');
+    expect(describeAuditEntry(renamed(null))).toBe('old_name changed their username');
   });
 });

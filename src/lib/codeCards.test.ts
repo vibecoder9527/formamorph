@@ -24,12 +24,14 @@ describe('codeCard: globals and their members', () => {
   it.each([
     ['return se|lf.value;', '(global) self: Stat'],
     ['return st|ats.Health.value;', '(global) stats: object'],
-    ['return cl|ock.day;', '(global) clock: { day, daypart, deltaHours, elapsedHours, previous, advance } [readOnly]'],
+    ['return cl|ock.day;', '(global) clock: { day, daypart, hour, minute, deltaHours, elapsedHours, previous, advance } [readOnly]'],
     ['return self.va|lue;', '(property) Stat.value: number [writable]'],
     ['self.re|gen = 0;', '(property) Stat.regen: number [writable]'],
     ['return self.na|me;', '(property) Stat.name: string [readOnly]'],
     ['return self.prev|ious.value;', '(property) Stat.previous: Stat [readOnly]'],
     ['return self.previous.re|gen;', '(property) Stat.previous.regen: number [readOnly]'],
+    ['return self.descr|iptor;', '(property) Stat.descriptor: string [readOnly]'],
+    ['return stats.Health.previous.descr|iptor;', '(property) Stat.previous.descriptor: string [readOnly]'],
     ['return self.delta.a|i.value;', '(property) Stat.delta.ai: { value, min, max, regen } [readOnly]'],
     ['return self.delta.ai.va|lue;', '(property) Stat.delta.ai.value: number [readOnly]'],
     ['return dictionaries.Lore.na|me;', '(property) Dictionary.name: string [readOnly]'],
@@ -59,13 +61,14 @@ describe('codeCard: globals and their members', () => {
   });
 });
 
-describe('codeCard: value, min, max and regen are writable on every route', () => {
+describe('codeCard: value, min, max, regen and hidden are writable on every route', () => {
   const routes = ['self', 'stats.Gold', 'stats["Max HP"]', 'owner.stats.Stock', 'entities.Mara.stats.Grit', 'persona.stats.Nerve'];
   it.each(routes)('%s', (route) => {
-    for (const field of ['value', 'min', 'max', 'regen']) {
+    for (const field of ['value', 'min', 'max', 'regen', 'hidden']) {
       expect(cardAt(`${route}.${field.slice(0, 1)}|${field.slice(1)} = 1;`, owned)?.access, `${route}.${field}`).toBe('writable');
     }
     expect(cardAt(`return ${route}.ena|bled;`, owned)?.access).toBe('readOnly');
+    expect(cardAt(`return ${route}.previous.hid|den;`, owned)?.access).toBe('readOnly');
   });
 });
 
@@ -236,7 +239,7 @@ describe('codeCard: a Tool script', () => {
     ['return ar|gs.size;', '(global) args: { size } [readOnly]'],
     ['return args.si|ze;', '(property) args.size: number [readOnly]'],
     ['return location.na|me;', '(property) location.name: string [readOnly]'],
-    ['return cl|ock.day;', '(global) clock: { day, daypart, deltaHours, elapsedHours, previous } [readOnly]'],
+    ['return cl|ock.day;', '(global) clock: { day, daypart, hour, minute, deltaHours, elapsedHours, previous } [readOnly]'],
     ['return no|tes;', '(global) notes: string [readOnly]'],
     ['return entities.Mara.loca|tion;', '(property) Entity.location: string [readOnly]'],
     ['return traits.Brave.ena|bled;', '(property) Trait.enabled: boolean [readOnly]'],
@@ -270,7 +273,7 @@ describe('completionCard: the card for an option the list offers', () => {
   }
 
   it.each([
-    ['return clo|', 'clock', '(global) clock: { day, daypart, deltaHours, elapsedHours, previous, advance } [readOnly]'],
+    ['return clo|', 'clock', '(global) clock: { day, daypart, hour, minute, deltaHours, elapsedHours, previous, advance } [readOnly]'],
     ['return self.re|', 'regen', '(property) Stat.regen: number [writable]'],
     ['return stats.He|', 'Health', '(stat) stats.Health: Stat'],
     ['return stats["He|', 'Health', '(stat) stats.Health: Stat'],

@@ -34,9 +34,6 @@ vi.mock('react-toastify', () => ({
   ToastContainer: () => null,
 }));
 
-// A case walks up to seven saved steps, which outlasts the default window under the whole suite's load.
-vi.setConfig({ testTimeout: 15_000 });
-
 const storeWorld = vi.mocked(WorldStorageService.storeWorld);
 
 /** A New World overview over the harness's one location and one entity, which the tour must never adopt. */
@@ -269,7 +266,7 @@ describe('In Game — Entities', () => {
     await resumeAt('entity-pronouns');
     useExample();
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Pronouns' })).toHaveValue('she/her'));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Pronouns' })).toHaveTextContent('she/her'));
     expect(within(playerSees()).getByRole('heading', { name: 'Maren' })).toBeInTheDocument();
     expect(within(playerSees()).getByText('Players never see the Pronouns')).toBeInTheDocument();
     await waitFor(() => expect(marks(narration())).toEqual(['she/her']));

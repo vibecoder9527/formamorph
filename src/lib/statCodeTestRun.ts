@@ -17,6 +17,7 @@ import { statCodeName, statCodeNamed } from '@/lib/statCodeNames';
 import { blueprintItemIds } from '@/lib/traitTree';
 import { placeholderPathExpression, placeholderPathLabel } from '@/lib/statCodePaths';
 import { turnOneClock } from '@/lib/statCodeTiming';
+import { sampleTurn } from '@/lib/scriptTestSamples';
 import type { ScriptPromptHost } from '@/lib/scriptPrompts';
 import type { ToolArgs } from '@/lib/tools/toolRunner';
 import { openingHomeOf, openingStateOf, type OpeningFoldWorld } from '@/lib/openingState';
@@ -160,8 +161,8 @@ const switchLine = (at: string, { name, enabled }: TraitWrite) => `${at}${name} 
  *  map the code wrote through. */
 const statWriteLines = (map: string, { name, ...fields }: StatWrite) =>
   SELF_WRITABLE_FIELDS.flatMap((field) => {
-    const number = fields[field as keyof typeof fields];
-    return typeof number === 'number' ? [`${memberPath(map, name)}.${field} = ${number}`] : [];
+    const written = fields[field as keyof typeof fields];
+    return written === undefined ? [] : [`${memberPath(map, name)}.${field} = ${written}`];
   });
 
 /** The stat map code wrote through to reach each owner a run wrote to: `owner.stats` for the home's Owner,
@@ -201,7 +202,9 @@ const worldWriteLines = (
  *  rolls (Q3). The editor holds no discovered cast, so a `diary` name it lacks is a warning (Q46). */
 export const testCodeSnapshotOf = (
   world: OpeningFoldWorld, timing: ScriptTiming, overlays: Pick<SnapshotOptions, 'pendingPersona' | 'assumedStats'> = {},
-): SandboxSnapshot => snapshotOf({ ...openingStateOf(world), clock: turnOneClock(timing) }, { openCast: true, ...overlays });
+): SandboxSnapshot => snapshotOf(
+  { ...openingStateOf(world), clock: turnOneClock(timing), turn: sampleTurn(world.worldOverview, timing) }, { openCast: true, ...overlays },
+);
 
 /**
  * Runs `code` from the `timing` box of `home` on `world` at turn one. Applies nothing. With `pendingPersona`, a
@@ -242,6 +245,7 @@ export async function runTestCode(
       const bound = outcome.bounds?.[field];
       return bound === undefined ? [] : [`${BOUND_LABELS[field]}: ${bound}`];
     }),
+    ...(outcome.hidden === undefined ? [] : [`Hidden: ${outcome.hidden}`]),
     ...(outcome.statWrites ?? []).flatMap((write) => statWriteLines('stats', write)),
     ...ownerLines.filter((row) => !row.pending).flatMap((row) => row.lines),
     // The path the code wrote, not the placeholder's bare name: that is what the author typed.
@@ -249,6 +253,8 @@ export async function runTestCode(
     ...(outcome.traits ?? []).map((entry) => switchLine('', entry)),
     ...(outcome.entities ?? []).filter((entry) => entry !== personaWrites).flatMap((row) =>
       (row.traits ?? []).map((entry) => switchLine(`${traitWritesPath(row)}.`, entry))),
+    ...(outcome.lore ?? []).map(({ path, value }) => `${path} = ${value}`),
+    ...(outcome.choices ? [`turn.choices = ${JSON.stringify(outcome.choices)}`] : []),
     ...worldWriteLines(outcome.worldWrites, locations, entityNames),
   ];
   const keep = missing ? droppedFilter(missing) : KEEP_DROPPED;
@@ -260,6 +266,7 @@ export async function runTestCode(
     ...droppedLine('Unknown trait names.', outcome.unknownTraits?.filter(keep.trait(null))),
     ...droppedLine('acquired is read-only.', outcome.acquiredWrites),
     ...droppedLine('Unknown entity names.', outcome.unknownEntities?.filter(keep.entity)),
+    ...droppedLine('Unknown dictionary entries.', outcome.unknownLore),
     ...readOnlyWritesLines(outcome.readOnlyWrites),
     ...(outcome.maybeDiary ?? []).map((name) => `Diary target “${name}” may be discovered in play.`),
     ...(outcome.entities ?? []).flatMap((row) => {

@@ -7,11 +7,12 @@ import { clearDeletedDefaultWorlds, readDeletedDefaultWorlds } from '@/lib/defau
 import { encodePlaceholderToken } from '@/lib/placeholders';
 import AuthService from './AuthService';
 import { getDownloadState } from '@/lib/downloadState';
-import { PUBLISH_LIMITS } from '@/lib/publishLimits';
+import { PUBLISH_LIMITS, measureMascotBytes } from '@/lib/publishLimits';
 import { KIND_LABELS } from '@/lib/catalogKinds';
 import { openWorldLibrary, putWorldRecords } from '@/lib/worldLibrary';
 import { Blob as NodeBlob } from 'node:buffer';
 import { WORLD_CHANGE_CHANNEL } from '@/lib/worldChangeSignal';
+import { readBundledWorld } from '@/lib/bundledWorldText';
 
 vi.mock('@/lib/jsonFileWorkerUtils', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -79,7 +80,7 @@ describe('fetchRemoteWorlds', () => {
   it('asks for the whole catalog when given `all`', async () => {
     vi.mocked(fetch).mockResolvedValue(res({ data: [], total: 0 }));
     await WorldStorageService.fetchRemoteWorlds(1, 1000, '', false, false, '', 'desc', 'all');
-    expect(vi.mocked(fetch).mock.calls[0][0] as string).toContain('kind=all');
+    expect(vi.mocked(fetch).mock.calls[0][0] as string).toContain(`kind=${encodeURIComponent('world,entity,dictionary,model,prompt,mascot')}`);
   });
 });
 
@@ -257,8 +258,18 @@ describe('publishItem', () => {
 
   // A raw string as `contentData` serializes to `"xxx…"`: length + 2 quote characters, all single-byte —
   // so its byte count is exactly controllable without building a real world/entity/dictionary fixture.
-  const overLimit = (kind: keyof typeof PUBLISH_LIMITS) => 'x'.repeat(PUBLISH_LIMITS[kind] + 1);
-  const atLimit = (kind: keyof typeof PUBLISH_LIMITS) => 'x'.repeat(PUBLISH_LIMITS[kind] - 2);
+  // A Mascot is measured in decoded image bytes: one image whose base64 body decodes to exactly `bytes`.
+  const mascotBytes = (bytes: number) => {
+    const body = 'A'.repeat(Math.ceil(bytes / 3) * 4);
+    const trim = (3 - (bytes % 3)) % 3;
+    const images = [`data:image/webp;base64,${body.slice(0, body.length - trim)}${'='.repeat(trim)}`];
+    expect(measureMascotBytes({ images })).toBe(bytes);
+    return { images };
+  };
+  const overLimit = (kind: keyof typeof PUBLISH_LIMITS) =>
+    (kind === 'mascot' ? mascotBytes(PUBLISH_LIMITS.mascot + 1) : 'x'.repeat(PUBLISH_LIMITS[kind] + 1));
+  const atLimit = (kind: keyof typeof PUBLISH_LIMITS) =>
+    (kind === 'mascot' ? mascotBytes(PUBLISH_LIMITS.mascot) : 'x'.repeat(PUBLISH_LIMITS[kind] - 2));
 
   it.each(Object.keys(PUBLISH_LIMITS) as (keyof typeof PUBLISH_LIMITS)[])(
     'refuses over-limit %s content before any request is sent, even unauthenticated',
@@ -447,8 +458,14 @@ describe('local world storage (IndexedDB)', () => {
       otherTab.onmessage = (event) => { heard.push(event.data); };
     });
     afterEach(() => { otherTab.close(); });
-    /** Lets messages already posted arrive. */
-    const settle = () => new Promise<void>((resolve) => { setTimeout(resolve, 50); });
+    /** Lets messages already posted arrive: posts a marker behind them and waits for it, then drops it. */
+    const settle = async () => {
+      const marker = new BroadcastChannel(WORLD_CHANGE_CHANNEL);
+      marker.postMessage({ worldId: 'marker' });
+      marker.close();
+      await vi.waitFor(() => expect(heard).toContainEqual({ worldId: 'marker' }));
+      heard = heard.filter((message) => (message as { worldId: string }).worldId !== 'marker');
+    };
 
     it('after a stored world is written, and not for a write that fails', async () => {
       await expect(
@@ -593,7 +610,7 @@ describe('what the launch reads actually touch', () => {
     await writeRaw({ id: 'mine-1', name: 'Mine', data: { worldOverview: {} } } as StoredWorldRecord);
     const store = watchStore();
 
-    await WorldStorageService.loadDefaultWorlds([{ id: 'rampage', defaultName: 'Rampage' }]);
+    await WorldStorageService.loadDefaultWorlds([{ id: 'rampage', defaultName: 'Rampage' }], readBundledWorld);
 
     expect(store.getAll).not.toHaveBeenCalled();
     const asked = store.get.mock.calls.map(([key]) => key);
@@ -604,7 +621,7 @@ describe('what the launch reads actually touch', () => {
   it('still seeds a default it has never stored, reading by id', async () => {
     // The narrowed read must not turn "absent" into "present": a missing key returns undefined, and the
     // seed path depends on telling that apart from a stored copy.
-    await WorldStorageService.loadDefaultWorlds([{ id: 'rampage', defaultName: 'Rampage' }]);
+    await WorldStorageService.loadDefaultWorlds([{ id: 'rampage', defaultName: 'Rampage' }], readBundledWorld);
 
     expect((await readRaw('rampage'))?.sourceHash).toEqual(expect.any(String));
   });
@@ -619,7 +636,7 @@ describe('loadDefaultWorlds (content-hash refresh)', () => {
   });
 
   it('seeds a missing world with its content hash, announcing nothing on a first run', async () => {
-    const { failed, updated } = await WorldStorageService.loadDefaultWorlds(seed);
+    const { failed, updated } = await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
 
     expect(failed).toEqual([]);
     expect(updated).toEqual([]); // a first seed isn't news to the player
@@ -627,14 +644,14 @@ describe('loadDefaultWorlds (content-hash refresh)', () => {
   });
 
   it('does not rewrite an already-converged world (the every-launch re-save loop)', async () => {
-    await WorldStorageService.loadDefaultWorlds(seed);
+    await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
 
     // A sentinel that only a rewrite would clobber, plus a direct watch on the write path.
     const record = (await readRaw('rampage'))!;
     await writeRaw({ ...record, name: 'SENTINEL' });
     const storeSpy = vi.spyOn(WorldStorageService, 'storeWorld');
 
-    const { updated } = await WorldStorageService.loadDefaultWorlds(seed);
+    const { updated } = await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
 
     expect(storeSpy).not.toHaveBeenCalled();
     expect(updated).toEqual([]);
@@ -642,11 +659,11 @@ describe('loadDefaultWorlds (content-hash refresh)', () => {
   });
 
   it('reseeds and announces when the bundled content changed', async () => {
-    await WorldStorageService.loadDefaultWorlds(seed);
+    await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
     const record = (await readRaw('rampage'))!;
     await writeRaw({ ...record, sourceHash: 'STALE-HASH', name: 'OLD NAME' });
 
-    const { updated } = await WorldStorageService.loadDefaultWorlds(seed);
+    const { updated } = await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
 
     expect(updated).toHaveLength(1);
     const healed = await readRaw('rampage');
@@ -655,25 +672,25 @@ describe('loadDefaultWorlds (content-hash refresh)', () => {
   });
 
   it('backfills a hashless copy silently, then converges', async () => {
-    await WorldStorageService.loadDefaultWorlds(seed);
+    await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
     const record = (await readRaw('rampage'))!;
     delete record.sourceHash; // a world seeded before hashing existed
     await writeRaw(record);
 
-    const first = await WorldStorageService.loadDefaultWorlds(seed);
+    const first = await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
     expect(first.updated).toEqual([]); // adopting a hash isn't a content change — don't announce it
     expect((await readRaw('rampage'))?.sourceHash).toEqual(expect.any(String));
 
-    const second = await WorldStorageService.loadDefaultWorlds(seed);
+    const second = await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
     expect(second.updated).toEqual([]);
   });
 
   it('leaves an edited world alone even when the bundle changed', async () => {
-    await WorldStorageService.loadDefaultWorlds(seed);
+    await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
     const record = (await readRaw('rampage'))!;
     await writeRaw({ ...record, sourceHash: 'STALE-HASH', dirty: true, name: 'MY EDIT' });
 
-    const { updated } = await WorldStorageService.loadDefaultWorlds(seed);
+    const { updated } = await WorldStorageService.loadDefaultWorlds(seed, readBundledWorld);
 
     expect(updated).toEqual([]);
     const stored = await readRaw('rampage');
@@ -684,7 +701,7 @@ describe('loadDefaultWorlds (content-hash refresh)', () => {
   it('reports a world with no bundled JSON as failed without throwing', async () => {
     const { failed, updated } = await WorldStorageService.loadDefaultWorlds([
       { id: 'no-such-world', defaultName: 'Nope' },
-    ]);
+    ], readBundledWorld);
 
     expect(failed).toEqual(['no-such-world']);
     expect(updated).toEqual([]);
@@ -693,7 +710,7 @@ describe('loadDefaultWorlds (content-hash refresh)', () => {
   it('keeps the error behind each failed world, named by its id', async () => {
     const { errors } = await WorldStorageService.loadDefaultWorlds([
       { id: 'no-such-world', defaultName: 'Nope' },
-    ]);
+    ], readBundledWorld);
 
     expect(errors).toHaveLength(1);
     expect(errors[0].message).toBe('no-such-world');
@@ -705,7 +722,7 @@ describe('default worlds: seed vs. the player deleting one', () => {
   const RAMPAGE = [{ id: 'rampage', defaultName: 'City Rampage' }];
 
   it('seeds a default that has never been stored', async () => {
-    const { failed } = await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    const { failed } = await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
     expect(failed).toEqual([]);
     await expect(WorldStorageService.getWorldData('rampage')).resolves.toBeTruthy();
   });
@@ -713,16 +730,16 @@ describe('default worlds: seed vs. the player deleting one', () => {
   it('does not re-create a default the player deleted', async () => {
     // The bug: the seeder decides on presence alone, so a deleted default looked "never seeded" and came
     // back on the next Main Menu mount.
-    await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
     await WorldStorageService.deleteWorld('rampage');
 
-    await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
 
     await expect(WorldStorageService.getWorldData('rampage')).rejects.toBe('World not found');
   });
 
   it('stops counting a deleted default once it is stored again, as Keep Mine in another tab saves it back', async () => {
-    await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
     const world = await WorldStorageService.getWorldData('rampage');
     await WorldStorageService.deleteWorld('rampage');
     expect(readDeletedDefaultWorlds().has('rampage')).toBe(true);
@@ -734,29 +751,29 @@ describe('default worlds: seed vs. the player deleting one', () => {
   });
 
   it('leaves a deleted default gone across repeated seed passes', async () => {
-    await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
     await WorldStorageService.deleteWorld('rampage');
-    for (let i = 0; i < 3; i++) await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    for (let i = 0; i < 3; i++) await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
     await expect(WorldStorageService.getWorldData('rampage')).rejects.toBe('World not found');
   });
 
   it('still seeds the other defaults after one is deleted', async () => {
-    await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
     await WorldStorageService.deleteWorld('rampage');
 
-    await WorldStorageService.loadDefaultWorlds([...RAMPAGE, { id: 'drone', defaultName: 'Reincarnated Drone' }]);
+    await WorldStorageService.loadDefaultWorlds([...RAMPAGE, { id: 'drone', defaultName: 'Reincarnated Drone' }], readBundledWorld);
 
     await expect(WorldStorageService.getWorldData('rampage')).rejects.toBe('World not found');
     await expect(WorldStorageService.getWorldData('drone')).resolves.toBeTruthy();
   });
 
   it('re-seeds a deleted default once the tombstones are cleared (the Restore button)', async () => {
-    await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
     await WorldStorageService.deleteWorld('rampage');
     await expect(WorldStorageService.getWorldData('rampage')).rejects.toBe('World not found');
 
     clearDeletedDefaultWorlds();
-    await WorldStorageService.loadDefaultWorlds(RAMPAGE);
+    await WorldStorageService.loadDefaultWorlds(RAMPAGE, readBundledWorld);
 
     await expect(WorldStorageService.getWorldData('rampage')).resolves.toBeTruthy();
   });
@@ -850,10 +867,16 @@ describe('the listing changelog', () => {
     expect(await WorldStorageService.fetchListingDetails('w1')).toBeNull();
   });
 
-  it.each([403, 404])('reads a %i as a listing this reader may not see', async (status) => {
-    vi.mocked(fetch).mockResolvedValue(res({ error: 'World not found' }, false, status));
+  it('reads a 404 as a listing this reader may not see', async () => {
+    vi.mocked(fetch).mockResolvedValue(res({ error: 'World not found' }, false, 404));
 
     expect(await WorldStorageService.readListingDetails('w1')).toEqual({ status: 'gone' });
+  });
+
+  it('reads a 403 as gone too, and says the listing is there but hidden', async () => {
+    vi.mocked(fetch).mockResolvedValue(res({ error: 'Not visible' }, false, 403));
+
+    expect(await WorldStorageService.readListingDetails('w1')).toEqual({ status: 'gone', hidden: true });
   });
 
   it.each([429, 500])('reads a %i as no answer, not as gone', async (status) => {
@@ -972,6 +995,15 @@ describe('fetchCatalog', () => {
     });
   });
 
+  it('keeps a row\'s pending_preview as the server sent it', async () => {
+    const pending_preview = { name: 'Sedge Landing Reborn', queued_at: '2026-10-01T00:00:00.000Z', thumbnail_url: '/api/reviews/w1/thumbnail' };
+    vi.mocked(fetch).mockResolvedValue(catalogRes({ data: [{ id: 'w1', pending_preview }] }, 200, 'W/"new"'));
+
+    const answer = await WorldStorageService.fetchCatalog();
+
+    expect(answer.status === 'fresh' && (answer.data[0] as { pending_preview?: unknown }).pending_preview).toEqual(pending_preview);
+  });
+
   it('answers fresh with no tag when the server exposes none', async () => {
     vi.mocked(fetch).mockResolvedValue(catalogRes({ data: [{ id: 'w1' }] }));
 
@@ -987,7 +1019,7 @@ describe('fetchCatalog', () => {
 
     const url = vi.mocked(fetch).mock.calls[0][0] as string;
     expect(url).toContain('limit=1000');
-    expect(url).toContain('kind=all');
+    expect(url).toContain(`kind=${encodeURIComponent('world,entity,dictionary,model,prompt,mascot')}`);
   });
 
   it('answers with the error rather than throwing when the request fails', async () => {

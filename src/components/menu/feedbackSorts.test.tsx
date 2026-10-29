@@ -5,6 +5,7 @@ import { MyFeedbackTab } from './MyFeedbackTab';
 import FeedbackService from '@/services/FeedbackService';
 import { sortsFor } from '@/lib/feedbackPresentation';
 import type { FeedbackThread, FeedbackType } from '@/types';
+import { toastFeedbackNotify } from '@/lib/feedbackToast';
 
 vi.mock('react-toastify', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 vi.mock('./FeedbackThreadView', () => ({ FeedbackThreadView: () => null }));
@@ -15,6 +16,7 @@ vi.mock('@/services/AuthService', () => ({
 
 const thread = (type: FeedbackType): FeedbackThread => ({
   id: 't1',
+  number: 1,
   type,
   title: 'Save button does nothing',
   category: 'other',
@@ -65,6 +67,10 @@ describe('which sorts a branch offers', () => {
     expect(sortsFor('suggestion')).toEqual(['newest', 'oldest', 'active', 'votes']);
     expect(sortsFor('bug')).toEqual(['newest', 'oldest', 'active']);
   });
+
+  it('gives questions every sort, votes included', () => {
+    expect(sortsFor('question')).toEqual(['newest', 'oldest', 'active', 'votes']);
+  });
 });
 
 describe('the sort control on the staff queue', () => {
@@ -86,6 +92,12 @@ describe('the sort control on the staff queue', () => {
     await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'suggestion', sort: 'votes' }));
   });
 
+  it('opens Questions on Unanswered, Most Voted', async () => {
+    render(<FeedbackQueueTab active type="question" />);
+
+    await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'question', sort: 'votes', status: 'open' }));
+  });
+
   it('sends the sort a staff member picks on Bugs', async () => {
     render(<FeedbackQueueTab active type="bug" />);
     const options = await openSort();
@@ -101,26 +113,32 @@ describe('the sort control on the user tab', () => {
     ['bug', ['Newest', 'Oldest', 'Recently Active']],
     ['suggestion', ['Newest', 'Oldest', 'Recently Active', 'Most Voted']],
   ] as const)('lists the %s sorts', async (type, labels) => {
-    render(<MyFeedbackTab active type={type} />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type={type} />);
     await openFilters();
 
     expect((await openSort()).map((option) => option.textContent)).toEqual(labels);
   });
 
   it('opens on Newest in both branches', async () => {
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
     await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'bug', sort: 'newest' }));
     cleanup();
 
-    render(<MyFeedbackTab active type="suggestion" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="suggestion" />);
     await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'suggestion', sort: 'newest' }));
+  });
+
+  it('opens Questions on Everyone’s, Unanswered, Most Voted', async () => {
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="question" />);
+
+    await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'question', scope: 'all', status: 'open', sort: 'votes' }));
   });
 
   it.each([
     ['bug', 'all'],
     ['suggestion', 'mine'],
   ] as const)('keeps Sort on %s after switching to %s', async (type, scope) => {
-    render(<MyFeedbackTab active type={type} />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type={type} />);
 
     fireEvent.keyDown(await screen.findByLabelText('Which threads'), { key: 'Enter' });
     const scopes = await screen.findAllByRole('option');
@@ -132,7 +150,7 @@ describe('the sort control on the user tab', () => {
   });
 
   it('sends the pick from the caller’s own scope', async () => {
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
     await openFilters();
     const options = await openSort();
 

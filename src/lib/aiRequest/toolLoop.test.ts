@@ -15,6 +15,7 @@ import { buildToolSnapshot } from '@/lib/tools/toolSnapshot';
 import type { AssistantToolCallMessage, RequestMessage, Tool, ToolResultMessage, WireMessage } from '@/types';
 import type { AiRequestBody, AiRequestSpec } from './aiRequestSpec';
 import { AiStreamError } from './aiStream';
+import type { ResponseSchemaNode } from './responseSchema';
 import { DEFAULT_TOOL_ROUND_CAP, streamAiToolLoop, type AiToolLoopEvent, type AiToolLoopOptions } from './toolLoop';
 
 // --- Fixture: the Sedge Landing world behind the catalog's real entity lookup ------------------------------
@@ -228,7 +229,7 @@ describe('streamAiToolLoop: what reaches the reply', () => {
     const controller = new AbortController();
     const transport = scripted([(signal) => hangingResponse(signal, [frame({ content: 'The ' })])]);
     // A held delta never arrives while the body is open, so this backstop ends the stream for a clean failure.
-    const backstop = setTimeout(() => controller.abort(), 200);
+    const backstop = setTimeout(() => controller.abort(), 10_000);
 
     const events: AiToolLoopEvent[] = [];
     for await (const event of streamAiToolLoop(spec(), { execute, fetchImpl: transport.fetchImpl, signal: controller.signal })) {
@@ -419,7 +420,7 @@ describe('streamAiToolLoop: Stop', () => {
   it('aborts after a tools-offered round streamed text: done carries the text the consumer already saw', async () => {
     const controller = new AbortController();
     const transport = scripted([(signal) => hangingResponse(signal, [frame({ content: 'The ' }), frame({ content: 'door' })])]);
-    const backstop = setTimeout(() => controller.abort(), 200);
+    const backstop = setTimeout(() => controller.abort(), 10_000);
 
     const events: AiToolLoopEvent[] = [];
     for await (const event of streamAiToolLoop(spec(), { execute, fetchImpl: transport.fetchImpl, reasoningThrottleMs: 0, signal: controller.signal })) {
@@ -454,11 +455,11 @@ describe('streamAiToolLoop: Stop', () => {
     const transport = scripted([callFrames(['slow', {}]), proseFrames('never')]);
     // The script blocks the thread, so the Stop press queued behind it is seen once the deadline returns.
     const stopping: AiToolLoopOptions['execute'] = async (tool, args) => {
+      setTimeout(() => controller.abort(), 0);
       const result = await runToolCall(tool, args, snapshot);
       await new Promise((resolve) => setTimeout(resolve, 0));
       return result;
     };
-    setTimeout(() => controller.abort(), 20);
 
     const events = await run(transport, { execute: stopping, signal: controller.signal }, spec([slow]));
 
@@ -513,6 +514,28 @@ describe('streamAiToolLoop: cut thoughts', () => {
       expect(events.some((e) => e.type === 'done')).toBe(false);
     },
   );
+
+  // The cloud's Gemma spill with a Tool offered: the thought channel in the content, cut by the choices cap.
+  const contentCutFrames = (): string[] => [frame({ content: '<|channel>' }), frame({ content: 'thought\nThe user wants options. ' }), frame({}, 'length')];
+
+  it('retries a Tools round cut inside a thought in its content once without Tools, and answers that round', async () => {
+    const transport = scripted([contentCutFrames(), proseFrames('I wave at Bram.')]);
+
+    const events = await run(transport, { captureRounds: true });
+
+    expect(transport.sent).toHaveLength(2);
+    expect(transport.sent[1].tools).toBeUndefined();
+    expect(transport.sent[1].messages).toEqual(transport.sent[0].messages);
+    expect(doneOf(events)).toMatchObject({ content: 'I wave at Bram.', finishReason: 'stop' });
+    expect(roundsOf(events)).toEqual([expect.objectContaining({ index: 1, calls: [] })]);
+  });
+
+  it('fails a thought in the content cut with no Tools offered, or cut again on the retry', async () => {
+    for (const [script, tools] of [[[contentCutFrames()], null], [[contentCutFrames(), contentCutFrames()], [GET_ENTITY]]] as const) {
+      const { error } = await runUntilThrow(scripted([...script]), spec(tools));
+      expect(error).toMatchObject({ kind: 'cut-thought' });
+    }
+  });
 
   it('names the Thinking Room and its strength in the details of a cut round, on the first round and after a lookup', async () => {
     const roomed = { ...spec(), thinkingRoom: { tokens: 1024, strength: 'low' } } as const;
@@ -716,6 +739,13 @@ describe('streamAiToolLoop: Answer Cap', () => {
     expect(doneOf(short)).toMatchObject({ content: `${think}Bram waves.`, finishReason: 'stop' });
   });
 
+  it("counts the answer from the close of Gemma's leading thought channel, with Tools offered", async () => {
+    const thought = `<|channel>thought\n${'x'.repeat(300)}<channel|>`;
+    const events = await run(watched(proseFrames('<|channel>', 'thought\n', 'x'.repeat(300), '<channel|>', 'Bram waves.')), {}, capped(5, [GET_ENTITY]));
+
+    expect(doneOf(events)).toMatchObject({ content: `${thought}Bram waves.`, finishReason: 'stop' });
+  });
+
   it('counts each round on its own, so text a tool round wrote takes none of the reply\'s room', async () => {
     const transport = scripted([
       [frame({ content: 'Let me check. ' }), ...callFrames(['get_entity', { name: 'Bram' }])],
@@ -751,5 +781,53 @@ describe('streamAiToolLoop: Answer Cap', () => {
     }
 
     expect(doneOf(events)).toMatchObject({ content: 'The door opens. Bram', finishReason: 'aborted', toolCalls: [] });
+  });
+});
+
+describe('streamAiToolLoop: a request with a response schema', () => {
+  const SCHEMA: ResponseSchemaNode = {
+    type: 'object', additionalProperties: false, required: ['Global Stats'],
+    properties: { 'Global Stats': { type: 'object', additionalProperties: false, required: ['Gold'], properties: { Gold: { type: 'integer' } } } },
+  };
+  const schemaSpec = (tools: readonly Tool[] | null = [GET_ENTITY]): ToolRequestSpec => {
+    const base = spec(tools);
+    return { ...base, requestType: 'statUpdates', body: { ...base.body, response_format: { type: 'json_schema', json_schema: { name: 'stat_changes', strict: true, schema: SCHEMA } } } };
+  };
+  const REPLY = '{"Global Stats": {"Gold": 5}}';
+
+  it('offers its Tools without the schema, which would forbid the call, and keeps a reply that follows it', async () => {
+    const transport = scripted([callFrames(['get_entity', { name: 'Bram' }]), proseFrames(REPLY)]);
+
+    const events = await run(transport, {}, schemaSpec());
+
+    expect(transport.sent).toHaveLength(2);
+    for (const body of transport.sent) {
+      expect(body.tools).toEqual([toolSchema(GET_ENTITY)]);
+      expect(body.response_format).toBeUndefined();
+    }
+    expect(toolMessagesOf(transport.sent[1])[0].content).toContain(BRAM_FACT);
+    expect(doneOf(events).content).toBe(REPLY);
+  });
+
+  it('drops a reply that breaks the schema and sends the schema once more without Tools', async () => {
+    const transport = scripted([proseFrames('Gold: +5'), proseFrames(REPLY)]);
+
+    const events = await run(transport, { captureRounds: true }, schemaSpec());
+
+    expect(transport.sent).toHaveLength(2);
+    expect(transport.sent[1].tools).toBeUndefined();
+    expect(transport.sent[1].response_format).toEqual(schemaSpec().body.response_format);
+    expect(transport.sent[1].messages).toEqual(transport.sent[0].messages);
+    expect(doneOf(events).content).toBe(REPLY);
+    expect(deltasOf(events).join('')).toBe(REPLY);
+    expect(roundsOf(events)).toEqual([expect.objectContaining({ index: 1, content: 'Gold: +5', calls: [] })]);
+  });
+
+  it('sends the schema itself when no Tool is offered', async () => {
+    const transport = scripted([proseFrames(REPLY)]);
+
+    await run(transport, {}, schemaSpec(null));
+
+    expect(transport.sent[0].response_format).toEqual(schemaSpec(null).body.response_format);
   });
 });

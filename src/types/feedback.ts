@@ -1,7 +1,7 @@
 import type { SupporterFlair } from './supporter';
 
-/** The two branches of the feedback tree. Mirrors the server's `CHECK` constraint. */
-export const FEEDBACK_TYPES = ['bug', 'suggestion'] as const;
+/** The three branches of the feedback tree. Mirrors the server's `CHECK` constraint. */
+export const FEEDBACK_TYPES = ['bug', 'suggestion', 'question'] as const;
 export type FeedbackType = (typeof FEEDBACK_TYPES)[number];
 
 /** What a bug report is about. Mirrors the server's per-type `CHECK`. */
@@ -12,18 +12,35 @@ export type BugCategory = (typeof BUG_CATEGORIES)[number];
 export const SUGGESTION_CATEGORIES = ['gameplay', 'writing', 'editor', 'community', 'interface', 'other'] as const;
 export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number];
 
-export type FeedbackCategory = BugCategory | SuggestionCategory;
+/** What a question is about: where the asker is stuck. */
+export const QUESTION_CATEGORIES = ['gameplay', 'editor', 'setup', 'community', 'account', 'other'] as const;
+export type QuestionCategory = (typeof QUESTION_CATEGORIES)[number];
+
+export type FeedbackCategory = BugCategory | SuggestionCategory | QuestionCategory;
 
 /** Where a bug sits in triage. Mirrors the server's per-type `CHECK`. */
-export const BUG_STATUSES = ['open', 'need_info', 'confirmed', 'resolved', 'wontfix'] as const;
+export const BUG_STATUSES = ['open', 'need_info', 'confirmed', 'pending_release', 'resolved', 'wontfix', 'duplicate'] as const;
 export type BugStatus = (typeof BUG_STATUSES)[number];
 
 /** Where a suggestion sits. A bug is triaged towards a fix; a suggestion is weighed, then committed to
- *  or turned down, so 'confirmed' and 'planned' are different promises. */
-export const SUGGESTION_STATUSES = ['open', 'considering', 'planned', 'declined', 'done'] as const;
+ *  or turned down, so 'confirmed' and 'planned' are different promises. Both branches share
+ *  'pending_release': the work is in, but no release has it yet. */
+export const SUGGESTION_STATUSES = ['open', 'considering', 'planned', 'pending_release', 'declined', 'done'] as const;
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 
-export type FeedbackStatus = BugStatus | SuggestionStatus;
+/** Where a question sits. `answered` comes only from accepting a reply, never from the status route. */
+export const QUESTION_STATUSES = ['open', 'answered', 'closed'] as const;
+export type QuestionStatus = (typeof QUESTION_STATUSES)[number];
+
+export type FeedbackStatus = BugStatus | SuggestionStatus | QuestionStatus;
+
+/**
+ * Whether a type is a public board: open to replies from anyone signed in, and to votes.
+ *
+ * @param type - The thread's type
+ * @returns True for suggestions and questions
+ */
+export const isVotableBoard = (type: FeedbackType): boolean => type === 'suggestion' || type === 'question';
 
 /** What the client reports about itself, shown to the reporter before it is sent. Bugs only. */
 export interface BugDiagnostics {
@@ -51,31 +68,105 @@ export interface FeedbackReporter {
   supporter?: SupporterFlair | null;
 }
 
-/** One piece of feedback — a bug report or a suggestion — as any reader of it sees it. */
+/** An account the `@` suggestions offer. */
+export interface FeedbackUserSuggestion {
+  id: string;
+  username: string;
+  /** Root-relative, or null for none; see `serverAssetSrc`. */
+  avatarUrl: string | null;
+  role: string | null;
+  supporter?: SupporterFlair | null;
+  /** Whether they filed or replied to the thread being written in. */
+  participant: boolean;
+}
+
+/** A thread the `#` suggestions offer. */
+export interface FeedbackThreadSuggestion {
+  number: number;
+  title: string;
+  type: FeedbackType;
+  status: FeedbackStatus;
+}
+
+/** A link target the reader cannot see, or that does not exist. Carries nothing but the typed ref. */
+export interface UnavailableLinkTarget {
+  kind: 'thread' | 'user' | 'listing';
+  ref: string;
+  available: false;
+}
+
+/** A thread a link points at, as this reader may know it. */
+export interface ThreadLinkTarget {
+  kind: 'thread';
+  /** The thread number as typed. */
+  ref: string;
+  available: true;
+  number: number;
+  title: string;
+  type: FeedbackType;
+  status: FeedbackStatus;
+}
+
+/** A publicly visible community listing a pasted URL points at. */
+export interface ListingLinkTarget {
+  kind: 'listing';
+  /** `<kind>/<id>`. */
+  ref: string;
+  available: true;
+  listingKind: string;
+  id: string;
+  title: string;
+  /** Root-relative; see `serverAssetSrc`. */
+  thumbnailUrl: string;
+}
+
+/** An account a mention points at. */
+export interface UserLinkTarget {
+  kind: 'user';
+  /** The lower-cased username. */
+  ref: string;
+  available: true;
+  id: string;
+  /** As the account spells it. */
+  username: string;
+  /** Root-relative, or null for none; see `serverAssetSrc`. */
+  avatarUrl: string | null;
+}
+
+/** One resolved link of a post. The client matches a link to its target by kind and ref. */
+export type FeedbackLinkTarget = ThreadLinkTarget | ListingLinkTarget | UserLinkTarget | UnavailableLinkTarget;
+
+/** One piece of feedback — a bug report, a suggestion or a question — as any reader of it sees it. */
 export interface FeedbackThread {
   id: string;
+  /** The short number from the sequence every type shares; its address on the website. */
+  number: number;
   type: FeedbackType;
   title: string;
   category: FeedbackCategory;
   body: string;
   status: FeedbackStatus;
   reporter: FeedbackReporter;
-  /** Always empty on a suggestion: none is collected. */
+  /** Always empty on a suggestion or question: none is collected. */
   diagnostics: BugDiagnostics;
   /** Whether an admin has closed it to further replies. */
   locked: boolean;
   /** Set once it has been rewritten, so the thread can say "edited" beside the date. */
   editedAt?: string | null;
-  /** Suggestions only; a bug is never voted for. */
+  /** Votable boards only; a bug is never voted for. */
   votes: number;
   /** Whether the vote count includes this reader's. */
   voted: boolean;
-  /** Replies on it, both branches. Absent from a server that predates it. */
+  /** Replies on it, every branch. Absent from a server that predates it. */
   commentCount?: number;
   createdAt: string;
   updatedAt: string;
   /** Whether this reader has a comment on it they haven't seen. */
   unread: boolean;
+  /** The reply marked as the answer, copied from the thread. Questions only; null for none. */
+  acceptedAnswer?: FeedbackComment | null;
+  /** The resolved links of `body`, for this reader. Absent from a server that predates them. */
+  targets?: FeedbackLinkTarget[];
 }
 
 export interface FeedbackComment {
@@ -99,6 +190,8 @@ export interface FeedbackComment {
     /** Their Supporter Flair, or null for none. Absent from a server that predates it. */
     supporter?: SupporterFlair | null;
   };
+  /** The resolved links of `body`, for this reader. Absent from a server that predates them. */
+  targets?: FeedbackLinkTarget[];
 }
 
 /** A thread with its comments, as the detail view holds it. */

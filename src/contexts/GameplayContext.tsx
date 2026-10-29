@@ -7,7 +7,7 @@ import { toastError } from '@/lib/linkToast';
 import { convertSaveFile, terminateWorker } from '../lib/saveConversionWorkerUtils';
 import { useTtsPlayback } from '../lib/useTtsPlayback';
 import { APP_VERSION, isSaveEnvelope, migrateSave, migrateLegacySaveState, stripSnapshotHistory } from '../lib/version';
-import { flattenEnabledBookEntries } from '../lib/dictionaryUtils';
+import { loreEntries, NO_LORE_TOGGLES, playthroughBooks } from '../lib/loreToggles';
 import { getGameplayText, setGameplayText } from '../lib/gameplayTextStore';
 import { turnActivity } from '../lib/turnActivity';
 import { setLiveReasoning } from '../lib/reasoningStreamStore';
@@ -19,6 +19,7 @@ import { restoreTells, type TellMap } from '../lib/scriptTells';
 import { matchChoicesToAction, CONTINUE_CHOICE } from '../lib/choices';
 import { pageStatDeltas } from '../lib/statChanges';
 import { activeTraits, recoverStatBases, type AppliedTraitValues } from '../lib/traitRuntime';
+import { settleItemEffects, withoutOrphanCopies, type OwnerStatTraits } from '../lib/inventory';
 import { heldEntityIds, withHeldOwners } from '../lib/ownedTraitState';
 import { pageAssistantIndex, pageNextActionIndex, placeSnapshot } from '../lib/turnHistory';
 import { backfillGameStateStats } from '../lib/statBackfill';
@@ -43,11 +44,15 @@ import type { MemoryEditMap, MemoryNote } from '../lib/memoryOverrides';
 import type {
   CharacterData,
   CodePins,
+  LoreToggles,
   Entity,
   EntityStatChanges,
   EntityStatValues,
   EntityPositions,
   ImageAttachment,
+  Item,
+  ItemCopy,
+  ItemEffectLedger,
   LogEntry,
   GameLocation,
   Stat,
@@ -78,6 +83,8 @@ const EMPTY_ENTITY_CHANGES: EntityStatChanges = {};
 const EMPTY_CHOICES: Choice[] = [];
 const EMPTY_INDICES: number[] = [];
 const EMPTY_PINS: CodePins = {};
+const NO_ITEM_COPIES: readonly ItemCopy[] = [];
+const NO_ITEM_EFFECTS: ItemEffectLedger = {};
 
 const EMPTY_ENTITY_STATS: EntityStatValues = {};
 
@@ -169,6 +176,12 @@ function useProvideGameplay() {
   }, []);
   // Placeholder id → the text stat code pinned it to. Snapshotted per turn, so undo and re-roll restore it.
   const [codePins, setCodePins] = useState<CodePins>(EMPTY_PINS);
+  // What scripts switched on dictionary entries. Snapshotted per turn, so undo and re-roll restore it.
+  const [loreToggles, setLoreToggles] = useState<LoreToggles>(NO_LORE_TOGGLES);
+  // Every Item Copy in play. Snapshotted per turn, so undo and re-roll restore it.
+  const [itemCopies, setItemCopies] = useState<readonly ItemCopy[]>(NO_ITEM_COPIES);
+  // What item effects have applied, beside the Item Copies they follow.
+  const [itemEffects, setItemEffects] = useState<ItemEffectLedger>(NO_ITEM_EFFECTS);
   // Per-playthrough dictionary set chosen at world entry (or restored from a save). Runtime-only: the
   // authored world's books live in GameDataContext and are never mutated by gameplay.
   const [runtimeDictionaries, setRuntimeDictionaries] = useState<Dictionary[]>([]);
@@ -239,8 +252,12 @@ function useProvideGameplay() {
   const [pendingAttachments, setPendingAttachments] = useState<ImageAttachment[]>([]);
   // What scripts told the player, by turn id, beside the history so no request carries it (Q23).
   const [scriptTells, setScriptTells] = useState<TellMap>({});
-  // Flattened enabled entries fed to the injection pipeline (mirrors GameData's old derived `dictionary`).
-  const runtimeDictionary = useMemo(() => flattenEnabledBookEntries(runtimeDictionaries), [runtimeDictionaries]);
+  // The opening turn's `turn.action`; null until a playthrough opens, and on a save that lacks it.
+  const [openingAction, setOpeningAction] = useState<string | null>(null);
+  // The books in play: the save's, plus the world's shipped-off books a script may switch on.
+  const playthroughDictionaries = useMemo(() => playthroughBooks(runtimeDictionaries, worldBooks), [runtimeDictionaries, worldBooks]);
+  // The enabled entries the injection pipeline reads, with the lore overlay applied.
+  const runtimeDictionary = useMemo(() => loreEntries(playthroughDictionaries, loreToggles), [playthroughDictionaries, loreToggles]);
   const libraryDictionaries = useMemo(() => libraryBooksInPlay(runtimeDictionaries, worldBooks), [runtimeDictionaries, worldBooks]);
   const added = useMemo(() => addedCharacters(discoveredEntities), [discoveredEntities]);
   // Added characters' and library books' placeholders join the session's set, and their Wildcards are drawn.
@@ -337,6 +354,9 @@ function useProvideGameplay() {
       ...(metEntities.length ? { metEntities: [...metEntities] } : {}),
       ...(Object.keys(entityStatChanges).length ? { entityStatChanges } : {}),
       ...(Object.keys(codePins).length ? { codePins } : {}),
+      ...(Object.keys(loreToggles).length ? { loreToggles } : {}),
+      ...(itemCopies.length ? { itemCopies: [...itemCopies] } : {}),
+      ...(Object.keys(itemEffects).length ? { itemEffects } : {}),
       visibleEntities,
       discoveredEntities,
       suppressedCharacterNames,
@@ -357,8 +377,8 @@ function useProvideGameplay() {
       // Add a version flag for backward compatibility
       stateVersion: 2
     };
-  }, [globalStats, globalTraits, disabledTraitIds, appliedTraitValues, cascadeOffTraitIds, ownedTraits, entityStats, entityPositions, entityFollowers, metEntities, entityStatChanges, codePins, visibleEntities, discoveredEntities, suppressedCharacterNames, logEntries, currentLocation,
-      gameTime, startHour, fullMessageHistory, characterData, choices, isGameStarted, playerNotes, currentPage]);
+  }, [globalStats, globalTraits, disabledTraitIds, appliedTraitValues, cascadeOffTraitIds, ownedTraits, entityStats, entityPositions, entityFollowers, metEntities, entityStatChanges, codePins, loreToggles, itemCopies, itemEffects, visibleEntities, discoveredEntities, suppressedCharacterNames, logEntries,
+      currentLocation, gameTime, startHour, fullMessageHistory, characterData, choices, isGameStarted, playerNotes, currentPage]);
 
   /** Restore a `GameState` into the live gameplay state, resolving `locationId` against `locations` and
    *  recovering `playerNotes` from the newest nested state when the top-level field is absent (legacy saves).
@@ -386,6 +406,9 @@ function useProvideGameplay() {
       setEntityFollowers(gameState.entityFollowers ?? []);
       setMetEntities(gameState.metEntities ?? []);
       setCodePins(gameState.codePins ?? EMPTY_PINS);
+      setLoreToggles(gameState.loreToggles ?? NO_LORE_TOGGLES);
+      setItemCopies(gameState.itemCopies ?? NO_ITEM_COPIES);
+      setItemEffects(gameState.itemEffects ?? NO_ITEM_EFFECTS);
       setVisibleEntities(normalizeVisibleEntities(gameState.visibleEntities));
       // Rollback / re-generate also keep the live discovered cast + suppressed names (they carry the
       // player's edits and deletions, which land after the snapshot froze); the rewind handlers prune
@@ -490,6 +513,7 @@ function useProvideGameplay() {
         ...(keepSceneImages && Object.keys(sceneImages).length ? { sceneImages } : {}),
         ...(Object.keys(actionAttachments).length ? { actionAttachments } : {}),
         ...(Object.keys(scriptTells).length ? { scriptTells } : {}),
+        ...(openingAction !== null ? { openingAction } : {}),
         ...(isAutosave ? { isAutosave: true } : {}),
       };
 
@@ -508,7 +532,7 @@ function useProvideGameplay() {
       }
       return false;
     }
-  }, [saveCurrentGameState, gameStates, runtimeDictionaries, placeholderRolls, memoryPins, entityVisualPreference, personaRef, milestoneSelection, memoryEdits, memoryDeleted, memoryNotes, sceneImages, actionAttachments, scriptTells, addSystemLogEntry]);
+  }, [saveCurrentGameState, gameStates, runtimeDictionaries, placeholderRolls, memoryPins, entityVisualPreference, personaRef, milestoneSelection, memoryEdits, memoryDeleted, memoryNotes, sceneImages, actionAttachments, scriptTells, openingAction, addSystemLogEntry]);
 
   // Autosave has failed at least once this session — used to toast only once, re-armed on a later success.
   const autosaveFailedRef = useRef(false);
@@ -537,9 +561,38 @@ function useProvideGameplay() {
    *  store, which a pre-per-entity-Avatar save's chosen Avatar remaps against. */
   const loadGame = useCallback(async (
     saveId: string, locations: GameLocation[], worldStats: Stat[] = [], worldEntities?: readonly (PlaceableEntity & Pick<Entity, 'stats'>)[],
-    vrmStore?: WorldVrmStore,
+    vrmStore?: WorldVrmStore, items?: readonly Item[], ownerStatTraits?: (state: GameState, persona?: PersonaRef) => OwnerStatTraits,
   ) => {
     const locationIds = locations.map((l) => l.id);
+    const orphanIds = new Set<string>();
+    /** The state without Item Copies whose item, owner entity or location the world no longer has, and its
+     *  item effects settled, the dropped ones reversed (Q60). */
+    const withoutOrphans = (state: GameState, persona?: PersonaRef): GameState => {
+      if (!items || !worldEntities || (!state.itemCopies?.length && !state.itemEffects?.applied)) return state;
+      const { copies, dropped } = withoutOrphanCopies(state.itemCopies ?? [], {
+        itemIds: new Set(items.map((item) => item.id)),
+        entityIds: new Set([...worldEntities.map((e) => e.id), ...(state.discoveredEntities ?? []).map((d) => d.entity.id)]),
+        locationIds: new Set(locationIds),
+      });
+      for (const copy of dropped) orphanIds.add(copy.id);
+      // Without the owners' traits the bounds can't derive; the ledger keeps the entries, and the next settle reverses them.
+      if (!ownerStatTraits) return dropped.length ? { ...state, itemCopies: [...copies] } : state;
+      // Settled on every load, so the item bounds follow the world's current rows.
+      const settled = settleItemEffects(
+        { copies, entityStats: state.entityStats ?? {}, ledger: state.itemEffects },
+        { items, entities: worldEntities, ...(persona && { persona }) },
+        ownerStatTraits(state, persona),
+      );
+      return {
+        ...state, ...(dropped.length && { itemCopies: [...copies] }), entityStats: settled.entityStats, itemEffects: settled.ledger,
+      };
+    };
+    /** One log line for every orphan the load dropped, across the state and its history. */
+    const logOrphans = () => {
+      if (!orphanIds.size) return;
+      const n = orphanIds.size;
+      addSystemLogEntry(`Removed ${n} ${n === 1 ? 'item' : 'items'} whose item, owner or location no longer exists`);
+    };
     /** The state with its chosen Avatar remapped against the world's Avatar store. */
     const withChosenVrmRemapped = (raw: GameState) => (raw.characterData
       ? { ...raw, characterData: remapChosenVrm(raw.characterData, vrmStore) }
@@ -547,7 +600,7 @@ function useProvideGameplay() {
     /** The state with every stat the world has since added, global and each entity's, no entity stat
      *  carrying stored code bounds, each position checked against the world, and its chosen Avatar remapped. */
     const backfilled = (raw: GameState, persona?: PersonaRef) => {
-      const state = withChosenVrmRemapped(raw);
+      const state = withoutOrphans(withChosenVrmRemapped(raw), persona);
       const players = backfillGameStateStats(withoutEntityCodeBounds(state), worldStats);
       if (!worldEntities) return players;
       const cast = positionedCast(worldEntities, persona);
@@ -608,8 +661,10 @@ function useProvideGameplay() {
           // Absent on a save written with no attachments ⇒ none.
           setActionAttachments(restoreAttachments(migrated.actionAttachments));
           setScriptTells(restoreTells(migrated.scriptTells));
+          setOpeningAction(typeof migrated.openingAction === 'string' ? migrated.openingAction : null);
           setPendingAttachments([]);
           addSystemLogEntry(`Game loaded from "${saveName}"`);
+          logOrphans();
           setSaveLoads((n) => n + 1);
         }
         return success;
@@ -659,8 +714,10 @@ function useProvideGameplay() {
             // A legacy save predates attachments ⇒ none.
             setActionAttachments({});
             setScriptTells({});
+            setOpeningAction(null);
             setPendingAttachments([]);
             addSystemLogEntry(`Game loaded from "${saveName}"`);
+            logOrphans();
             setSaveLoads((n) => n + 1);
           }
           return success;
@@ -869,9 +926,16 @@ function useProvideGameplay() {
     setMetEntities,
     codePins,
     setCodePins,
+    loreToggles,
+    setLoreToggles,
+    itemCopies,
+    setItemCopies,
+    itemEffects,
+    setItemEffects,
     runtimeDictionaries,
     setRuntimeDictionaries,
     libraryDictionaries,
+    playthroughDictionaries,
     placeholderRolls,
     setPlaceholderRolls,
     sceneImages,
@@ -879,6 +943,8 @@ function useProvideGameplay() {
     setActionAttachments,
     scriptTells,
     setScriptTells,
+    openingAction,
+    setOpeningAction,
     pendingAttachments,
     setPendingAttachments,
     setSceneImages,

@@ -13,6 +13,19 @@ import type { ChatMessage, Entity } from '@/types';
 vi.hoisted(() => { vi.stubEnv('VITE_DEFAULT_ENDPOINT', ''); });
 
 vi.mock('@/views/VRMViewer', () => import('@/test/stubs/vrmViewer'));
+/** Every AI request the view sent, as the promise of its reply. */
+const transports = vi.hoisted((): Promise<unknown>[] => []);
+vi.mock('@/lib/aiRequest/requestTransport', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/aiRequest/requestTransport')>();
+  return {
+    ...actual,
+    transportRequest: (...args: Parameters<typeof actual.transportRequest>) => {
+      const reply = actual.transportRequest(...args);
+      transports.push(reply);
+      return reply;
+    },
+  };
+});
 vi.mock('react-toastify', () => ({
   toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn(), dismiss: vi.fn(), isActive: vi.fn() }),
   ToastContainer: () => null,
@@ -84,7 +97,7 @@ describe('the Background Pass Status row', () => {
     const endpoint = stubEndpoint(new Set(['digest']));
     fireEvent.change(box, { target: { value: 'I ring the bell.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => expect(endpoint.calls.digest).toHaveLength(1), { timeout: 8000 });
+    await waitFor(() => expect(endpoint.calls.digest).toHaveLength(1));
     return endpoint;
   }
 
@@ -93,15 +106,14 @@ describe('the Background Pass Status row', () => {
     expect(await screen.findByText('Summarizing turn…')).toBeInTheDocument();
     endpoint.release();
     await waitFor(() => expect(screen.queryByText('Summarizing turn…')).toBeNull());
-  }, 30_000);
+  });
 
   it('stays blank for the same running digest with it off', async () => {
     const endpoint = await playUntilDigestHeld(false);
-    // The request is in flight; the row would show by now.
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+    // The queue publishes the pass as it starts it, and the store's re-render is synchronous.
     expect(screen.queryByText('Summarizing turn…')).toBeNull();
     endpoint.release();
-  }, 30_000);
+  });
 });
 
 describe('a diary written under a variant name', () => {
@@ -114,11 +126,11 @@ describe('a diary written under a variant name', () => {
     const endpoint = stubEndpoint(new Set());
     act(() => seedHistory(storedTurn({ entities: ['Aldric'] })));
 
-    await waitFor(() => expect(endpoint.calls.diary).toHaveLength(1), { timeout: 8000 });
+    await waitFor(() => expect(endpoint.calls.diary).toHaveLength(1));
     const request = userMessageOf(endpoint.calls.diary[0]);
     expect(request).toContain('Aldric');
     expect(request).toContain('A scarred veteran who guards the bell tower.');
-  }, 30_000);
+  });
 });
 
 describe('regenerating a memory', () => {
@@ -132,11 +144,16 @@ describe('regenerating a memory', () => {
     await user.click(await screen.findByRole('tab', { name: 'Memory' }));
     await user.click(await screen.findByRole('button', { name: 'Manage Memories' }));
     await user.click(await screen.findByRole('button', { name: 'Have the Story Write This Memory Again' }));
-    await waitFor(() => expect(endpoint.calls.digest).toHaveLength(1), { timeout: 8000 });
+    await waitFor(() => expect(endpoint.calls.digest).toHaveLength(1));
 
     await view.unmountView();
     endpoint.release();
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+    // Every request has settled; the write would follow in the same chain, which a 0 ms flush drains.
+    await act(async () => {
+      await Promise.allSettled(transports);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(transports.length).toBeGreaterThan(0);
     expect(memoryEditsNow()).toEqual({});
-  }, 30_000);
+  });
 });

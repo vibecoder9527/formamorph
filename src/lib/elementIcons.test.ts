@@ -9,7 +9,9 @@ import {
   EntitiesIcon,
   EntityIcon,
   GroupIcon,
+  ItemIcon,
   LocationIcon,
+  MascotIcon,
   OpeningIcon,
   PersonaIcon,
   PlaceholderIcon,
@@ -40,6 +42,7 @@ const OTHER_MEANINGS: Record<string, { icons: string[]; meaning: string }> = {
   'components/formaquestion/MinimalChat.tsx': { icons: ['PersonStanding'], meaning: 'full-body view toggle' },
   'components/game/AudioPlayer.tsx': { icons: ['Play'], meaning: 'playback' },
   'components/game/TtsPlaybackBar.tsx': { icons: ['Play'], meaning: 'playback' },
+  'components/menu/FeedbackMarkdown.tsx': { icons: ['User'], meaning: 'unknown player chip' },
   'components/menu/SentMessageList.tsx': { icons: ['Users'], meaning: 'message audience' },
   'components/modals/LoadGameDialog.tsx': { icons: ['Folder'], meaning: 'save folder' },
   'components/modals/ToolTryIt.tsx': { icons: ['Play'], meaning: 'run action' },
@@ -130,8 +133,8 @@ describe('element icon map', () => {
 
   it('exports every component alias for its map entry', () => {
     expect([
-      TraitIcon, EntityIcon, EntitiesIcon, LocationIcon, StatIcon, DictionaryIcon, PlaceholderIcon,
-      BlueprintIcon, PersonaIcon, AvatarIcon, OpeningIcon, WorldIcon, GroupIcon,
+      TraitIcon, EntityIcon, EntitiesIcon, ItemIcon, LocationIcon, StatIcon, DictionaryIcon, PlaceholderIcon,
+      BlueprintIcon, PersonaIcon, AvatarIcon, MascotIcon, OpeningIcon, WorldIcon, GroupIcon,
     ]).toEqual(Object.values(ELEMENT_ICONS));
   });
 

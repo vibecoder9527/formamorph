@@ -88,6 +88,22 @@ _Avoid_: auto layout (as a live behavior), nudge
 Any world inhabitant the narrator can reference — person, creature, plant, or object.
 _Avoid_: character (too narrow)
 
+**Item**:
+An authored kind of object in the world's Items list, such as a sword or a potion. It has the entity description fields, images and placeholders, and its own value, Stackable, Consumable, Charges, Bound and Slot. An Item never joins the roster or the stat pass. Its placeholders roll once per playthrough, shared by every Item Copy.
+_Avoid_: object, thing, entity (for an item)
+
+**Item Copy**:
+One item in play, kept in the save. It has an Owner or lies at a location, a quantity, an equipped state and a visibility. Always written in full.
+_Avoid_: copy (that is a placeholder Copy), instance
+
+**Placement**:
+An authored starting Item Copy: where it goes (the Persona, an entity or a location), a quantity, Hidden, and a source. The source is one item. A new game's seed turns each Placement into Item Copies.
+_Avoid_: spawn, starting item
+
+**Slot**:
+A named place in the world's slot list where an item is equipped, such as Hand or Ring. Its capacity sets how many item units fit; an item's slot size says how many it takes. The Persona and every entity share one list.
+_Avoid_: equipment slot list per entity
+
 **Persona**:
 The entity that fills the player slot for a playthrough. It comes from the player's library or from the world's entities that carry the Persona mark. A save names one, or an explicit None.
 _Avoid_: player character, user, the Mascot's Voice
@@ -220,7 +236,11 @@ _Avoid_: baseline (the dirty check's term), initial state
 
 **Report**:
 A signed-in user's one-shot ticket flagging a Report Target to staff — a category plus optional details. Never public, never a conversation; it ends in exactly one Outcome.
-_Avoid_: flag, feedback (that's bug/suggestion)
+_Avoid_: flag, feedback (that's bug/suggestion/question)
+
+**Votable board**:
+The feedback types anyone signed in may reply to and vote on: suggestions and questions. A bug is not one: only its reporter and staff reply, and it takes no votes.
+_Avoid_: public board (every feedback thread is readable), board post
 
 **Report Target**:
 The thing a Report points at — a listing (any kind), a comment, or a user profile — captured by snapshot at report time so the ticket outlives the content's deletion.
@@ -420,12 +440,16 @@ One alternative in a Requirement. A row holds when every Condition in it holds (
 _Avoid_: clause, branch, group (a group is a trait group)
 
 **Condition**:
-One check in a Requirement Row: a trait, any trait in a group, a persona the player plays as, or a stat, with an optional owner, or the time of day. A Condition can carry the Not flag, and then it holds while its target is off. Not is a flag on a Condition, not a separate item. A Time Condition has no Not.
+One check in a Requirement Row: a trait, any trait in a group, a persona the player plays as, a stat, or an item, with an optional owner, or the time of day. A Condition can carry the Not flag, and then it holds while its target is off. Not is a flag on a Condition, not a separate item. A Time Condition has no Not.
 _Avoid_: exclusion, negation, rule, requirement (a Requirement is the whole gate)
 
 **Stat Condition**:
 A Condition that compares an owner's stat to a number with one of six operators (`>`, `<`, `>=`, `<=`, `=`, `≠`). The number is raw, in the stat's units, or a percent of the stat's min-to-max span; the author picks per Condition. Traits and image Visibility rules share it. The game reads stats once per turn commit, after the stat pass, and a Condition on an inert or missing stat does not hold.
 _Avoid_: stat gate, stat requirement, threshold (a descriptor's word)
+
+**Item Condition**:
+A Condition that holds while an owner has an Item Copy of an item, owned (carried or equipped, hidden copies included) or equipped. Traits and image Visibility rules share it. With no owner it reads the host's owner; on a global trait or a location rule that is the Persona. On an item's rule it reads the Item Copy's owner, and never holds while the copy lies at a location, Not included.
+_Avoid_: item gate, inventory check
 
 **Time Condition**:
 A Condition that holds while the story clock's daypart is one of a set: night, dawn, morning, midday, afternoon, evening. Dayparts split the day by fraction, as the narration's do. It has no owner and no Not, and it never tests the day number or an hour. The game reads it once per turn commit, after the turn's time passes. Outside play it reads the opening hour, which is morning. Traits and image Visibility rules share it.

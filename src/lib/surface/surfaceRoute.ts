@@ -95,6 +95,7 @@ const DIALOGS: Record<DevModal, DialogRoute> = {
 
   // Raised by the app itself, never by the player: a refused build, an error toast, the Android back button.
   updateRequired: { ancestor: null },
+  usernameRename: { ancestor: null },
   errorDetails: { ancestor: null },
   imageSetup: { ancestor: null },
   exitApp: { ancestor: null },
@@ -126,6 +127,7 @@ const LEDGERS: Record<TabKey, LedgerRoute> = {
   worldEditorLocations: { ancestor: 'worldEditor.locations' },
   worldEditorLocation: { ancestor: 'worldEditor.locations' },
   worldEditorEntity: { ancestor: 'worldEditor.entities' },
+  worldEditorItem: { ancestor: 'worldEditor.items' },
   worldEditorStat: { ancestor: 'worldEditor.stats' },
   worldEditorTrait: { ancestor: 'worldEditor.traits' },
   worldEditorEntry: { ancestor: 'worldEditor.dictionary' },
@@ -144,6 +146,7 @@ const LEDGERS: Record<TabKey, LedgerRoute> = {
   adminPanelEvents: { parent: 'adminPanel.events' },
   adminPanelPolicies: { parent: 'adminPanel.policies' },
   adminPanelFeedback: { parent: 'adminPanel.feedback' },
+  adminPanelModeration: { parent: 'adminPanel.moderation' },
 
   formaquestion: { parent: 'formaquestion' },
   formaquestionSettings: { parent: 'formaquestionSettings' },

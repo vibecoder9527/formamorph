@@ -2,6 +2,7 @@ import { randomUUID } from "@/lib/uuid";
 import { newBlankWorld } from "@/lib/blankWorld";
 import { filledScripts, SCRIPT_TIMING_LABEL, type ScriptHome } from "@/lib/scripts";
 import { DEFAULT_WORLDS, isDefaultWorldId } from "@/lib/defaultWorlds";
+import { readBundledWorld } from "@/lib/bundledWorldText";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useGameData } from '../contexts/GameDataContext';
 import { useResolvedAuthoredWorld } from '@/lib/useResolvedWorld';
@@ -115,10 +116,13 @@ import { UserName } from "@/components/UserName";
 import { badgeKind, UNREAD_MARK_STYLES } from "@/lib/unreadSeverity";
 import UserService from "@/services/UserService";
 import ReportService from "@/services/ReportService";
-import { type MyFeedbackTabKey } from "@/components/menu/myFeedbackTabs";
+import ReviewService from "@/services/ReviewService";
+import { useListingReviewMeta } from "@/lib/useListingReviewMeta";
+import { type FeedbackTab as MyFeedbackTabKey } from "@/components/menu/feedbackTabs";
 import { type AdminPanelTab } from "@/components/menu/adminPanelTabs";
 import { type PoliciesTab as PoliciesSubTab } from "@/components/menu/policiesTabs";
 import { type FeedbackTab as FeedbackSubTab } from "@/components/menu/feedbackTabs";
+import { type ModerationTab as ModerationSubTab } from "@/components/menu/moderationTabs";
 import MessageService from "@/services/MessageService";
 import { useActiveEvents } from "@/lib/useActiveEvents";
 import { asBrowseTab, type BrowseTab } from "@/lib/browseTabs";
@@ -130,6 +134,7 @@ import { useEventBanners } from "@/components/events/useEventBanners";
 import { EventAckModal } from "@/components/events/EventAckModal";
 import FeedbackService from "@/services/FeedbackService";
 import { FeedbackHubDialog } from "@/components/menu/FeedbackHubDialog";
+import { toastFeedbackNotify } from "@/lib/feedbackToast";
 import { AuthModals } from "@/components/menu/AuthModals";
 import { onSignInSucceeded, requestSignIn } from "@/lib/signInStore";
 import { PublishModal } from "@/components/menu/PublishModal";
@@ -147,6 +152,7 @@ import {
   consumeCommunityListingHandoff,
   readCommunityListingHandoff,
 } from '@/lib/communityListingHandoff';
+import { clearCommunityListingRequest, useCommunityListingRequest } from '@/lib/communityListingRequest';
 import { isStaff } from "@/lib/roles";
 import { Checkbox } from "@/components/ui/checkbox";
 import { BundledContentChoice } from "@/components/BundledContentChoice";
@@ -164,6 +170,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useWorldPromptPresets, GLOBAL_PRESET_VALUE } from "@/lib/worldPromptPreset";
 import { promptLibraryTarget } from "@/lib/promptDownload";
+import { mascotLibraryTarget } from "@/lib/mascotDownload";
+import { currentHelpSettings, useHelpSettings } from "@/components/formaquestion/useHelpSettings";
 import PatreonIcon from "@/components/PatreonIcon";
 import GithubIcon from "@/components/GithubIcon";
 import { describePlaceholders } from '@/lib/placeholders';
@@ -273,6 +281,15 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   const promptTarget = useMemo(
     () => promptLibraryTarget({ presets: userPromptPresets, store: storeDownloadedPreset }),
     [userPromptPresets, storeDownloadedPreset],
+  );
+  // The Mascot presets live in the Formaquestion settings, which every user of the hook shares.
+  const [helpSettings, changeHelpSettings] = useHelpSettings();
+  const mascotTarget = useMemo(
+    () => mascotLibraryTarget(helpSettings.mascotPresets.mascots, {
+      read: () => currentHelpSettings().mascotPresets,
+      write: (mascotPresets) => changeHelpSettings({ mascotPresets }),
+    }),
+    [helpSettings.mascotPresets.mascots, changeHelpSettings],
   );
   /** A preset id as the player knows it, or undefined when nothing names that id any more. */
   const presetName = useCallback(
@@ -604,9 +621,12 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   // becomes; a character or a dictionary uses it to name the library item its Compatible Worlds are
   // derived from. An Avatar has neither and passes none.
   const [publishLocalId, setPublishLocalId] = useState<string | undefined>(undefined);
-  const openPublish = (payload: PublishPayload, localId?: string) => {
+  // The listing that record is linked to, which the modal preselects as the update target.
+  const [publishLinkedId, setPublishLinkedId] = useState<string | undefined>(undefined);
+  const openPublish = (payload: PublishPayload, localId?: string, linkedListingId?: string) => {
     setPublishPayload(payload);
     setPublishLocalId(localId);
+    setPublishLinkedId(linkedListingId);
     setShowPublishModal(true);
   };
 
@@ -618,7 +638,11 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
    * side already offers this choice; the publish side is where the big image actually comes from.
    */
   const publishEntity = async (entity: Entity, libraryDetails?: { author?: string }) => {
-    openPublish(entityPublishPayload(await withCarriedVrm(await promptEntity(entity)), libraryDetails), entity.id);
+    openPublish(
+      entityPublishPayload(await withCarriedVrm(await promptEntity(entity)), libraryDetails),
+      entity.id,
+      entities.find((record) => record.id === entity.id)?.sourceId,
+    );
   };
 
   /**
@@ -633,7 +657,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
       toast.error(attempt.message);
       return;
     }
-    openPublish(attempt.payload);
+    openPublish(attempt.payload, undefined, models.find((record) => record.id === model.id)?.sourceId);
   };
 
   /** Publish the selected world, unless it is a bundled world the player never edited. */
@@ -644,7 +668,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
       toast.error(attempt.message);
       return;
     }
-    openPublish(attempt.payload, world.id);
+    openPublish(attempt.payload, world.id, typeof world.sourceId === 'string' ? world.sourceId : undefined);
   };
   const [showBackup, setShowBackup] = useState(false);
 
@@ -668,6 +692,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     requireAttestation({
       onAccept: () => {
         setShowProfileDialog(false);
+        // A listing link in a feedback thread steps the Feedback window aside.
+        setShowFeedback(false);
         setPendingListing(listing);
         // A no-op when the request came from a profile opened inside the browser: it is already open, and
         // the listing it was handed is what it reacts to either way.
@@ -704,6 +730,10 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   // Targets with an open report on them, for the badge on the Admin Panel button. Staff only, and zero
   // against a server without the feature — the button simply wears no badge there.
   const [openReports, setOpenReports] = useState(0);
+  const [waitingReviews, setWaitingReviews] = useState(0);
+  const listingReview = useListingReviewMeta(COMMUNITY_ENABLED && isAuthenticated && isStaff(currentUser));
+  // Open reports plus waiting reviews: the work the Admin Panel button badges.
+  const staffWork = openReports + waitingReviews;
   // Bumped after a resolution, so the badge follows the queue rather than the session.
   const [reportCountNonce, setReportCountNonce] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -854,7 +884,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         if (!isMountedRef.current) return;
         setSkeletonWorlds(existingIds.map((id) => ({ id, isLoading: true })));
         const firstRun = existingIds.length === 0;
-        const { failed, errors, updated } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS);
+        const { failed, errors, updated } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS, readBundledWorld);
         if (!isMountedRef.current) return;
         if (firstRun) {
           if (failed.length === 0) toast.success("Loaded default worlds");
@@ -1578,6 +1608,21 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     });
   }, [externalListing, requireAttestation]);
 
+  // A listing another part of the app asks for, such as the Mascot tab's locked Supporter Mascot.
+  const requestedListing = useCommunityListingRequest();
+  useEffect(() => {
+    if (!COMMUNITY_ENABLED || !requestedListing) return;
+    clearCommunityListingRequest(requestedListing.nonce);
+    const { id, kind } = requestedListing;
+    requireAttestation({
+      onAccept: () => {
+        setCommunityTab(kind);
+        setPendingListing({ id, kind });
+        setShowCommunityBrowser(true);
+      },
+    });
+  }, [requestedListing, requireAttestation]);
+
   /** Take the player to where an event's content lives — the contest tab, for a contest. */
   const openEvent = useCallback((event: ServerEvent) => {
     openCommunityBrowser(isContestEvent(event) ? 'contest' : undefined);
@@ -1601,6 +1646,20 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
 
     return () => { current = false; };
   }, [isAuthenticated, currentUser, reportCountNonce]);
+
+  // The review queue is the same kind of shared work, so it joins the same badge.
+  useEffect(() => {
+    if (!COMMUNITY_ENABLED || !isAuthenticated || !isStaff(currentUser) || !listingReview.supported) {
+      setWaitingReviews(0);
+      return;
+    }
+
+    let current = true;
+
+    void ReviewService.fetchCount().then((count) => { if (current) setWaitingReviews(count); });
+
+    return () => { current = false; };
+  }, [isAuthenticated, currentUser, reportCountNonce, listingReview.supported]);
 
   // The feedback half of the badge. Separate from messages because reading a thread changes it, so it is
   // re-read on demand rather than only when auth changes.
@@ -1643,6 +1702,11 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     setCurrentUser(null);
     setShowProfileDialog(false);
     setUnreadMessages(0);
+  }), []);
+
+  // A held account rewritten elsewhere (a rename, an email change) shows its new fields in the header.
+  useEffect(() => AuthService.onSessionChanged(() => {
+    setCurrentUser((held) => (held && AuthService.isAuthenticated() ? AuthService.getCurrentUser() : held));
   }), []);
 
   // The sign-in dialog is shared by every view, so a sign-in raised from Error Details lands here too.
@@ -1763,12 +1827,12 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           onClick={() => setShowAdminPanel(true)}
         >
           <Shield className="mr-2 h-4 w-4" /> Admin Panel
-          {/* Reports are the one thing in this panel that waits on somebody. The count rides the button
-              rather than the profile circle: that badge is what is waiting for *you*, and a report queue
-              is waiting for whichever of the team gets to it. */}
-          {openReports > 0 && (
+          {/* Reports and the review queue are the things in this panel that wait on somebody. The count
+              rides the button rather than the profile circle: that badge is what is waiting for *you*, and
+              these queues wait for whichever of the team gets to them. */}
+          {staffWork > 0 && (
             <span className="ml-2 rounded-full bg-destructive px-1.5 text-meta font-semibold text-destructive-foreground">
-              {openReports > 9 ? '9+' : openReports}
+              {staffWork > 9 ? '9+' : staffWork}
             </span>
           )}
         </GradientButton>
@@ -2731,7 +2795,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         initialTab={devRoute?.modal === 'dictionaryEditor' ? DICTIONARY_EDITOR_TABS.find((t) => t.value === devRoute.tab)?.value : undefined}
         draft={draftDictionary}
         onClose={() => { setEditingDictionaryId(null); setDraftDictionary(null); refreshDictionaries(); }}
-        onPublish={isAuthenticated ? (book, details) => openPublish(dictionaryPublishPayload(book, details), book.id) : undefined}
+        onPublish={isAuthenticated ? (book, details) => openPublish(dictionaryPublishPayload(book, details), book.id, dictionaries.find((record) => record.id === book.id)?.sourceId) : undefined}
       />
 
       <ConfirmDialog
@@ -2923,6 +2987,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             isAuthenticated={isAuthenticated}
             payload={publishPayload}
             localId={publishLocalId}
+            linkedListingId={publishLinkedId}
             onLinked={() => { void refreshWorlds(); }}
             events={activeEvents}
           />
@@ -2950,6 +3015,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             // switched off, and the cap toast's own Sign in. Closing it leaves them on the listing.
             onGuestLike={() => requestSignIn()}
             promptLibrary={{ target: promptTarget, activeId: activePresetId, select: selectPreset }}
+            mascotLibrary={{ target: mascotTarget }}
             openLikersOnMount={devRoute?.modal === 'likers'}
             openManageAddonsOnMount={devRoute?.modal === 'manageAddons'}
           />
@@ -3000,6 +3066,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         initialTab={surfaceNav.tab('feedbackHub') ?? (devRoute?.modal === 'feedbackHub' ? (devRoute.tab as MyFeedbackTabKey | undefined) : undefined)}
         requestKey={surfaceNav.key}
         onChanged={handleBugsChange}
+        notify={toastFeedbackNotify}
       />
 
       <AdminPanelDialog
@@ -3008,12 +3075,14 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         initialTab={devRoute?.modal === 'adminPanel' ? (devRoute.tab as AdminPanelTab | undefined) : undefined}
         initialPoliciesTab={devRoute?.modal === 'adminPanel' ? (devRoute.subtab as PoliciesSubTab | undefined) : undefined}
         initialFeedbackTab={devRoute?.modal === 'adminPanel' ? (devRoute.subtab as FeedbackSubTab | undefined) : undefined}
+        initialModerationTab={devRoute?.modal === 'adminPanel' ? (devRoute.subtab as ModerationSubTab | undefined) : undefined}
+        initialReviewItemId={devRoute?.modal === 'adminPanel' ? devRoute.pick : undefined}
         onOpenListing={(listingId) => {
           // The panel stays open behind the browser: judging a listing is a step inside working the
           // queue, not a departure from it.
           handleOpenListing({ id: listingId, kind: 'world' });
         }}
-        onReportsChanged={() => setReportCountNonce((n) => n + 1)}
+        onQueuesChanged={() => setReportCountNonce((n) => n + 1)}
       />
     </div>
   );

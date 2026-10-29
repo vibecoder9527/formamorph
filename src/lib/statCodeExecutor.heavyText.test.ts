@@ -35,8 +35,8 @@ const memory = (id: string, text: string): SandboxMemory => ({
 
 const lore: SandboxDictionary = {
   name: 'Lore', id: 'lore', entries: [
-    { id: 'tides', name: 'Tides', keys: ['tide'], value: TEXT.tides },
-    { id: 'wreck', name: 'The Wreck', keys: ['wreck', 'ship'], value: TEXT.wreck },
+    { id: 'tides', name: 'Tides', keys: ['tide'], value: TEXT.tides, enabled: true, constant: false },
+    { id: 'wreck', name: 'The Wreck', keys: ['wreck', 'ship'], value: TEXT.wreck, enabled: true, constant: false },
   ],
 };
 
@@ -94,14 +94,14 @@ describe('heavy text in the sandbox', () => {
         JSON.stringify(memories[1]), JSON.stringify(dictionaries.Lore.entries.Tides), Object.values(locations.Hill).slice(0, 5),
       ];`)).toEqual([
         ['id', 'name', 'type', 'pronouns', 'inScene', 'location', 'following', 'description', 'summary', 'aliases', 'traits', 'placeholders', 'stats', 'move', 'follow', 'unfollow', 'diary'],
-        ['id', 'name', 'description', 'summary', 'starting', 'present'],
-        ['id', 'name', 'description', 'summary', 'starting', 'present', 'move'],
+        ['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits'],
+        ['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits', 'move'],
         ['id', 'turn', 'timestamp', 'day', 'daypart', 'text', 'custom', 'kept', 'inContext', 'pinned', 'forgotten'],
-        ['id', 'name', 'entries', 'placeholders'],
+        ['id', 'name', 'enabled', 'entries', 'placeholders'],
         ['Tides', 'The Wreck'],
-        ['id', 'name', 'keys', 'value'],
+        ['id', 'name', 'keys', 'value', 'enabled', 'constant'],
         JSON.stringify({ ...memory('m2', TEXT.second) }),
-        JSON.stringify({ id: 'tides', name: 'Tides', keys: ['tide'], value: TEXT.tides }),
+        JSON.stringify({ id: 'tides', name: 'Tides', keys: ['tide'], value: TEXT.tides, enabled: true, constant: false }),
         ['hill', 'Hill', TEXT.hill, '', false],
       ]);
     });

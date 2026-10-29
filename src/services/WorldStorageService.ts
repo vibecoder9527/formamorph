@@ -1,7 +1,7 @@
 import AuthService from './AuthService';
 import { authHeaders } from './authRequest';
 import { codedResponseError, readFailure, responseError } from './responseError';
-import type { CatalogKindQuery } from '@/lib/catalogKinds';
+import { kindParam, type CatalogKindQuery } from '@/lib/catalogKinds';
 import { API_BASE_URL } from '@/lib/apiBase';
 import type { PublishPayload } from '@/lib/publishPayload';
 import { PUBLISH_LIMITS, publishLimitRefusal } from '@/lib/publishLimits';
@@ -20,6 +20,7 @@ import {
 import { changelogOf, type ChangelogDraft, type ChangelogEntry } from '@/lib/listingChangelog';
 import type { ReviewState, WorldAssociation } from '@/lib/compatibleWorlds';
 import type { ListingVisibility } from '@/lib/publishLinks';
+import type { PendingUpdate } from '@/lib/listingModeration';
 import type { AddonRow, DependencyRow } from '@/lib/worldDependencies';
 import type { SourceCheckStatus } from '@/lib/sourceChecks';
 import type { LikeState } from '@/lib/likeCount';
@@ -76,12 +77,31 @@ export interface ListingDetails {
   requiredDependencies?: string[];
   /** The worlds a component is offered for today, with the world author's answer to each. */
   compatibleWorlds?: WorldAssociation[];
+  description?: string;
+  tags?: string[];
+  /** The file under `/thumbnails/`, absent for a listing with no art. */
+  thumbnailFile?: string;
+  updatedAt?: string;
+  /** The listing's name as served now. */
+  name?: string;
+  /** The author's waiting update, null when none waits, absent for a player or an older server. */
+  pendingUpdate?: PendingUpdate | null;
 }
+
+/**
+ * A changelog write's answer. A held create adds `pending`; a held edit adds the listing's pending update
+ * and shows the approved entry.
+ */
+export type ChangelogWriteAnswer = ChangelogEntry & {
+  pending?: boolean;
+  has_pending_update?: boolean;
+  pending_update?: PendingUpdate | null;
+};
 
 /** One listing read: its details, word that this reader may not see it, or no answer at all. */
 export type ListingDetailsRead =
   | { status: 'ok'; details: ListingDetails }
-  | { status: 'gone' }
+  | { status: 'gone'; /** The listing exists but this reader may not see it. */ hidden?: boolean }
   | { status: 'unreachable' };
 
 /** The toast shown while another tab on an older build holds the library upgrade back. */
@@ -156,16 +176,6 @@ export interface DefaultWorldSyncResult {
   updated: string[];
 }
 
-/**
- * The bundled default worlds as raw JSON text, so their content can be hashed without re-serializing the
- * parsed object (they carry base64 images and run to megabytes). Parsing happens only when a world actually
- * needs (re)seeding.
- */
-const DEFAULT_WORLD_RAW = import.meta.glob('../defaultworlds/*.json', {
-  query: '?raw',
-  import: 'default',
-}) as Record<string, () => Promise<string>>;
-
 /** Singleton owning local world persistence (the world library in `@/lib/worldLibrary`) and community server calls
  *  (fetch/publish/comments). Default-exported as one shared instance; the constructor kicks off DB init. */
 class WorldStorageService {
@@ -239,7 +249,10 @@ class WorldStorageService {
       blocked = true;
       toast.info(LIBRARY_BLOCKED_MESSAGE, { toastId: LIBRARY_BLOCKED_TOAST, autoClose: false });
     }).then((db) => {
-      db.addEventListener('versionchange', () => { if (this.db === db) this.db = null; });
+      const drop = () => { if (this.db === db) this.db = null; };
+      // `close` fires when the browser drops the connection (cleared site data, storage failure).
+      db.addEventListener('versionchange', drop);
+      db.addEventListener('close', drop);
       this.db = db;
     }).finally(() => {
       this.opening = null;
@@ -495,8 +508,12 @@ class WorldStorageService {
    *  the player has edited it (`dirty`), since that diverges from the bundled default (git-dirty model), or if
    *  they deleted it — absent alone can't be trusted to mean "never seeded", so a deleted default carries a
    *  tombstone and stays gone even when the bundled copy changes.
+   *  `readBundled` is `readBundledWorld`, passed in so this module never bundles the worlds.
    *  Returns the ids that failed to load plus the display names auto-updated in place. */
-  async loadDefaultWorlds(defaultWorlds: DefaultWorldSeed[]): Promise<DefaultWorldSyncResult> {
+  async loadDefaultWorlds(
+    defaultWorlds: DefaultWorldSeed[],
+    readBundled: (id: string) => Promise<string>,
+  ): Promise<DefaultWorldSyncResult> {
     await this.ensureInitialized();
     const deleted = readDeletedDefaultWorlds();
     defaultWorlds = defaultWorlds.filter((w) => !deleted.has(w.id));
@@ -513,10 +530,8 @@ class WorldStorageService {
       defaultWorlds.map(async world => {
         try {
           const existing = byId.get(world.id);
-          const loadRaw = DEFAULT_WORLD_RAW[`../defaultworlds/${world.id}.json`];
-          if (!loadRaw) throw new Error(`No bundled JSON for default world "${world.id}"`);
           // Hash the raw text, then parse it — one read, and no re-serializing a multi-MB parsed world.
-          const raw = await loadRaw();
+          const raw = await readBundled(world.id);
           const hash = contentHash(raw);
           // A copy seeded before hashing existed has no hash to compare; reseed once to adopt the current
           // bundle (its content may genuinely differ), then it converges like any other.
@@ -618,7 +633,7 @@ class WorldStorageService {
         ? { headers: { ...headers, 'If-None-Match': tag }, cache: 'no-store' as RequestCache }
         : { headers };
 
-      const response = await this.installFallbackFetch(`${this.API_URL}/worlds?page=1&limit=1000&kind=all`, init);
+      const response = await this.installFallbackFetch(`${this.API_URL}/worlds?page=1&limit=1000&kind=${encodeURIComponent(kindParam('all'))}`, init);
       if (response.status === 304) return { status: 'unchanged' };
       if (!response.ok) throw await responseError(response, 'Failed to fetch worlds');
 
@@ -647,7 +662,7 @@ class WorldStorageService {
       if (searchByAuthor) url += `&searchByAuthor=true`;
       if (sort) url += `&sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}`;
       // Omitted entirely for 'world' so the request stays byte-identical to what shipped before kinds.
-      if (kind !== 'world') url += `&kind=${encodeURIComponent(kind)}`;
+      if (kind !== 'world') url += `&kind=${encodeURIComponent(kindParam(kind))}`;
 
       const headers = authHeaders();
 
@@ -851,6 +866,51 @@ class WorldStorageService {
     if (!response.ok) throw await responseError(response, 'Failed to release this');
   }
 
+  /**
+   * Pin a listing so it shows first in its section, or unpin it. Staff only.
+   *
+   * @param worldId - The listing's server id
+   * @param pinned - True to pin, false to unpin
+   * @returns When the listing was pinned, or null once unpinned
+   */
+  async setRemoteWorldPinned(worldId: string, pinned: boolean): Promise<string | null> {
+    const response = await fetch(`${this.API_URL}/worlds/${worldId}/pin`, {
+      method: pinned ? 'PUT' : 'DELETE',
+      headers: authHeaders(),
+    });
+
+    if (!response.ok) throw await responseError(response, pinned ? 'Failed to pin this' : 'Failed to unpin this');
+    const body = await response.json().catch(() => ({}));
+    const pinnedAt = (body.data ?? body)?.pinnedAt;
+
+    if (!pinned) return null;
+    if (typeof pinnedAt !== 'string') throw new Error('The server did not say when it was pinned');
+
+    return pinnedAt;
+  }
+
+  /**
+   * Mark a listing Supporter-only, or clear the mark. Staff only.
+   *
+   * @param worldId - The listing's server id
+   * @param supporterOnly - True to limit the download to Supporters
+   * @returns The flag the server now holds
+   */
+  async setRemoteWorldSupporterOnly(worldId: string, supporterOnly: boolean): Promise<boolean> {
+    const response = await fetch(`${this.API_URL}/worlds/${worldId}/supporter-only`, {
+      method: 'PUT',
+      headers: authHeaders(true),
+      body: JSON.stringify({ supporterOnly }),
+    });
+
+    if (!response.ok) throw await responseError(response, 'Failed to change who can download this');
+    const body = await response.json().catch(() => ({}));
+    const held = (body.data ?? body)?.supporterOnly;
+    if (typeof held !== 'boolean') throw new Error('The server did not say what it saved');
+
+    return held;
+  }
+
   /** Fetch a page of comments for a published world; auth is optional. Never throws — errors resolve to
    *  a `{success:false}` shape. */
   async fetchComments(worldId: string, page = 1, limit = 20, signal?: AbortSignal) {
@@ -928,6 +988,11 @@ class WorldStorageService {
     if (!response.ok) throw await responseError(response, 'Failed to delete the comment');
   }
 
+  /** Where a listing's live thumbnail file is served. */
+  thumbnailUrl(file: string): string {
+    return `${this.API_URL}/thumbnails/${file}`;
+  }
+
   /**
    * Read what a listing shows only when it is opened on its own: its changelog, and an Avatar's license.
    *
@@ -958,7 +1023,8 @@ class WorldStorageService {
         `${this.API_URL}/worlds/${worldId}?includeChangelog=true`,
         { headers, signal },
       );
-      if (response.status === 403 || response.status === 404) return { status: 'gone' };
+      if (response.status === 403) return { status: 'gone', hidden: true };
+      if (response.status === 404) return { status: 'gone' };
       if (!response.ok) return { status: 'unreachable' };
 
       const body = await response.json();
@@ -976,6 +1042,12 @@ class WorldStorageService {
             (row: { id?: string } | string) => (typeof row === 'string' ? row : String(row?.id ?? '')),
           ).filter(Boolean),
           compatibleWorlds: body.data?.compatibleWorlds ?? [],
+          description: typeof body.data?.description === 'string' ? body.data.description : undefined,
+          tags: Array.isArray(body.data?.tags) ? body.data.tags.filter((tag: unknown) => typeof tag === 'string') : undefined,
+          thumbnailFile: typeof body.data?.thumbnail_file === 'string' && body.data.thumbnail_file ? body.data.thumbnail_file : undefined,
+          updatedAt: typeof body.data?.updated_at === 'string' ? body.data.updated_at : undefined,
+          name: typeof body.data?.name === 'string' ? body.data.name : undefined,
+          ...(body.data && 'pending_update' in body.data ? { pendingUpdate: body.data.pending_update ?? null } : {}),
         },
       };
     } catch (error) {
@@ -1095,7 +1167,7 @@ class WorldStorageService {
    * @param worldId - The listing's server id
    * @param draft - The three authored fields
    */
-  async createChangelogEntry(worldId: string, draft: ChangelogDraft): Promise<ChangelogEntry> {
+  async createChangelogEntry(worldId: string, draft: ChangelogDraft): Promise<ChangelogWriteAnswer> {
     return this.writeChangelog('POST', `/worlds/${worldId}/changelog`, draft, 'Failed to add the entry');
   }
 
@@ -1106,19 +1178,19 @@ class WorldStorageService {
    * @param entryId - The entry's id
    * @param draft - The replacement fields
    */
-  async updateChangelogEntry(worldId: string, entryId: string, draft: ChangelogDraft): Promise<ChangelogEntry> {
+  async updateChangelogEntry(worldId: string, entryId: string, draft: ChangelogDraft): Promise<ChangelogWriteAnswer> {
     return this.writeChangelog(
       'PUT', `/worlds/${worldId}/changelog/${entryId}`, draft, 'Failed to save the entry',
     );
   }
 
   /**
-   * Remove one entry.
+   * Remove one entry. Answers the listing's pending update when the delete joined it, null when it applied.
    *
    * @param worldId - The listing's server id
    * @param entryId - The entry's id
    */
-  async deleteChangelogEntry(worldId: string, entryId: string): Promise<void> {
+  async deleteChangelogEntry(worldId: string, entryId: string): Promise<PendingUpdate | null> {
     if (!AuthService.isAuthenticated()) throw new Error('You must be logged in to edit a changelog');
 
     const response = await fetch(`${this.API_URL}/worlds/${worldId}/changelog/${entryId}`, {
@@ -1127,6 +1199,10 @@ class WorldStorageService {
     });
 
     if (!response.ok) throw await responseError(response, 'Failed to delete the entry');
+
+    const body = (await response.json().catch(() => ({}))) as { data?: { pending_update?: PendingUpdate | null } };
+
+    return body.data?.pending_update ?? null;
   }
 
   /** The half `createChangelogEntry` and `updateChangelogEntry` share: same body, same auth, same refusal. */
@@ -1135,7 +1211,7 @@ class WorldStorageService {
     path: string,
     draft: ChangelogDraft,
     fallbackError: string,
-  ): Promise<ChangelogEntry> {
+  ): Promise<ChangelogWriteAnswer> {
     if (!AuthService.isAuthenticated()) throw new Error('You must be logged in to edit a changelog');
 
     const response = await fetch(`${this.API_URL}${path}`, {
@@ -1148,7 +1224,7 @@ class WorldStorageService {
 
     const body = await response.json();
 
-    return body.data as ChangelogEntry;
+    return body.data as ChangelogWriteAnswer;
   }
 
   /** Fetch the current user's published worlds; returns `[]` when unauthenticated or on error. */
@@ -1156,7 +1232,7 @@ class WorldStorageService {
     if (!AuthService.isAuthenticated()) return [];
 
     // Omitted for 'world' so the request stays byte-identical to what shipped before kinds.
-    const query = kind === 'world' ? '' : `?kind=${encodeURIComponent(kind)}`;
+    const query = kind === 'world' ? '' : `?kind=${encodeURIComponent(kindParam(kind))}`;
     try {
       const response = await fetch(`${this.API_URL}/users/me/worlds${query}`, {
         headers: authHeaders()

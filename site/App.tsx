@@ -5,15 +5,22 @@ import { NotFoundPage } from './pages/NotFoundPage';
 import { OwnProfilePage } from './pages/OwnProfilePage';
 import { ProfilePage } from './pages/ProfilePage';
 import { RegisterPage } from './pages/RegisterPage';
+import { RenamePage } from './pages/RenamePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { SupportersPage } from './pages/SupportersPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
-import { profileUsername, useSiteLocation } from './router';
+import { profileUsername, underPath, useSiteLocation } from './router';
 
 // Community stays out of lightweight account routes until its own chunk is requested.
 const CommunityPage = lazy(async () => {
   const module = await import('./pages/CommunityPage');
   return { default: module.CommunityPage };
+});
+
+// Feedback carries the app's feedback components, so it is its own chunk too.
+const FeedbackPage = lazy(async () => {
+  const module = await import('./pages/FeedbackPage');
+  return { default: module.FeedbackPage };
 });
 
 /** Every fixed path this entry serves, and the tab title that goes with it. */
@@ -22,6 +29,7 @@ const ROUTES = {
   '/register': { title: 'Create Account · Formamorph', page: RegisterPage },
   '/reset-password': { title: 'Reset Password · Formamorph', page: ResetPasswordPage },
   '/profile': { title: 'Your Profile · Formamorph', page: OwnProfilePage },
+  '/rename': { title: 'Choose a New Username · Formamorph', page: RenamePage },
   '/account': { title: 'Your Account · Formamorph', page: AccountPage },
   '/supporters': { title: 'Supporters · Formamorph', page: SupportersPage },
   '/verify-email': { title: 'Verify Email · Formamorph', page: VerifyEmailPage },
@@ -35,7 +43,8 @@ const normalize = (pathname: string) =>
 export function App() {
   const { pathname } = useSiteLocation();
   const path = normalize(pathname);
-  const community = path === '/community' || path.startsWith('/community/');
+  const community = underPath(path, '/community');
+  const feedback = underPath(path, '/feedback');
 
   const fixed = ROUTES[path as keyof typeof ROUTES];
   const username = fixed ? null : profileUsername(path);
@@ -44,10 +53,13 @@ export function App() {
   // profile is the exception: it names an account that may turn out not to exist, so it titles itself
   // once the server has answered and this leaves it the plain name until then.
   useEffect(() => {
-    document.title = community ? 'Community Creations · Formamorph' : fixed?.title ?? 'Formamorph';
-  }, [community, fixed]);
+    document.title = community ? 'Community Creations · Formamorph'
+      : feedback ? 'Feedback · Formamorph'
+        : fixed?.title ?? 'Formamorph';
+  }, [community, feedback, fixed]);
 
   if (community) return <Suspense fallback={null}><CommunityPage /></Suspense>;
+  if (feedback) return <Suspense fallback={null}><FeedbackPage /></Suspense>;
 
   if (fixed) {
     const Page = fixed.page;

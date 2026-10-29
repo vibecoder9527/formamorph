@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Bug, Lightbulb, ListFilter, RotateCcw } from "lucide-react";
+import { Bug, Lightbulb, ListFilter, MessageCircleQuestion, RotateCcw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
@@ -130,27 +130,34 @@ export function StaffFilterRow({ type, filters }: StaffFilterRowProps) {
   );
 }
 
+/** The file button's icon, per branch. */
+const FILE_ICONS: Record<FeedbackType, typeof Bug> = { bug: Bug, suggestion: Lightbulb, question: MessageCircleQuestion };
+
 interface UserFilterRowProps {
   type: FeedbackType;
   filters: FeedbackFilters<UserFilterValues>;
   /** The file button's label. It stays the button's name when the button is icon-only. */
   fileLabel: string;
   onFile: () => void;
+  /** Whether to offer Mine; off for a guest, who has no threads of their own. */
+  showScope?: boolean;
 }
 
 /** A profile tab's filter row: search and scope, then Filters with Status, Category and Sort, then the file button. */
-export function UserFilterRow({ type, filters, fileLabel, onFile }: UserFilterRowProps) {
+export function UserFilterRow({ type, filters, fileLabel, onFile, showScope = true }: UserFilterRowProps) {
   const { values, set } = filters;
-  const FileIcon = type === 'bug' ? Bug : Lightbulb;
+  const FileIcon = FILE_ICONS[type];
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <FeedbackSearchInput value={filters.search} onSearch={filters.setSearch} label={SEARCH_LABELS[type]} className={SEARCH_CLASS} />
-      <Select value={values.scope} onValueChange={(next) => set('scope')(next as FeedbackScope)}>
-        <SelectTrigger className="min-w-0 flex-1 sm:w-36 sm:flex-none" aria-label="Which threads"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          {FEEDBACK_SCOPES.map((scope) => <SelectItem key={scope} value={scope}>{SCOPE_LABELS[type][scope]}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      {showScope && (
+        <Select value={values.scope} onValueChange={(next) => set('scope')(next as FeedbackScope)}>
+          <SelectTrigger className="min-w-0 flex-1 sm:w-36 sm:flex-none" aria-label="Which threads"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {FEEDBACK_SCOPES.map((scope) => <SelectItem key={scope} value={scope}>{SCOPE_LABELS[type][scope]}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      )}
       <FeedbackFiltersButton filters={filters}>
         <FilterField label="Status">
           <FeedbackStatusSelect type={type} value={values.status} onValueChange={set('status')} className="w-full" />

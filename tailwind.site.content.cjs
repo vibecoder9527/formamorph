@@ -48,6 +48,27 @@ const COMMUNITY_FILES = [
   'src/components/GradientButton.tsx',
 ]
 
+/** The lazy feedback route's components, and the presentation table that holds its badge and grid classes. */
+const FEEDBACK_FILES = [
+  'src/components/menu/MyFeedbackSection.tsx',
+  'src/components/menu/MyFeedbackTab.tsx',
+  'src/components/menu/FeedbackThreadView.tsx',
+  'src/components/menu/FeedbackMarkdown.tsx',
+  'src/components/menu/FeedbackEditDialog.tsx',
+  'src/components/menu/FeedbackList.tsx',
+  'src/components/menu/FeedbackDialog.tsx',
+  'src/components/menu/FeedbackFilterRow.tsx',
+  'src/components/menu/FeedbackSearchInput.tsx',
+  'src/components/menu/FeedbackStatusSelect.tsx',
+  'src/components/menu/SimilarQuestions.tsx',
+  'src/components/menu/FeedbackSuggestPlugin.tsx',
+  'src/components/SuggestionList.tsx',
+  'src/components/UnreadDot.tsx',
+  'src/components/UnreadEdge.tsx',
+  'src/lib/feedbackPresentation.ts',
+  'src/lib/unreadSeverity.ts',
+]
+
 /**
  * Scanned one by one: the app files the site entry reaches.
  *
@@ -75,15 +96,19 @@ const FILES = [
   'src/lib/avatarCrop.ts',
   'src/lib/catalogKinds.ts',
   'src/lib/deletionCancellation.ts',
+  'src/lib/fetchTarget.ts',
   'src/lib/filesFrom.ts',
   'src/lib/elementIcons.ts',
   'src/lib/errorDetails.ts',
   'src/lib/letterMask.ts',
   'src/lib/likeCount.ts',
   'src/lib/linkToast.tsx',
+  'src/lib/listingModeration.ts',
   'src/lib/numberInputWheel.ts',
   'src/lib/placeholderArt.ts',
+  'src/lib/quarantine.ts',
   'src/lib/redactUrl.ts',
+  'src/lib/refusalWatch.ts',
   'src/lib/responseBody.ts',
   'src/lib/roles.ts',
   'src/lib/serverAssets.ts',
@@ -92,7 +117,9 @@ const FILES = [
   'src/lib/thumbAspect.ts',
   'src/lib/useCachedThumbnail.tsx',
   'src/lib/useMountedRef.ts',
+  'src/lib/useRenameSubmit.ts',
   'src/lib/useResetOnOpen.ts',
+  'src/lib/usernameRule.ts',
   'src/lib/utils.ts',
   'src/lib/uuid.ts',
   'src/services/AuthService.ts',
@@ -104,12 +131,14 @@ const FILES = [
   'src/services/UserService.ts',
   'src/types/index.ts',
   ...COMMUNITY_FILES,
+  ...FEEDBACK_FILES,
 ]
 
 module.exports = {
   DIRECTORIES,
   FILES,
   COMMUNITY_FILES,
+  FEEDBACK_FILES,
   /** The two lists as Tailwind wants them. */
   content: [
     ...DIRECTORIES.map((directory) => `./${directory}**/*.{js,jsx,ts,tsx}`),

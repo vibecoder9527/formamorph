@@ -61,19 +61,35 @@ If it shows **Not shareable**, a line under it names what the file does not allo
 
 You get the file as you imported it: a `.vrm` file, or `.glb` for a file with no VRM data.
 
-## How to Change Your Profile Image
-<!-- keywords: picture, photo, pfp, icon, account picture, upload, crop, display pic, user portrait, animated gif, account face, take off my pic, reposition, initial letter shown -->
-<!-- route: profile -->
+## How to Add Body Sliders in Blender
+<!-- keywords: shape keys, shapekeys, blend shapes, morph targets, custom avatar, slider not showing, key missing, body mesh, wings, horns, tail, transform during play, grow, ctrl+j, join mesh, weight paint, vertex group, ponytail, hair length key, vrm addon, basis, object data properties, part left behind, floating horns -->
+<!-- route: modelDetails -->
 
-You need a Community Creations account.
+Formamorph makes a body slider from each shape key on the object named `Body`. A world's stats can drive these sliders. Formamorph reads no other object for body sliders.
 
-1. On the main menu, select the round button at the bottom left. **User Profile** opens.
-2. Select your profile image.
-3. Select a `.png`, `.jpg`, `.webp` or `.gif` file, up to 10 MB.
-4. In **Position Your Picture**, drag the image to move it. Scroll, or use the **Zoom** slider, to zoom. The circle shows what everyone sees.
-5. Select **Save**.
+You need the VRM Add-on for Blender. **Shape Keys** and **Vertex Groups** are in the **Object Data Properties** tab, the green triangle.
 
-To remove it, select **Remove your profile image**. With no picture, your initial shows in its place. See [The User Profile Dialog](Community-Creations#the-user-profile-dialog).
+1. Select the new part, such as wings, horns or a tail.
+2. Hold Shift and select `Body` last.
+3. Press **Ctrl+J**. The part joins into `Body`.
+4. Press **Tab** for Edit Mode, and select only the part's vertices.
+5. In **Vertex Groups**, select the bone the part follows, such as the head for horns. Select **Assign**.
+6. In **Shape Keys**, select **Basis**. If the list is empty, select **+** once to make it.
+7. Shrink the part inside the body. This is its hidden form.
+8. Press **Tab** for Object Mode. In **Shape Keys**, select **+** and name the new key.
+9. With the new key selected, press **Tab** and scale the part out to full size. Press **Tab** again.
+10. Select **File › Export › VRM**. Don't apply modifiers by hand before you export.
+11. Import the file and open its details. Each key shows as a slider in **Initial Body Features**.
+
+Keep these rules or the sliders can fail:
+
+- Name the object `Body`, with a capital B. Parent it to the armature, not to a bone.
+- Don't parent other objects to `Body`.
+- Give every vertex a bone. A vertex with no bone follows the hips, so the part stays behind when the Avatar moves.
+
+To tie a slider to a stat, open a world stat in the World Editor and pick the key in **Body Sliders**. The stat's Min sets the key to 0, and its Max sets it to 1. Each key belongs to one stat only. An entity's own stats list the keys of its 3D model, not its Avatar. The **Initial Body Features** value adds to the stat's value. See [World Editor Stats](World-Editor-Stats).
+
+> An object with *hair* in its name gives one key only: `LENGTH`, in capitals, for **Hair Length**. Stats can't drive it.
 
 ## Character Customization
 <!-- keywords: creator screen, rotate the model, spin view, stop it moving, sliders missing, clothing recolor, body grows with stats, hide model in game, transformation -->

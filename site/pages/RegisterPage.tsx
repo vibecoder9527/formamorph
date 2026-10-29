@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import AuthService from '@/services/AuthService';
+import { USERNAME_RULE_HELP, checkUsername } from '@/lib/usernameRule';
 import PolicyService from '@/services/PolicyService';
 import type { PublicPrivacyPolicy } from '@/types';
 import { AccountForm, Field } from '../components/AccountForm';
@@ -34,6 +35,8 @@ export function RegisterPage() {
   const [checking, setChecking] = useState(startedSignedIn);
   const [policy, setPolicy] = useState<PublicPrivacyPolicy | null>(null);
   const checkedExisting = useRef(false);
+  // The name the rule check passed, for the policy step's retry to send as the first attempt did.
+  const checkedName = useRef('');
   const [authenticationFlow] = useState(() => startedSignedIn ? null : readAgeGateAuthentication());
   const continueAuthentication = useAgeGateAuthenticationHandoff(authenticationFlow);
   const boundAgeGateAuthenticationRef = useRef<BoundAgeGateAuthentication | null>(null);
@@ -101,12 +104,9 @@ export function RegisterPage() {
     setError('');
 
     // Validate before the policy step; AuthService repeats the server rules at the network boundary.
-    if (!username) {
-      setError('Username is required');
-      return;
-    }
-    if (username.length < 3 || username.length > 20) {
-      setError('Username must be between 3 and 20 characters');
+    const usernameVerdict = checkUsername(username);
+    if (!usernameVerdict.ok) {
+      setError(usernameVerdict.error);
       return;
     }
     if (!password) {
@@ -126,6 +126,7 @@ export function RegisterPage() {
       return;
     }
 
+    checkedName.current = usernameVerdict.username;
     setBusy(true);
     try {
       let currentPolicy: PublicPrivacyPolicy | null = null;
@@ -142,7 +143,7 @@ export function RegisterPage() {
         return;
       }
 
-      await AuthService.register(username, password, email.trim());
+      await AuthService.register(usernameVerdict.username, password, email.trim());
       setAccountCreated(true);
       bindPendingAgeGateAnswer();
       if (policyReadFailed) await checkAccountPolicy();
@@ -161,7 +162,7 @@ export function RegisterPage() {
 
     if (creating) {
       try {
-        await AuthService.register(username, password, email.trim());
+        await AuthService.register(checkedName.current, password, email.trim());
         setAccountCreated(true);
         bindPendingAgeGateAnswer();
       } catch (failure) {
@@ -272,7 +273,7 @@ export function RegisterPage() {
           label="Username"
           autoComplete="username"
           autoFocus
-          hint="3 to 20 characters."
+          hint={USERNAME_RULE_HELP}
           value={username}
           onChange={setUsername}
         />

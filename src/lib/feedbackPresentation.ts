@@ -1,15 +1,16 @@
 import {
-  BUG_CATEGORIES, BUG_STATUSES, SUGGESTION_CATEGORIES, SUGGESTION_STATUSES,
-  type FeedbackCategory, type FeedbackStatus, type FeedbackType,
+  BUG_CATEGORIES, BUG_STATUSES, QUESTION_CATEGORIES, QUESTION_STATUSES, SUGGESTION_CATEGORIES, SUGGESTION_STATUSES,
+  isVotableBoard, type FeedbackCategory, type FeedbackStatus, type FeedbackType,
 } from '@/types';
 
 /** How each branch of the tree reads, wherever one has to be named. */
 export const FEEDBACK_TYPE_LABELS: Record<FeedbackType, { tab: string; one: string; many: string }> = {
   bug: { tab: 'Bug', one: 'Bug Report', many: 'Bugs' },
   suggestion: { tab: 'Suggestion', one: 'Suggestion', many: 'Suggestions' },
+  question: { tab: 'Question', one: 'Question', many: 'Questions' },
 };
 
-/** How each category reads in the dropdown and on a thread. Both branches, keyed by their own values. */
+/** How each category reads in the dropdown and on a thread. Every branch, keyed by its own values. */
 export const FEEDBACK_CATEGORY_LABELS: Record<FeedbackCategory, string> = {
   // Bugs
   crash: 'Crash or freeze',
@@ -22,39 +23,71 @@ export const FEEDBACK_CATEGORY_LABELS: Record<FeedbackCategory, string> = {
   gameplay: 'Gameplay',
   writing: 'AI & writing',
   interface: 'Interface',
+  // Questions — `gameplay`, `editor`, `community` and `other` are shared with the lists above.
+  setup: 'AI setup & models',
+  account: 'Account',
 };
 
 /** How each state reads, and the badge that carries it. */
-export const FEEDBACK_STATUS_STYLES: Record<FeedbackStatus, { label: string; badge: string }> = {
+export const FEEDBACK_STATUS_STYLES: Record<FeedbackStatus, { label: string; badge: string; dot: string }> = {
   // Bugs
-  open: { label: 'Open', badge: 'bg-primary/10 text-primary' },
-  need_info: { label: 'Need Info', badge: 'bg-warning/10 text-warning' },
-  confirmed: { label: 'Confirmed', badge: 'bg-info/10 text-info' },
-  resolved: { label: 'Resolved', badge: 'bg-success/10 text-success' },
-  wontfix: { label: "Won't Fix", badge: 'bg-muted text-muted-foreground' },
-  // Suggestions — `open` is shared with the list above.
-  considering: { label: 'Considering', badge: 'bg-warning/10 text-warning' },
-  planned: { label: 'Planned', badge: 'bg-info/10 text-info' },
-  done: { label: 'Done', badge: 'bg-success/10 text-success' },
-  declined: { label: 'Declined', badge: 'bg-muted text-muted-foreground' },
+  open: { label: 'Open', badge: 'bg-primary/10 text-primary', dot: 'bg-primary' },
+  need_info: { label: 'Needs Info', badge: 'bg-warning/10 text-warning', dot: 'bg-warning' },
+  confirmed: { label: 'Confirmed', badge: 'bg-info/10 text-info', dot: 'bg-info' },
+  pending_release: { label: 'Pending Release', badge: 'bg-info/10 text-info', dot: 'bg-info' },
+  resolved: { label: 'Fixed', badge: 'bg-success/10 text-success', dot: 'bg-success' },
+  wontfix: { label: "Won't Fix", badge: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground' },
+  duplicate: { label: 'Duplicate', badge: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground' },
+  // Suggestions — `open` and `pending_release` are shared with the list above.
+  considering: { label: 'Considering', badge: 'bg-warning/10 text-warning', dot: 'bg-warning' },
+  planned: { label: 'Planned', badge: 'bg-info/10 text-info', dot: 'bg-info' },
+  done: { label: 'Added', badge: 'bg-success/10 text-success', dot: 'bg-success' },
+  declined: { label: 'Declined', badge: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground' },
+  // Questions — `open` is shared with the lists above.
+  answered: { label: 'Answered', badge: 'bg-success/10 text-success', dot: 'bg-success' },
+  closed: { label: 'Closed', badge: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground' },
 };
+
+/**
+ * The style for a thread's status, with a muted fallback for a status a newer server added after this build.
+ *
+ * @param status - The status as the server sent it
+ * @returns The status's style, or a muted badge that names the raw value
+ */
+export function statusStyle(status: FeedbackStatus): { label: string; badge: string; dot: string } {
+  const known = (FEEDBACK_STATUS_STYLES as Partial<Record<string, { label: string; badge: string; dot: string }>>)[status];
+  if (known) return known;
+
+  const label = String(status).split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  return { label, badge: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground' };
+}
 
 /** The categories each branch offers, in the order the server declares them. */
 export const CATEGORY_OPTIONS: Record<FeedbackType, { value: FeedbackCategory; label: string }[]> = {
   bug: BUG_CATEGORIES.map((value) => ({ value, label: FEEDBACK_CATEGORY_LABELS[value] })),
   suggestion: SUGGESTION_CATEGORIES.map((value) => ({ value, label: FEEDBACK_CATEGORY_LABELS[value] })),
+  question: QUESTION_CATEGORIES.map((value) => ({ value, label: FEEDBACK_CATEGORY_LABELS[value] })),
 };
 
 /** The statuses each branch offers, in triage order. */
 export const STATUS_OPTIONS: Record<FeedbackType, { value: FeedbackStatus; label: string }[]> = {
   bug: BUG_STATUSES.map((value) => ({ value, label: FEEDBACK_STATUS_STYLES[value].label })),
   suggestion: SUGGESTION_STATUSES.map((value) => ({ value, label: FEEDBACK_STATUS_STYLES[value].label })),
+  question: QUESTION_STATUSES.map((value) => ({ value, label: FEEDBACK_STATUS_STYLES[value].label })),
+};
+
+/** The statuses staff may set by hand. A question is answered only by accepting a reply. */
+export const SET_STATUS_OPTIONS: Record<FeedbackType, { value: FeedbackStatus; label: string }[]> = {
+  bug: STATUS_OPTIONS.bug,
+  suggestion: STATUS_OPTIONS.suggestion,
+  question: STATUS_OPTIONS.question.filter((option) => option.value !== 'answered'),
 };
 
 /** The category a blank draft of each kind starts on. */
 export const DEFAULT_CATEGORY: Record<FeedbackType, FeedbackCategory> = {
   bug: 'crash',
   suggestion: 'gameplay',
+  question: 'gameplay',
 };
 
 /** The status filter's "no filter" value. A `Select` cannot hold an empty string as an item value. */
@@ -65,17 +98,20 @@ export const UNRESOLVED_STATUS = 'unresolved';
 
 /**
  * The states that still want attention, per branch: everything a thread can sit in short of being
- * closed. A bug is closed by being fixed or turned down; a suggestion by being built or turned down.
+ * closed. A bug is closed by being fixed, turned down or marked a duplicate; a suggestion by being built
+ * or turned down; a question by being answered or closed. Pending Release stays open until it ships.
  */
 export const UNRESOLVED_STATUSES: Record<FeedbackType, FeedbackStatus[]> = {
-  bug: BUG_STATUSES.filter((value) => value !== 'resolved' && value !== 'wontfix'),
+  bug: BUG_STATUSES.filter((value) => value !== 'resolved' && value !== 'wontfix' && value !== 'duplicate'),
   suggestion: SUGGESTION_STATUSES.filter((value) => value !== 'done' && value !== 'declined'),
+  question: QUESTION_STATUSES.filter((value) => value !== 'answered' && value !== 'closed'),
 };
 
 /** How the unresolved filter reads over each branch — a suggestion is never "unresolved". */
 export const UNRESOLVED_LABELS: Record<FeedbackType, string> = {
   bug: 'Unresolved',
   suggestion: 'Still Open',
+  question: 'Unanswered',
 };
 
 /** Everything the status filter can hold: one state, every state, or every state still needing work. */
@@ -85,12 +121,14 @@ export type StatusFilter = FeedbackStatus | typeof ANY_STATUS | typeof UNRESOLVE
 export const FILTERED_EMPTY_LABELS: Record<FeedbackType, string> = {
   bug: 'No reports match this filter.',
   suggestion: 'No suggestions match this filter.',
+  question: 'No questions match this filter.',
 };
 
 /** What every feedback list opens on: the threads that still need work. */
 export const DEFAULT_STATUS_FILTER: Record<FeedbackType, StatusFilter> = {
   bug: UNRESOLVED_STATUS,
   suggestion: UNRESOLVED_STATUS,
+  question: UNRESOLVED_STATUS,
 };
 
 /** The category filter's "no filter" value, for the same reason. */
@@ -132,6 +170,7 @@ export type FeedbackScope = (typeof FEEDBACK_SCOPES)[number];
 export const SCOPE_LABELS: Record<FeedbackType, Record<FeedbackScope, string>> = {
   bug: { mine: 'My Reports', all: 'All Reports' },
   suggestion: { mine: 'Mine', all: 'Everyone’s' },
+  question: { mine: 'Mine', all: 'Everyone’s' },
 };
 
 /**
@@ -147,6 +186,7 @@ export const scopeFilterValue = (value: FeedbackScope): 'all' | undefined => (va
 export const SEARCH_LABELS: Record<FeedbackType, string> = {
   bug: 'Search Reports',
   suggestion: 'Search Suggestions',
+  question: 'Search Questions',
 };
 
 /** Every way a feedback list may be ordered. */
@@ -162,13 +202,13 @@ export const SORT_LABELS: Record<FeedbackSort, string> = {
 };
 
 /**
- * The sorts a branch offers, in dropdown order. Only suggestions carry votes, so only they rank by them.
+ * The sorts a branch offers, in dropdown order. Only votable boards carry votes, so only they rank by them.
  *
  * @param type - Which branch the list shows
  * @returns The offered sorts
  */
 export const sortsFor = (type: FeedbackType): FeedbackSort[] =>
-  (type === 'suggestion' ? [...FEEDBACK_SORTS] : FEEDBACK_SORTS.filter((value) => value !== 'votes'));
+  (isVotableBoard(type) ? [...FEEDBACK_SORTS] : FEEDBACK_SORTS.filter((value) => value !== 'votes'));
 
 /** Which scope each profile tab opens on. */
 export const DEFAULT_SCOPE: Record<FeedbackType, FeedbackScope> = {
@@ -176,6 +216,7 @@ export const DEFAULT_SCOPE: Record<FeedbackType, FeedbackScope> = {
   bug: 'mine',
   // Everyone's: a board is for browsing and voting, and mine-first buries the point.
   suggestion: 'all',
+  question: 'all',
 };
 
 /** The staff queue's filters. */
@@ -189,7 +230,7 @@ export const STAFF_HIDDEN_FILTERS = ['category'] as const satisfies readonly (ke
 export const USER_HIDDEN_FILTERS = ['status', 'category', 'sort'] as const satisfies readonly (keyof UserFilterValues)[];
 
 /**
- * What the staff queue opens on and resets to. Staff triage suggestions by demand, so they open on votes.
+ * What the staff queue opens on and resets to. Staff triage votable boards by demand, so they open on votes.
  *
  * @param type - Which branch the queue shows
  * @returns The queue's default filters
@@ -197,11 +238,19 @@ export const USER_HIDDEN_FILTERS = ['status', 'category', 'sort'] as const satis
 export const staffFilterDefaults = (type: FeedbackType): StaffFilterValues => ({
   status: DEFAULT_STATUS_FILTER[type],
   category: ANY_CATEGORY,
-  sort: type === 'suggestion' ? 'votes' : 'newest',
+  sort: isVotableBoard(type) ? 'votes' : 'newest',
 });
 
+/** Which sort each profile tab opens on: newest, to find what is new to vote on, except questions, which
+ *  open on the ones most players still need answered. */
+export const DEFAULT_USER_SORT: Record<FeedbackType, FeedbackSort> = {
+  bug: 'newest',
+  suggestion: 'newest',
+  question: 'votes',
+};
+
 /**
- * What a profile tab opens on and resets to. Users see the newest first, to find what is new to vote on.
+ * What a profile tab opens on and resets to.
  *
  * @param type - Which branch the tab shows
  * @returns The tab's default filters
@@ -209,9 +258,12 @@ export const staffFilterDefaults = (type: FeedbackType): StaffFilterValues => ({
 export const userFilterDefaults = (type: FeedbackType): UserFilterValues => ({
   status: DEFAULT_STATUS_FILTER[type],
   category: ANY_CATEGORY,
-  sort: 'newest',
+  sort: DEFAULT_USER_SORT[type],
   scope: DEFAULT_SCOPE[type],
 });
 
 // A thread timestamp is a server timestamp like any other — see `lib/serverDate`.
 export { formatServerDateTime as formatFeedbackDate } from './serverDate';
+
+/** Tab-strip grid classes by tab count, spelled out so Tailwind's scan finds them. */
+export const TAB_GRID_COLUMNS: Record<number, string> = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-3' };

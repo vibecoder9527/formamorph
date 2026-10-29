@@ -6,6 +6,7 @@ import { StaffFilterRow } from "@/components/menu/FeedbackFilterRow";
 import {
   FILTERED_EMPTY_LABELS, STAFF_HIDDEN_FILTERS, categoryFilterValue, staffFilterDefaults, statusFilterValue,
 } from "@/lib/feedbackPresentation";
+import { toastFeedbackNotify } from "@/lib/feedbackToast";
 import type { FeedbackType } from "@/types";
 
 interface FeedbackQueueTabProps {
@@ -16,7 +17,7 @@ interface FeedbackQueueTabProps {
 }
 
 /**
- * Admin Panel → Bugs / Suggestions. The whole queue for one branch: filter by state, sort, open a
+ * Admin Panel → Bugs / Suggestions / Questions. The whole queue for one branch: filter by state, sort, open a
  * thread, answer it and triage it.
  */
 export function FeedbackQueueTab({ active, type }: FeedbackQueueTabProps) {
@@ -34,6 +35,7 @@ export function FeedbackQueueTab({ active, type }: FeedbackQueueTabProps) {
           onBack={back}
           onChanged={refresh}
           onDeleted={back}
+          notify={toastFeedbackNotify}
         />
       )}
 
@@ -54,6 +56,7 @@ export function FeedbackQueueTab({ active, type }: FeedbackQueueTabProps) {
           refreshNonce={nonce}
           onOpen={open}
           emptyLabel={FILTERED_EMPTY_LABELS[type]}
+          notify={toastFeedbackNotify}
         />
       </div>
     </>

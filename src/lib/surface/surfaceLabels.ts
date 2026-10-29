@@ -19,6 +19,7 @@ import { PLACEHOLDER_PANEL_TABS } from '@/views/placeholderPanelTabs';
 import { DICTIONARY_EDITOR_TABS } from '@/views/dictionaryEditorTabs';
 import { DICTIONARY_PANEL_TABS } from '@/views/dictionaryPanelTabs';
 import { ENTITY_EDITOR_SUBTABS, ENTITY_EDITOR_TABS, ENTITY_PANEL_TABS } from '@/views/entityPanelTabs';
+import { ITEM_PANEL_TABS } from '@/views/itemPanelTabs';
 import { LOCATION_PANEL_TABS } from '@/views/locationPanelTabs';
 import { STAT_PANEL_TABS } from '@/views/statPanelTabs';
 import { TRAIT_PANEL_TABS } from '@/views/traitPanelTabs';
@@ -75,6 +76,7 @@ const ENTRIES: [string, string][] = [
   ['ageGate', 'Adult Content Ahead'],
   ['auth', 'Login'],
   ['privacyPolicy', 'Privacy Policy'],
+  ['usernameRename', 'Choose a New Username'],
   ['profile', 'User Profile'],
   ['deleteAccount', 'Delete Account'],
   ['deletionCancelled', 'Deletion Cancelled'],
@@ -102,6 +104,7 @@ const ENTRIES: [string, string][] = [
   ...tabsOf('worldEditor', WORLD_EDITOR_TABS),
   ...tabsOf('worldEditorLocations', [{ value: 'list', label: 'List' }, { value: 'canvas', label: 'Canvas' }]),
   ...tabsOf('worldEditorEntity', ENTITY_PANEL_TABS),
+  ...tabsOf('worldEditorItem', ITEM_PANEL_TABS),
   ...tabsOf('worldEditorLocation', LOCATION_PANEL_TABS),
   ...tabsOf('worldEditorStat', STAT_PANEL_TABS),
   ...tabsOf('worldEditorTrait', TRAIT_PANEL_TABS),
@@ -121,11 +124,12 @@ const ENTRIES: [string, string][] = [
     { value: 'dictionaries', label: BROWSE_TAB_LABELS.dictionary.many },
     { value: 'models', label: BROWSE_TAB_LABELS.model.many },
   ]),
-  ...(['world', 'entity', 'dictionary', 'model', 'prompt', 'contest'] as const).map((tab): [string, string] => [`community.${tab}`, BROWSE_TAB_LABELS[tab].many]),
+  ...(['world', 'entity', 'dictionary', 'model', 'prompt', 'mascot', 'contest'] as const).map((tab): [string, string] => [`community.${tab}`, BROWSE_TAB_LABELS[tab].many]),
   ['publish.world', KIND_LABELS.world.one],
   ['publish.prompt', KIND_LABELS.prompt.one],
   ['feedbackHub.bugs', FEEDBACK_TYPE_LABELS.bug.many],
   ['feedbackHub.suggestions', FEEDBACK_TYPE_LABELS.suggestion.many],
+  ['feedbackHub.questions', FEEDBACK_TYPE_LABELS.question.many],
   ['profile.messages', 'Messages'],
   ['profile.notifications', 'Notifications'],
   ['profile.terms', 'Terms'],
@@ -136,6 +140,10 @@ const ENTRIES: [string, string][] = [
   ['gameViewer.notes', 'Notes'],
   ['gameViewer.memory', 'Memory'],
   ['gameViewer.logs', 'Logs'],
+  ['gameViewer.stats', 'Stats'],
+  ['gameViewer.traits', 'Traits'],
+  ['gameViewer.inventory', 'Inventory'],
+  ['gameViewer.location', 'Location'],
 ];
 
 /** The label for each surface id the player can have open. */

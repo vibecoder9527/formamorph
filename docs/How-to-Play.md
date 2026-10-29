@@ -223,7 +223,7 @@ No actions show while the AI writes a turn.
 | **Memory** | What the story remembers. See [Story Memory](Memory#the-memory-tab). |
 | **Logs** | A record of what changed. See [Logs](#logs). |
 
-On narrow desktop windows the tabs show icons only. Hover an icon to read its name.
+When a tab strip has no room for every label, its tabs show icons only. Hover an icon to read its name.
 
 ### Notes
 
@@ -250,7 +250,28 @@ The **Logs** tab lists what the game changed: your starting traits and location,
 | Persona row | Shows who you play. **Change** opens **Change Persona**. See [Change It in Game](Personas#change-it-in-game). |
 | **Stats** | The global stats under **Global**, and your persona's stats under its name. **Edit Stats** lets you drag them; **Re-generate Stats** asks the AI again. Shows only when the world has stats you can see. |
 | **Traits** | Your active traits. A **Global** section holds the global traits you picked. Your persona's section is marked **You**. Filter them, or switch one on or off. |
+| **Inventory** | What you wear and what you carry. See [How to Use Your Inventory](#how-to-use-your-inventory). Shows only when the world has items. |
 | **Location** | Where you are, its description and the places it connects to |
+
+## How to Use Your Inventory
+<!-- keywords: items, equipment, gear, equip, wear, wield, unequip, take off, drop, give, hand over, bag, pack, backpack, slot, bound item, quest item, charges -->
+<!-- route: gameViewer.inventory -->
+
+1. In the right panel, open the **Inventory** tab. On mobile, open **Status** first.
+2. **Equipped** lists each slot with what you wear there. **Carried** lists the rest. **Here** lists the items lying at your location.
+3. Use the buttons on an item's row:
+
+| Button | What it does |
+|---|---|
+| **Equip** | Wears the item in its slot. A full slot takes off the item you equipped there first. From a stack, you equip one. |
+| **Unequip** | Takes the item off. You keep it. |
+| **Drop** | Leaves the item here, at your location. |
+| **Give** | Hands the item to someone here. |
+
+Items with art show a small image on their row. **Here** shows items you can see. An item you haven't found yet stays out of the panel until the story reveals it. Changes apply at once. The next turn's narration sees them. On a stack, **Drop** and **Give** ask how many. Type a number or select **All**.
+
+> [!NOTE]
+> The buttons are off while a turn runs and on an earlier page. A lock marks a **Bound** item: you can't drop it or give it away, but the story can still take it.
 
 ## The Entity Dialog
 <!-- keywords: npc profile, character sheet, portrait, bio, unknown name, who is this, click a name, cast details -->
@@ -259,6 +280,8 @@ The **Logs** tab lists what the game changed: your starting traits and location,
 Select a name in the **Entities** tab to open it. The first select shows that entity's Avatar, 3D model or image in the entity view.
 
 The dialog shows the entity's image or 3D model, its player-facing description, and its sound. An entity the story invented also has **Edit** and **Regenerate** for its description. **Regenerate** shows a **New Description** to **Keep** or **Discard**.
+
+An **Equipped** list shows what the entity wears, when you can see it. What the entity carries stays private.
 
 An entity the story hasn't revealed yet shows as its alias or *Unknown*, and doesn't open.
 

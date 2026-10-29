@@ -104,12 +104,16 @@ export const MASCOT_COPY = {
   overlays: 'Overlays',
   bundledOverlay: 'Default Image',
   storedOverlay: 'Your Image',
+  supporterOverlay: 'Supporter Image',
+  /** A Supporter-only Mascot this account hasn't installed. */
+  locked: { label: '(Locked)', checking: '(Checking…)', installFailed: "Couldn't install this Supporter Mascot." },
   removeLayer: 'Remove layer',
   removeOverlay: 'Remove overlay',
   preset: {
     label: 'Preset',
     hint: `Picks the mascot help shows. ${DEFAULT_MASCOT_NAME} updates with each release.`,
     readOnly: (name: string) => `${name} is read-only`,
+    supporterReadOnly: (name: string) => `${name} is Supporter content. You can't edit, duplicate, export or publish it.`,
     /** The header actions' tooltips, by action key. */
     tips: {
       duplicate: 'Make an editable copy of this mascot',
@@ -117,6 +121,7 @@ export const MASCOT_COPY = {
       delete: 'Delete this mascot and its images',
       import: 'Add a mascot from a card',
       export: 'Save this mascot as a card',
+      publish: 'Share this mascot in Community Creations',
       reset: `Put this mascot back to ${DEFAULT_MASCOT_NAME}`,
     },
     deleteTitle: 'Delete Mascot',

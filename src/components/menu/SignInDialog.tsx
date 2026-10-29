@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "react-toastify";
 import {
   Dialog,
@@ -17,6 +17,7 @@ import { useAccountDeletion } from "@/contexts/AccountDeletionContext";
 import PolicyService from "@/services/PolicyService";
 import AuthService from "@/services/AuthService";
 import { useResetOnOpen } from "@/lib/useResetOnOpen";
+import { USERNAME_RULE_HELP, checkUsername } from "@/lib/usernameRule";
 import type { PublicPrivacyPolicy } from "@/types";
 
 interface SignInDialogProps {
@@ -41,6 +42,8 @@ export function SignInDialog({ open, onOpenChange, onAuthenticated }: SignInDial
   // this point there is no account to hold one.
   const [signupPolicy, setSignupPolicy] = useState<PublicPrivacyPolicy | null>(null);
   const [signupBusy, setSignupBusy] = useState(false);
+  // The name the rule check passed, for the policy step's retry to send as the first attempt did.
+  const checkedName = useRef('');
 
   // The signed-in prompt. Registration answers the policy on its own, but a sign-in has to ask the
   // server whether this account already has.
@@ -87,17 +90,14 @@ export function SignInDialog({ open, onOpenChange, onAuthenticated }: SignInDial
 
   const handleRegister = async () => {
     setAuthError('');
+    const usernameVerdict = checkUsername(username);
 
     // Validate username and password according to server requirements
-    if (!username) {
-      setAuthError('Username is required');
+    if (!usernameVerdict.ok) {
+      setAuthError(usernameVerdict.error);
       return;
     }
-
-    if (username.length < 3 || username.length > 20) {
-      setAuthError('Username must be between 3 and 20 characters');
-      return;
-    }
+    checkedName.current = usernameVerdict.username;
 
     if (!password) {
       setAuthError('Password is required');
@@ -144,10 +144,10 @@ export function SignInDialog({ open, onOpenChange, onAuthenticated }: SignInDial
     if (await createAccount()) finishSignup();
   };
 
-  /** Register, and report a refusal the same way whichever path arrived here. */
+  /** Register under the name the rule check passed, and report a refusal the same way whichever path arrived here. */
   const createAccount = async (): Promise<boolean> => {
     try {
-      await AuthService.register(username, password, email.trim());
+      await AuthService.register(checkedName.current, password, email.trim());
       authenticationSucceeded();
       return true;
     } catch (error) {
@@ -242,6 +242,9 @@ export function SignInDialog({ open, onOpenChange, onAuthenticated }: SignInDial
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter your username"
               />
+              {authMode === 'register' && (
+                <p className="text-meta text-muted-foreground">{USERNAME_RULE_HELP}</p>
+              )}
             </div>
 
             <div className="space-y-2">

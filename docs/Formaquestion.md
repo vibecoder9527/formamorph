@@ -49,6 +49,20 @@ The button opens the screen, dialog or tab that the top source under **Sources**
 - When the button needs you to close a World Editor that has unsaved changes, the editor asks first, as it does when you close it. A jump to **Settings** opens over the editor and does not ask.
 - The button does not show when the answer is not from the guide, when the top source has no screen, or when the answer stopped or failed.
 
+## How to Ask the Community
+<!-- keywords: ask the community, ask people, ask other players, post a question, community question, answer not enough, still stuck, forum, ask a human -->
+<!-- route: formaquestion.ask#question-field -->
+
+1. Ask a question.
+2. When the answer is not enough, select **Ask the Community** under the answer.
+3. Add what you tried, and select **Post Question**.
+
+The **Send Feedback** dialog opens over the help window on a new question. Your question to the help window is already its title. Other players can answer it and vote on it, and replies show under **Questions** in your profile.
+
+- The button shows once the answer is done. It also shows when the answer stopped or failed. It does not show while the answer is writing.
+- When you have an unsent draft, the dialog asks first. Select **Replace** to start the new question, or **Keep Draft** to go back to your draft.
+- When you are signed out, the button asks you to sign in first.
+
 ## How to Ask About a Screenshot
 <!-- keywords: image, picture, paste, upload, attach, what is this, screen capture, photo, snip, print screen, vision model, clipboard, identify button, show my screen, drag file -->
 <!-- route: formaquestion.ask#question-field -->
@@ -391,6 +405,7 @@ Until the answer starts, a line under your question says what it waits on: **Che
 
 - **Sources**, under an answer, lists the guide sections that the AI got. Select one to read it.
 - **Take Me There**, next to **Sources**, opens the screen that the top source describes. See [How to Go to the Screen an Answer Describes](#how-to-go-to-the-screen-an-answer-describes).
+- **Ask the Community**, under a finished answer, opens a new community question with your question as its title. See [How to Ask the Community](#how-to-ask-the-community).
 - **Thinking**, above an answer, shows how the AI reasoned, when your model reasons. It starts closed. Open or close one, and later answers start the same way.
 - When the guide does not cover your question, the AI answers from general knowledge. A note above the answer says that it is not from the guide and can be wrong about Formamorph. **Nearest Sections** then takes the place of **Sources** and lists the guide sections closest to your question.
 - The request holds your question and those guide sections. It holds nothing from your saves. It holds nothing from your worlds either, unless **test_script** or one of your **My Tools** reads the world you have open. See [Tools](#tools).
@@ -631,7 +646,7 @@ A Tool that's on reads the world you have open, so text from that world can go t
 2. The file is the same Tool pack as **Settings** → **Tools**, so a pack from one list opens in the other. An import skips a Tool you already have, and names it. A file with a Script Tool shows a warning, because a script runs code when the AI calls it.
 
 ### Mascot
-<!-- keywords: morphie, mascot name, who is the mascot, character, mascot, rig, layers, overlays, base image, expression, state, reset mascot, my own character, face, wave, thinking face, initial look, idle look, thinking look, voice, mask, head view, transition, jelly, dissolve, bounce, mascot card, export mascot, import mascot, share my mascot, turn off the mascot, minimal window, mascot preset, duplicate mascot, rename mascot, delete mascot, save mascot, unsaved changes, more than one mascot, mascot full screen -->
+<!-- keywords: morphie, mascot name, who is the mascot, character, mascot, rig, layers, overlays, base image, expression, state, reset mascot, my own character, face, wave, thinking face, initial look, idle look, thinking look, voice, mask, head view, transition, jelly, dissolve, bounce, mascot card, export mascot, import mascot, share my mascot, turn off the mascot, minimal window, mascot preset, duplicate mascot, rename mascot, delete mascot, save mascot, unsaved changes, more than one mascot, mascot full screen, supporter mascot, exclusive mascot, locked mascot, patreon mascot -->
 <!-- route: formaquestionSettings.mascot -->
 
 The **Mascot** tab edits the mascot's rig: a base image with layers drawn on top. The mascot stands beside the chat and reacts to your questions. The mascot's name is its preset's name. Your AI answers as that name, and a screen reader reads it on the mascot. The **Mascot** switch is in the **Window** group on the **General** tab. With the mascot off, this tab disables every control and shows "The Mascot is off. Select “General” to turn it on." Select **General** in that line to open the **General** tab.
@@ -646,9 +661,12 @@ You can keep more than one mascot. The **Preset** list at the top of the tab pic
 | **Reset** | Puts Morphie's rig in place of this mascot's. **Cancel** takes it back. |
 | **Import** | Adds a mascot from a card file, and selects it. See [The Mascot Card](#the-mascot-card). |
 | **Export** | Saves this mascot as a card |
+| **Publish** | Shares this mascot in Community Creations. It shows when you're signed in, and never on Morphie. See [Publish a Mascot](#publish-a-mascot). |
 | **View full screen** | Opens the whole tab full screen. **Exit full screen** or Escape returns it. |
 
-Only **Duplicate**, **Import**, **Export** and **View full screen** show while **Morphie** is selected. Point at a button to see what it does. On a narrow screen, the buttons are in the **Preset Actions** menu.
+Only **Duplicate**, **Import**, **Export** and **View full screen** show while **Morphie** is selected. Only **Import** and **View full screen** show while a Supporter Mascot is selected. Point at a button to see what it does. On a narrow screen, the buttons are in the **Preset Actions** menu.
+
+**Supporter Mascots** are for Patreon Supporter and Supporter+ accounts. One you don't have shows in the **Preset** list with its thumbnail and a lock. Select it to open its listing in Community Creations. If your account is a Supporter, selecting it installs it and selects it. A Supporter Mascot is read-only: you can't edit, duplicate, export or publish it. When your pledge ends, the app removes it and Formaquestion shows Morphie again.
 
 Your changes on the tab show in the preview at once. The window, the face your AI picks and **AI Context** keep the saved mascot until you select **Save** at the bottom of the tab. **Cancel** drops your changes. When you change the mascot, the tab or close **Formaquestion Settings** with changes not saved, the app asks you to save them, exit without saving, or stay.
 
@@ -728,6 +746,22 @@ The mascot plays its transition each time its look changes: from the Initial Loo
 
 - A card with a bad field, or one from a different version, is refused. The error names the field, and your mascot stays as it was.
 - The card is an image file with your art inside it. Share it only with people you want to see that art.
+
+#### Publish a Mascot
+<!-- keywords: publish mascot, share mascot, upload mascot, mascot listing, mascot thumbnail, mascot too big, mascot size limit, 10 MB, update my mascot listing, delete my mascot listing, mascot changelog, community mascot -->
+
+**Publish** puts your mascot in the **Mascots** section of Community Creations, where other players download it as their own mascot. Sign in first.
+
+1. Open the **Mascot** tab and select your mascot.
+2. Select **Publish**. If you have unsaved changes, the app asks you to save or discard them first.
+3. Choose **Publish as new mascot**, or pick one of your listings to update it.
+4. Select **Publish**.
+
+- The thumbnail shows the Initial Look. To use your own image, upload it in **Thumbnail**. **Use Initial Look** puts the default back.
+- To update a listing, pick it in step 3. You can add a **Changelog Entry** for players who hold a copy. To delete a listing, select the trash button on your card in the **Mascots** section of Community Creations.
+- A mascot can hold up to 10 MB of images. If yours is larger, the app shows its size and sends nothing. Compress the layers, then publish again.
+- A mascot that uses art that comes with Formamorph can't be published. The message names the layers to replace. Morphie has no **Publish**.
+- After you publish, your mascot follows its listing, as your other published items do.
 
 ## AI Context
 <!-- keywords: debug a question, see the request, inspect help, wrong section, trace, export json, bug report, search block, samplers, request card -->

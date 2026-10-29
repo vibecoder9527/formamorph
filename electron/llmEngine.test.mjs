@@ -39,10 +39,11 @@ let workRoot = null;
 function setup(fakeOptions = {}, { platform = 'win32', binaryPath = ({ cpu } = {}) => (cpu ? 'llama-server-cpu' : 'llama-server') } = {}) {
   const fake = createFakeLlamaServer(fakeOptions);
   workRoot = mkdtempSync(path.join(os.tmpdir(), 'engine-test-'));
-  engine = createEngine({ spawn: fake.spawn, binaryPath, platform, workRoot, listProcesses: fake.listProcesses });
+  const chatEvents = [];
+  engine = createEngine({ spawn: fake.spawn, binaryPath, platform, workRoot, listProcesses: fake.listProcesses, onChatEvent: (e) => chatEvents.push(e) });
   const seen = [];
   engine.onStatus((s) => seen.push(s));
-  return { fake, seen };
+  return { fake, seen, chatEvents };
 }
 
 afterEach(async () => {
@@ -121,7 +122,7 @@ describe('engine lifecycle through the fake server', () => {
     expect(ready).toMatchObject({
       status: 'ready', modelPath: MODEL, modelId: 'Tiny-Q4_K_M.gguf', port, error: null, loadProgress: null,
       contextSize: 8192, gpuLayers: GPU_LAYERS_AUTO, flashAttention: true, parallelRequests: 2, unifiedKvCache: true,
-      maxContextSize: 131072, engineVramMB: 3023, deviceVramTotalMB: 24138, deviceVramFreeMB: 21970,
+      maxContextSize: 131072, engineVramMB: 3025, deviceVramTotalMB: 24138, deviceVramFreeMB: 23365,
       gpuBackend: 'vulkan', gpuDeviceNames: ['NVIDIA GeForce RTX 4090'], gpuDeviceOptions: ['NVIDIA GeForce RTX 4090'],
       gpuDeviceIndex: null, gpuDeviceOrigin: null,
     });
@@ -417,7 +418,9 @@ describe('proxy request path', () => {
     expect(frames.at(-1)).toBe('[DONE]');
     const chunks = frames.slice(0, -1).map((f) => JSON.parse(f));
     expect(chunks.every((c) => c.object === 'chat.completion.chunk')).toBe(true);
-    expect(chunks.map((c) => c.choices[0].delta.content ?? '').join('')).toBe(expected);
+    // The recorded stream is its own request, so its text can differ from the non-streamed reply.
+    const recordedStream = fixture.scenarios.loaded.chatStream.split('\n\n').filter((f) => f.startsWith('data: {')).map((f) => JSON.parse(f.slice(6)));
+    expect(chunks.map((c) => c.choices[0].delta.content ?? '').join('')).toBe(recordedStream.map((c) => c.choices[0].delta.content ?? '').join(''));
     expect(chunks.at(-1).choices[0].finish_reason).toBe('stop');
   });
 
@@ -500,11 +503,11 @@ describe('Context Overflow', () => {
   const tokensOf = (messages) => countFakeTokens(renderChatMl(messages));
 
   async function ready(policy, fakeOptions) {
-    const { fake } = setup(fakeOptions);
+    const { fake, chatEvents } = setup(fakeOptions);
     const port = await freePort();
     expect(await engine.start({ ...SETTINGS, contextSize: N_CTX, modelPath: MODEL, port, contextOverflow: policy })).toMatchObject({ status: 'ready' });
     const chat = (body) => fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', body: JSON.stringify(body) });
-    return { fake, port, chat };
+    return { fake, port, chat, chatEvents };
   }
   const sent = (fake) => fake.chatRequests.at(-1);
 
@@ -637,17 +640,21 @@ describe('Context Overflow', () => {
   });
 
   it('stops counting and sends nothing when the client hangs up mid-count', async () => {
-    // Slower than expect.poll's 50 ms beat, so the hangup lands inside the first count.
-    const { fake, port } = await ready('truncateMiddle', { tokenizeMs: 200 });
+    // The first count's tokenize stays held until the engine has seen the hangup.
+    const { fake, port, chatEvents } = await ready('truncateMiddle', { holdTokenize: true });
     // node:http, not fetch: the test environment's AbortSignal is not the one Node's fetch takes.
     const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/v1/chat/completions' });
     req.on('error', () => {});
     req.end(JSON.stringify({ messages: story, max_tokens: 64 }));
-    await expect.poll(() => fake.templateRequests.length).toBe(1);
+    await expect.poll(() => fake.heldTokenize.length).toBe(1);
     req.destroy();
-    // Three tokenize delays: an engine still counting would have sent its next template request by then.
-    await new Promise((r) => setTimeout(r, 600));
+    await expect.poll(() => chatEvents).toEqual(['hangup']);
+    fake.releaseTokenize();
+    // The engine's end for this request: anything it would have sent upstream went out before it.
+    await expect.poll(() => chatEvents.length).toBe(2);
+    expect(chatEvents).toEqual(['hangup', 'dropped']);
     expect(fake.templateRequests).toHaveLength(1);
+    expect(fake.heldTokenize).toHaveLength(1);
     expect(fake.chatRequests).toHaveLength(0);
   });
 
@@ -867,9 +874,9 @@ describe('VRAM viewer fields from the load log', () => {
   it('fills share, free-at-load, total, names and backend from an Auto load', async () => {
     setup();
     const s = await engine.start({ ...SETTINGS, modelPath: MODEL, port: await freePort() });
-    // Recorded: Vulkan0 model 2430.74 + KV 512 + compute 80.01 MiB; the CPU_Mapped and Vulkan_Host buffers stay out.
+    // Recorded: Vulkan0 model 2430.74 + KV 512 + compute 82.01 MiB; the CPU_Mapped and Vulkan_Host buffers stay out.
     expect(s).toMatchObject({
-      engineVramMB: 3023, deviceVramFreeMB: 21970, deviceVramTotalMB: 24138,
+      engineVramMB: 3025, deviceVramFreeMB: 23365, deviceVramTotalMB: 24138,
       gpuBackend: 'vulkan', gpuDeviceNames: ['NVIDIA GeForce RTX 4090'],
     });
   });
@@ -877,7 +884,7 @@ describe('VRAM viewer fields from the load log', () => {
   it('fills them from a fit-off load too', async () => {
     setup({ scenarioFor: () => 'max' });
     const s = await engine.start({ ...SETTINGS, gpuLayers: GPU_LAYERS_MAX, modelPath: MODEL, port: await freePort() });
-    expect(s).toMatchObject({ engineVramMB: 3023, deviceVramFreeMB: 22293, deviceVramTotalMB: 24138 });
+    expect(s).toMatchObject({ engineVramMB: 3025, deviceVramFreeMB: 23370, deviceVramTotalMB: 24138 });
   });
 
   it('reports no share and no device VRAM after a CPU fallback', async () => {
@@ -890,14 +897,14 @@ describe('VRAM viewer fields from the load log', () => {
     // GPU Device All with an iGPU listed after the card; the recorded instance used Vulkan0 alone.
     setup({ listDevices: `${fixture.listDevices}  Vulkan1: Intel(R) UHD Graphics 770 (16252 MiB, 15000 MiB free)\r\n` });
     const s = await engine.start({ ...SETTINGS, gpuDevice: 'all', modelPath: MODEL, port: await freePort() });
-    expect(s).toMatchObject({ deviceVramTotalMB: 24138, deviceVramFreeMB: 21970 });
+    expect(s).toMatchObject({ deviceVramTotalMB: 24138, deviceVramFreeMB: 23365 });
   });
 
   it('drops the share when the model is lost, keeping the device line for the error', async () => {
     const { fake, seen } = setup();
     await engine.start({ ...SETTINGS, modelPath: MODEL, port: await freePort() });
     fake.routers[0].child.crash();
-    await new Promise((resolve) => { const check = () => (seen.at(-1).status === 'error' ? resolve() : setTimeout(check, 5)); check(); });
+    await expect.poll(() => seen.at(-1).status).toBe('error');
     expect(seen.at(-1)).toMatchObject({ engineVramMB: null, serverPid: null, deviceVramTotalMB: 24138 });
   });
 

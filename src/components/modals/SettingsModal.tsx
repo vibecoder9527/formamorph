@@ -1,4 +1,5 @@
 import { PromptNavigationRail } from './PromptNavigationRail';
+import { useRequestKey } from '@/lib/surface/useRequestKey';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useTheme } from '../theme-provider';
@@ -65,7 +66,7 @@ import { PROMPT_KIND_VARIABLES, PROMPT_KIND_USER_VARIABLES, NOW_LINE_VARIABLES, 
 import { defaultPromptSampler } from '@/lib/promptSamplers';
 import { numInput } from '@/lib/numInput';
 import { MAX_AUTOSAVE_SLOTS } from '@/lib/autosave';
-import { FieldError } from '@/components/ui/typography';
+import { FieldError, Hint } from '@/components/ui/typography';
 import { SamplerControl, type SamplerControlProps } from './SamplerControl';
 import { EndpointRouteField } from './EndpointRouteField';
 import { EndpointReachabilityBadge } from './EndpointReachabilityBadge';
@@ -87,6 +88,7 @@ import WorldStorageService from '@/services/WorldStorageService';
 import { cachedImageBytes, clearCachedImages } from '@/lib/remoteImageCache';
 import { formatBytes } from '@/lib/imageOptim';
 import { DEFAULT_WORLDS, readDeletedDefaultWorlds, clearDeletedDefaultWorlds } from '@/lib/defaultWorlds';
+import { readBundledWorld } from '@/lib/bundledWorldText';
 import { PresetNameDialog } from './PresetNameDialog';
 import { workflowOwnModels } from '@/lib/imageGen/comfyui';
 import { DEFAULT_IMAGE_FILE_NAME } from '@/lib/imageGen/fileName';
@@ -138,7 +140,7 @@ function VerbatimTurnsField({ id, value, onChange, disabled }: { id: string; val
         onChange={(e) => onChange(Math.max(0, Math.floor(Number(e.target.value)) || 0))}
         className="w-20"
       />
-      <span className="hidden sm:inline text-helper text-muted-foreground">{c.description}</span>
+      <Hint as="span" className="hidden sm:inline">{c.description}</Hint>
       <HintInfo>{c.info}</HintInfo>
     </div>
   );
@@ -155,7 +157,7 @@ function AttachmentsControl({ checked, disabled, onChange }: AttachmentsControlP
     <div className="flex items-center gap-2">
       <Checkbox id="promptAttachments" checked={checked} disabled={disabled} onCheckedChange={(c) => onChange(c === true)} />
       <label htmlFor="promptAttachments" className="text-label">{SETTINGS_COPY.promptAttachments.label}</label>
-      <span className="hidden sm:inline text-helper text-muted-foreground">{SETTINGS_COPY.promptAttachments.description}</span>
+      <Hint as="span" className="hidden sm:inline">{SETTINGS_COPY.promptAttachments.description}</Hint>
     </div>
   );
 }
@@ -210,7 +212,7 @@ const MODE_SELECT_TARGETS: Record<string, TargetAttribute> & { data: TargetAttri
   data: targetAttribute('settings.data', 'settings-mode'),
 };
 
-export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, initialTab, initialEndpointTab, initialPromptTab, initialPromptSurface, initialPromptField, initialTarget, requestKey, onWorldsRestored, onStartAuthoringTour, forcedMode }: {
+export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, initialTab, initialEndpointTab, initialPromptTab, initialPromptSurface, initialPromptField, initialTarget, requestKey: landingKey, onWorldsRestored, onStartAuthoringTour, forcedMode }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   /** Called after Restore Default Worlds re-seeds, so a world list on screen can refresh. */
@@ -271,6 +273,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     else if (wantsAdvancedTab) setModeState('advanced');
   }, [devRoute, routeMode, wantsAdvancedTab]);
   useEffect(() => { if (forcedMode) setModeState(forcedMode); }, [forcedMode]);
+  const requestKey = useRequestKey(landingKey);
   useEffect(() => {
     if (requestKey && wantsAdvancedTab) setModeState('advanced');
     // Only a new request switches the mode; the player's own switch afterwards stands.
@@ -318,7 +321,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
   const restoreDefaultWorlds = async () => {
     clearDeletedDefaultWorlds();
     try {
-      const { failed, errors } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS);
+      const { failed, errors } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS, readBundledWorld);
       if (failed.length) {
         toastError(
           new AggregateError(errors, 'Default worlds failed to restore'),
@@ -1095,7 +1098,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                 descriptions={SETTINGS_MODE_DESCRIPTIONS}
                 hiddenNotice={hasHiddenValues ? SETTINGS_HIDDEN_NOTICE : undefined}
                 size="sm"
-                aria-label="Settings mode"
+                aria-label="Settings Mode"
                 // The Data and Output tabs' guide sections need Advanced, so they land on this select.
                 {...(MODE_SELECT_TARGETS[activeTab] ?? MODE_SELECT_TARGETS.data)}
               />
@@ -1187,7 +1190,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                 The status region is always mounted, so a screen reader announces the label when it fills in. */}
             <div data-testid="image-scroll-frame" className="flex min-h-0 flex-1 flex-col">
             <div role="status" className={cn('flex items-center justify-center px-6 text-center', imageGenDisabled && 'min-h-0 flex-1')}>
-              {imageGenDisabled && <p className="text-helper text-muted-foreground">{SETTINGS_NOTES.imageGenerationOff}</p>}
+              {imageGenDisabled && <Hint>{SETTINGS_NOTES.imageGenerationOff}</Hint>}
             </div>
             {/* A class, not the `hidden` attribute: the root's `flex` utility overrides `[hidden]`. */}
             <ScrollArea className={cn('flex-1 min-h-0', imageGenDisabled && 'hidden')}>
@@ -1461,10 +1464,10 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
               </TabsContent>
               {!imageGenDisabled && advanced && (
               <TabsContent value="img-tagprompt" className="pt-4 flex-1 min-h-0 data-[state=active]:flex flex-col gap-2">
-                <p className="text-helper text-muted-foreground flex-shrink-0">
+                <Hint className="flex-shrink-0">
                   The prompt sent to your text model to turn a subject’s description into booru tags. The
-                  <span className="mx-1 font-medium">Subject</span>chip expands per kind — character: “{SUBJECT_GUIDANCE.character}”; location: “{SUBJECT_GUIDANCE.location}”; world: “{SUBJECT_GUIDANCE.world}”.
-                </p>
+                  <span className="mx-1 font-medium">Subject</span>chip expands per kind. Entity: “{SUBJECT_GUIDANCE.character}”. Location: “{SUBJECT_GUIDANCE.location}”. World: “{SUBJECT_GUIDANCE.world}”.
+                </Hint>
                 <PromptField value={imageTagPrompt} onChange={setImageTagPrompt} variables={[SUBJECT]} chipReads={effectivePreviewValues} />
                 <div className="flex justify-start flex-shrink-0">
                   <ConfirmDialog
@@ -1517,10 +1520,10 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
             {/* While a pinned world is open the selector edits that world's pin, not the global choice —
                 say so, or picking a preset here looks like it silently did nothing to the rest of the app. */}
             {presetPinnedToWorld && (
-              <p className="-mt-2 flex-shrink-0 text-helper text-muted-foreground">
+              <Hint className="-mt-2 flex-shrink-0">
                 The world you&apos;re playing is pinned to this preset, so changing it here re-pins this world.
                 Your usual preset is unaffected and comes back when you leave.
-              </p>
+              </Hint>
             )}
             {/* Rail + panel. The rail replaces both the thirteen wrapped prompt tabs and the
                 System/User/Messages/Options row: two rows of chrome the editor gets back, and a list that
@@ -1615,9 +1618,9 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                   The hub draws the same line itself, beside its own controls. Above rather than beneath: at
                   the bottom of a full-height editor it sat below the fold. */}
               {!showingHub && (
-                <p className="flex-shrink-0 text-helper text-muted-foreground">
+                <Hint className="flex-shrink-0">
                   {PROMPT_DESCRIPTIONS[activePromptTab]}
-                </p>
+                </Hint>
               )}
 
               {showingOptions && (
@@ -1685,7 +1688,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                           </div>
                           {/* Read before the template: when this message is sent is runtime-conditional,
                               so it can't be inferred from the field being visible. */}
-                          <p className="text-helper text-muted-foreground italic">{f.sentWhen}</p>
+                          <Hint className="italic">{f.sentWhen}</Hint>
                           <PromptField
                             value={f.value}
                             onChange={f.set}
@@ -1698,7 +1701,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                     onRequestFullscreen={promptsMorph.toggle}
                             readOnly={activePresetIsBuiltIn}
                           />
-                          <p className="text-helper text-muted-foreground">{f.description}</p>
+                          <Hint>{f.description}</Hint>
                         </div>
                       ))}
                     </div>
@@ -2130,11 +2133,11 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                       {SETTINGS_BUTTONS.restoreDefaultWorlds}
                     </Button>
                   </ConfirmDialog>
-                  <p className="text-helper text-muted-foreground mt-1">
+                  <Hint className="mt-1">
                     {deletedDefaultCount === 0
                       ? "You haven't deleted any of the bundled worlds."
                       : `Re-creates ${deletedDefaultCount} deleted bundled world${deletedDefaultCount > 1 ? 's' : ''} at their latest version.`}
-                  </p>
+                  </Hint>
                 </div>
               </Row>
               <Row>
@@ -2147,11 +2150,11 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                       {SETTINGS_BUTTONS.clearCachedImages}
                     </Button>
                   </ConfirmDialog>
-                  <p className="text-helper text-muted-foreground mt-1">
+                  <Hint className="mt-1">
                     {cachedBytes === 0
                       ? 'No linked images have been cached yet.'
                       : `${formatBytes(cachedBytes)} of linked images kept on this device so they work offline.`}
-                  </p>
+                  </Hint>
                 </div>
               </Row>
               <Row>
@@ -2164,11 +2167,11 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                       {SETTINGS_BUTTONS.resetTutorials}
                     </Button>
                   </ConfirmDialog>
-                  <p className="text-helper text-muted-foreground mt-1">
+                  <Hint className="mt-1">
                     {seenTutorialCount === 0
                       ? 'No tutorials have been dismissed yet.'
                       : `Brings back ${seenTutorialCount} dismissed tutorial${seenTutorialCount > 1 ? 's' : ''}.`}
-                  </p>
+                  </Hint>
                 </div>
               </Row>
               </Section>

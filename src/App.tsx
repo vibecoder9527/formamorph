@@ -4,6 +4,8 @@ import { ThemeProvider } from "./components/theme-provider";
 import { AndroidBackHandler } from './components/AndroidBackHandler';
 import { recordView } from './lib/backAction';
 import { watchSessionForClaim } from './lib/anonymousLikeClaim';
+import { watchSupporterContent } from './lib/supporterContent';
+import { watchSupporterMascots } from './components/formaquestion/supporterMascots';
 import { COMMUNITY_ENABLED } from './lib/featureFlags';
 import { useDevRoute, installDevRouter, registerDevHook } from './lib/devRouter';
 import { installViewportHeightVar, APP_HEIGHT_VAR } from './lib/viewportHeight';
@@ -22,6 +24,7 @@ import { AgeGateProvider } from './contexts/AgeGateContext';
 import { PrivacyPolicyProvider } from './contexts/PrivacyPolicyContext';
 import { AccountDeletionProvider } from './contexts/AccountDeletionContext';
 import { UpdateRequiredGate } from './components/modals/UpdateRequiredDialog';
+import { UsernameRenameGate } from './components/modals/UsernameRenameDialog';
 import { SignInHost } from './components/SignInHost';
 import { EXIT_TO_MENU_PROMPT } from './lib/leavePrompts';
 import { LocalEngineManager } from './components/LocalEngineManager';
@@ -89,6 +92,14 @@ function AppViews() {
   useEffect(() => {
     if (!COMMUNITY_ENABLED) return;
     return watchSessionForClaim();
+  }, []);
+
+  // The Supporter content check runs at each start and again when the signed-in account changes.
+  useEffect(() => {
+    if (!COMMUNITY_ENABLED) return;
+    const stopMascots = watchSupporterMascots();
+    const stopContent = watchSupporterContent();
+    return () => { stopContent(); stopMascots(); };
   }, []);
 
   // Track the visual viewport into `--app-h` so full-height screens shrink for the on-screen keyboard
@@ -268,6 +279,7 @@ function App() {
                           made from either screen, and sibling effects run in order — so the header this
                           installs is on `fetch` before any screen's mount effect asks for anything. */}
                       <UpdateRequiredGate />
+                      {COMMUNITY_ENABLED && <UsernameRenameGate />}
                       {/* One sign-in for every view, inside the age gate and the privacy prompt it
                           answers to. A view swap never remounts it. */}
                       {COMMUNITY_ENABLED && <SignInHost />}

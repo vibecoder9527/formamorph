@@ -17,13 +17,16 @@ import {
   seedNewGameStats, statTraitsInForce, type TraitRuntimeState, type TraitWorld,
 } from './traitRuntime';
 import type { PersonaPick } from './persona';
+import { seedItemCopies, settleInventory, type NewId } from './inventory';
+import { randomUUID } from './uuid';
 import type { OwnerId } from './scope';
 import { resolveEntityText, type PlaceholderMode } from './placeholders';
-import type { Entity, EntityStatValues, OwnedTraitPicks, Placeholder, Trait, World } from '@/types';
+import type { Entity, EntityStatValues, ItemEffectLedger, OwnedTraitPicks, Placeholder, Trait, World } from '@/types';
 
 /** The authored slice the fold reads. An absent slice reads as empty, as an editor's half-built world can be. */
 export type OpeningFoldWorld = Partial<Pick<World,
   'stats' | 'statGroups' | 'traits' | 'traitGroups' | 'entities' | 'entityGroups' | 'placeholders' | 'placeholderGroups' | 'dictionaries' | 'locations'
+  | 'connections' | 'worldOverview' | 'items' | 'placements'
 >>;
 
 /** What the player picked at the entry step: the global trait ids and each owner's trait ids. */
@@ -46,6 +49,8 @@ export interface OpeningFold {
   startingTraits: { trait: Trait; ownerId: OwnerId }[];
   /** The trait slice as play's trait state holds it. */
   traitState: TraitRuntimeState;
+  /** What the seeded Item Copies' effects applied, for the ledger, and the start log with names unresolved. */
+  itemEffects: { ledger: ItemEffectLedger; log: string[] };
 }
 
 /** Authored text resolved as turn one would: an unrolled chip draws once, and every text after it reads that roll. */
@@ -55,16 +60,21 @@ function turnOneText(placeholders: Placeholder[]): ResolveText {
   return (text, owner) => resolveEntityText(owner, text, { placeholders, rolls, setRoll });
 }
 
-/** The state a new game opens with. Pure: the same inputs give the same state, its unrolled chips aside. */
-export function openingFold(world: OpeningFoldWorld, picks: OpeningPicks = NO_OPENING_PICKS, persona?: OpeningPersona): OpeningFold {
+/** The state a new game opens with. Pure: the same inputs give the same state, its unrolled chips and its
+ *  Item Copy ids aside. */
+export function openingFold(
+  world: OpeningFoldWorld, picks: OpeningPicks = NO_OPENING_PICKS, persona?: OpeningPersona, newId: NewId = randomUUID,
+): OpeningFold {
   const ref = persona?.ref ?? { source: 'none' as const };
   const traits = world.traits ?? [];
   const traitGroups = world.traitGroups ?? [];
   const { stats: authored, entities } = playStatWorld({ stats: world.stats ?? [], statGroups: world.statGroups ?? [], entities: world.entities ?? [] });
   const ownerWorld = { traits, traitGroups, entities };
   const library = inPlayLibrary(ownerWorld, persona?.libraryEntity, persona?.characters ?? []);
+  const itemCopies = seedItemCopies(world, ref, newId);
   const traitWorld: TraitWorld = {
-    traits, groups: traitGroups, entities, persona: ref, ...inPlayOwners(ownerWorld, ref, library),
+    traits, groups: traitGroups, entities, persona: ref, items: world.items ?? [], itemCopies,
+    ...inPlayOwners(ownerWorld, ref, library),
   };
 
   // Authored order, not click order: two players with the same picks open with the same stats.
@@ -80,6 +90,12 @@ export function openingFold(world: OpeningFoldWorld, picks: OpeningPicks = NO_OP
     ...traitState, ownedTraits: ownedTraitStatesFrom(picks.owned), entityStats: seedEntityStats(statEntities),
   }, traitWorld);
   traitState = applyOwnedStatTraits(rows.state, traitWorld);
+  // Seeded Item Copies apply their effects, On First Obtain included (Q59).
+  const items = settleInventory(
+    { copies: itemCopies, traits: traitState, ledger: undefined },
+    { items: world.items ?? [], traits: traitWorld, persona: ref, entities },
+  );
+  traitState = items.traits;
   const entityStats = traitState.entityStats ?? {};
   const ownedTraits = traitState.ownedTraits ?? {};
 
@@ -98,12 +114,13 @@ export function openingFold(world: OpeningFoldWorld, picks: OpeningPicks = NO_OP
     placeholders: {
       placeholders: allPlaceholders(world), owners: placeholderOwners(world), dictionaries: world.dictionaries ?? [], rolls: {},
     },
-    places: { locations, location: start && { id: start.id, name: start.name } },
+    places: { locations, location: start && { id: start.id, name: start.name }, connections: world.connections ?? [] },
     resolveText: turnOneText(allPlaceholders(world)),
     clock: { deltaHours: 0, elapsedHours: 0 },
+    itemCopies,
   };
   const startingTraits = [...held.map((trait) => ({ trait, ownerId: null })), ...rows.appliedRows];
-  return { state, entityStats, startingTraits, traitState };
+  return { state, entityStats, startingTraits, traitState, itemEffects: { ledger: items.ledger, log: items.log } };
 }
 
 /** The `SandboxState` of turn one. */

@@ -4,7 +4,9 @@ import { primeRolls, weightedPick } from '@/lib/placeholders';
 import { ownerPriming } from '@/lib/ownedTraitsInPlay';
 import { allPinTexts, valuePinRollChips } from '@/lib/placeholderPins';
 import { entityTexts } from '@/lib/entityTexts';
+import { itemTexts } from '@/lib/itemTexts';
 import { overviewTexts } from '@/lib/overviewTexts';
+import { connectionHints } from '@/lib/connectionEditing';
 import { bookTexts, libraryPlaceholderSet, primeLibraryRolls } from '@/lib/libraryPlaceholders';
 import { sameElements } from '@/lib/placeholderHomes';
 import type { Dictionary, Entity, Placeholder, PlaceholderRolls } from '@/types';
@@ -82,7 +84,7 @@ export function PlaceholderSessionProvider({ children }: { children: ReactNode }
   const [persona, setPersonaState] = useState<Entity | null>(null);
   const [additions, setAdditions] = useState<LibraryAdditions>(NO_ADDITIONS);
   const {
-    worldOverview, entities, locations, dictionaries, stats, traits, traitGroups, placeholders: worldPlaceholders,
+    worldOverview, entities, items, locations, connections, dictionaries, stats, traits, traitGroups, placeholders: worldPlaceholders,
   } = useGameData();
   const placeholders = useMemo(
     () => libraryPlaceholderSet(worldPlaceholders, libraryItems(persona, additions)),
@@ -166,7 +168,10 @@ export function PlaceholderSessionProvider({ children }: { children: ReactNode }
     const texts = [
       ...overviewTexts(worldOverview),
       ...entities.flatMap(entityTexts),
+      // One roll per item, shared by every Item Copy of it.
+      ...items.flatMap(itemTexts),
       ...locations.flatMap((l) => [l.name, l.playerDescription, l.aiDescription, l.aiSummary, l.description, l.imageTags]),
+      ...connections.flatMap(connectionHints),
       ...[...dictionaries, ...additions.books].flatMap(bookTexts),
       ...stats.flatMap((s) => [s.name, s.description, ...(s.descriptors ?? []).map((d) => d.description)]),
       ...traits.flatMap((t) => [t.name, t.playerDescription, t.aiDescription]),
@@ -189,7 +194,7 @@ export function PlaceholderSessionProvider({ children }: { children: ReactNode }
       return sameRolls(prev, next) ? prev : next;
     });
   }, [
-    sessionActive, rolls, placeholders, worldPlaceholders, entities, locations, dictionaries, stats, traits, traitGroups,
+    sessionActive, rolls, placeholders, worldPlaceholders, entities, items, locations, connections, dictionaries, stats, traits, traitGroups,
     worldOverview, persona, additions,
   ]);
 

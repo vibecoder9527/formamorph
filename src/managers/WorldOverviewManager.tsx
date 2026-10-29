@@ -17,6 +17,8 @@ import { SelectOptions } from "@/components/SelectOptions";
 import type { AllowedPersonas } from '@/types';
 import { WorldInput } from '@/components/editor/WorldField';
 import { fieldFrame } from '@/lib/historyField';
+import SlotsSection from './SlotsSection';
+import PlacementsSection from './PlacementsSection';
 
 const ALLOWED_PERSONAS_LABELS: Record<AllowedPersonas, string> = { any: 'Any', world: 'World Only' };
 
@@ -149,6 +151,12 @@ const WorldOverviewManager = () => {
         </div>
       </div>
       {advanced && <PersonaRulesFields />}
+      <SlotsSection />
+      <PlacementsSection
+        where={{ kind: 'you' }}
+        label="Persona Items"
+        hint="Gives the player items when a game starts, whoever they play"
+      />
       <div className="space-y-2" {...targetAttribute('worldEditor.overview', 'background-music')}>
         <Label htmlFor="sound-upload-world-bgm">Background Music</Label>
         {/* The world stores a bare data URL where a location stores a media record, so the shared widget

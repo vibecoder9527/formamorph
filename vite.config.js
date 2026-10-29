@@ -7,6 +7,8 @@ import { readFileSync, realpathSync } from 'fs'
 import { createRequire } from 'module'
 import { releasedMinorChangelog } from './src/lib/docs/changelogSlice'
 import { zhTwPlugin } from './scripts/zhTw.mjs'
+import { shipBundledWorlds } from './scripts/shipBundledWorlds.mjs'
+import { stripSeededWorlds } from './scripts/stripSeededWorlds.mjs'
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
 // The ONNX runtime's dist folder, which its package exports do not expose (src/lib/embeddingWorker.ts).
@@ -99,7 +101,7 @@ const cacheTypesCjs = {
 }
 
 export default defineConfig({
-  plugins: [zhTwPlugin(), react(), directSyncAppModules, holdUpdates, docsIndexMarkdown, cacheTypesCjs],
+  plugins: [zhTwPlugin(), react(), directSyncAppModules, holdUpdates, docsIndexMarkdown, cacheTypesCjs, shipBundledWorlds(__dirname), stripSeededWorlds()],
   cacheDir: process.env.E2E_SYNC_APP ? path.resolve(__dirname, 'node_modules/.vite-sync-app') : devCacheDir,
   base: './',
   // Expose the package.json version to the app (single source of truth for the app/world/save stamp).
@@ -179,6 +181,9 @@ export default defineConfig({
       'vite.config.js',
       'scripts/zhTw.mjs',
       'src/lib/docs/changelogSlice.ts',
+      'scripts/shipBundledWorlds.mjs',
+      'scripts/stripSeededWorlds.mjs',
+      'scripts/stripWorldImages.mjs',
       'tsconfig*.json',
       '.env*',
     ].map((file) => path.resolve(__dirname, file).replace(/\\/g, '/')),
@@ -187,6 +192,13 @@ export default defineConfig({
     // 5-second tests ran 4.6 s idle and timed out under a peer's load. Half the threads keeps the wall
     // time and gives every fork a thread of its own.
     maxWorkers: '50%',
+    // Timeouts catch hangs, not slowness: load stretches a test, and the slow-test report flags it.
+    // A fake-timer test's `waitFor` never expires on its own, so this is also how long its miss takes.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    expect: { poll: { timeout: 10_000 } },
+    slowTestThreshold: 2000,
+    reporters: ['default', './scripts/slowTestReporter.mjs'],
     // A new jsdom per file is a large share of the suite's CPU, so plain .ts tests run in node. A .ts test
     // that needs the DOM opts in with `// @vitest-environment jsdom`.
     projects: [

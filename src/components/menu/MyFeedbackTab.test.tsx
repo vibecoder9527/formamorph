@@ -5,6 +5,7 @@ import FeedbackService from '@/services/FeedbackService';
 import AuthService from '@/services/AuthService';
 import { scopeFilterValue } from '@/lib/feedbackPresentation';
 import type { FeedbackThread } from '@/types';
+import { toastFeedbackNotify } from '@/lib/feedbackToast';
 
 vi.mock('react-toastify', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
@@ -26,6 +27,7 @@ vi.mock('@/services/AuthService', () => ({
 
 const thread = (over: Partial<FeedbackThread> = {}): FeedbackThread => ({
   id: 'b1',
+  number: 1,
   type: 'bug',
   title: 'Save button does nothing',
   category: 'crash',
@@ -66,7 +68,7 @@ describe('which threads each tab opens on', () => {
     // This is where their replies are, and the badge counts their threads.
     stubList();
 
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
 
     await waitFor(() => expect(firstQuery()).toMatchObject({ type: 'bug', scope: undefined }));
   });
@@ -75,7 +77,7 @@ describe('which threads each tab opens on', () => {
     // A board is for browsing and voting; mine-first buries the point of it.
     stubList();
 
-    render(<MyFeedbackTab active type="suggestion" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="suggestion" />);
 
     await waitFor(() => expect(firstQuery()).toMatchObject({ type: 'suggestion', scope: 'all' }));
   });
@@ -92,7 +94,7 @@ describe('the file button', () => {
   it('offers to report a bug on the bug tab', async () => {
     stubList();
 
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
 
     expect(await screen.findByRole('button', { name: /Report a Bug/ })).toBeTruthy();
   });
@@ -100,16 +102,24 @@ describe('the file button', () => {
   it('offers to suggest something on the suggestion tab', async () => {
     stubList();
 
-    render(<MyFeedbackTab active type="suggestion" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="suggestion" />);
 
     expect(await screen.findByRole('button', { name: /Suggest Something/ })).toBeTruthy();
+  });
+
+  it('offers to ask a question on the question tab', async () => {
+    stubList();
+
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="question" />);
+
+    expect(await screen.findByRole('button', { name: /Ask a Question/ })).toBeTruthy();
   });
 
   it('opens the dialog on this tab’s branch', async () => {
     // Landing on Bug from the Suggestions tab would be wrong every time.
     stubList();
 
-    render(<MyFeedbackTab active type="suggestion" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="suggestion" />);
     fireEvent.click(await screen.findByRole('button', { name: /Suggest Something/ }));
 
     expect(screen.getByTestId('dialog').getAttribute('data-type')).toBe('suggestion');
@@ -120,13 +130,13 @@ describe('the category filter', () => {
   it('is offered on both branches', async () => {
     stubList();
 
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
     await openFilters();
     expect(await screen.findByLabelText('Filter by category')).toBeTruthy();
 
     cleanup();
     stubList();
-    render(<MyFeedbackTab active type="suggestion" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="suggestion" />);
     await openFilters();
     expect(await screen.findByLabelText('Filter by category')).toBeTruthy();
   });
@@ -134,7 +144,7 @@ describe('the category filter', () => {
   it('opens on every category', async () => {
     stubList();
 
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
 
     await waitFor(() => expect(firstQuery()).toMatchObject({ category: undefined }));
   });
@@ -145,7 +155,7 @@ describe('what the tab does not say', () => {
     // The tab's own label already says what it is; the sentence was costing the filters their space.
     stubList();
 
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
     await screen.findByRole('button', { name: /Report a Bug/ });
 
     expect(screen.queryByText(/Bugs you.ve reported/)).toBeNull();
@@ -155,7 +165,7 @@ describe('what the tab does not say', () => {
 describe('opening a thread from the profile', () => {
   const openFirst = async (type: 'bug' | 'suggestion' = 'bug') => {
     stubList({ type });
-    render(<MyFeedbackTab active type={type} />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type={type} />);
     fireEvent.click(await screen.findByText('Save button does nothing'));
     return threadProps.last as Record<string, unknown>;
   };
@@ -189,26 +199,26 @@ describe('opening a thread from the profile', () => {
 describe('the status filter', () => {
   it('opens a bug tab on what is unresolved, before any filter is picked', async () => {
     stubList();
-    render(<MyFeedbackTab active type="bug" />);
-    await waitFor(() => expect(firstQuery()).toMatchObject({ status: ['open', 'need_info', 'confirmed'] }));
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
+    await waitFor(() => expect(firstQuery()).toMatchObject({ status: ['open', 'need_info', 'confirmed', 'pending_release'] }));
   });
 
   it('opens a suggestion tab on what is still open, before any filter is picked', async () => {
     stubList();
-    render(<MyFeedbackTab active type="suggestion" />);
-    await waitFor(() => expect(firstQuery()).toMatchObject({ status: ['open', 'considering', 'planned'] }));
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="suggestion" />);
+    await waitFor(() => expect(firstQuery()).toMatchObject({ status: ['open', 'considering', 'planned', 'pending_release'] }));
   });
 
   it('offers the staff options and sends the pick with the request', async () => {
     // Radix's Select opens by keyboard in jsdom; the shared test setup polyfills the rest.
     stubList();
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
     await waitFor(() => expect(FeedbackService.list).toHaveBeenCalled());
     await openFilters();
 
     fireEvent.keyDown(screen.getByLabelText('Filter by status'), { key: 'Enter' });
     const labels = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(labels).toEqual(['All statuses', 'Unresolved', 'Open', 'Need Info', 'Confirmed', 'Resolved', "Won't Fix"]);
+    expect(labels).toEqual(['All statuses', 'Unresolved', 'Open', 'Needs Info', 'Confirmed', 'Pending Release', 'Fixed', "Won't Fix", 'Duplicate']);
 
     const all = screen.getByRole('option', { name: 'All statuses' });
     fireEvent.pointerDown(all, { pointerType: 'mouse' });
@@ -225,20 +235,26 @@ describe('what the tab says when nothing shows', () => {
   it('blames the status filter while it narrows the list', async () => {
     // The default hides closed threads, so "You haven't reported anything yet." would be false.
     empty();
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
     expect(await screen.findByText('No reports match this filter.')).toBeTruthy();
     expect(screen.queryByText('You haven’t reported anything yet.')).toBeNull();
   });
 
   it('words it for suggestions', async () => {
     empty();
-    render(<MyFeedbackTab active type="suggestion" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="suggestion" />);
     expect(await screen.findByText('No suggestions match this filter.')).toBeTruthy();
+  });
+
+  it('words it for questions', async () => {
+    empty();
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="question" />);
+    expect(await screen.findByText('No questions match this filter.')).toBeTruthy();
   });
 
   it('keeps the scope label once the status filter is All', async () => {
     empty();
-    render(<MyFeedbackTab active type="bug" />);
+    render(<MyFeedbackTab notify={toastFeedbackNotify} active type="bug" />);
     await screen.findByText('No reports match this filter.');
     await openFilters();
 

@@ -4,7 +4,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import IndeterminateProgress from "@/components/ui/indeterminate-progress";
-import { Columns2, RectangleVertical, Pencil, Trash2, X, Flag, EyeOff, Check, Play } from "lucide-react";
+import { Columns2, RectangleVertical, Pencil, Heart, HeartOff, Pin, PinOff, Trash2, X, Flag, EyeOff, Check, Play } from "lucide-react";
+import { PinnedMark } from "@/components/community/PinnedMark";
+import { SupporterListingButton } from "@/components/community/SupporterListingButton";
+import { isSupporterOnly } from "@/lib/supporterListingAction";
+import { isPinned } from "@/lib/pinning";
 import { WorldIcon } from '@/lib/elementIcons';
 import { ActionIcon } from "@/lib/actionIcons";
 import { THUMB_FRAME, thumbAspectFor, thumbFit } from "@/lib/thumbAspect";
@@ -13,7 +17,7 @@ import { MarkdownRenderer } from "@/components/game/MarkdownRenderer";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import PromptField from "@/components/prompt/PromptField";
 import { plainVocabulary } from "@/lib/chipVocabulary";
-import { canModerate, isStaff } from "@/lib/roles";
+import { canModerate, isAdmin, isStaff } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { useCachedThumbnail } from "@/lib/useCachedThumbnail";
 import { WorldDetailsColumn, DetailTags, DateTimeText, splitColumnClasses, type WorldRecord } from "@/components/WorldDetails";
@@ -44,6 +48,9 @@ import { useWorldDownloadPlan } from "@/lib/useWorldDownloadPlan";
 import { useMountedRef } from "@/lib/useMountedRef";
 import type { DownloadPlan } from "@/lib/useDownloadCoordinator";
 import { PlaceBadges } from "@/components/PlaceBadges";
+import { ModerationMarker } from "@/components/community/ModerationMarker";
+import { PendingUpdateSection } from "@/components/community/PendingUpdateSection";
+import { heldChangelogEntries, type PendingUpdate } from "@/lib/listingModeration";
 import { placementsBy } from "@/lib/contests";
 import { Tip } from "@/components/ui/tooltip";
 import { VrmFileDetails } from "@/components/VrmFileDetails";
@@ -86,6 +93,12 @@ interface RemoteWorldDetailsModalProps {
   onOpenContest?: (contestId: string) => void;
   /** Records a new like count after a staff removal, so the card behind this modal agrees. */
   onLikesChanged?: (world: WorldRecord, likes: number) => void;
+  /** Called when this reader's write starts or drops the listing's pending update. */
+  onPendingUpdateChange?: (world: WorldRecord, pending: boolean) => void;
+  /** Pins the listing, or unpins it when it is pinned. Staff only. */
+  onTogglePin?: (world: WorldRecord) => void;
+  /** Marks the listing Supporter-only, or clears the mark. Staff only. */
+  onToggleSupporterOnly?: (world: WorldRecord) => void;
   /** DEV only: raise the likers dialog as soon as the modal opens, for the dev route. */
   openLikersOnMount?: boolean;
   /** A read-only action supplied by the surface that opened this listing. */
@@ -121,7 +134,7 @@ export function RemoteWorldDetailsModal({
   open, onOpenChange, world, collapsed, onToggleCollapsed,
   isAuthenticated, openImageViewer, downloadStateForWorld, downloadProgress, onContextualDownload, onDeviceDownload,
   currentUser, onLike, onGuestLike, guestLikes = false, serverTakesLikes = false, onAnonymousLikes,
-  contests = [], onOpenContest, onLikesChanged, openLikersOnMount = false,
+  contests = [], onOpenContest, onLikesChanged, onPendingUpdateChange, onTogglePin, onToggleSupporterOnly, openLikersOnMount = false,
   capabilities = APP_DETAILS_CAPABILITIES,
   detailsAction, onOpenListing, presetUse,
 }: RemoteWorldDetailsModalProps) {
@@ -155,6 +168,8 @@ export function RemoteWorldDetailsModal({
   // against a server that predates them, which leaves their surfaces off rather than wrong.
   const [associations, setAssociations] = useState<WorldAssociation[] | undefined>(undefined);
   const [listingVisibility, setListingVisibility] = useState<ListingVisibility | undefined>(undefined);
+  // The author's waiting update as the listing read says, undefined until it answers.
+  const [pendingUpdate, setPendingUpdate] = useState<PendingUpdate | null | undefined>(undefined);
   const [tab, setTab] = useState<ChangelogTab>('comments');
   // What the report dialog is aimed at, or null when it is closed. One dialog for both the listing and
   // any comment on it — they differ only in what they point at.
@@ -301,6 +316,7 @@ export function RemoteWorldDetailsModal({
       setModelLicense(details?.modelLicense);
       setAssociations(details?.compatibleWorlds);
       setListingVisibility(details?.visibility);
+      setPendingUpdate(details?.pendingUpdate);
     };
     const apply = (details: ListingDetails | null) => {
       const entries = details?.changelog ?? null;
@@ -352,6 +368,7 @@ export function RemoteWorldDetailsModal({
       setModelLicense(undefined);
       setAssociations(undefined);
       setListingVisibility(undefined);
+      setPendingUpdate(undefined);
       tabPickedRef.current = false;
       setTab(seededChangelog === undefined ? 'comments' : defaultTabForCount(seededChangelog, downloadStateForWorld(world)));
       setReportTarget(null);
@@ -392,6 +409,16 @@ export function RemoteWorldDetailsModal({
     world?.author && currentUser &&
     (world.author.id === currentUser.id || world.author.username === currentUser.username)
   );
+
+  // The listing as this reader's own writes left it, so the marker follows a discard or a held entry.
+  const markedListing = world && pendingUpdate !== undefined
+    ? { ...world, has_pending_update: pendingUpdate !== null, pending_update: pendingUpdate }
+    : world;
+
+  const changePendingUpdate = (next: PendingUpdate | null) => {
+    setPendingUpdate(next);
+    if (world) onPendingUpdateChange?.(world, next !== null);
+  };
 
   // Who liked something is a moderation surface, not a social one: an author does not get it on their
   // own listing, and nothing on screen tells anybody else it exists.
@@ -469,6 +496,12 @@ export function RemoteWorldDetailsModal({
   );
 
   const actions = world && (() => {
+    // A Supporter-only listing has no plain download; the in-app shell gets Install, Patreon or Sign In.
+    if (isSupporterOnly(world)) {
+      return capabilities.localLibrary && onContextualDownload
+        ? <SupporterListingButton world={world} kind={kindOf(world)} signedIn={isAuthenticated} onSignIn={onGuestLike} variant="details" />
+        : null;
+    }
     // Mirror the contextual card button (none/refresh/update), icon and all.
     const dlState = downloadStateForWorld(world);
     const progress = downloadProgress[world._id || world.id];
@@ -574,6 +607,22 @@ export function RemoteWorldDetailsModal({
               <span className="truncate leading-normal">{world?.name || `${KIND_LABELS[world ? kindOf(world) : 'world'].one} Details`}</span>
             </DialogTitle>
             {detailsAction && <div className="shrink-0">{detailsAction}</div>}
+            {world && onTogglePin && capabilities.moderation && isStaff(currentUser) && (
+              <Tip tip={isPinned(world) ? "Remove it from the top of its section" : "Keep it at the top of its section"}>
+                <Button variant="ghost" size="sm" className="shrink-0" onClick={() => onTogglePin(world)}>
+                  {isPinned(world) ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                  {isPinned(world) ? 'Unpin' : 'Pin'}
+                </Button>
+              </Tip>
+            )}
+            {world && onToggleSupporterOnly && capabilities.moderation && isAdmin(currentUser) && (
+              <Tip tip={isSupporterOnly(world) ? "Let everyone download it" : "Limit the download to Supporters"}>
+                <Button variant="ghost" size="sm" className="shrink-0" onClick={() => onToggleSupporterOnly(world)}>
+                  {isSupporterOnly(world) ? <HeartOff className="h-4 w-4" /> : <Heart className="h-4 w-4" />}
+                  {isSupporterOnly(world) ? 'Open to All' : 'Limit to Supporters'}
+                </Button>
+              </Tip>
+            )}
             <Tip tip={collapsed ? "Expand to two columns" : "Collapse to single column"}>
               <Button
                 variant="ghost"
@@ -587,6 +636,8 @@ export function RemoteWorldDetailsModal({
           </div>
           {/* Under the title, as on the card: opening a winning card must not lose what the card said. */}
           {world && <PlaceBadges placements={placementsBy(world, contests)} className="mr-8" shine onSelect={onOpenContest} />}
+          {world && <PinnedMark listing={world} className="mr-8" />}
+          {markedListing && <ModerationMarker listing={markedListing} showStaffQuarantine={false} className="mr-8" />}
         </DialogHeader>
 
         {world && (
@@ -623,6 +674,20 @@ export function RemoteWorldDetailsModal({
                           This {KIND_LABELS[kindOf(world)].one.toLowerCase()} is unlisted.
                           Other players receive it only inside a world that requires it.
                         </p>
+                      </div>
+                    )}
+
+                    {(isOwnListing || (capabilities.moderation && isStaff(currentUser))) && pendingUpdate && (
+                      <div className="col-span-2">
+                        <PendingUpdateSection
+                          viewerIsAuthor={isOwnListing}
+                          listingId={String(world._id || world.id)}
+                          name={world.name}
+                          update={pendingUpdate}
+                          liveThumbnail={thumbUrl || undefined}
+                          approvedChangelog={changelog}
+                          onDiscarded={() => changePendingUpdate(null)}
+                        />
                       </div>
                     )}
 
@@ -745,6 +810,9 @@ export function RemoteWorldDetailsModal({
                   entries={changelog}
                   onEntriesChange={setChangelog}
                   canEdit={isOwnListing}
+                  held={isOwnListing ? heldChangelogEntries(pendingUpdate) : undefined}
+                  pendingUpdate={pendingUpdate}
+                  onPendingUpdateChange={changePendingUpdate}
                 />
               ) : (
                 <>

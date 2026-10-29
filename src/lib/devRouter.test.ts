@@ -13,6 +13,7 @@ import { BUILT_BENCH_TABS } from '@/lib/testBench/benchTabs';
 import { TOUR_STEPS } from '@/lib/authoringTour/steps';
 import { LOCATION_VIEWS } from '@/views/locationViews';
 import { ENTITY_EDITOR_SUBTABS, ENTITY_EDITOR_TABS, ENTITY_PANEL_TABS } from '@/views/entityPanelTabs';
+import { ITEM_PANEL_TABS } from '@/views/itemPanelTabs';
 import { LOCATION_PANEL_TABS } from '@/views/locationPanelTabs';
 import { STAT_PANEL_TABS } from '@/views/statPanelTabs';
 import { TRAIT_PANEL_TABS } from '@/views/traitPanelTabs';
@@ -23,13 +24,14 @@ import { DICTIONARY_EDITOR_TABS } from '@/views/dictionaryEditorTabs';
 import { MAIN_MENU_CARD_TABS } from '@/views/mainMenuTabs';
 import { FORMAQUESTION_TABS } from '@/components/formaquestion/formaquestionTabs';
 import { FORMAQUESTION_SETTINGS_TABS } from '@/components/formaquestion/formaquestionSettingsTabs';
-import { GAME_LEFT_PANEL_TABS } from '@/components/game/leftPanelTabs';
+import { GAME_LEFT_PANEL_TABS, GAME_RIGHT_PANEL_TABS } from '@/components/game/panelTabs';
 import { NARRATION_LAYOUTS } from '@/contexts/settingsDefaults';
 import { PROFILE_TABS } from '@/components/menu/profileTabs';
 import { ADMIN_PANEL_TABS } from '@/components/menu/adminPanelTabs';
 import { POLICIES_TABS } from '@/components/menu/policiesTabs';
 import { FEEDBACK_TABS } from '@/components/menu/feedbackTabs';
-import { MY_FEEDBACK_TABS } from '@/components/menu/myFeedbackTabs';
+import { MODERATION_TABS } from '@/components/menu/moderationTabs';
+
 import { EVENT_ACK_PHASES } from '@/components/events/eventAckPhases';
 import { SCRIPT_PROMPT_SAMPLE_KEYS } from './devScriptPromptSamples';
 import { EVENTS_TAB_ROLE_VIEWS } from '@/lib/adminEvents';
@@ -175,6 +177,10 @@ describe('dev-router coverage guard', () => {
     expect([...DEV_MODAL_TABS.worldEditorEntity]).toEqual(ENTITY_PANEL_TABS.map((t) => t.value));
   });
 
+  it('ledger lists exactly the tabs the item panel switches between', () => {
+    expect([...DEV_MODAL_TABS.worldEditorItem]).toEqual(ITEM_PANEL_TABS.map((t) => t.value));
+  });
+
   it('ledger lists exactly the tabs the library entity editor switches between', () => {
     expect([...DEV_MODAL_TABS.entityEditor]).toEqual(ENTITY_EDITOR_TABS.map((t) => t.value));
   });
@@ -233,7 +239,7 @@ describe('dev-router coverage guard', () => {
   });
 
   it('ledger lists exactly the game side panel tabs', () => {
-    expect([...DEV_MODAL_TABS.gameViewer]).toEqual([...GAME_LEFT_PANEL_TABS]);
+    expect([...DEV_MODAL_TABS.gameViewer]).toEqual([...GAME_LEFT_PANEL_TABS, ...GAME_RIGHT_PANEL_TABS]);
   });
 
   it('ledger lists exactly the narration layouts the game view can open in', () => {
@@ -252,8 +258,12 @@ describe('dev-router coverage guard', () => {
     expect([...DEV_MODAL_TABS.adminPanelFeedback]).toEqual([...FEEDBACK_TABS]);
   });
 
+  it('ledger lists exactly the Moderation sub-tabs the surface renders', () => {
+    expect([...DEV_MODAL_TABS.adminPanelModeration]).toEqual([...MODERATION_TABS]);
+  });
+
   it('ledger lists exactly the Feedback dialog tabs the surface renders', () => {
-    expect([...DEV_MODAL_TABS.feedbackHub]).toEqual([...MY_FEEDBACK_TABS]);
+    expect([...DEV_MODAL_TABS.feedbackHub]).toEqual([...FEEDBACK_TABS]);
   });
 
   it('ledger lists exactly the event acknowledge phases the poster renders', () => {
@@ -276,8 +286,8 @@ describe('dev-router coverage guard', () => {
     // localModel is deliberately excluded (it lives inside Settings, not as a standalone modal). worldEditor
     // is an in-place MainMenu modal (no longer a top-level view).
     expect(DEV_MODALS).toEqual([
-      'settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'changelog', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt',
-      'customCode', 'eventForm', 'podium', 'sentMessages', 'suspend', 'feedbackForm', 'feedbackEdit', 'changelogEntry', 'fontTune', 'revealDemo', 'presetImport', 'generateImage', 'placeholderPicker', 'rootCrash',
+      'settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'changelog', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'usernameRename', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt',
+      'customCode', 'eventForm', 'podium', 'sentMessages', 'suspend', 'feedbackForm', 'feedbackEdit', 'feedbackThread', 'changelogEntry', 'fontTune', 'revealDemo', 'presetImport', 'generateImage', 'placeholderPicker', 'rootCrash', 'pendingUpdate',
     ]);
   });
 

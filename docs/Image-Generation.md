@@ -22,8 +22,8 @@ The **Generate with AI** buttons now show beside the World Editor's image fields
 <!-- route: settingsEndpoints.image#enable-image-generation -->
 
 1. Install ComfyUI.
-2. Add `--enable-cors-header` to the start command in your `run_*.bat` file.
-3. Run that file to start ComfyUI.
+2. In the browser only: add `--enable-cors-header` and the app's address to the start command in your `run_*.bat` file. **How to Set Up** shows the exact flag. The desktop app needs no flag.
+3. Start ComfyUI.
 4. In **Provider**, select **ComfyUI (local)**.
 5. Leave **Endpoint URL** empty to use `http://localhost:8188`, or type your server's address.
 6. In **Model**, select a checkpoint. The **Model** and **Sampler** lists load from your server.
@@ -93,12 +93,12 @@ This provider ignores **Negative Prompt**, **Steps / CFG** and **Sampler**. Each
 <!-- keywords: graph, custom, nodes, json, api format, lora, template, setup, custom pipeline, upscaler, controlnet, refiner, paste exported file, dev mode export, hires fix, own node layout -->
 <!-- route: settingsEndpoints.image#enable-image-generation -->
 
-The **Workflow (API Format)** field shows in Advanced mode. It holds the ComfyUI graph that Formamorph sends. **How to Get This** shows these steps too.
+The **Workflow** field shows in Advanced mode. It holds the ComfyUI graph that Formamorph sends, exported in API format. **How to Get This** shows these steps too.
 
 1. In ComfyUI, open **Settings** and turn on **Enable dev mode options (API save, etc.)**.
 2. Load or build your workflow.
 3. Select **Workflow → Export (API)**. Older builds have a **Save (API Format)** button. You get a `.json` file.
-4. Open the file and paste all of it in **Workflow (API Format)**.
+4. Open the file and paste all of it in **Workflow**.
 5. Replace each value that Formamorph must set with its token. See [ComfyUI Workflow Rules](#comfyui-workflow-rules).
 
 **Reset to Defaults** puts back the default graph.

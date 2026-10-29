@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, type ChangeEvent, type MutableRefObject, type ReactNode } from 'react';
+import { useRequestKey } from '@/lib/surface/useRequestKey';
 import { useGameData } from '@/contexts/GameDataContext';
 import { useWorldHistoryMoves } from '@/contexts/worldRecorder';
 import { useHistoryChords } from '@/components/editor/useHistoryChords';
@@ -90,6 +91,8 @@ import 'react-toastify/dist/ReactToastify.css';
 import { useWorldStatsAdapter } from '../managers/useWorldStatsAdapter';
 import { useWorldScriptsAdapter } from '../managers/useWorldScriptsAdapter';
 import { useWorldToolsAdapter } from '../managers/useWorldToolsAdapter';
+import { useWorldItemsAdapter } from '../managers/useWorldItemsAdapter';
+import { ITEM_PANEL_TABS, itemPanelTabsFor, type ItemPanelTab } from './itemPanelTabs';
 import { useWorldEntitiesAdapter } from '../managers/useWorldEntitiesAdapter';
 import { useWorldLocationsAdapter } from '../managers/useWorldLocationsAdapter';
 import { useWorldDictionaryAdapter } from '../managers/useWorldDictionaryAdapter';
@@ -160,7 +163,7 @@ export interface EditorExit {
 
 const WorldEditorInner = ({
   onClose, embedded = false, backButton, newWorld = false, inGame = false, startTour: startTourOnOpen = false, onPlay,
-  initialTab, initialBenchTab, initialTarget, requestKey, leaveRef, exitRef,
+  initialTab, initialBenchTab, initialTarget, requestKey: landingKey, leaveRef, exitRef,
 }: {
   onClose: () => void;
   /** A tab an outside request selects. */
@@ -192,7 +195,7 @@ const WorldEditorInner = ({
   const {
     updateWorldOverview, worldId, worldOverview,
     loadWorldData, getWorldData,
-    stats, statGroups, locations, entities, entityGroups, traits, traitGroups, dictionaries, placeholders, placementLetters,
+    stats, statGroups, locations, connections, entities, entityGroups, traits, traitGroups, dictionaries, placeholders, placementLetters,
     worldPlaceholders, placeholderOwners, placeholderGroups, worldTools,
     addStat, addLocation, addEntity, addTrait, addDictionary,
     addPlaceholder,
@@ -277,6 +280,7 @@ const WorldEditorInner = ({
   const offerAnchor = useTourAnchor(offerPending ? TOUR_STEPS[0].anchor : null);
   const visibleTabs = useMemo(() => editorTabsFor(advanced), [advanced]);
   const tabGroups = useMemo(() => editorTabGroupsFor(advanced), [advanced]);
+  const requestKey = useRequestKey(landingKey);
   const [activeTab, setActiveTab] = useState(initialTab ?? "overview");
   const [sectionsOpen, setSectionsOpen] = useState(false);
   useEffect(() => { if (initialTab) setActiveTab(initialTab); }, [initialTab, requestKey]);
@@ -311,6 +315,11 @@ const WorldEditorInner = ({
   // The entity and book panels' open placeholder rows, one per panel, held and cleared the same way.
   const [entityPlaceholderId, setEntityPlaceholderId] = useState<string | null>(null);
   const [bookPlaceholderId, setBookPlaceholderId] = useState<string | null>(null);
+  // The item panel's tab and open placeholder, held and derived as the entity panel's are.
+  const [itemTab, setItemTab] = useState<ItemPanelTab>('profile');
+  const itemTabs = useMemo(() => itemPanelTabsFor(advanced), [advanced]);
+  const shownItemTab = itemTabs.some((t) => t.value === itemTab) ? itemTab : 'profile';
+  const [itemPlaceholderId, setItemPlaceholderId] = useState<string | null>(null);
   // The location panel's own tabs, held here for the same reason and answered the same way.
   const [locationTab, setLocationTab] = useState<LocationPanelTab>('details');
   const locationTabs = useMemo(() => locationPanelTabsFor(advanced), [advanced]);
@@ -364,6 +373,12 @@ const WorldEditorInner = ({
   useEffect(() => {
     if (import.meta.env.DEV && ENTITY_PANEL_TABS.some((t) => t.value === devSubtab)) {
       setEntityTab(devSubtab as EntityPanelTab);
+    }
+  }, [devSubtab]);
+  // And over the Items tab, where it names one of the item panel's own tabs.
+  useEffect(() => {
+    if (import.meta.env.DEV && ITEM_PANEL_TABS.some((t) => t.value === devSubtab)) {
+      setItemTab(devSubtab as ItemPanelTab);
     }
   }, [devSubtab]);
   // And over the Locations tab, where the slot already names a view. The two value sets are disjoint, so
@@ -481,13 +496,13 @@ const WorldEditorInner = ({
     if (!searching) return [];
     const reachable = new Set<string>(visibleTabs.map((t) => t.value));
     return collectSearchTargets({
-      worldOverview, stats, statGroups, entities, entityGroups, locations, traits, traitGroups, dictionaries, placeholders, placeholderGroups,
-      updateWorldOverview, updateStat, updateStatGroup, updateEntity, updateEntityGroup, updateLocation, updateTrait,
-      updateTraitGroup, updateDictionary, updateDictionaryEntry, updatePlaceholder, updatePlaceholderGroup,
+      worldOverview, stats, statGroups, entities, entityGroups, locations, connections, traits, traitGroups, dictionaries, placeholders,
+      placeholderGroups, updateWorldOverview, updateStat, updateStatGroup, updateEntity, updateEntityGroup, updateLocation,
+      updateConnection, updateTrait, updateTraitGroup, updateDictionary, updateDictionaryEntry, updatePlaceholder, updatePlaceholderGroup,
     }).filter((t) => reachable.has(t.tab));
-  }, [searching, visibleTabs, worldOverview, stats, statGroups, updateStatGroup, entities, entityGroups, locations, traits, traitGroups,
-      dictionaries, placeholders, placeholderGroups, updateWorldOverview, updateStat, updateEntity, updateEntityGroup,
-      updateLocation, updateTrait, updateTraitGroup, updateDictionary, updateDictionaryEntry, updatePlaceholder,
+  }, [searching, visibleTabs, worldOverview, stats, statGroups, updateStatGroup, entities, entityGroups, locations, connections, traits,
+      traitGroups, dictionaries, placeholders, placeholderGroups, updateWorldOverview, updateStat, updateEntity, updateEntityGroup,
+      updateLocation, updateConnection, updateTrait, updateTraitGroup, updateDictionary, updateDictionaryEntry, updatePlaceholder,
       updatePlaceholderGroup]);
   // A fresh object per navigation, not the bare key: a panel with its own tabs has to re-open the right one
   // even when two consecutive hits sit in the same field and the author flipped tabs between them.
@@ -789,6 +804,7 @@ const WorldEditorInner = ({
     switch (tab) {
       case 'overview': setOverviewPanel(overviewPanelFor(subTab)); break;
       case 'entities': setEntityTab(offered(entityTabs, 'profile')); break;
+      case 'items': setItemTab(offered(itemTabs, 'profile')); break;
       case 'locations': setLocationTab(offered(locationTabs, 'details')); break;
       case 'stats': setStatTab(offered(statTabs, 'details')); break;
       case 'traits': setTraitTab(offered(traitTabs, 'details')); break;
@@ -962,9 +978,9 @@ const WorldEditorInner = ({
     onSelect: selectPlaceholder,
     tab: shownPlaceholderTab,
     onTabChange: setPlaceholderTab,
-    onOpenOwner: (owner) => (owner.kind === 'entity'
-      ? navigateToBenchItem('entities', owner.id, 'placeholders')
-      : navigateToBenchItem('dictionary', owner.id)),
+    onOpenOwner: (owner) => (owner.kind === 'dictionary'
+      ? navigateToBenchItem('dictionary', owner.id)
+      : navigateToBenchItem(owner.kind === 'entity' ? 'entities' : 'items', owner.id, 'placeholders')),
   });
   // A panel copy's Edit Blueprint: the blueprint opens on this tab, and the panel keeps its own row.
   const openWorldPlaceholder = useCallback((id: string) => navigateToBenchItem('placeholders', id), [navigateToBenchItem]);
@@ -983,6 +999,17 @@ const WorldEditorInner = ({
   const selectTool = useCallback((id: string | null) => select('tools', id), [select]);
   const toolsAdapter = useWorldToolsAdapter({ selectedId: selections.tools ?? null, onSelect: selectTool, snapshot: editorToolWorld });
   const toolsParts = useListEditor(toolsAdapter, { selectedId: selections.tools ?? null, onSelect: selectTool, search });
+  const selectItem = useCallback((id: string | null) => select('items', id), [select]);
+  const itemsAdapter = useWorldItemsAdapter({
+    selectedId: selections.items ?? null,
+    onSelect: selectItem,
+    tab: shownItemTab,
+    onTabChange: setItemTab,
+    placeholderId: itemPlaceholderId,
+    onPlaceholderIdChange: setItemPlaceholderId,
+    onOpenWorldPlaceholder: openWorldPlaceholder,
+  });
+  const itemsParts = useListEditor(itemsAdapter, { selectedId: selections.items ?? null, onSelect: selectItem, search });
   // The entity panel's tab and its trait and placeholder rows live here, so a new entity keeps them.
   const selectEntity = useCallback((id: string | null) => select('entities', id), [select]);
   const entitiesEditor = useWorldEntitiesAdapter({
@@ -1057,12 +1084,14 @@ const WorldEditorInner = ({
   const partsByTab: Partial<Record<string, ListEditorParts>> = {
     media: mediaParts,
     traits: traitsParts, placeholders: placeholdersParts, stats: statsParts,
-    entities: entitiesParts, locations: locationsParts, dictionary: dictionaryParts, scripts: scriptsParts, tools: toolsParts,
+    entities: entitiesParts, items: itemsParts, locations: locationsParts, dictionary: dictionaryParts, scripts: scriptsParts,
+    tools: toolsParts,
   };
   const listEditorParts = partsByTab[activeTab] ?? null;
   const adaptersByTab: Partial<Record<RevealTab, { holds: (id: string) => boolean }>> = {
     traits: traitsAdapter, placeholders: placeholdersEditor.adapter, stats: statsAdapter,
-    entities: entitiesEditor.adapter, locations: locationsAdapter, dictionary: dictionaryEditor.adapter, scripts: scriptsAdapter,
+    entities: entitiesEditor.adapter, items: itemsAdapter, locations: locationsAdapter, dictionary: dictionaryEditor.adapter,
+    scripts: scriptsAdapter,
     tools: toolsAdapter, media: { holds: (id) => mediaHolds(getWorldData(), id) },
   };
   listHoldsRef.current = (tab, id) => !!adaptersByTab[tab]?.holds(id);
@@ -1071,6 +1100,7 @@ const WorldEditorInner = ({
   const placeSubTab: Partial<Record<string, string>> = {
     overview: overviewPanel ?? NO_OVERVIEW_PANEL,
     entities: shownEntityTab,
+    items: shownItemTab,
     locations: shownLocationTab,
     stats: shownStatTab,
     traits: shownTraitTab,

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import 'fake-indexeddb/auto';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, forceCloseDatabase } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-toastify', () => ({ toast: { info: vi.fn(), dismiss: vi.fn() } }));
@@ -13,6 +13,7 @@ import { promisifyRequest } from '@/lib/idb';
 import {
   WORLD_LIBRARY_DB, WORLD_META_STORE, WORLD_STORE, openWorldLibrary, worldMetaOf, type WorldMetaRecord,
 } from './worldLibrary';
+import { readBundledWorld } from '@/lib/bundledWorldText';
 
 /** Open the library database the way a version 1 build did. */
 function openVersion1(): Promise<IDBDatabase> {
@@ -166,6 +167,16 @@ describe('the version 2 upgrade', () => {
     expect(WorldStorageService.db).toBeNull();
     newer.close();
   });
+
+  it('reconnects after the browser closes the library connection', async () => {
+    await WorldStorageService.storeWorld(world('a'));
+    // fake-indexeddb types the argument as the class; the function takes a connection.
+    forceCloseDatabase(WorldStorageService.db as unknown as Parameters<typeof forceCloseDatabase>[0]);
+
+    await WorldStorageService.storeWorld(world('b'));
+
+    expect((await WorldStorageService.getWorldMetadata()).map((m) => m.id).sort()).toEqual(['a', 'b']);
+  });
 });
 
 describe('every write keeps metadata in step', () => {
@@ -223,7 +234,7 @@ describe('every write keeps metadata in step', () => {
   });
 
   it('default seeding', async () => {
-    const { failed } = await WorldStorageService.loadDefaultWorlds([{ id: 'rampage', defaultName: 'Rampage' }]);
+    const { failed } = await WorldStorageService.loadDefaultWorlds([{ id: 'rampage', defaultName: 'Rampage' }], readBundledWorld);
 
     expect(failed).toEqual([]);
     await expectMetaInSync();

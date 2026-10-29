@@ -629,6 +629,19 @@ It differs from the Searchable Group Picker. That pattern is a Dialog for an unb
 - **Caller page.** A caller can replace the list with its own page, such as Add Requirement's owner page.
 - **Check column.** A picker with a value reserves a check column. Every row that holds the value shows a check.
 
+### Drill-down
+
+A caller can pass a tree of pages in place of flat sections. The drill-down is opt-in.
+
+- **Cutoff.** With 15 rows or fewer, the picker shows the flat list. With more, it opens on the root page.
+- **Page rows.** A page row shows its name, then a count of the enabled rows under it, then `›`. Disabled rows don't count.
+- **Header.** An open page shows a back arrow, then its path, such as `Stats › Ruby`. This is the same header as the Requires owner page.
+- **One choice.** A page with one child page opens straight through it. The header still names the skipped page. A root with one category opens into it and has no back arrow.
+- **One row.** A page with one row shows that row in its place.
+- **Search.** Search on the root page reads every row and shows full breadcrumbs. Search on a page reads only that page's rows.
+- **Breadcrumbs.** On a page, rows drop the segments the path already shows.
+- **Place.** A pick keeps the open page. The picker opens on the root page each time.
+
 ### Row layout and collapse
 
 - The name comes first and keeps its width up to about 65% of the row. Past that it truncates.
@@ -649,7 +662,7 @@ It differs from the Searchable Group Picker. That pattern is a Dialog for an unb
 
 ### Keyboard and responsive behavior
 
-Arrow keys move through rows, Enter picks the row, and Escape closes the picker with no change. A field trigger's popover matches the trigger width, with a minimum of 16rem, and stays inside the viewport. Long lists scroll inside the popover.
+Arrow keys move through rows, Enter picks the row or opens a page, and Escape closes the picker with no change. Backspace in an empty search goes back one page. A field trigger's popover matches the trigger width, with a minimum of 16rem, and stays inside the viewport. Long lists scroll inside the popover.
 
 ### Production mapping
 
@@ -2110,6 +2123,54 @@ A segmented control whose options turn on and off one by one, for a short pick-m
 - 🔊 **Name.** The group carries an `aria-label`; each option is a pressed or unpressed button.
 
 Open `#dev?modal=designSystem&tab=segmented-multi-select` for the time chip's controls with local state.
+
+## Pattern: Inventory Tab
+
+**Purpose:** Show the player's equipment and carried items in the game's side panel, and act on them in one click.
+
+> ✅ **Approved.** The user approved the layout on 2026-10-28 (Inventory ticket 03), with one change: side panel tabs show icons alone whenever their labels would overlap.
+
+**Density:** Compact, like the Stats and Traits tabs. Item rows are 36px tall; a charges line adds one meta line.
+
+### Composition
+
+- 🗂️ **Owner card.** The played Persona's `PanelOwnerCard`, with the You pill. Under None it reads **You** with no pill.
+- 🛡️ **Equipped.** One row per world slot. The slot name sits left in meta text, with "1 of 2" under it when the slot holds more than one. The equipped items sit right, each with an Unequip button. A free slot reads **Empty**.
+- 🎒 **Carried.** One row per Item Copy: the name, ×count for a stack, a lock for Bound, and a charges line. Icon buttons on the right: Equip (only for an item with a slot), Drop and Give.
+- 🔢 **Count.** Drop on one Item Copy acts at once. Drop on a stack and Give open a popover. It holds a number field that starts at 1, an **All** button and "of N". Give adds the present entities as `CompactSelectionRow`s, or "Nobody is here."
+- 🔒 **Bound.** Drop and Give stay in place, disabled, with the reason in their tooltips.
+- 🏷️ **Tab strip.** The side panels' strips show labels only while every label fits its cell. Otherwise each tab shows its icon, and the tooltip names it.
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| The tab body | `InventoryTab` in [`InventoryTab.tsx`](../src/components/game/InventoryTab.tsx) |
+| Its data and its one write | `useInventoryPanel` in [`useInventoryPanel.ts`](../src/components/game/useInventoryPanel.ts), through `applyInventoryOps` in [`inventory/index.ts`](../src/lib/inventory/index.ts) |
+| The measured tab strip | `PanelTabList` and `PanelTab` in [`PanelTabList.tsx`](../src/components/game/PanelTabList.tsx) |
+| The host | `RightPanel` in [`GamePanels.tsx`](../src/components/game/GamePanels.tsx) |
+| Isolated reference | [`InventoryTabReference.tsx`](../src/components/design-system/InventoryTabReference.tsx) |
+
+### Responsive behavior
+
+The tab fills the right panel on desktop and the **Status** sheet on mobile. Rows keep their buttons; long names truncate first. Popovers align to the button's end and stay in the viewport. At 1280px and on a 390px phone the four-tab strip shows icons; at 1920px it shows labels.
+
+### State reference
+
+| State | Treatment |
+| --- | --- |
+| Turn running or past page | Every button is disabled, and an open count popover closes. |
+| Bound | Drop and Give disabled; Equip still works. |
+| Hidden Item Copy | Never shown. A hidden equipped item still counts in its slot's fill. |
+| Equipped row | Unequip only. Drop and Give act on carried rows. |
+| Nothing carried | "You carry nothing." |
+| No items in the world | No Inventory tab. |
+
+### Writing review
+
+Button names are verb-first and name the item: "Equip Greatsword", "Drop Ash Wand: Bound". Status lines are short sentences. Item names are authored and keep their own voice.
+
+Open `#dev?modal=designSystem&tab=inventory-tab`, or `#dev?view=gameViewer&fixture=items&tab=inventory` for the tab in a game.
 
 ## UI and prototype workflow
 

@@ -63,7 +63,7 @@ describe('settings design reference', () => {
     const user = userEvent.setup();
     renderShowcase();
 
-    const modeSelect = screen.getByRole('combobox', { name: 'Settings mode' });
+    const modeSelect = screen.getByRole('combobox', { name: 'Settings Mode' });
     expect(modeSelect).toHaveTextContent('Advanced');
     await user.click(screen.getByRole('checkbox', { name: SETTINGS_COPY.markdownFormatting.label }));
     await user.click(modeSelect);
@@ -352,7 +352,7 @@ describe('sections bar reference', () => {
     const sections = () => within(region).getByRole('button', { name: /^Sections/ });
     const bar = () => within(region).getByRole('tablist', { name: 'Editor Sections' });
     await user.click(sections());
-    expect(within(bar()).getAllByRole('tab')).toHaveLength(10);
+    expect(within(bar()).getAllByRole('tab')).toHaveLength(11);
     // Lines split the groups; no group name is drawn.
     expect(bar().querySelectorAll('[data-sections-separator]')).toHaveLength(3);
     expect(within(bar()).queryByText('Content')).toBeNull();
@@ -362,7 +362,7 @@ describe('sections bar reference', () => {
 
     await user.click(within(region).getByRole('radio', { name: 'Simple' }));
     await user.click(sections());
-    expect(within(bar()).getAllByRole('tab')).toHaveLength(7);
+    expect(within(bar()).getAllByRole('tab')).toHaveLength(8);
     expect(localStorage).toHaveLength(0);
   });
 });
@@ -375,7 +375,7 @@ describe('nav rail reference', () => {
 
     const region = screen.getByRole('region', { name: 'Nav Rail' });
     const rail = within(region).getByRole('tablist', { name: 'Sample Editor Sections' });
-    expect(within(rail).getAllByRole('tab')).toHaveLength(10);
+    expect(within(rail).getAllByRole('tab')).toHaveLength(11);
     await user.click(within(rail).getByRole('tab', { name: 'Traits' }));
     expect(within(region).getByText('The trait tree beside the selected trait\'s details.')).toBeInTheDocument();
 
@@ -484,12 +484,12 @@ describe('surface app bar reference', () => {
     await user.click(within(region).getByRole('button', { name: 'Save' }));
     expect(within(region).getByText('Last action: Save.')).toBeInTheDocument();
     expect(within(region).getByRole('button', { name: 'Saving…' })).toBeInTheDocument();
-    expect(await within(region).findByRole('button', { name: 'Saved' }, { timeout: 2000 })).toBeInTheDocument();
+    expect(await within(region).findByRole('button', { name: 'Saved' })).toBeInTheDocument();
 
     await user.click(within(region).getByRole('checkbox', { name: 'Fail Saves' }));
     await user.click(within(region).getByRole('button', { name: 'Make a Change' }));
     await user.click(within(region).getByRole('button', { name: 'Save' }));
-    expect(await within(region).findByRole('button', { name: 'Failed' }, { timeout: 2000 })).toBeEnabled();
+    expect(await within(region).findByRole('button', { name: 'Failed' })).toBeEnabled();
 
     await user.click(within(region).getByRole('button', { name: 'Save options' }));
     await user.click(await screen.findByRole('button', { name: 'Export World' }));

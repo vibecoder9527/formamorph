@@ -13,6 +13,7 @@ import { ChipOptionsReference } from '@/components/design-system/ChipOptionsRefe
 import { CodeCardReference } from '@/components/design-system/CodeCardReference';
 import { VariableMenuReference } from '@/components/design-system/VariableMenuReference';
 import { YouMarkReference } from '@/components/design-system/YouMarkReference';
+import { InventoryTabReference } from '@/components/design-system/InventoryTabReference';
 import { SegmentedMultiSelectReference } from '@/components/design-system/SegmentedMultiSelectReference';
 import { useDevRoute } from '@/lib/devRouter';
 import { BookOpen, MonitorCog } from 'lucide-react';
@@ -213,7 +214,7 @@ function SettingsReference() {
           descriptions={SETTINGS_MODE_DESCRIPTIONS}
           hiddenNotice={hasHiddenValues ? SETTINGS_HIDDEN_NOTICE : undefined}
           size="sm"
-          aria-label="Settings mode"
+          aria-label="Settings Mode"
         />
       </div>
       <div className="grid gap-6 xl:grid-cols-2">
@@ -473,6 +474,12 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     label: 'Segmented Multi-Select',
     description: 'A segmented control where each option turns on by itself, as the time chip uses',
     Component: SegmentedMultiSelectReference,
+  },
+  {
+    id: 'inventory-tab',
+    label: 'Inventory Tab',
+    description: 'The game panel’s slots and carried items, and the side panel tab strip that drops to icons',
+    Component: InventoryTabReference,
   },
 ];
 

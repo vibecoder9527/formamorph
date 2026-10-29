@@ -15,8 +15,14 @@ export type DevView = (typeof DEV_VIEWS)[number];
 /** Dev-only routes for panes whose real host needs a server, an admin session, or a deep click path.
  *  `customCode` opens MainMenu's Custom Code Execution dialog on canned stat code when the selected world has none; the
  *  rest mount one pane on canned props (`DevPaneRoutes`). The podium and the sent list still load from the
- *  server, so they show their empty state without one. Players never navigate to these. */
-export const DEV_PANE_MODALS = ['customCode', 'eventForm', 'podium', 'sentMessages', 'suspend', 'feedbackForm', 'feedbackEdit', 'changelogEntry', 'fontTune', 'revealDemo', 'presetImport', 'generateImage', 'placeholderPicker', 'rootCrash'] as const;
+ *  server, so they show their empty state without one. `feedbackForm` opens on the branch `tab=` names
+ *  (`bug`, `suggestion`, `question`), on a canned fill; over a stored draft it opens the Replace-draft confirm.
+ *  `feedbackThread` opens the answered question from the feedback fixture (add `fixture=feedback`); `tab=staff`
+ *  reads it as staff, with the triage controls. `pendingUpdate` shows the author's Pending Update section of the
+ *  details modal on a canned update (`devPendingUpdate`); `tab=compare` opens its Compare view. Add
+ *  `fixture=review` so the held thumbnail and the listing names load.
+ *  Players never navigate to these. */
+export const DEV_PANE_MODALS = ['customCode', 'eventForm', 'podium', 'sentMessages', 'suspend', 'feedbackForm', 'feedbackEdit', 'feedbackThread', 'changelogEntry', 'fontTune', 'revealDemo', 'presetImport', 'generateImage', 'placeholderPicker', 'rootCrash', 'pendingUpdate'] as const;
 export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
 
 /** Modals the router can open via `#dev?modal=…`. `settings` opens from MainMenu or GameViewer; `menu`,
@@ -65,7 +71,8 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  a sign-in raises when it calls a pending deletion off. Neither is reachable by clicking without an
  *  account in the matching state — one needs a real password, the other a request already standing.
  *  `updateRequired` raises the Update Dialog on a canned refusal, since the real one needs a server route
- *  whose minimum version is above the running build. `exitApp` raises the Android exit prompt, which on a
+ *  whose minimum version is above the running build. `usernameRename` raises the rename dialog on a
+ *  canned name, since only a flagged account reaches it. `exitApp` raises the Android exit prompt, which on a
  *  phone only the hardware back button reaches. `connectReferences` raises the Connect World References step
  *  on canned rows (`devConnectReferencesSample.ts`), because in the app it opens only partway through an add
  *  in the World Editor, and only for a library item expecting something that world lacks. `manageAddons`
@@ -109,7 +116,7 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  Chip Options over it, on a canned Entities chip. `scriptPrompt` is in game (GameViewer) and fires one
  *  canned `player.*` request through the live prompt store once the game has a turn; `tab=…` picks the shape
  *  (`devScriptPromptSamples.ts`). Pair it with `fixture=…`. `DEV_PANE_MODALS` follow. */
-export const DEV_MODALS = ['settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'changelog', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt', ...DEV_PANE_MODALS] as const;
+export const DEV_MODALS = ['settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'changelog', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'usernameRename', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt', ...DEV_PANE_MODALS] as const;
 export type DevModal = (typeof DEV_MODALS)[number];
 
 /** The `attach=…` value that stages sample attachments on the game view. */
@@ -130,25 +137,27 @@ export const DEV_MODAL_TABS = {
   // Settings → Endpoints opens its own tab with the same `subtab=…` (`#dev?modal=settings&tab=endpoints&subtab=image`).
   // `tagPrompt` is Advanced only and hidden while image generation is off.
   settingsEndpoints: ['text', 'image', 'tagPrompt'],
-  worldEditor: ['overview', 'media', 'entities', 'locations', 'traits', 'stats', 'dictionary', 'placeholders', 'scripts', 'tools'],
+  worldEditor: ['overview', 'media', 'entities', 'items', 'locations', 'traits', 'stats', 'dictionary', 'placeholders', 'scripts', 'tools'],
   // Community Creations browses one kind per tab, plus Contest — a view over the worlds already in the
   // catalog rather than a fourth kind (see lib/browseTabs). `tab=contest` serves canned contests, so the
-  // tab is reachable whether or not one is really running.
-  community: ['world', 'entity', 'dictionary', 'model', 'prompt', 'contest'],
+  // tab is reachable whether or not one is really running. `fixture=review` shows the viewer as an admin
+  // with the review queue's listings pinned above the results (`#dev?modal=community&fixture=review`).
+  community: ['world', 'entity', 'dictionary', 'model', 'prompt', 'mascot', 'contest'],
   // The publish dialog's canned payload: a world by default, or a prompt with `tab=prompt`.
   publish: ['world', 'prompt'],
   // The account dialog: admin messages, the follow feed, the terms, and the account settings. Log Out is a
   // header button rather than a tab, so it is not routable.
   profile: ['messages', 'notifications', 'terms', 'settings'],
-  // The reader's side of feedback, behind the main menu's Feedback button; one tab per branch.
-  feedbackHub: ['bugs', 'suggestions'],
+  // The reader's side of feedback, behind the main menu's Feedback button; one tab per branch. Add
+  // `fixture=feedback` to serve a canned board (`devFeedbackStub.ts`); the admin feedback route takes it too.
+  feedbackHub: ['bugs', 'suggestions', 'questions'],
   // The admin tools: accounts, broadcasts, the publish policies, the events calendar, the feedback
-  // queues, the report queue, and the log. `tab=events` serves a canned calendar (`devEventSample.ts`),
+  // queues, the moderation queues, and the log. `tab=events` serves a canned calendar (`devEventSample.ts`),
   // so the tab's three groups are reachable without a live server; which of its two role views appears
-  // follows the session. `tab=reports` needs a live server with the feature — it opens empty otherwise.
+  // follows the session. `tab=moderation` needs a live server for reports — it opens empty otherwise.
   // `tab=serverSettings` is the Server tab: one box per server setting, read from the live server, so
   // against a server without the settings routes each row reports that it went unanswered.
-  adminPanel: ['users', 'broadcasts', 'policies', 'serverSettings', 'events', 'feedback', 'reports', 'log'],
+  adminPanel: ['users', 'broadcasts', 'policies', 'serverSettings', 'events', 'feedback', 'moderation', 'log'],
   // Admin Panel → Events uses the `subtab=…` slot for which of its two role views to render over the
   // canned calendar, so the moderator's read-only half is reachable without a second account.
   adminPanelEvents: ['admin', 'staff'],
@@ -162,7 +171,10 @@ export const DEV_MODAL_TABS = {
   // slot over the Entities tab (`#dev?modal=worldEditor&tab=entities&subtab=descriptions`). It lands on the
   // panel, so pair it with a world that has an entity to select. `openings` and `placeholders` are Advanced only.
   // `fixture=entityPresence` gives the Archivist Relationships rows on `profile`.
-  worldEditorEntity: ['profile', 'descriptions', 'traits', 'stats', 'placeholders', 'openings'],
+  worldEditorEntity: ['profile', 'descriptions', 'items', 'traits', 'stats', 'placeholders', 'openings'],
+  // The item panel's own tabs, in the same `subtab=…` slot over the Items tab
+  // (`#dev?modal=worldEditor&tab=items&subtab=properties`). `fixture=items` gives a world with items and slots.
+  worldEditorItem: ['profile', 'descriptions', 'properties', 'effects', 'requirements', 'placeholders'],
   // The library entity editor (`#dev?modal=entityEditor&tab=placeholders`). It opens on a blank draft and is
   // never in Simple mode, so every tab is reachable. `fixture=gallery` opens it on an entity whose images carry
   // Visibility rules (`#dev?modal=entityEditor&tab=entity&subtab=profile&fixture=gallery`).
@@ -174,7 +186,7 @@ export const DEV_MODAL_TABS = {
   // (`#dev?modal=worldEditor&tab=locations&subtab=presence`). It shares that tab's `subtab=…` slot with the
   // List/Canvas switch above, which is why no value may appear in both lists. `pins` is Advanced only.
   // `fixture=entityPresence` loads a cast for the Presence tab's Entities Here rows; select The White Room.
-  worldEditorLocation: ['details', 'presence', 'media', 'pins', 'openings'],
+  worldEditorLocation: ['details', 'presence', 'items', 'media', 'pins', 'openings'],
   // The World Editor's stat panel does the same over the Stats tab
   // (`#dev?modal=worldEditor&tab=stats&subtab=code`). `descriptors` and `code` are Advanced only, and
   // Simple mode leaves one tab and no strip, so land those on an Advanced editor.
@@ -218,7 +230,13 @@ export const DEV_MODAL_TABS = {
   // Admin Panel → Policies has a second level, one sub-tab per authored popup, reached with `subtab=…`.
   adminPanelPolicies: ['uploadGate', 'tagNotice', 'privacyPolicy'],
   // Admin Panel → Feedback uses the same `subtab=…` slot, one per branch.
-  adminPanelFeedback: ['bugs', 'suggestions'],
+  adminPanelFeedback: ['bugs', 'suggestions', 'questions'],
+  // Admin Panel → Moderation uses it too: the report queue, the review queue and the auto-approvals.
+  // `fixture=review` serves a canned review queue and auto-approval list (`devReviewStub.ts`), and
+  // `pick=<item id>` opens one item's dialog
+  // (`#dev?modal=adminPanel&tab=moderation&subtab=review&fixture=review&pick=dev-review-new`;
+  // `subtab=auto` lands on the auto-approvals).
+  adminPanelModeration: ['reports', 'review', 'auto'],
   // The acknowledge poster renders one of an event's two phases; `tab=…` picks which the canned event is at.
   eventAck: ['start', 'end'],
   // `player.*` prompt shapes on the game view (`#dev?view=gameViewer&fixture=whiteRoom&modal=scriptPrompt&tab=askLong`).
@@ -239,9 +257,10 @@ export const DEV_MODAL_TABS = {
   // Settings → Prompts preset-level entries, reached with `subtab=…` in place of a prompt
   // (`#dev?modal=settings&tab=prompts&subtab=overview`). A built-in preset shows none and lands on Narration.
   settingsPromptPreset: ['overview'],
-  // GameViewer's side panel (Entities/Notes/Memory/Logs). Also not a modal: `#dev?view=gameViewer&tab=memory`.
+  // GameViewer's side panels: Entities/Notes/Memory/Logs on the left, Stats/Traits/Inventory/Location on the
+  // right. Also not a modal: `#dev?view=gameViewer&tab=memory`. Inventory shows with `fixture=items`.
   // The mobile-only `model` tab is deliberately not routable.
-  gameViewer: ['entities', 'notes', 'memory', 'logs'],
+  gameViewer: ['entities', 'notes', 'memory', 'logs', 'stats', 'traits', 'inventory', 'location'],
   // The narration panel's layout, reached with `mode=…` on the game view (`#dev?view=gameViewer&mode=chat`).
   // It overrides the Narration Layout setting without saving it.
   gameViewerLayout: ['pages', 'chat'],

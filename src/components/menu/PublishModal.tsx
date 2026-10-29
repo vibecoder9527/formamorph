@@ -16,6 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import WorldStorageService, { type ListingDetails } from "@/services/WorldStorageService";
 import { type WorldRecord } from "@/components/WorldDetails";
 import { KIND_LABELS } from "@/lib/catalogKinds";
+import { publishedMessage } from "@/lib/listingModeration";
 import { PolicyDialog } from "@/components/menu/PolicyDialog";
 import { usePublishPolicies } from "@/lib/usePublishPolicies";
 import PolicyService, { TERMS_REQUIRED } from "@/services/PolicyService";
@@ -23,6 +24,9 @@ import { publishTags, type PublishPayload } from "@/lib/publishPayload";
 import { remoteImagesInContent } from "@/lib/embedRemoteImages";
 import { isExpiringImageHost } from "@/lib/imageBytes";
 import { ContestEntryCard } from "@/components/menu/ContestEntryCard";
+import { SupporterOnlyCard } from "@/components/menu/SupporterOnlyCard";
+import AuthService from "@/services/AuthService";
+import { isAdmin } from "@/lib/roles";
 import { activeContestOf, entriesOf } from "@/lib/contests";
 import { CONTEST_ALREADY_ENTERED, CONTEST_NOT_ACTIVE } from "@/services/WorldStorageService";
 import { useContestWithdrawal } from "@/lib/useContestWithdrawal";
@@ -38,6 +42,19 @@ import { offersCompatibility, usePublishLinks } from "@/lib/usePublishLinks";
 import { AlertTriangle, ScrollText, Trophy } from "lucide-react";
 import type { ServerEvent } from "@/types";
 import { useMountedRef } from "@/lib/useMountedRef";
+import { ImageUpload } from "@/lib/UtilityComponents";
+import { blobToDataUrl } from "@/lib/imageSource";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+/** The Expression select's value for the Initial pick's own expression. */
+const INITIAL_EXPRESSION = '__initial__';
+
+/** A Mascot's expression layers, and a renderer for its Initial look with one of them in place. */
+export interface MascotThumbnailLooks {
+  expressions: readonly { id: string; name: string }[];
+  /** A WebP data URL; null draws the Initial pick's own expression. */
+  render: (expression: string | null) => Promise<string>;
+}
 
 interface PublishModalProps {
   open: boolean;
@@ -54,10 +71,14 @@ interface PublishModalProps {
    * Avatar passes none.
    */
   localId?: string;
+  /** The listing the local copy is linked to. Preselected as the update target when it is one of the user's own. */
+  linkedListingId?: string;
   /** Called once a published world's link has been written, so the caller can re-read its library. */
   onLinked?: () => void;
   /** Called after any successful publish with the listing it became, for a caller that links its own copy. */
   onPublished?: (listing: { id: string; updatedAt?: string }) => void;
+  /** A Mascot's expressions for the thumbnail picker. */
+  mascotLooks?: MascotThumbnailLooks;
 }
 
 /**
@@ -68,7 +89,7 @@ interface PublishModalProps {
  * The overwrite list is fetched per kind: your characters are never offered as targets for a world.
  */
 export function PublishModal({
-  open, onOpenChange, isAuthenticated, payload, events = [], localId, onLinked, onPublished,
+  open, onOpenChange, isAuthenticated, payload, events = [], localId, linkedListingId, onLinked, onPublished, mascotLooks,
 }: PublishModalProps) {
   const [userWorlds, setUserWorlds] = useState<WorldRecord[]>([]);
   const [selectedWorldToOverride, setSelectedWorldToOverride] = useState<string | null>(null);
@@ -77,6 +98,14 @@ export function PublishModal({
   // Whether this upload is also a contest entry, and what the server said if it refused to take it.
   const [enterContest, setEnterContest] = useState(false);
   const [contestError, setContestError] = useState('');
+  // An admin's new Mascot listing, created Supporter-only and pinned.
+  const [supporterOnly, setSupporterOnly] = useState(false);
+  // A Mascot's own thumbnail, replacing the Initial render the payload carries.
+  const [thumbnailOverride, setThumbnailOverride] = useState<string | null>(null);
+  // The expression drawn into the Initial look for the thumbnail, and that render. An upload wins over both.
+  const [thumbnailExpression, setThumbnailExpression] = useState<string | null>(null);
+  const [expressionThumbnail, setExpressionThumbnail] = useState<string | null>(null);
+  const expressionRequest = useRef(0);
 
   // The optional note about what changed. Held here until the update-publish succeeds, so a refused
   // upload costs nothing that was written. `changelogSupported` stays false against a server that has
@@ -92,6 +121,21 @@ export function PublishModal({
   const changelogReqRef = useRef(0);
   // The request id still matches after an unmount, so it alone cannot stop a late answer.
   const mountedRef = useMountedRef();
+
+  /** Draw the thumbnail with `expression`, dropping any upload. A later pick wins over a slower render. */
+  const chooseExpression = async (expression: string | null) => {
+    if (!mascotLooks) return;
+    const request = ++expressionRequest.current;
+    setThumbnailExpression(expression);
+    setThumbnailOverride(null);
+    if (expression === null) { setExpressionThumbnail(null); return; }
+    try {
+      const rendered = await mascotLooks.render(expression);
+      if (mountedRef.current && request === expressionRequest.current) setExpressionThumbnail(rendered);
+    } catch (error) {
+      if (mountedRef.current) toastError(error, "Couldn't draw that expression.");
+    }
+  };
   /** The answer, once one listing has given it. Null until then, and again on the next opening. */
   const changelogSupportRef = useRef<boolean | null>(null);
 
@@ -154,12 +198,16 @@ export function PublishModal({
   const updatingEntry = Boolean(enteredId) && selectedWorldToOverride === enteredId;
   const showContestCard = Boolean(contest) && kind === 'world'
     && (selectedWorldToOverride === 'new' || updatingEntry);
+  // Only Mascots have a Supporter install today (Q40). An update keeps the listing's flag.
+  const showSupporterCard = kind === 'mascot' && selectedWorldToOverride === 'new' && isAdmin(AuthService.getCurrentUser());
+  const publishesSupporterOnly = showSupporterCard && supporterOnly;
   // What's open right now, readable from inside an async callback that captured an older `kind`.
   const kindRef = useRef(kind);
   kindRef.current = kind;
 
   // Fetch the user's listings of this kind — the only valid overwrite targets.
-  const fetchUserWorlds = async () => {
+  // `preselect` only on opening: a later re-read must not undo a pick the user made.
+  const fetchUserWorlds = async ({ preselect = false } = {}) => {
     if (!isAuthenticated) return;
 
     try {
@@ -169,6 +217,10 @@ export function PublishModal({
       // character dialog with worlds — every row then a wrong-kind overwrite target.
       if (kindRef.current !== kind) return;
       setUserWorlds(listings);
+      // A downloaded copy links to someone else's listing, so only an own listing is preselected.
+      if (preselect && linkedListingId && listings.some((row: WorldRecord) => String(row._id || row.id) === linkedListingId)) {
+        setSelectedWorldToOverride((current) => (current === 'new' ? linkedListingId : current));
+      }
     } catch (error) {
       console.error('Error fetching user listings:', error);
       if (kindRef.current !== kind) return;
@@ -217,7 +269,13 @@ export function PublishModal({
         if (!ready) return;
       }
 
-      const created = await WorldStorageService.publishItem(links.declarePayload(payload), targetId, entering);
+      const declared = links.declarePayload(payload);
+      const mascotThumbnail = thumbnailOverride ?? expressionThumbnail;
+      const created = await WorldStorageService.publishItem({
+        ...declared,
+        ...(kind === 'mascot' && mascotThumbnail ? { thumbnail: mascotThumbnail } : {}),
+        ...(!targetId && publishesSupporterOnly ? { supporterOnly: true } : {}),
+      }, targetId, entering);
 
       // The author's copy becomes a copy of the listing it just became, the way a downloaded one is —
       // which is what carries a later contest win back to the library they actually work in. The listing's
@@ -244,9 +302,10 @@ export function PublishModal({
         await new Promise<void>((resolve) => { entrySettledRef.current = resolve; });
       }
       const draft = changelogDraftRef.current;
+      let entryHeld = false;
       if (targetId && draft) {
         try {
-          await WorldStorageService.createChangelogEntry(targetId, draft);
+          entryHeld = (await WorldStorageService.createChangelogEntry(targetId, draft)).pending === true;
         } catch (error) {
           toastError(error, {
             headline: `${KIND_LABELS[kind].one} updated, but the changelog entry did not save. Add it from the listing's Changelog.`,
@@ -258,7 +317,7 @@ export function PublishModal({
       // No refetch: the modal closes here and reloads its listings on the next open, so re-reading them
       // only to discard them is a round-trip the user waits on.
       onOpenChange(false);
-      toast.success(`${KIND_LABELS[kind].one} ${targetId ? 'updated' : 'published'} successfully!`);
+      toast.success(publishedMessage(kind, Boolean(targetId), created, entryHeld));
     } catch (error) {
       // The gate can be raised, or an acceptance reset, after this modal read its policy state. The
       // server is the authority, so its refusal reopens the popup rather than showing a dead error.
@@ -390,10 +449,15 @@ export function PublishModal({
     setPublishError('');
     setEnterContest(false);
     setContestError('');
+    setSupporterOnly(false);
+    setThumbnailOverride(null);
+    setThumbnailExpression(null);
+    setExpressionThumbnail(null);
+    expressionRequest.current += 1;
     // Asked again on the next opening rather than held for the app's lifetime: this dialog is mounted for
     // the whole session, and one refused request must not hide the feature until a restart.
     changelogSupportRef.current = null;
-    fetchUserWorlds();
+    void fetchUserWorlds({ preselect: true });
     // Fetch only when the modal opens, auth changes, or the kind changes — not on fetchUserWorlds identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isAuthenticated, kind]);
@@ -525,6 +589,41 @@ export function PublishModal({
               </div>
             )}
 
+            {kind === 'mascot' && (
+              <div className="mt-4 space-y-2" data-testid="mascot-publish-thumbnail">
+                <p className="text-label font-medium">Thumbnail</p>
+                <p className="text-meta text-muted-foreground">
+                  Shows the Initial Look. Pick an expression or upload an image to replace it.
+                </p>
+                {mascotLooks && mascotLooks.expressions.length > 0 && (
+                  <div className="space-y-1">
+                    <Label htmlFor="publish-mascot-expression" className="text-label">Expression</Label>
+                    <Select
+                      value={thumbnailExpression ?? INITIAL_EXPRESSION}
+                      onValueChange={(value) => { void chooseExpression(value === INITIAL_EXPRESSION ? null : value); }}
+                    >
+                      <SelectTrigger id="publish-mascot-expression" className="w-56"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={INITIAL_EXPRESSION}>Initial Look&apos;s Own</SelectItem>
+                        {mascotLooks.expressions.map((expression) => (
+                          <SelectItem key={expression.id} value={expression.id}>{expression.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <ImageUpload
+                  id="publish-mascot-thumbnail"
+                  value={thumbnailOverride ?? expressionThumbnail ?? payload?.thumbnail ?? null}
+                  onFile={(file) => { void blobToDataUrl(file).then((data) => { if (mountedRef.current) setThumbnailOverride(data); }); }}
+                  onChange={(value) => { if (value === '') setThumbnailOverride(null); }}
+                />
+                {thumbnailOverride && (
+                  <Button size="sm" variant="ghost" onClick={() => setThumbnailOverride(null)}>Use Initial Look</Button>
+                )}
+              </div>
+            )}
+
             {kind === 'world' && (
               <LinkedContentSection
                 rows={links.linkedRows}
@@ -565,6 +664,8 @@ export function PublishModal({
             error={contestError || null}
           />
         )}
+
+        {showSupporterCard && <SupporterOnlyCard checked={supporterOnly} onCheckedChange={setSupporterOnly} />}
 
         {/* The world is still unpublished: every source it requires has to exist first. Pinned below the
             scrolling list, because the button beside it is what acts on this. */}
@@ -611,7 +712,8 @@ export function PublishModal({
               ? 'Publishing...'
               : links.sourceFailures.length > 0
                 ? 'Retry'
-                : showContestCard && enterContest ? 'Publish & Enter' : 'Publish'}
+                : showContestCard && enterContest ? 'Publish & Enter'
+                  : publishesSupporterOnly ? 'Publish Supporter-Only' : 'Publish'}
           </Button>
         </DialogFooter>
       </DialogContent>

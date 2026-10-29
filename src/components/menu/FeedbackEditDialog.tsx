@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { toast } from "react-toastify";
-import { toastError } from "@/lib/linkToast";
+import { useMountedRef } from "@/lib/useMountedRef";
 import { Pencil } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -10,11 +9,14 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PromptField from "@/components/prompt/PromptField";
+import { FeedbackSuggestPlugin } from "@/components/menu/FeedbackSuggestPlugin";
 import { plainVocabulary } from "@/lib/chipVocabulary";
 import { CATEGORY_OPTIONS, FEEDBACK_TYPE_LABELS } from "@/lib/feedbackPresentation";
 import { categoryForType, changedFields, type EditDraft } from "@/lib/feedbackEditing";
 import FeedbackService from "@/services/FeedbackService";
-import type { FeedbackCategory, FeedbackThread, FeedbackType } from "@/types";
+import { DetailedError } from "@/lib/errorDetails";
+import type { FeedbackNotify } from "@/lib/feedbackCapabilities";
+import { FEEDBACK_TYPES, type FeedbackCategory, type FeedbackThread, type FeedbackType } from "@/types";
 
 /** Mirrors the server's caps so the fields agree with what it will accept. */
 const TITLE_MAX = 120;
@@ -30,6 +32,12 @@ interface FeedbackEditDialogProps {
   mayRefile: boolean;
   /** Handed the thread as it now reads. */
   onSaved: (thread: FeedbackThread) => void;
+  /** Reports each result to the reader. */
+  notify: FeedbackNotify;
+  /** Says a failed save inside the dialog, where the reader is looking; a 401 still goes to `notify`. */
+  inlineNote?: boolean;
+  /** The boards `#` suggestions search, or null for every board the reader may read. */
+  threadSearchTypes: readonly FeedbackType[] | null;
 }
 
 /**
@@ -39,12 +47,14 @@ interface FeedbackEditDialogProps {
  * refused: a reporter sees their own words, the team sees the filing, and on a bug they see both.
  */
 export function FeedbackEditDialog({
-  open, onOpenChange, thread, mayEditProse, mayRefile, onSaved,
+  open, onOpenChange, thread, mayEditProse, mayRefile, onSaved, notify, inlineNote = false, threadSearchTypes,
 }: FeedbackEditDialogProps) {
+  const [failure, setFailure] = useState<string | null>(null);
   const [draft, setDraft] = useState<EditDraft>({
     title: thread.title, body: thread.body, category: thread.category, type: thread.type,
   });
   const [saving, setSaving] = useState(false);
+  const mounted = useMountedRef();
   // No chip family: a report is prose, and an authored world's placeholders mean nothing in one.
   const [plainVocab] = useState(() => plainVocabulary());
 
@@ -52,6 +62,7 @@ export function FeedbackEditDialog({
   // overwrite somebody else's edit with what was on screen before it.
   useEffect(() => {
     if (open) {
+      setFailure(null);
       setDraft({ title: thread.title, body: thread.body, category: thread.category, type: thread.type });
     }
   }, [open, thread]);
@@ -68,17 +79,20 @@ export function FeedbackEditDialog({
   const incomplete = mayEditProse && (!draft.title.trim() || !draft.body.trim());
 
   const save = async () => {
+    setFailure(null);
     setSaving(true);
     try {
       onSaved(await FeedbackService.update(thread.id, changes as {
         title?: string; body?: string; category?: FeedbackCategory; type?: FeedbackType;
       }));
       onOpenChange(false);
-      toast.success('Saved');
+      notify('Saved', 'success');
     } catch (error) {
-      toastError(error, 'Failed to save the changes');
+      if (inlineNote && !(error instanceof DetailedError && error.status === 401)) {
+        if (mounted.current) setFailure('Failed to save the changes');
+      } else notify('Failed to save the changes', 'error', error);
     } finally {
-      setSaving(false);
+      if (mounted.current) setSaving(false);
     }
   };
 
@@ -122,7 +136,9 @@ export function FeedbackEditDialog({
                     markdown
                     ariaLabel="Description"
                     className="h-[240px]"
-                  />
+                  >
+                    <FeedbackSuggestPlugin thread={thread.id} threadTypes={threadSearchTypes} />
+                  </PromptField>
                 </div>
               </>
             )}
@@ -134,7 +150,7 @@ export function FeedbackEditDialog({
                   <Select value={draft.type} onValueChange={pickType}>
                     <SelectTrigger aria-label="Kind"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {(['bug', 'suggestion'] as const).map((value) => (
+                      {FEEDBACK_TYPES.map((value) => (
                         <SelectItem key={value} value={value}>{FEEDBACK_TYPE_LABELS[value].one}</SelectItem>
                       ))}
                     </SelectContent>
@@ -163,12 +179,14 @@ export function FeedbackEditDialog({
             {draft.type !== thread.type && (
               <p className="rounded-md border border-warning/40 bg-warning/5 p-3 text-meta text-muted-foreground">
                 Moving this to a {FEEDBACK_TYPE_LABELS[draft.type as FeedbackType].one.toLowerCase()} sets its status
-                back to Open{thread.type === 'bug' ? ', and deletes the version and platform it was filed with' : ''}.
-                Its replies and votes stay.
+                back to Open{thread.acceptedAnswer ? ' and clears the accepted answer' : ''}{thread.type === 'bug' ? ', and deletes the version and platform it was filed with' : ''}.
+                Its replies and votes stay.{draft.type === 'bug' && ' Only the reporter and staff can reply to a bug.'}
               </p>
             )}
           </div>
         </ScrollArea>
+
+        {failure && <p role="alert" className="text-helper text-destructive">{failure}</p>}
 
         <DialogFooter className="flex-col-reverse sm:flex-row gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>

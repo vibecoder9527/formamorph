@@ -8,6 +8,7 @@ import { FEEDBACK_SEARCH_DELAY_MS, FEEDBACK_SEARCH_MAX, FeedbackSearchInput } fr
 import FeedbackService from '@/services/FeedbackService';
 import { DEFAULT_CATEGORY, SEARCH_LABELS } from '@/lib/feedbackPresentation';
 import type { FeedbackThread, FeedbackType } from '@/types';
+import { toastFeedbackNotify } from '@/lib/feedbackToast';
 
 vi.mock('react-toastify', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
@@ -28,6 +29,7 @@ vi.mock('@/services/AuthService', () => ({
 
 const thread = (id: string, type: FeedbackType, title: string): FeedbackThread => ({
   id,
+  number: 1,
   type,
   title,
   category: DEFAULT_CATEGORY[type],
@@ -66,11 +68,12 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 const queue = (type: FeedbackType) => <FeedbackQueueTab active type={type} />;
-const userTab = (type: FeedbackType) => <MyFeedbackTab active type={type} />;
+const userTab = (type: FeedbackType) => <MyFeedbackTab notify={toastFeedbackNotify} active type={type} />;
 
 const TABS = [
   { name: 'the staff queue', type: 'bug', renderTab: queue, empty: 'No reports match this filter.' },
@@ -99,14 +102,16 @@ describe.each(TABS)('search in $name, $type', ({ type, renderTab, empty }) => {
     render(renderTab(type));
     await pageTo(3);
 
+    vi.useFakeTimers();
     type_(type, 'T');
     type_(type, 'Thr');
     type_(type, 'Thread 1');
-    await act(() => new Promise((resolve) => setTimeout(resolve, FEEDBACK_SEARCH_DELAY_MS - 100)));
+    await act(() => vi.advanceTimersByTimeAsync(FEEDBACK_SEARCH_DELAY_MS - 1));
     expect(searchesSent().filter(Boolean)).toEqual([]);
 
-    await waitFor(() => expect(lastCall()).toMatchObject({ search: 'Thread 1', page: 1 }), { timeout: 300 });
-    expect(await screen.findByText('Page 1 of 2')).toBeTruthy();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(lastCall()).toMatchObject({ search: 'Thread 1', page: 1 });
+    expect(screen.getByText('Page 1 of 2')).toBeTruthy();
     expect(searchesSent().filter(Boolean)).toEqual(['Thread 1']);
     expect(screen.getByText('Thread 18')).toBeTruthy();
   });
@@ -179,12 +184,13 @@ describe.each(TABS)('search in $name, $type', ({ type, renderTab, empty }) => {
 
 describe('the search input', () => {
   it('drops typing cut off by unmount', async () => {
+    vi.useFakeTimers();
     const onSearch = vi.fn();
     const { unmount } = render(<FeedbackSearchInput value="" onSearch={onSearch} label="Search Reports" />);
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Thread 1' } });
     unmount();
-    await new Promise((resolve) => setTimeout(resolve, FEEDBACK_SEARCH_DELAY_MS + 50));
+    await vi.advanceTimersByTimeAsync(FEEDBACK_SEARCH_DELAY_MS);
 
     expect(onSearch).not.toHaveBeenCalled();
   });
@@ -211,7 +217,7 @@ const switchTo = (name: string) => fireEvent.mouseDown(screen.getByRole('tab', {
 
 describe.each([
   { name: 'the Admin Panel', renderHost: () => <FeedbackTab active /> },
-  { name: 'the Feedback dialog', renderHost: () => <FeedbackHubDialog open onOpenChange={() => {}} /> },
+  { name: 'the Feedback dialog', renderHost: () => <FeedbackHubDialog notify={toastFeedbackNotify} open onOpenChange={() => {}} /> },
 ])('a tab switch in $name', ({ renderHost }) => {
   it('keeps each tab’s search and page', async () => {
     render(renderHost());
@@ -233,13 +239,13 @@ describe.each([
 
 describe('the Feedback dialog', () => {
   it('starts with an empty search when it is closed and opened again', async () => {
-    const { rerender } = render(<FeedbackHubDialog open onOpenChange={() => {}} />);
+    const { rerender } = render(<FeedbackHubDialog notify={toastFeedbackNotify} open onOpenChange={() => {}} />);
     await screen.findByText('Page 1 of 5');
     type_('bug', 'Thread 1');
     await screen.findByText('Page 1 of 2');
 
-    rerender(<FeedbackHubDialog open={false} onOpenChange={() => {}} />);
-    rerender(<FeedbackHubDialog open onOpenChange={() => {}} />);
+    rerender(<FeedbackHubDialog notify={toastFeedbackNotify} open={false} onOpenChange={() => {}} />);
+    rerender(<FeedbackHubDialog notify={toastFeedbackNotify} open onOpenChange={() => {}} />);
 
     expect(await screen.findByText('Page 1 of 5')).toBeTruthy();
     expect(searchBox('bug')).toHaveProperty('value', '');

@@ -5,7 +5,7 @@ import { act, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { GameDataProvider, useGameData } from './GameDataContext';
 import WorldStorageService from '@/services/WorldStorageService';
-import { WORLD_CHANGE_CHANNEL } from '@/lib/worldChangeSignal';
+import { onWorldChangedElsewhere, WORLD_CHANGE_CHANNEL } from '@/lib/worldChangeSignal';
 import type { World } from '@/types';
 
 /**
@@ -45,8 +45,15 @@ const deletedElsewhere = async (ctx: () => Handle) => {
   otherTab.postMessage({ worldId: 'w1', deleted: true });
   await waitFor(() => expect(ctx().worldChangedElsewhere).toBe('deleted'));
 };
-/** Lets a message already posted arrive and render. */
-const settle = () => act(() => new Promise<void>((resolve) => { setTimeout(resolve, 50); }));
+/** Posts a marker behind every message already sent, and waits until this tab has heard and rendered it. */
+const drainChannel = async () => {
+  let heard!: () => void;
+  const arrived = new Promise<void>((resolve) => { heard = resolve; });
+  const stop = onWorldChangedElsewhere((worldId) => { if (worldId === 'marker') heard(); });
+  otherTab.postMessage({ worldId: 'marker' });
+  await act(() => arrived);
+  stop();
+};
 
 beforeEach(() => {
   otherTab = new BroadcastChannel(WORLD_CHANGE_CHANNEL);
@@ -61,7 +68,7 @@ describe('another tab writes the open world', () => {
   it('is heard with no editor open, and only for this world', async () => {
     const ctx = await mount();
     await savedElsewhere(ctx, 'another-world');
-    await settle();
+    await drainChannel();
     expect(ctx().worldChangedElsewhere).toBeNull();
     await savedElsewhere(ctx);
   });
@@ -70,7 +77,7 @@ describe('another tab writes the open world', () => {
     const ctx = await mount();
     act(() => ctx().updateWorldOverview({ name: 'Brinewell' }));
     await act(async () => { await ctx().saveWorld(); });
-    await settle();
+    await drainChannel();
     expect(ctx().worldChangedElsewhere).toBeNull();
   });
 });
@@ -147,18 +154,22 @@ describe('the answers', () => {
 
   it('Reload waits for a running save, so that save cannot land over the loaded copy', async () => {
     const ctx = await mount();
+    const order: string[] = [];
     let finish!: () => void;
-    vi.spyOn(WorldStorageService, 'storeWorld')
-      .mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
-    const getWorldData = vi.spyOn(WorldStorageService, 'getWorldData').mockResolvedValue(world('w1', 'Saltmarsh'));
+    const storeWorld = vi.spyOn(WorldStorageService, 'storeWorld')
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finish = () => { order.push('stored'); resolve(); }; }));
+    const getWorldData = vi.spyOn(WorldStorageService, 'getWorldData')
+      .mockImplementation(async () => { order.push('read'); return world('w1', 'Saltmarsh'); });
     act(() => ctx().updateWorldOverview({ name: 'Brinewell' }));
     let saving!: Promise<unknown>;
     let reloading!: Promise<boolean>;
     act(() => { saving = ctx().saveWorld({ markSaved: false }); reloading = ctx().reloadWorld(); });
-    await settle();
+    // The save is in its write; a reload outside the queue starts its read before the save gets here.
+    await waitFor(() => expect(storeWorld).toHaveBeenCalledTimes(1));
     expect(getWorldData).not.toHaveBeenCalled();
 
     await act(async () => { finish(); await saving; await reloading; });
+    expect(order).toEqual(['stored', 'read']);
     expect(ctx().worldOverview.name).toBe('Saltmarsh');
     expect(ctx().isWorldDirty).toBe(false);
   });

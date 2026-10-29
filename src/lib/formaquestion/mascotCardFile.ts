@@ -6,7 +6,7 @@
 import { embedEntityCard, readEntityCard } from '@/lib/entityCard';
 import { bytesToDataUrl, dataUrlMime, dataUrlToBuffer } from '@/lib/imageBytes';
 import { APP_VERSION } from '@/lib/version';
-import { composeMascot, type MascotImageRef, type MascotRig } from './mascot';
+import { composeInitialWith, mascotImageKey, type MascotImageRef, type MascotRig } from './mascot';
 import { mascotAssetUrl } from './mascotAssets';
 import {
   NOT_A_MASCOT_CARD, buildMascotCardData, isMascotCardImage, mascotRigFromCard, parseMascotCardData, type MascotCardData,
@@ -36,11 +36,12 @@ export interface MascotCardStore {
 }
 
 const MISSING_IMAGE = "One of your mascot images is missing. Replace it, then export again.";
+const SUPPORTER_IMAGE = "Supporter content can't be exported.";
 const UNREADABLE_IMAGE = "One of your mascot images isn't an image file. Replace it, then export again.";
 
-const refKey = (ref: MascotImageRef): string => (ref.kind === 'bundled' ? `bundled:${ref.name}` : `stored:${ref.id}`);
-
 async function readRigImage(ref: MascotImageRef): Promise<Blob> {
+  // Supporter layers never become a Blob, so a card can't carry them.
+  if (ref.kind === 'supporter') throw new Error(SUPPORTER_IMAGE);
   if (ref.kind === 'stored') {
     const blob = await getMascotImage(ref.id);
     if (!blob) throw new Error(MISSING_IMAGE);
@@ -81,15 +82,26 @@ export async function renderMascotLayers(layers: readonly Blob[]): Promise<Rende
 
 const DEFAULT_EXPORT: MascotCardExportDeps = { render: renderMascotLayers, appVersion: APP_VERSION };
 
-/** The card of the mascot `name`: a WebP of its Initial look carrying its name and the whole rig, every image in full. */
-export async function exportMascotCard(name: string, rig: MascotRig, overrides: Partial<MascotCardExportDeps> = {}): Promise<Blob> {
+/**
+ * The card data of the mascot `name`, with the rendered Initial look. Every image is read in full. A given
+ * `expression` layer is drawn in place of the Initial pick's own.
+ */
+export async function buildMascotCardWithLook(
+  name: string, rig: MascotRig, overrides: Partial<MascotCardExportDeps> = {}, { expression = null }: { expression?: string | null } = {},
+): Promise<{ card: MascotCardData; look: RenderedCardImage }> {
   const deps = { ...DEFAULT_EXPORT, ...overrides };
-  const distinct = [...new Map(mascotImageRefs(rig).map((ref) => [refKey(ref), ref])).values()];
-  const blobs = new Map(await Promise.all(distinct.map(async (ref) => [refKey(ref), await readRigImage(ref)] as const)));
+  const distinct = [...new Map(mascotImageRefs(rig).map((ref) => [mascotImageKey(ref), ref])).values()];
+  const blobs = new Map(await Promise.all(distinct.map(async (ref) => [mascotImageKey(ref), await readRigImage(ref)] as const)));
   const data = new Map(await Promise.all([...blobs].map(async ([key, blob]) => [key, bytesToDataUrl(new Uint8Array(await blob.arrayBuffer()), blob.type)] as const)));
   if (![...data.values()].every(isMascotCardImage)) throw new Error(UNREADABLE_IMAGE);
-  const card = buildMascotCardData(name, rig, (ref) => data.get(refKey(ref))!, deps.appVersion);
-  const look = await deps.render(composeMascot(rig, 'initial', null).map((ref) => blobs.get(refKey(ref))!));
+  const card = buildMascotCardData(name, rig, (ref) => data.get(mascotImageKey(ref))!, deps.appVersion);
+  const look = await deps.render(composeInitialWith(rig, expression).map((ref) => blobs.get(mascotImageKey(ref))!));
+  return { card, look };
+}
+
+/** The card of the mascot `name`: a WebP of its Initial look carrying its name and the whole rig, every image in full. */
+export async function exportMascotCard(name: string, rig: MascotRig, overrides: Partial<MascotCardExportDeps> = {}): Promise<Blob> {
+  const { card, look } = await buildMascotCardWithLook(name, rig, overrides);
   return new Blob([embedEntityCard(look.bytes, JSON.stringify(card), { w: look.width, h: look.height })], { type: 'image/webp' });
 }
 

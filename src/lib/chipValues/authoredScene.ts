@@ -17,9 +17,10 @@ import { resolveStartingLocation } from '../startingLocation';
 import { seedNewGameStats, treeStatTraits } from '../traitRuntime';
 import { enabledOwnerStats, withTraitToggles } from '../statOwners';
 import { playStatWorld } from '../statLinks';
+import { seedItemCopies } from '../inventory';
 import type {
-  Connection, Dictionary, Entity, EntityGroup, GameLocation, Placeholder, PlayerStat, Stat, StatGroup, Trait,
-  TraitGroup, WorldOverview,
+  Connection, Dictionary, Entity, EntityGroup, GameLocation, Item, Placeholder, Placement, PlayerStat, Stat, StatGroup,
+  Trait, TraitGroup, WorldOverview,
 } from '@/types';
 import type { ChipScene } from './chipScene';
 
@@ -36,6 +37,8 @@ export interface AuthoredWorld {
   traitGroups?: TraitGroup[];
   dictionaries?: Dictionary[];
   placeholders?: Placeholder[];
+  items?: Item[];
+  placements?: Placement[];
 }
 
 /** Overrides for a scene scoped tighter than "the world's own opening" — the Test Bench's Opening
@@ -52,6 +55,9 @@ export interface AuthoredSceneOptions {
   resolve?: (text: string, copies?: CopyLookup) => string;
   /** An entity's own text under `resolve`'s rolls and pins. Absent with `resolve` given, `resolve` alone reads it. */
   resolveEntity?: ResolveEntityText;
+  /** An entity's own trait text under that trait's pins over the entity's. Absent, a given `resolveEntity`
+   *  reads it, else the trait's own pins do. */
+  resolveOwned?: ResolveOwnedTraitText;
 }
 
 
@@ -91,13 +97,14 @@ export function authoredChipScene(world: AuthoredWorld, options: AuthoredSceneOp
   );
   const copiesOf = (reader: CopyReader | undefined) => (reader ? copyLookup(blueprints, reader) : undefined);
   // An entity's trait reads its own pins and copies, bound for that entity, with the entity as the Character Name.
-  const resolveOwned: ResolveOwnedTraitText = options.resolveEntity
+  const ownTraitText: ResolveOwnedTraitText = options.resolveEntity
     ? (_trait, text, owner) => options.resolveEntity!(owner, text)
     : (trait, text, owner) => {
       const tree = treeOf.get(owner.id);
       const reader = tree && readerOf(tree);
       return resolveEntityText(owner, text, { placeholders, rolls: {}, pins: ownPins(trait, reader), copies: copiesOf(reader) });
     };
+  const resolveOwned = options.resolveOwned ?? ownTraitText;
   const withLinks = withOwnerTrees(entities, trees);
   const cast = resolveEntity
     ? resolveOwnedTraitTexts(resolveEntityTexts(withLinks, resolveEntity), resolveOwned, resolveEntity)
@@ -118,6 +125,7 @@ export function authoredChipScene(world: AuthoredWorld, options: AuthoredSceneOp
     Object.fromEntries(entities.filter((e) => e.stats?.length).map((e) => [e.id, seedNewGameStats(e.stats ?? [])])),
     treeStatTraits(trees, Object.fromEntries(trees.map((b) => [b.id, defaultsOf(b)]))),
   ));
+  let copyCount = 0;
 
   return {
     overview: worldOverview?.systemPrompt || '',
@@ -154,5 +162,8 @@ export function authoredChipScene(world: AuthoredWorld, options: AuthoredSceneOp
     resolve,
     resolveEntity,
     placeholders: world.placeholders ?? [],
+    items: world.items ?? [],
+    // The Item Copies a new game would start with, ids numbered since nothing keeps them.
+    itemCopies: seedItemCopies({ ...world, entities }, undefined, () => `preview-copy-${copyCount++}`),
   };
 }

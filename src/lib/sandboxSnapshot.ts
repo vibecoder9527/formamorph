@@ -5,17 +5,20 @@
  */
 import type { Entity, Placeholder, Stat, Trait } from '@/types';
 import {
-  executeStatCode, keyedEntities, type EntityTraitWrites, type KeyedEntities, type NarrationInput, type SandboxEntity, type SandboxPlace,
-  type SandboxPlaceholderNode, type SandboxPlaces, type SandboxStats, type SandboxTrait, type StatCodeResult, type StatCodeRunOptions, type StatTurnInputs,
-  type SwitchedTrait, type TraitWrite,
+  EMPTY_REPLY, executeStatCode, keyedEntities, type EntityTraitWrites, type KeyedEntities, type NarrationInput, type SandboxEntity, type SandboxPlace,
+  type SandboxLocationLinks, type SandboxPlaceholderNode, type SandboxPlaces, type SandboxStats, type SandboxTrait, type StatCodeResult, type StatCodeRunOptions, type StatTurnInputs,
+  type SandboxTurn, type SwitchedTrait, type TraitWrite,
 } from './statCodeExecutor';
 import { statCodeName, statCodeNamed } from './statCodeNames';
+import { navigableDestinationEntries } from './locationContext';
+import { parentIndex } from './locationGraph';
 import {
   codeDictionaries, sandboxDictionaries, sandboxPlaceholders, withLibraryPlaceholders, type StatCodePlaceholderSet,
 } from './statCodePlaceholders';
 import { codeEntities, sandboxTraits, worldTraitPlaces, type CodeEntities, type CodeEntity } from './statCodeTraits';
 import { sampleNarration, sampleSwitchedTrait } from './scriptTestSamples';
 import { randomUUID } from './uuid';
+import { withLoreToggles } from './loreToggles';
 import { gateStatsOf, type TraitRuntimeState, type TraitSwitchEvent, type TraitWorld } from './traitRuntime';
 import { activeStatEnabled } from './traitEffects';
 import type { GateStats } from './traitGates';
@@ -74,6 +77,8 @@ export interface ScriptRunUnit {
   prompts?: ScriptPromptHost;
   /** A user Tool's run: the surface without writes. */
   readOnly?: boolean;
+  /** The `turn.choices` the earlier scripts of the batch left, which this run reads in place of the state's (Q14). */
+  choices?: readonly string[];
 }
 
 /** Each scope's stat turn inputs: the global run's and each Owner's, by id. The caller leaves them empty at a
@@ -85,7 +90,7 @@ export interface TurnReadings {
 
 export interface SnapshotOptions {
   /** This turn's asks, regen and previous values. Absent, every stat reads an untouched turn. */
-  turn?: TurnReadings;
+  readings?: TurnReadings;
   /** An editor run's cast, which has no discovered entities: a `diary` name the cast lacks is a warning. */
   openCast?: boolean;
   /** Test Code's overlay: `persona` is a stand-in holding every trait, placeholder and stat a persona-capable
@@ -144,20 +149,44 @@ export function switchedTraitOf({ traitId, ownerId }: TraitSwitchEvent, world: T
   return tree?.find((trait) => trait.id === traitId);
 }
 
-/** `set` listing only the authored books in play; a book turned off reads as an unknown dictionary. */
+/** `set` listing the authored books in play, on, and the ones the world ships off, off; a book the player turned
+ *  off reads as an unknown dictionary (Q33). */
 const withBooksInPlay = (set: StatCodePlaceholderSet): StatCodePlaceholderSet => {
   const { inPlayDictionaryIds: inPlay } = set;
-  return inPlay ? { ...set, dictionaries: set.dictionaries?.filter((book) => inPlay.has(book.id)) } : set;
+  return inPlay ? {
+    ...set,
+    dictionaries: set.dictionaries?.flatMap((book) => (inPlay.has(book.id) ? [{ ...book, enabled: true }]
+      : book.enabled === false ? [book] : [])),
+  } : set;
 };
 
 const AS_AUTHORED: ResolveText = (text) => text;
 
 /** `places` under the code names scripts reach them by, their text resolved. */
-function codePlaces({ locations, location }: StatePlaces, placeholders: readonly Placeholder[], resolve: ResolveText): SandboxPlaces {
+function codePlaces(
+  { locations, location, connections = [] }: StatePlaces, placeholders: readonly Placeholder[], resolve: ResolveText,
+): SandboxPlaces {
   const named = (place: SandboxPlace): SandboxPlace => ({ id: place.id, name: statCodeName(place.name, placeholders) });
+  // Built on the first read of any location's links, so a run that reads none builds no index.
+  let index: { nameOf: Map<string, string>; childrenOf: ReadonlyMap<string, string[]> } | undefined;
+  const indexOf = () => (index ??= {
+    nameOf: new Map(locations.map((place) => [place.id, statCodeName(place.name, placeholders)])),
+    childrenOf: parentIndex(locations).childrenOf,
+  });
+  const linksOf = (place: StatePlaces['locations'][number]) => (): SandboxLocationLinks => {
+    const { nameOf, childrenOf } = indexOf();
+    const codeName = (id: string) => nameOf.get(id) ?? '';
+    return {
+      parent: place.parentId ? codeName(place.parentId) : '',
+      children: (childrenOf.get(place.id) ?? []).map(codeName),
+      exits: navigableDestinationEntries(place, locations, connections)
+        .map(({ location: exit, hint }) => ({ name: codeName(exit.id), hint: resolve(hint ?? '', null) })),
+    };
+  };
   return {
     locations: locations.map((place) => ({
       ...named(place), description: resolve(place.aiDescription ?? '', null), summary: resolve(place.aiSummary ?? '', null), starting: !!place.isStarting,
+      links: linksOf(place),
     })),
     location: location && named(location),
   };
@@ -171,6 +200,7 @@ function playFields(
   return {
     description: resolve(entity.aiDescription ?? '', entity), summary: resolve(entity.aiSummary ?? '', entity),
     aliases: (entity.aliases ?? []).map((alias) => resolve(alias, entity)),
+    pronouns: resolve(entity.pronouns ?? '', entity),
     ...(at ? { locationId: at } : {}), locationIds: entity.locations ?? [],
     ...(followers?.includes(entity.id) ? { following: true } : {}),
   };
@@ -224,7 +254,7 @@ function pendingPersonaOf(
   };
 }
 
-function boardOf(state: SandboxState, { turn, pendingPersona, assumedStats = [] }: SnapshotOptions): Board {
+function boardOf(state: SandboxState, { readings, pendingPersona, assumedStats = [] }: SnapshotOptions): Board {
   const placeholderDefs = state.placeholders?.placeholders ?? [];
   const { world } = state.ownerTraits;
   const before = runtimeStateOf(state);
@@ -238,9 +268,9 @@ function boardOf(state: SandboxState, { turn, pendingPersona, assumedStats = [] 
   const placeholderSet = state.placeholders && withLibraryPlaceholders(withBooksInPlay(state.placeholders), state.ownerTraits.library ?? []);
   const sandbox = placeholderSet ? sandboxPlaceholders(placeholderSet) : null;
   const scopeStats = (stats: readonly Stat[], enabled: SandboxStats['enabled'], inputs: TurnReadings['global'] | undefined): SandboxStats =>
-    ({ stats: statCodeNamed(stats, placeholderDefs), ...(inputs ? { turn: inputs } : {}), enabled });
-  const owned = new Map((state.owners ?? []).map((owner) => [owner.id, scopeStats(owner.stats, owner.enabled, turn && (turn.owners?.[owner.id] ?? {}))]));
-  const ownerStats = (id: string): SandboxStats => owned.get(id) ?? { stats: [], ...(turn ? { turn: {} } : {}), enabled: {} };
+    ({ stats: statCodeNamed(stats, placeholderDefs), ...(inputs ? { readings: inputs } : {}), enabled });
+  const owned = new Map((state.owners ?? []).map((owner) => [owner.id, scopeStats(owner.stats, owner.enabled, readings && (readings.owners?.[owner.id] ?? {}))]));
+  const ownerStats = (id: string): SandboxStats => owned.get(id) ?? { stats: [], ...(readings ? { readings: {} } : {}), enabled: {} };
   const resolve = state.resolveText ?? AS_AUTHORED;
   const { entities = [], library = [], discovered = [] } = state.ownerTraits;
   const authored = new Map([...entities, ...library, ...discovered].map((entity) => [entity.id, entity]));
@@ -255,10 +285,12 @@ function boardOf(state: SandboxState, { turn, pendingPersona, assumedStats = [] 
   const globalStats = assumed.length ? [...state.stats, ...assumed] : state.stats;
   const globalEnabled = assumed.length ? { ...state.enabled, ...activeStatEnabled(assumed, []) } : state.enabled;
   return {
-    stats: scopeStats(globalStats, globalEnabled, turn?.global),
+    stats: scopeStats(globalStats, globalEnabled, readings?.global),
     traits, inPlay, placeholderDefs, ownerStats,
     placeholders: sandbox?.top ?? [],
-    dictionaries: sandboxDictionaries(codeDictionaries(placeholderSet?.dictionaries, placeholderDefs), sandbox?.owners),
+    dictionaries: sandboxDictionaries(
+      codeDictionaries(placeholderSet?.dictionaries && withLoreToggles(placeholderSet.dictionaries, state.loreToggles), placeholderDefs), sandbox?.owners,
+    ),
     ...(state.resolveText ? { resolveEntryValue: (value: string) => resolve(value, null) } : {}),
     ...(state.places ? { places: codePlaces(state.places, placeholderDefs, resolve) } : {}),
   };
@@ -292,6 +324,17 @@ function switchedTraitEntry(board: Board, { event, world }: { event: TraitSwitch
 
 const statOf = (home: UnitHome): Stat | null => ('stat' in home ? home.stat : null);
 
+/** The page and choices read empty at a timing before the turn's reply is done (Q5); later, the choices are the ones
+ *  the batch's earlier scripts left. A read-only run is a user Tool's, which reads the state's turn as it stands. */
+const turnRead = (turn: SandboxTurn, { timing, readOnly, choices }: ScriptRunUnit): SandboxTurn => {
+  if (!readOnly && (timing === 'start' || timing === 'before' || timing === 'output')) return { ...turn, ...EMPTY_REPLY };
+  return choices && !turn.choicesOff ? { ...turn, choices } : turn;
+};
+
+/** Only an After the AI script writes `turn.choices`, and only while the player has choices on (Q11, Q21). */
+const takesChoicesWrite = ({ home, timing, readOnly }: ScriptRunUnit, turn: SandboxTurn | undefined): boolean =>
+  timing === 'after' && home.kind !== 'tool' && !readOnly && !turn?.choicesOff;
+
 const optionsOfSnapshot = new WeakMap<SandboxSnapshot, (unit: ScriptRunUnit) => StatCodeRunOptions>();
 
 /** The snapshot of `state`, which every Script of the turn or check runs through. */
@@ -311,7 +354,9 @@ export function snapshotOf(state: SandboxState, options: SnapshotOptions = {}): 
       : unit.switched === 'sample' ? sampleSwitchedTrait(read.traits, firstTraitId(), selfTrait && { entry: selfTrait, owner: owner?.name ?? '' })
         : switchedTraitEntry(read, unit.switched);
     return {
-      clock: state.clock, ...(read.stats.turn ? { turn: read.stats.turn } : {}), enabled: read.stats.enabled,
+      clock: state.clock, ...(read.stats.readings ? { readings: read.stats.readings } : {}), ...(state.turn && { turn: turnRead(state.turn, unit) }),
+      ...(takesChoicesWrite(unit, state.turn) && { choicesWritable: true }),
+      enabled: read.stats.enabled,
       placeholders: read.placeholders, traits: read.traits, ...read.inPlay,
       ...(owner && { owner }), dictionaries: read.dictionaries, ...(read.resolveEntryValue && { resolveEntryValue: read.resolveEntryValue }),
       ...(unit.prompts && { prompts: unit.prompts }),

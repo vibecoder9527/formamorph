@@ -9,6 +9,12 @@ import { useEffect, useState } from 'react';
  * own Back.
  */
 
+/** The page a flagged account renames on. */
+export const RENAME_PATH = '/rename';
+
+/** The account page a rename returns to. */
+export const ACCOUNT_PATH = '/account';
+
 /** A profile path and the name in it. The name runs to the next slash, so nothing nested matches. */
 const PROFILE_PATH = /^\/u\/([^/]+)$/;
 
@@ -32,6 +38,10 @@ export function profileUsername(pathname: string): string | null {
   }
 }
 
+/** Whether a path is a section's own page or anything under it. */
+export const underPath = (pathname: string, section: string): boolean =>
+  pathname === section || pathname.startsWith(`${section}/`);
+
 /** Where the reader is: the path that picks the page, and the query that configures it. */
 export interface SiteLocation {
   pathname: string;
@@ -46,6 +56,12 @@ const currentLocation = (): SiteLocation => ({
 /** Updates the address bar and tells lightweight site routes to read the new location. */
 export function navigateSite(path: string): void {
   window.history.pushState(null, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/** Rewrites the address bar without a new history entry, and tells site routes to read it. */
+export function replaceSite(path: string): void {
+  window.history.replaceState(window.history.state, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 

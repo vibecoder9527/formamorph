@@ -139,7 +139,7 @@ describe('editing a Tool', () => {
     await user.click(screen.getByRole('button', { name: 'What a Script Can Read' }));
     const readable = within(await screen.findByLabelText('What the script can read'));
     expect(readable.getAllByRole('term').map((t) => t.textContent)).toEqual([
-      'args', 'stats', 'clock', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'console',
+      'args', 'stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'console',
     ]);
     expect(readable.getAllByRole('definition')[0]).toHaveTextContent('{ place }');
     await user.keyboard('{Escape}');
@@ -406,7 +406,7 @@ describe('Try It', () => {
     render(<Harness initial={userStore([weather({ params: [], handler: { kind: 'script', code: 'return nobody.name;' } })])} />);
     await user.click(list().getByRole('button', { name: 'get_weather' }));
     await user.click(tryIt().getByRole('button', { name: 'Run' }));
-    const alert = await tryIt().findByRole('alert', {}, { timeout: 5000 });
+    const alert = await tryIt().findByRole('alert');
     expect(alert).toHaveTextContent(/^The script failed: .*nobody/);
     expect(alert.textContent).not.toContain('{');
   });

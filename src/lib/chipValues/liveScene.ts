@@ -1,11 +1,11 @@
 import { useCallback } from 'react';
 import type {
-  Connection, Entity, EntityPositions, GameLocation, OwnedTraitStates, Placeholder, PlayerStat, Trait, TraitGroup,
+  Connection, Entity, EntityPositions, GameLocation, Item, ItemCopy, OwnedTraitStates, Placeholder, PlayerStat, Trait, TraitGroup,
 } from '@/types';
 import { entitiesInPlay, entityIdsAt } from '../entityPresence';
 import { entityNamed, scenePresentHere, type OwnedTraitsInForce } from '../locationContext';
 import type { GateTree } from '../traitGates';
-import { borneByPlayer, inOwnerPlaces, withOwnerTrees, type OwnerTree } from '../ownedTraitsInPlay';
+import { activeOwnedTraitIds, borneByPlayer, inOwnerPlaces, withOwnerTrees, type OwnerTree } from '../ownedTraitsInPlay';
 import type { ResolvedPersona } from '../persona';
 import { treeStatTraits } from '../traitRuntime';
 import { enabledOwnerStats, withTraitToggles, type OwnerStats } from '../statOwners';
@@ -55,6 +55,10 @@ export interface LiveSceneSources {
   time: ChipSceneTime | null;
   /** The world's shared placeholders. */
   placeholders: readonly Placeholder[];
+  /** The world's authored items. None when absent. */
+  items?: readonly Item[];
+  /** Every Item Copy in play. None when absent. */
+  itemCopies?: readonly ItemCopy[];
 }
 
 /** The world under a running turn's code writes, which React has not rendered yet. Each absent field keeps
@@ -143,33 +147,30 @@ export function liveChipScene(
     resolve: box?.resolve ?? sources.resolve,
     resolveEntity,
     placeholders: sources.placeholders,
+    items: sources.items,
+    itemCopies: sources.itemCopies,
     outerScopeEntities: ownText(placed(sources.entities)),
     inSceneNames,
   };
 }
 
-/** Each entity's chosen owned traits minus the ones switched off. */
-function inForceByOwner(states: OwnedTraitStates | undefined): OwnedTraitsInForce {
-  return Object.fromEntries(Object.entries(states ?? {}).map(([id, { chosen, disabled = [] }]) => {
-    const off = new Set(disabled);
-    return [id, chosen.filter((traitId) => !off.has(traitId))];
-  }));
-}
+/** Each entity's owned traits in force: its picks on, and the ones an item grant holds. */
+const inForceByOwner = (states: OwnedTraitStates | undefined): OwnedTraitsInForce => activeOwnedTraitIds(states ?? {});
 
 /** The live adapter: one memoized builder over the playthrough's contexts. */
 export function useLiveChipScene(sources: LiveSceneSources): (location?: GameLocation | null, box?: SceneWrites | null) => ChipScene {
   const {
     overview, stats, statPlacement, traits, traitGroups, ownedTraits, global, owners, entityStats, playedEntities, resolve, resolveTrait, resolveEntity, persona,
-    location, locations, connections, entities, allEntities, participants, notes, time, placeholders,
+    location, locations, connections, entities, allEntities, participants, notes, time, placeholders, items, itemCopies,
   } = sources;
   return useCallback(
     (at?: GameLocation | null, box?: SceneWrites | null) => liveChipScene({
       overview, stats, statPlacement, traits, traitGroups, ownedTraits, global, owners, entityStats, playedEntities, resolve, resolveTrait, resolveEntity, persona,
-      location, locations, connections, entities, allEntities, participants, notes, time, placeholders,
+      location, locations, connections, entities, allEntities, participants, notes, time, placeholders, items, itemCopies,
     }, at, box),
     [
       overview, stats, statPlacement, traits, traitGroups, ownedTraits, global, owners, entityStats, playedEntities, resolve, resolveTrait, resolveEntity, persona,
-      location, locations, connections, entities, allEntities, participants, notes, time, placeholders,
+      location, locations, connections, entities, allEntities, participants, notes, time, placeholders, items, itemCopies,
     ],
   );
 }

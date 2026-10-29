@@ -65,6 +65,20 @@ You can enter one world per contest. Only a world can enter. To enter a world yo
 
 To report a comment, select its **Report comment** button. To report a person, open their profile and select **Report Profile**.
 
+## How to Change Your Profile Image
+<!-- keywords: picture, photo, pfp, icon, account picture, upload, crop, display pic, user portrait, animated gif, account face, take off my pic, reposition, initial letter shown -->
+<!-- route: profile -->
+
+You need a Community Creations account.
+
+1. On the main menu, select the round button at the bottom left. **User Profile** opens.
+2. Select your profile image.
+3. Select a `.png`, `.jpg`, `.webp` or `.gif` file, up to 10 MB.
+4. In **Position Your Picture**, drag the image to move it. Scroll, or use the **Zoom** slider, to zoom. The circle shows what everyone sees.
+5. Select **Save**.
+
+To remove it, select **Remove your profile image**. With no picture, your initial shows in its place. See [The User Profile Dialog](#the-user-profile-dialog).
+
 ## How to Delete Your Account
 <!-- keywords: remove, close, erase, cancel, deactivate, my data, profile, gdpr, unregister, terminate membership, wipe my info, leave for good, right to erasure, undo deletion, privacy request -->
 <!-- route: profile.settings -->
@@ -83,10 +97,10 @@ You are logged out immediately. The account is erased seven days later. To cance
 
 1. Log in.
 2. On the main menu, select the round **Feedback** button at the bottom left.
-3. Open the **Bugs** or **Suggestions** tab.
-4. Select **Report a Bug** or **Suggest Something**.
+3. Open the **Bugs**, **Suggestions** or **Questions** tab.
+4. Select **Report a Bug**, **Suggest Something** or **Ask a Question**.
 5. Fill in **Title**, **Category** and the description.
-6. Select **Send Report** or **Send Suggestion**.
+6. Select **Send Report**, **Send Suggestion** or **Post Question**.
 
 In a game, **Send Feedback** in the menu opens the form directly. See [Bugs and Suggestions](#bugs-and-suggestions).
 
@@ -119,6 +133,7 @@ The dialog has no close button. After **Decline**, the app asks again the next t
 | **Entities** | Entities to add to your library and your games. |
 | **Dictionaries** | Dictionaries that teach the AI a world's terms. |
 | **Avatars** | 3D avatars for any world. |
+| **Mascots** | Mascots for the Formaquestion window. |
 | **Prompts** | Prompt presets that change how the AI writes. |
 | **Contest** | The entries of a contest. It shows only while a contest exists. See [Contests](#contests). |
 
@@ -187,11 +202,26 @@ On your own listing, select **Add Entry**. Fill in **Title**, **Date** and **Wha
 | World | A new copy in your library's **Worlds** tab, with the content it requires and the add-ons you checked. |
 | Entity, Dictionary | Your library. A second download replaces the copy you have. |
 | Avatar | Your library's **Avatars** tab. |
+| Mascot | **Settings** → **Formaquestion** → **Mascot**, as a custom Mascot you can select, edit, duplicate and export. A second download replaces the copy you have. If you edited the copy, the app asks first. |
 | Prompt | **Settings** → **Prompts**. Select **Use This Preset** to switch to it. |
 
 A toast says when the download is done. A prompt preset that adds a script Tool warns you first. Read the script in the **Tools** tab. See [Tools](Tools).
 
-On formamorph.ai, the download button saves the file to your device instead. Prompt presets download only in the app. The website has no **Hidden** list and no Reports.
+On formamorph.ai, the download button saves the file to your device instead. Prompt presets and Mascots download only in the app. The website has no **Hidden** list and no Reports.
+
+### Supporter-Only Listings
+
+Staff can limit a listing's download to Patreon Supporters. Everyone can still open it, like it and comment on it. The main button on its card and in its details window changes with your account:
+
+| You are | The button reads | What it does |
+|---|---|---|
+| Signed out | **Sign In** | Opens the login dialog. |
+| Signed in, not a Supporter | **Patreon** | Opens the project's Patreon page. |
+| A Supporter or Supporter+ | **Install** | Installs the listing. The button then reads **Installed**. |
+
+The button reads **Checking…** while the app checks your Supporter status at start. Only Mascots can be installed so far. On a Supporter-only listing of another kind, a Supporter sees **Not Supported Yet**.
+
+Staff see **Limit to Supporters** beside **Pin** in the details window, and a heart on the card. Select it to limit the download to Supporters. Select **Open to All** to open the download to everyone again.
 
 ### When an Update Is Available
 
@@ -388,7 +418,7 @@ Select the round button at the bottom left of the main menu to open **Login**. T
 | Dialog | Fields |
 |---|---|
 | **Login** | **Username** and **Password**. **Forgot password?** opens the reset page on formamorph.ai. |
-| **Register** | **Username** (3 to 20 characters), **Password** (at least 6), **Confirm Password**, and **Email (Optional)**. The email lets you reset your password. |
+| **Register** | **Username** (3–20 letters, numbers, spaces, `_` or `-`; no two names can differ only by case), **Password** (at least 6), **Confirm Password**, and **Email (Optional)**. The email lets you reset your password. |
 
 Select **Create Account** to switch to **Register**, and **Back to Login** to switch back. To change your email, use the account page on formamorph.ai.
 
@@ -406,9 +436,19 @@ When the policy changes, it opens after you log in:
 
 Read the policy any time at [formamorph.ai/privacy](https://formamorph.ai/privacy).
 
+### Choose a New Username
+
+Some older usernames don't fit the username rule: they have spaces or other symbols, or they match another account's name except for capital letters. If yours is one of them, **Choose a New Username** opens when you log in or start the app.
+
+- 💡 The **New Username** field starts with a suggested name when one is free. Keep it or type your own.
+- Select **Save Username** to change it. From then on, you log in with the new name.
+- Select **Later** to close the dialog. Your games and saves keep working. Likes, comments, follows and publishing stay locked until you rename, and the dialog opens again when you try one.
+
+Your listings, likes and comments move to the new name. Old links to your profile stop working.
+
 ### The User Profile Dialog
 
-Select the round button at the bottom left of the main menu. Its badge counts unread messages. The dialog shows your profile image, **Member since** and your stats. Select your profile image to change it. See [How to Change Your Profile Image](Avatars#how-to-change-your-profile-image).
+Select the round button at the bottom left of the main menu. Its badge counts unread messages. The dialog shows your profile image, **Member since** and your stats. Select your profile image to change it. See [How to Change Your Profile Image](#how-to-change-your-profile-image).
 
 The header has **Log Out**. Your email, **Change Password** and **Delete Account** are on the **Settings** tab.
 
@@ -436,7 +476,7 @@ To cancel, log in before that date. The **Deletion Cancelled** notice opens and 
 A suspended account can't be deleted from here. Select **Open Feedback** to ask the team.
 
 ## Bugs and Suggestions
-<!-- keywords: ticket status, track my ticket, known issues, roadmap, upvote an idea, dev response, planned features, what data is sent -->
+<!-- keywords: ticket status, track my ticket, known issues, roadmap, upvote an idea, dev response, planned features, what data is sent, ask a question, community help, unanswered, me too -->
 <!-- route: feedbackHub -->
 
 Select the round **Feedback** button at the bottom left of the main menu. It shows when you are logged in. The steps to send one are in [How to Report a Bug or Suggest Something](#how-to-report-a-bug-or-suggest-something).
@@ -445,10 +485,69 @@ Select the round **Feedback** button at the bottom left of the main menu. It sho
 |---|---|
 | **Bugs** | Your bug reports, or all of them with **All Reports**. **Report a Bug** opens the form. Only you and the team reply to your report. |
 | **Suggestions** | Everyone's suggestions, or yours with **Mine**. **Suggest Something** opens the form. Anyone can reply and vote. Sort by **Newest** or **Most voted**. |
+| **Questions** | Everyone's questions, or yours with **Mine**. **Ask a Question** opens the form. Anyone can reply, and a vote says you have the same question. The tab opens on **Unanswered**, sorted by **Most Voted**. |
+
+You can also read the **Suggestions** and **Questions** boards at [formamorph.ai/feedback](https://formamorph.ai/feedback), with no account. Sign in there to vote or reply. Bug reports stay in the app.
 
 A bug report includes your app version and platform. Nothing about your worlds or saves goes with it. The form keeps an unsent draft.
 
-Staff set each item's status. A bug is **Open**, **Need Info**, **Confirmed**, **Resolved** or **Won't Fix**. A suggestion is **Open**, **Considering**, **Planned**, **Declined** or **Done**. Replies show in the item's thread, under **Bugs** or **Suggestions**.
+Staff set each item's status. A bug is **Open**, **Needs Info**, **Confirmed**, **Pending Release**, **Fixed**, **Won't Fix** or **Duplicate**. A suggestion is **Open**, **Considering**, **Planned**, **Pending Release**, **Declined** or **Added**. **Pending Release** means the change is done and comes in the next update. A question is **Open**, **Answered** or **Closed**, and a closed question takes no more replies. Replies show in the item's thread, under **Bugs**, **Suggestions** or **Questions**.
+
+### Accepted Answers
+
+On your own question, select **Accept Answer** on the reply that solved it. Staff can do the same on any question. The question becomes **Answered**. The reply gets an **Accepted** mark. The reply also shows again under the question, so readers see it first.
+
+Select **Clear Answer** to undo the pick. The question goes back to **Open**. A closed question stays **Closed**. If the author edits the accepted reply, the text under the question changes too. If the reply is deleted, or staff change the question to a bug or a suggestion, the question goes back to **Open** with no answer.
+
+### Thread Links
+<!-- keywords: link a thread, thread number, hash number, refer to a suggestion, duplicate, see also, feedback url -->
+
+Every bug, suggestion and question has a number, such as **#23**. It shows beside the title and in the list. The website address of a thread uses the same number: `formamorph.ai/feedback/23`.
+
+To link another thread in a report or a reply, type `#` and its number, or paste its website address. The link shows as a chip with the thread's type, number, title and status. Select the chip to open that thread.
+
+| You type | What shows |
+|---|---|
+| `#23` | A chip for thread 23 |
+| `https://formamorph.ai/feedback/23` | The same chip |
+| `` `#23` `` or a code block | Plain text, as typed |
+
+A thread you can't read, or one that was deleted, shows as **Unavailable thread** with its number and no title. On the website, a link to a bug report shows the same way, because bug reports stay in the app.
+
+### Listing Links
+<!-- keywords: link a world, link an entity, link a listing, share a creation, community link, paste a listing address -->
+
+To point at a world, entity, dictionary or prompt, paste its website address in a report or a reply. The address looks like `https://formamorph.ai/community/world/…`. The link shows as a chip with the listing's image, title and kind.
+
+In the app, select the chip to open the listing in **Community Creations**. The **Feedback** window closes first. On the website, the chip opens the listing's page.
+
+A listing that is hidden, waiting for review or deleted shows as **Unavailable listing**, with no title. An address in code, between backticks or in a code block, stays plain text.
+
+### Mentions
+<!-- keywords: mention a player, at sign, at username, tag someone, notify a player, unknown user, mention limit, too many mentions -->
+
+To point a thread at a player, type `@` and their username in a report, a question, a suggestion or a reply. Names ignore letter case. The mention shows as a chip with the player's image and name. Select the chip to open their profile. On the website it opens their profile page.
+
+| You type | What shows |
+|---|---|
+| `@lantern_keeper` | A chip with that player's image and name |
+| `@` and a name with no account | **Unknown user**, without the name you typed |
+| `` `@lantern_keeper` `` or a code block | Plain text, as typed |
+
+On a suggestion or a question, a mention adds the thread to that player's feedback badge until they open it. Their later replies badge them too. Take the mention out and the badge goes with it. On a bug report a mention links, but never badges.
+
+### Suggestions While You Type
+<!-- keywords: autocomplete, suggest a name, suggest a thread, find a player, find a thread number, at sign list, hash list -->
+
+When you type `@` and a letter in a report or a reply, a list of players opens. Players who already posted in the thread come first. In a reply, `@` alone lists those players. When you type `#` and a number or a word, a list of threads you can read opens.
+
+- Press the arrow keys to move, then press **Enter** or **Tab** to insert the pick. You can also select a row.
+- Press **Escape** to close the list without inserting anything.
+- Text in code, between backticks or in a code block, gets no list.
+
+On the website, the `#` list shows only suggestions and questions.
+
+Each post can mention a limited number of players. Players can mention 5. Moderators and developers can mention 10. Admins have no limit. A repeat of one name counts once, and a mention of yourself counts for nothing. A post over the limit is refused with a message that names the limit. Your text stays in the box, so remove a name and send it again.
 
 ## Related
 

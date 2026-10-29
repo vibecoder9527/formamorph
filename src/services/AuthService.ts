@@ -1,6 +1,18 @@
 import { API_BASE_URL } from '@/lib/apiBase';
+import { USERNAME_RENAME_FAILED_MESSAGE, USERNAME_RULE_HELP, USERNAME_TAKEN_MESSAGE, checkUsername } from '@/lib/usernameRule';
 import type { AuthUser } from '@/types';
 import { codedResponseError, readFailure, responseError } from './responseError';
+
+/** The code the server returns when a flagged account's write is refused until it renames. */
+export const USERNAME_RENAME_REQUIRED = 'USERNAME_RENAME_REQUIRED';
+
+/** A refused registration or rename, with the rule module's text for the two username codes. */
+async function usernameRefusal(response: Response, fallback: string) {
+  const failure = await codedResponseError(response, fallback);
+  if (failure.code === 'USERNAME_TAKEN') failure.message = USERNAME_TAKEN_MESSAGE;
+  if (failure.code === 'USERNAME_INVALID') failure.message = USERNAME_RULE_HELP;
+  return failure;
+}
 
 /** What a sign-in tells the caller beyond the session it establishes. */
 export interface LoginResult {
@@ -187,12 +199,12 @@ class AuthService {
 
   /** Validate credentials client-side, register, persist the token, and resolve the user profile
    *  (falling back to a bare `{username}` if the server returns none); rethrows on failure. */
-  async register(username: string, password: string, email = '') {
+  async register(typedUsername: string, password: string, email = '') {
     try {
       // Validate username and password according to server requirements
-      if (!username || username.length < 3 || username.length > 20) {
-        throw new Error('Username must be between 3 and 20 characters');
-      }
+      const verdict = checkUsername(typedUsername);
+      if (!verdict.ok) throw new Error(verdict.error);
+      const username = verdict.username;
 
       if (!password || password.length < 6) {
         throw new Error('Password must be at least 6 characters long');
@@ -215,8 +227,10 @@ class AuthService {
       });
 
       // A taken name and a taken address are two sentences with two different fixes — pick another name,
-      // or recover the account holding the address — so the server's text is shown verbatim.
-      if (!response.ok) throw await responseError(response, 'Registration failed');
+      // or recover the account holding the address — so the server's text is shown, except for a name refusal.
+      if (!response.ok) {
+        throw await usernameRefusal(response, 'Registration failed');
+      }
 
       const data = await response.json();
 
@@ -389,6 +403,39 @@ class AuthService {
     if (data.user) this.adoptUser(data.user as AuthUser);
 
     return { emailVerified: data.user?.emailVerified === true, mailSent: data.mailSent === true };
+  }
+
+  /**
+   * Replace a flagged account's username and adopt the account the server answers with.
+   *
+   * The server refuses an unflagged account, so this is the rename screen's call only, shared by the
+   * game and the site.
+   *
+   * @param typed - The name as typed; it is trimmed and checked against the rule before it is sent
+   * @returns The adopted account, which no longer carries a rename demand
+   */
+  async renameUsername(typed: string): Promise<AuthUser> {
+    const verdict = checkUsername(typed);
+    if (!verdict.ok) throw new Error(verdict.error);
+    if (!this.token) throw new Error('Not authenticated');
+
+    const response = await fetch(`${this.API_URL}/auth/username`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.token}`
+      },
+      body: JSON.stringify({ username: verdict.username })
+    });
+
+    if (!response.ok) {
+      throw await usernameRefusal(response, USERNAME_RENAME_FAILED_MESSAGE);
+    }
+
+    const data = await response.json();
+    const user = data.user as AuthUser;
+    this.adoptUser(user);
+    return user;
   }
 
   /**

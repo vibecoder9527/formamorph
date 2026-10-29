@@ -208,6 +208,7 @@ describe('the lists without a badge state the access as text', () => {
     const leaves = variableTreeLeaves(buildVariableTree(undefined, { kind: 'entity', entity: null }));
     const byInsert = new Map(leaves.map((leaf) => [leaf.insert, leaf.access]));
     expect(byInsert.get('self.value')).toBe('writable');
+    expect(byInsert.get('self.hidden')).toBe('writable');
     expect(byInsert.get('self.name')).toBe('readOnly');
     expect(byInsert.get('clock.day')).toBe('readOnly');
     expect(byInsert.get('placeholders["Name"].value')).toBe('afterRun');
@@ -218,7 +219,7 @@ describe('the lists without a badge state the access as text', () => {
     const access = Object.fromEntries(toolSurface.globals.map((entry) => [entry.name, entry.access]));
     // A map's own entries carry the access, read-only on this surface.
     expect(access).toEqual({
-      args: 'readOnly', clock: 'readOnly', location: 'readOnly', memories: 'readOnly', notes: 'readOnly',
+      args: 'readOnly', clock: 'readOnly', turn: 'readOnly', location: 'readOnly', memories: 'readOnly', notes: 'readOnly',
       stats: undefined, locations: undefined, placeholders: undefined, traits: undefined, entities: undefined, persona: undefined,
       dictionaries: undefined, console: undefined,
     });

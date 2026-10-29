@@ -1,4 +1,4 @@
-import type { Stat, Trait, Entity, Dictionary, CommunityLink, ScriptTiming } from './world';
+import type { Stat, Trait, Entity, Dictionary, CommunityLink, ScriptTiming, PlacementWhere } from './world';
 import type { ChatMessage } from './ai';
 
 /** A director-invented character promoted to a persisted, per-playthrough entity (runtime characters,
@@ -46,6 +46,10 @@ export interface OwnedTraitState {
   chosen: string[];
   /** Absent ⇒ none. */
   disabled?: string[];
+  /** The traits an item grant holds, an extra source beside the picks (Q52). Absent ⇒ none. */
+  granted?: string[];
+  /** The granted traits whose gate fails, waiting for it to hold (Q119). Absent ⇒ none. */
+  grantedOff?: string[];
 }
 
 /** Entity id → its owned trait state. Absent entity ⇒ nothing chosen. */
@@ -80,6 +84,8 @@ export type PlayerStat = Omit<Stat, 'value'> & {
   aiMaxDelta?: number;
   /** How far stat code has moved each bound, kept apart like `aiMaxDelta` so every layer stays derived. */
   codeDelta?: CodeBoundDeltas;
+  /** What the item effects in force add to each bound, recomputed from the Item Copies on every change. */
+  itemDelta?: CodeBounds;
 };
 
 /** A global stat as an older save stores it, with each code-set bound as an absolute number in `codeBounds`. */
@@ -220,6 +226,55 @@ export interface AvatarListingContent {
   hash?: string;
 }
 
+/** What an Item Copy is a copy of: an authored item, or a runtime item the Inventory pass made. */
+export type ItemRef = { kind: 'item'; itemId: string } | { kind: 'runtime'; runtimeItemId: string };
+
+/** Where an Item Copy is: owned by the played Persona or an entity, or lying at a location. */
+export type ItemCopyWhere = PlacementWhere;
+
+export type ItemCopyVisibility = 'visible' | 'hidden';
+
+/** State one Item Copy keeps of its own. */
+export interface ItemCopyState {
+  /** Charges left. Absent = the item has no charges. */
+  charges?: number;
+}
+
+/** One item in play: a stack of `quantity` copies of an item in one place. */
+export interface ItemCopy {
+  id: string;
+  item: ItemRef;
+  where: ItemCopyWhere;
+  quantity: number;
+  /** The slot it is equipped in and when, as a rising order. Absent = carried. */
+  equipped?: { slotId: string; order: number };
+  visibility: ItemCopyVisibility;
+  /** Absent = none. */
+  state?: ItemCopyState;
+}
+
+/** One While Owned or While Equipped source in force on an owner, and the values it actually moved. */
+export interface AppliedItemEffect {
+  /** The entity whose own stats it moves. */
+  ownerId: string;
+  itemId: string;
+  timing: 'owned' | 'equipped';
+  /** Stat id → value delta, cap carry included. Reversal negates this. */
+  values: Record<string, number>;
+  /** Every Item Copy behind it is hidden, so its log lines name no item. */
+  hidden?: boolean;
+}
+
+/** The item effects in force. Bound facets are derived from the Item Copies and recorded nowhere. */
+export interface ItemEffectLedger {
+  /** Source key → what it applied. */
+  applied?: Record<string, AppliedItemEffect>;
+  /** Stat owner id → the items whose On First Obtain effects it got. */
+  firstObtained?: Record<string, string[]>;
+  /** Trait owner id → the traits On First Obtain rows grant it for good (Q121). */
+  firstObtainTraits?: Record<string, string[]>;
+}
+
 /** One saved snapshot of a play session (see GameplayContext.saveCurrentGameState). */
 export interface GameState {
   globalStats: PlayerStat[];
@@ -246,8 +301,14 @@ export interface GameState {
   metEntities?: string[];
   /** What this turn moved each entity stat, AI, regen and code together. Absent ⇒ none. */
   entityStatChanges?: EntityStatChanges;
+  /** Every Item Copy in play. A new game seeds them; an older save never gains any. Absent ⇒ none. */
+  itemCopies?: ItemCopy[];
+  /** What item effects have applied. Absent ⇒ none. */
+  itemEffects?: ItemEffectLedger;
   /** Absent ⇒ none. */
   codePins?: CodePins;
+  /** Absent ⇒ none. */
+  loreToggles?: LoreToggles;
   /** The live scene list — who is physically present this turn, with alias/reveal state for the tab. Legacy
    *  saves stored a bare `string[]` of names; those are normalized to `{ name, revealed: true }` on load. */
   visibleEntities: SceneEntity[];
@@ -361,6 +422,9 @@ export interface SaveObject {
   /** What scripts told the player with `player.tell`, by turn id, in call order, each with its script's
    *  timing. Never sent in a request. Absent ⇒ none. */
   scriptTells?: Record<string, { text: string; timing: ScriptTiming }[]>;
+  /** The opening turn's `turn.action`: the Opening Action the player sent, or empty for an Opening Narration.
+   *  History holds the "START GAME" stand-in instead. Absent ⇒ a page-one re-roll reads the drawn opening. */
+  openingAction?: string;
   /** v2.x memory editing: memories the player wrote by hand. `anchorTurn` is the message-history length
    *  at creation, which places the note chronologically among the digests. Never judged by the selector —
    *  a player-written memory rides until deleted. Absent (or empty) on older saves ⇒ none. */
@@ -381,6 +445,18 @@ export type PersonaRef =
 /** Placeholder id → what stat code pinned it to: one text, or the list an Object pin holds. Masks the roll
  *  and every authored pin until code unpins it. */
 export type CodePins = Readonly<Record<string, string | readonly string[]>>;
+
+/** What scripts set on one dictionary entry in play. A field left out reads as the book's copy. */
+export interface LoreEntryToggle {
+  enabled?: boolean;
+  constant?: boolean;
+}
+
+/** Book id → what scripts set on that book and its entries, by entry id. The save's books stay as entered. */
+export type LoreToggles = Readonly<Record<string, {
+  enabled?: boolean;
+  entries?: Readonly<Record<string, LoreEntryToggle>>;
+}>>;
 
 /** Per-playthrough Wildcard rolls, frozen in the save. */
 export interface PlaceholderRolls {

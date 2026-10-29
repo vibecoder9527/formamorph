@@ -10,6 +10,7 @@ const bigBook = (count: number): SandboxDictionary => ({
   name: 'Lore', id: 'lore',
   entries: Array.from({ length: count }, (_, at) => ({
     id: `entry-${at}-0000-0000-0000-000000000000`, name: `Entry ${at}`, keys: [`key ${at}`, `alias ${at}`], value: 'x'.repeat(1024),
+    enabled: true, constant: false,
   })),
 });
 
@@ -41,5 +42,5 @@ describe('the prelude cost (Q37, Q48)', () => {
     expect(full).toBeLessThanOrEqual(3 * empty);
     const read = await executeStatCode('return Object.keys(dictionaries.Lore.entries).length;', [], null, { dictionaries: [book], args: {} });
     expect(read.reply).toBe('10000');
-  }, 60_000);
+  });
 });

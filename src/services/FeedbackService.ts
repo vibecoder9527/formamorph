@@ -3,7 +3,7 @@ import { authHeaders, unwrap } from './authRequest';
 import { collectDiagnostics } from '@/lib/bugDiagnostics';
 import type {
   FeedbackCategory, FeedbackComment, FeedbackDetail, FeedbackDraft, FeedbackStatus, FeedbackThread,
-  FeedbackType,
+  FeedbackThreadSuggestion, FeedbackType, FeedbackUserSuggestion,
 } from '@/types';
 
 /** A page of threads, with the match count before paging so a pager can be drawn. */
@@ -13,7 +13,7 @@ export interface FeedbackPage {
 }
 
 /**
- * User-filed feedback: bug reports and suggestions, and the comment thread on each.
+ * User-filed feedback: bug reports, suggestions and questions, and the comment thread on each.
  *
  * The one channel running user→admin. Reading is open to any signed-in account on both branches; who may
  * write differs, and the server is the authority on that whatever this asks for.
@@ -24,11 +24,11 @@ class FeedbackService {
   }
 
   /**
-   * File a bug report or a suggestion.
+   * File a bug report, a suggestion or a question.
    *
    * Diagnostics are collected here so every caller sends the same block — and only for a bug, since a
-   * suggestion is about the game rather than the machine it was written on. The server drops them from a
-   * suggestion regardless; not sending them is what makes the promise true on this side too.
+   * suggestion or question is about the game rather than the machine it was written on. The server drops
+   * them from those regardless; not sending them is what makes the promise true on this side too.
    */
   async file(draft: FeedbackDraft): Promise<FeedbackThread> {
     const response = await fetch(`${this.apiUrl}/feedback`, {
@@ -83,6 +83,29 @@ class FeedbackService {
     return { thread: body.data, comments: body.comments };
   }
 
+  /**
+   * Accounts whose username starts with `query`, participants of `thread` first. An empty query lists only
+   * the participants.
+   */
+  async searchUsers(query: string, thread?: string, signal?: AbortSignal): Promise<FeedbackUserSuggestion[]> {
+    const params = new URLSearchParams({ q: query });
+    if (thread) params.set('thread', thread);
+    const response = await fetch(`${this.apiUrl}/feedback/search/users?${params}`, { headers: authHeaders(), signal });
+    const body = await unwrap<{ data: FeedbackUserSuggestion[] }>(response, 'Failed to search accounts');
+    return body.data;
+  }
+
+  /** Threads the caller can read, by number prefix or title words; `types` narrows the boards. */
+  async searchThreads(
+    query: string, types?: readonly FeedbackType[] | null, signal?: AbortSignal,
+  ): Promise<FeedbackThreadSuggestion[]> {
+    const params = new URLSearchParams({ q: query });
+    if (types?.length) params.set('types', types.join(','));
+    const response = await fetch(`${this.apiUrl}/feedback/search/threads?${params}`, { headers: authHeaders(), signal });
+    const body = await unwrap<{ data: FeedbackThreadSuggestion[] }>(response, 'Failed to search threads');
+    return body.data;
+  }
+
   /** Add a comment to a thread. */
   async comment(id: string, body: string): Promise<FeedbackComment> {
     const response = await fetch(`${this.apiUrl}/feedback/${id}/comments`, {
@@ -117,7 +140,19 @@ class FeedbackService {
     await unwrap(response, 'Failed to delete the comment');
   }
 
-  /** Vote for a suggestion, or take the vote back. */
+  /** Mark a reply as the answer to a question, or clear it with null. The asker and staff only. */
+  async setAnswer(id: string, commentId: string | null): Promise<FeedbackThread> {
+    const response = await fetch(`${this.apiUrl}/feedback/${id}/answer`, {
+      method: 'PUT',
+      headers: authHeaders(true),
+      body: JSON.stringify({ commentId }),
+    });
+
+    const body = await unwrap<{ data: FeedbackThread }>(response, 'Failed to update the answer');
+    return body.data;
+  }
+
+  /** Vote for a suggestion or question, or take the vote back. */
   async setVote(id: string, voted: boolean): Promise<FeedbackThread> {
     const response = await fetch(`${this.apiUrl}/feedback/${id}/vote`, {
       method: 'PUT',

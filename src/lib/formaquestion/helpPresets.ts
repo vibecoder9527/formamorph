@@ -1,11 +1,12 @@
 /**
  * The help preset store: the help prompts and the Code rider as one named set. The Default preset is read-only
  * and reads its texts and options from the code, so each release updates it for every player who has no custom
- * preset. A custom preset stores its own four texts and three option blocks. The store is a device
+ * preset. A custom preset stores its own texts and an option block per request prompt. The store is a device
  * setting, apart from the gameplay prompt presets.
  */
+import { HELP_INTENT_MAX_TOKENS } from './helpIntent';
 import { HELP_PICK_MAX_TOKENS } from './helpPicks';
-import { DEFAULT_HELP_PROMPTS, type HelpPromptKey, type HelpPromptTexts, type HelpRequestKey } from './helpPrompt';
+import { DEFAULT_HELP_PROMPTS, readHelpPromptTexts, type HelpPromptKey, type HelpPromptTexts, type HelpRequestKey } from './helpPrompt';
 
 /** One request's sampler values and cap. A preset holds them, so the Default preset's follow the code. */
 export interface HelpRequestOptions {
@@ -17,10 +18,13 @@ export interface HelpRequestOptions {
 /** One option block per request prompt: each prompt's request sends its own. The rider rides the answer's. */
 export type HelpPresetOptions = { readonly [K in HelpRequestKey]: HelpRequestOptions };
 
-/** The answer caps leave room for a long list of steps; the pick cap, for the copied lines. */
+/** The answer caps leave room for a long list of steps; the pick cap, for the copied lines; the Intent Classifier cap, for its label. */
 export const DEFAULT_HELP_OPTIONS: HelpPresetOptions = {
   answer: { temperature: 0.2, repetitionPenalty: 1, maxTokens: 800 },
   pick: { temperature: 0.2, repetitionPenalty: 1, maxTokens: HELP_PICK_MAX_TOKENS },
+  intent: { temperature: 0, repetitionPenalty: 1, maxTokens: HELP_INTENT_MAX_TOKENS },
+  // Drafts score alike at 0.5, 0.7 and 0.9 on the Create probe; 800 tokens holds three entities.
+  create: { temperature: 0.7, repetitionPenalty: 1, maxTokens: 800 },
   lookup: { temperature: 0.2, repetitionPenalty: 1, maxTokens: 800 },
 };
 
@@ -51,7 +55,7 @@ export const EMPTY_HELP_PRESET_STORE: HelpPresetStore = { activeId: DEFAULT_HELP
 export const defaultHelpPreset = (): HelpPreset => ({ id: DEFAULT_HELP_PRESET_ID, name: DEFAULT_HELP_PRESET_NAME, prompts: DEFAULT_HELP_PROMPTS, options: DEFAULT_HELP_OPTIONS });
 
 /** One block per prompt, each made by `block`. */
-export const mapHelpOptions = (block: (key: HelpRequestKey) => HelpRequestOptions): HelpPresetOptions => ({ answer: block('answer'), pick: block('pick'), lookup: block('lookup') });
+export const mapHelpOptions = (block: (key: HelpRequestKey) => HelpRequestOptions): HelpPresetOptions => ({ answer: block('answer'), pick: block('pick'), intent: block('intent'), create: block('create'), lookup: block('lookup') });
 
 const copyOptions = (options: HelpPresetOptions): HelpPresetOptions => mapHelpOptions((key) => ({ ...options[key] }));
 
@@ -146,12 +150,12 @@ function readOptions(value: unknown): HelpPresetOptions {
   return mapHelpOptions((key) => readStoredBlock(stored[key], DEFAULT_HELP_OPTIONS[key]));
 }
 
-/** A stored preset with its id, a name and four texts; anything else is dropped. */
+/** A stored preset with its id, a name and its texts; anything else is dropped. */
 function readPreset(value: unknown): HelpPreset | null {
   if (!isRecord(value) || !isText(value.id) || value.id === '' || !isText(value.name) || !isRecord(value.prompts)) return null;
-  const { answer, pick, lookup, code } = value.prompts;
-  if (!isText(answer) || !isText(pick) || !isText(lookup) || !isText(code)) return null;
-  return { id: value.id, name: value.name, prompts: { answer, pick, lookup, code }, options: readOptions(value.options) };
+  const prompts = readHelpPromptTexts(value.prompts);
+  if ('bad' in prompts) return null;
+  return { id: value.id, name: value.name, prompts: prompts.texts, options: readOptions(value.options) };
 }
 
 /**

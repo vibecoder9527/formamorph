@@ -41,7 +41,7 @@ A Tool stored on a world (`World.tools`), edited in the World Editor's Tools tab
 _Avoid_: author Tool, custom Tool, bundled Tool
 
 **Formaquestion Tool**:
-A Tool of the player's own that the help answer request offers. A separate list from the gameplay Tools, with a switch per device and no prompt preset; the gameplay Tool store never holds one, and a gameplay Tool never shows in Formaquestion. It reads the open world in the game or the editor, and an empty Tool Snapshot on every other screen. Imports and exports with the Tool pack file. Cannot take a fixed function's name, such as the guide lookup's.
+A Tool of the player's own that the help answer request offers. A separate list from the gameplay Tools, with a switch per device and no prompt preset; the gameplay Tool store never holds one, and a gameplay Tool never shows in Formaquestion. It reads the full open world in the editor, the Player View in the game, and an empty Tool Snapshot on every other screen. Imports and exports with the Tool pack file. Cannot take a fixed function's name, such as the guide lookup's.
 _Avoid_: help Tool, custom Tool, assistant Tool
 
 **Tool Handler**:
@@ -53,8 +53,24 @@ Starter code with slots that a script box's **Templates** menu fills in and inse
 _Avoid_: snippet, preset, recipe, example
 
 **Formaquestion**:
-The help window that a player can open on every screen. It holds the player docs, a search over them, and a field to ask a question that the connected AI answers from the docs. It only answers: it never navigates and never edits a world, a save or a setting. A request carries the docs and the current Surface, and nothing from a world or a save, with two exceptions that read the open world: a Formaquestion Tool the player turns on, and the code test, a fixed function offered on code turns that checks and test-runs the AI's scripts on the open world's authored data (ADR-0011).
+The help window that a player can open on every screen. It holds the player docs, a search over them, and a field to ask a question that the connected AI answers from the docs. It never edits a save or a setting. It changes the open world or the screen only through an action the player clicks on an answer, and writes only in a World Editor: Insert writes a code block into the open script home, an entity card's Add puts a drafted entity at the root of the open world, and Take Me There opens a screen (ADR-0015). A request carries the docs, the current Surface, and world text from the open world while Read the World is on: in the World Editor, the sections of the World Index that match the question, unsaved edits included, in a world block with a budget of its own; in game, the matching rows of the Player View, the dictionary entries that fire, and the story so far in a block of its own. A Formaquestion Tool the player turns on and the code test, a fixed function offered on code turns that checks and test-runs the AI's scripts, read the open world too: the full world in the editor, the Player View in game (ADR-0011, ADR-0014).
 _Avoid_: help chat, assistant, help bot, wiki (the web copy of the docs)
+
+**Intent**:
+What a Formaquestion question asks for, one of five: Chat (small talk, not about Formamorph), Help (a Formamorph question with no code), Code (scripts and stat code), World (the open world and its lore) and Create (a request to make an entity). The Intent Classifier gives it, and it decides which blocks and functions the answer request carries. A question has one Intent; one with two asks takes the first ask's.
+_Avoid_: route, category, mode
+
+**Intent Classifier**:
+The Formaquestion request that gives a question its Intent before the answer request, sent alongside the pick requests. It reads the question, the last exchange and the Surface, and has its own prompt, sampler pins and endpoint. A reply that names no known Intent sends the full request. A setting turns it on; the player sees it as Sort Questions.
+_Avoid_: router, sorter
+
+**World Index**:
+The open world's authored parts as sections in the Docs Index shape, one page per item: entities, locations, items, traits, stats with their code, world scripts, World Tools, dictionary entries and the world prompts. Placeholders read as their authored chips. Formaquestion ranks it with the same sources as the guide, as a second pool. Built from the World Editor's live world, and rebuilt when a slice changes.
+_Avoid_: world search index, lore index
+
+**Player View**:
+What the player has met in one playthrough, in player text only: the Met entities (an unmet stranger only under a scene alias the player saw, never its true name), the current location and every location a turn recorded, the items the player held or saw visible where they stood, the visible stats and the player's own active traits. It holds no AI description, AI summary, diary, script memory line or hidden content. It reads the current snapshot and the snapshots before it, so an undo moves it back. The in-game world that Formaquestion reads (ADR-0014).
+_Avoid_: player world, known world, spoiler-safe world
 
 **Mascot**:
 The optional character beside the Formaquestion chat. It is a rig: a base image and an ordered list of layers, each an expression (one at a time, picked by the AI through the face call) or a state (any number stacked), each drawing its overlay images in order. The app sets its look at three moments through the Initial Look, Idle Look and Thinking Look rows, each a pick of one expression and one state. A Mask, dragged on the Preview, sets the head view. A transition (None, Dissolve or Jelly) moves it on each change of look. On by default, and it implies the minimal chrome. Exports as a mascot card.
@@ -88,21 +104,100 @@ _Avoid_: auto layout (as a live behavior), nudge
 Any world inhabitant the narrator can reference — person, creature, plant, or object.
 _Avoid_: character (too narrow)
 
+**Stranger**:
+An entity the player has not met. Only an entity with a Stranger Name can be one. The player sees it under the latest alias the story gave it, else its Stranger Name, and never its true name. When both are blank it has no label and no player surface shows it. User copy says "stranger" and "the name you know"; "label" stays internal.
+_Avoid_: unknown entity, hidden entity
+
+**Met**:
+Whether the player knows who an entity is. An entity starts met in any of these cases:
+- It has no Stranger Name.
+- It has a relationship with the played persona, on either side.
+- One of its Known In picks is one of the persona's Locations or contains one. Nearby and Nowhere pick nothing.
+- It is a runtime character.
+
+Otherwise the player meets it when the story names it while it is here. A name inside dialogue counts. A met entity stays met. The Met set lists every met entity, wherever it is. It feeds the map and the Help window.
+_Avoid_: known, discovered, revealed
+
+**In Scene**:
+The entities here that took part in the story in one of the last 3 turns. An entity takes part when the prose shows it or the planner casts it. A name inside dialogue does not count. When the player moves, only followers keep the turns from before the move. An entity that leaves the player's place is out of scene at once. The In Scene set feeds the stat picker, the Traits tab and Give.
+_Avoid_: present, visible, participants
+
+**Look Around**:
+Everyone here the player would see if they looked around: In Scene first, then the quiet ones, each under their label. It feeds the Entities tab.
+_Avoid_: scene list, roster
+
 **Item**:
-An authored kind of object in the world's Items list, such as a sword or a potion. It has the entity description fields, images and placeholders, and its own value, Stackable, Consumable, Charges, Bound and Slot. An Item never joins the roster or the stat pass. Its placeholders roll once per playthrough, shared by every Item Copy.
+An authored kind of object in the world's Items list, such as a sword or a potion. It has the entity description fields, images and placeholders, and its own Value in a Currency, Stackable, Uses, When Empty, State, Bound, Slot, Unidentified Name and Unidentified Description. An Item never joins the roster or the stat pass. Its placeholders roll once per playthrough, shared by every Item Copy.
 _Avoid_: object, thing, entity (for an item)
 
 **Item Copy**:
-One item in play, kept in the save. It has an Owner or lies at a location, a quantity, an equipped state and a visibility. Always written in full.
+One item in play, kept in the save. It has an Owner or lies at a location, a quantity, an equipped state, a visibility, its uses left, its State and whether it is unidentified. Always written in full.
 _Avoid_: copy (that is a placeholder Copy), instance
+
+**Use**:
+The one action on an Item Copy: drink, read, blow, spend. It runs the item's After Use effects and When Used scripts, then spends one of the copy's Uses when the item has them. An item can be used when it has Uses, After Use effects or a When Used script. A runtime item's use removes one.
+_Avoid_: consume, activate
+
+**Uses**:
+How many times one Item Copy can be used before it is empty. Blank means unlimited. Each copy counts its own; an item with Uses 2 or more never stacks.
+_Avoid_: charges, doses
+
+**When Empty**:
+What a copy's last use leaves: Stays (the copy at zero uses, ready for a recharge), Gone (removed), Becomes (one carried copy of another authored item for the same owner) or Changes State (the copy at zero uses with a new State). It applies only while Uses is set; blank reads as Gone.
+_Avoid_: consumable, on empty
+
+**State**:
+A short free-text word one Item Copy holds, like an entity's Type: sealed, lit, soaked. The Item holds the starting State. The Inventory pass and scripts change it; the Inventory tab only shows it. Copies with different States never stack; the compare ignores case and surrounding spaces. Blank means none.
+_Avoid_: status, condition (that is a Requirement Row's)
+
+**Unidentified**:
+An Item Copy that shows the player its item's unidentified face: the Unidentified Name and Unidentified Description, each falling back to the normal value when blank. An item with either field starts every copy unidentified. It is apart from visibility, so a hidden copy can be unidentified too. A reveal on a visible unidentified copy identifies it. Its effects apply; the narrator sees both faces.
+_Avoid_: unknown, mystery, disguised
 
 **Placement**:
 An authored starting Item Copy: where it goes (the Persona, an entity or a location), a quantity, Hidden, and a source. The source is one item. A new game's seed turns each Placement into Item Copies.
 _Avoid_: spawn, starting item
 
+**Currency**:
+A kind of money in the world's ordered Currencies list, with one Backing. An item's Value is priced in one Currency, or none. The first in the list is the Default, which a new item takes. An item with no Currency has no price, whatever its Value holds.
+_Avoid_: value unit, money type
+
+**Backing**:
+What holds a Currency: a stat, Items, or nothing, for a name only. A stat backing lists each stat once: a Global Stat, a stat a Persona links under its original id, or a Persona's own stat.
+
+**Currency Item**:
+A row of an Items-backed Currency: a Stackable item and its worth in the base unit. The smallest Currency Item is worth 1, no two share a worth, and an item is a Currency Item of one Currency at most. The Breakdown reads an item's Value as Currency Items, largest first, such as "1 Gold, 5 Copper".
+_Avoid_: denomination
+
+**Balance**:
+What an owner holds in a Currency, or that the owner is untracked, which is never the same as 0. Currency Items count the visible, identified copies at the owner, and the player always tracks them. An entity tracks them when a Placement of one of the Currency Items starts at it. A stat counts for whoever has it, and a Global Stat counts for the player alone. A name-only Currency tracks no one. Players read it as **Money**.
+_Avoid_: wallet, funds
+
 **Slot**:
-A named place in the world's slot list where an item is equipped, such as Hand or Ring. Its capacity sets how many item units fit; an item's slot size says how many it takes. The Persona and every entity share one list.
-_Avoid_: equipment slot list per entity
+A name in the world's slot list where an item is equipped, such as Main Hand or Ring. A slot has no capacity of its own: each Body that holds it gives it one, and one capacity unit holds one Item Copy. One list serves every Body, so an item's slot works in any Body that has it.
+
+**Slot Rule**:
+An item's slots, in order, and a mode. **Either of** takes one of them, the first free or the one named. **All of** takes one unit in each, and the owner's Body must hold them all. An Item Copy stores the chosen slot, or the first listed under All of; the rule says which slots it occupies. An item without one can't be equipped.
+_Avoid_: slot size, two-handed flag
+
+**Body**:
+A named, ordered list of slot entries, each a slot and its capacity (absent = 1), such as Humanoid with Head and Hand ×2. The world holds an ordered Body list. An entity picks a Body, the Default, or None; None gives the owner no slots.
+_Avoid_: body type, form, paperdoll
+
+**Body Layout**:
+A Body's figure: its Backdrop and one Slot Box per capacity unit. It is display only: scripts and prompts don't see it.
+
+**Backdrop**:
+What a Body Layout's boxes sit on: Humanoid, Quadruped, Plain or a Custom Image. Its size is an aspect ratio.
+
+**Slot Box**:
+Where one capacity unit of a Body entry sits on the Backdrop, stored as fractions of the Backdrop. A smaller box draws above a larger one.
+
+**Default Body**:
+The first Body in the world's list. Every owner without a pick uses it: an entity with no pick, a library character and a character the AI introduces. A world with no Bodies has no Default, so no owner has slots.
+
+**Body in force**:
+The Body an owner equips into right now, from the one resolver every slot reader uses. The latest-on active trait Body row wins, then a script's base Body, then the authored pick. An entity reads its own pick. The played Persona reads a world persona's own pick, or the Custom Persona entity's under None or a library persona. A pick whose Body is gone reads as the Default.
 
 **Persona**:
 The entity that fills the player slot for a playthrough. It comes from the player's library or from the world's entities that carry the Persona mark. A save names one, or an explicit None.
@@ -159,12 +254,40 @@ What a Supporter shows to other people: a badge, a tier name color, a Profile Im
 _Avoid_: perks, rewards, supporter status
 
 **Supporters wall**:
-The page on formamorph.ai that lists linked accounts with a tier, Supporter+ first and longer tenure first. It never lists a Patreon member who did not link.
+The list of linked accounts with a tier, Supporter+ first and longer tenure first. It is a page on formamorph.ai and a tab of the Credits dialog, and both render one component. It never lists a Patreon member who did not link.
 _Avoid_: hall of fame, donor list, credits
 
 **Patreon link**:
 The tie between one Formamorph account and one Patreon user, made in the account settings after the member approves it on Patreon. Unlink removes it at once.
 _Avoid_: Patreon login, connection (the AI endpoint word), integration
+
+**Formamorph AI**:
+The built-in endpoint preset for Supporters, next to the Demo AI. Turns go through Formamorph's server to an AI provider, against a weekly allowance. Its model, context window and output limit come from the Hosted state and can't be edited. It is never stored and never probed. Background work pauses once the week's allowance is spent, and the allowance surface says so.
+_Avoid_: hosted tier (in copy), premium AI, the proxy
+
+**Hosted state**:
+What Formamorph's server reports about one account's Formamorph AI: its tier, its state (ready, warned, exhausted, paused, unconfirmed, locked or age gate; unconfirmed keeps the tier and means Patreon has not confirmed the pledge for 7 days), its context window and output cap, its turn time limit, the served model and its capabilities, and the allowance used. The client sets the preset's state from it, and from the refusals the server sends.
+_Avoid_: usage, quota, entitlement (the Patreon word)
+
+**Allowance Ring**:
+A small ring between Help and Send that fills as the week's Formamorph AI allowance is used. It shows while any prompt can send to Formamorph AI. Its figure holds during a turn and moves when the turn ends. Selecting it opens a popover with the usage lines and the Usage breakdown, or the state's reason and actions.
+_Avoid_: usage meter, quota ring
+
+**Usage breakdown**:
+Where one week's Formamorph AI use went, as whole percents over seven groups (Narration, Story Planning, Choices, Stats and World Tracking, Inventory, Memory, Help and Editor) plus an Other row above zero. A single prompt at or above the server's breakdown threshold is named under its group. Shown in AI settings, and in the Allowance Ring's popover.
+_Avoid_: usage chart, cost split (it shows percents, never dollars)
+
+**Spend subject**:
+What Formamorph AI spend is counted against: the Patreon membership for a pledge, or the grant for a staff grant. It is not the account, so relinking Patreon or making a new account keeps the week's spend.
+_Avoid_: account (for spend), payer, customer
+
+**Formamorph AI turn**:
+The calls one player action makes, named by a turn id the server issues on the first call and the client sends back on the rest. A first call is refused once the week's spend reaches the budget. A later call is refused once the week's spend, minus this turn's own, reaches the budget plus a grace of one whole turn's maximum cost, so a turn started under budget can finish and held turn ids buy no extra spend. A turn ends at its time limit or call cap. The client's clock starts when the first call is sent, and it clears the id slightly before the limit, so a late call opens a new turn and faces the first-call check. A null limit means no client expiry.
+_Avoid_: session, request group
+
+**Pause**:
+The stop on Formamorph AI calls once the UTC day's spend reaches the daily ceiling. Every call is refused, started turns included, so a paused day can cut a turn short. A call already streaming finishes. An admin can lift it until 00:00 UTC, and the next day starts unpaused.
+_Avoid_: outage, shutdown
 
 **Permissive License**:
 The verdict that a VRM's embedded 1.0 metadata grants every right the community catalog needs — everyone may use it, it may be redistributed, modified copies may be redistributed, and commercial use is allowed. Read from the file, never declared. A gate on publishing, not a badge.
@@ -393,23 +516,28 @@ The entity that owns the running stat, with the same fields as an `entities` ent
 _Avoid_: self (the running stat's own entry), persona (the played entity)
 
 **Script**:
-One box of JavaScript with a Timing, kept on a stat, on a trait or on the world. Its home decides what `self` is and when the script is in force; the surface is otherwise the same. It reads the world and writes through `self`, other stats, placeholders and traits. A script that names `player` can tell or ask the player.
+One box of JavaScript with a Timing, kept on a stat, on a trait, on the world or on an item. Its home decides what `self` is and when the script is in force; the surface is otherwise the same. It reads the world and writes through `self`, other stats, placeholders and traits. A script that names `player` can tell or ask the player.
 _Avoid_: stat code, code box, formula (a returned number is one use), macro
 
 **Timing**:
-When a Script runs: Before the AI, After the AI, During AI Output, At Game Start or When a Trait Switches. The Timing menu is the only way to move a script between timings. Inside one timing, an optional `order` decides who runs first.
+When a Script runs: Before the AI, After the AI, During AI Output, At Game Start or When a Trait Switches. An item's scripts have five Timings of their own, the item timings. The Timing menu is the only way to move a script between timings. Inside one timing, scripts run one by one in the Scripts tab's order, and an optional `order` decides who runs first.
 _Avoid_: hook, phase, trigger (a Test Bench Instrument), event
 
+**Script Chain**:
+The Scripts of one Timing run one after another, each over the state the one before left. Its trait switches and inventory writes fire their own runs at once, before the next Script. Code and specs use the word; player-facing text says what happens instead ("the writes add up").
+_Avoid_: script stack, pipeline
+
 **Sandbox Snapshot**:
-A frozen read of one playthrough state that every Script of a turn or a check runs against: the stats and which are on, the Owners and their stats, the traits in force, the placeholders, the dictionaries, the places, the discovered cast and the clock. Play takes one per turn. Test Code and the Test Bench take one of the authored world at turn one, so an editor run and a real turn read the same board. Taken once, read by every run.
+A frozen read of one playthrough state that one Script runs against: the stats and which are on, the Owners and their stats, the traits in force, the placeholders, the dictionaries, the places, the discovered cast and the clock. Play takes one per Script, over what the Script before it left. Test Code and the Test Bench start from the authored world at turn one, so an editor run and a real turn read the same board. Taken once per Script, read by that Script alone.
 _Avoid_: sandbox context, run options, script world, code scene
 
 **Before the AI**:
-The Timing that runs at the start of a turn, before the prompt is built. Its writes are in that turn's prompt. No AI change, regen or clock time exists yet, so `previous` reads as the stat and every `delta` reads zero.
+The Timing that runs at the start of a turn, before the prompt is built. Its writes are in that turn's prompt. No AI change, regen or clock time exists yet, so `previous` reads as the stat when the Timing began and `delta.ai` and `delta.regen` read zero.
 _Avoid_: pre-turn, before box
 
 **After the AI**:
-The Timing that runs after the AI's stat changes and Regen apply. It reads the AI's change, this turn's regen and what the Before the AI scripts set._Avoid_: post-turn, after box, stat code (the old name of the whole feature)
+The Timing that runs after the AI's stat changes and Regen apply. It reads the AI's change, this turn's regen, what the Before the AI scripts set and what the After the AI scripts above it wrote.
+_Avoid_: post-turn, after box, stat code (the old name of the whole feature)
 
 **During AI Output**:
 The Timing that runs once for each completed narration sentence, never for each token. The script reads `narration` and rewrites the sentence through `narration.sentence`. The rewrite is the one copy that the screen, the save, read-aloud and the AI's recap carry. It has no `player`.
@@ -420,8 +548,12 @@ The Timing that runs once for each new playthrough, on the opening turn, before 
 _Avoid_: on load, setup script, init
 
 **When a Trait Switches**:
-The Timing that runs once for each trait that turns on or off in play, whatever switched it. The script reads `trait`, the trait that switched, with `enabled` as its new state. Setup picks fire nothing.
+The Timing that runs once for each trait that turns on or off in play, whatever switched it. The script reads `trait`, the trait that switched, with `enabled` as its new state. A script's switch runs it before the next script, nested; a During AI Output switch waits for the After the AI landing. Setup picks fire nothing.
 _Avoid_: on toggle, trait hook, trait event
+
+**Item timings**:
+The five Timings of an item's scripts: When Gained, When Lost, When Equipped, When Unequipped and When Used. Each runs once for each event of one of the item's Item Copies, from the Inventory pass, the panel or a script. `self` is the item and `owner` is the Item Copy's Owner, empty while it lies at a location. A script's inventory write runs item timings up to 3 levels deep; past that the write still lands and no timing runs. Starting items run none.
+_Avoid_: item hook, item trigger, on pickup
 
 **Original**:
 The world trait, group or stat a Link points at, at the root or under Blueprints. An Original is a Blueprint trait or stat. An entity's own trait or stat is never an Original.
@@ -448,7 +580,7 @@ A Condition that compares an owner's stat to a number with one of six operators 
 _Avoid_: stat gate, stat requirement, threshold (a descriptor's word)
 
 **Item Condition**:
-A Condition that holds while an owner has an Item Copy of an item, owned (carried or equipped, hidden copies included) or equipped. Traits and image Visibility rules share it. With no owner it reads the host's owner; on a global trait or a location rule that is the Persona. On an item's rule it reads the Item Copy's owner, and never holds while the copy lies at a location, Not included.
+A Condition that holds while an owner has an Item Copy of an item, owned (carried or equipped, hidden copies included) or equipped. Traits and image Visibility rules share it. With no owner it reads the host's owner; on a global trait or a location rule that is the Persona. On an item's rule it reads the Item Copy's owner, and never holds while the copy lies at a location, Not included. It can also require a State word (trimmed, any case) and require the copy identified or unidentified. Owner, status, State and identity must all hold on one copy. Its text reads the checks in parentheses after the name, "owning Lantern (lit)", and names the item's unidentified face while the owner holds no visible identified copy.
 _Avoid_: item gate, inventory check
 
 **Time Condition**:

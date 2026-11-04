@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toastAiRequestFailure } from '@/lib/aiRequest/aiRequestFailureToast';
 import type { DocSection, DocsIndex } from '@/lib/docs/docsIndex';
 import { openDocs } from '@/lib/formaquestion/docsOpener';
+import { restoreEntityAdds, takeEntityAdds } from '@/lib/formaquestion/entityAdds';
 import { helpFocus } from '@/lib/formaquestion/helpFocus';
 import { askHelp, type HelpStage } from '@/lib/formaquestion/helpSession';
 import type { HelpSettings } from '@/lib/formaquestion/helpSettings';
 import type { HelpTrace } from '@/lib/formaquestion/helpTrace';
-import { helpWorld } from '@/lib/formaquestion/helpWorld';
+import type { AnswerSource } from '@/lib/formaquestion/helpWorldSource';
+import { helpWorld, type WorldLean } from '@/lib/formaquestion/helpWorld';
 import { surfaceRegistry } from '@/lib/surface/surfaceRegistry';
 import { turnActivity, useTurnGenerating } from '@/lib/turnActivity';
 import { useMountedRef } from '@/lib/useMountedRef';
@@ -37,8 +39,10 @@ export interface HelpExchange {
   /** How long the reasoning took, from its first text to the answer's first text. Absent while it runs. */
   reasoningMs?: number;
   status: HelpStatus;
+  /** The screen's world lean when the question was sent; absent when no world was open. Its world sources follow it. */
+  lean?: WorldLean;
   /** The docs sections that reached the model. */
-  sources: readonly DocSection[];
+  sources: readonly AnswerSource[];
   /** The open screen's section among the sources. */
   lead?: DocSection;
   /** The answer did not come from the guide. */
@@ -66,6 +70,8 @@ export interface HelpChat {
   stop: () => void;
   /** Empties the conversation and ends the answer that is coming in. */
   clear: () => void;
+  /** Replaces the conversation with finished exchanges: the dev-router's canned answers, in dev builds only. */
+  seed?: (exchanges: HelpExchange[]) => void;
 }
 
 /**
@@ -99,6 +105,7 @@ export function useHelpChat(index: DocsIndex | null, ai: HelpAi, settings: HelpS
     const world = helpWorld.get();
     const focus = helpFocus.get();
     const sentSettings = settingsRef.current;
+    const added = takeEntityAdds();
     const controller = new AbortController();
     running.current = controller;
     const id = randomUUID();
@@ -107,7 +114,7 @@ export function useHelpChat(index: DocsIndex | null, ai: HelpAi, settings: HelpS
     const change = (fields: Partial<HelpExchange>) => {
       if (mountedRef.current) setExchanges((all) => all.map((entry) => (entry.id === id ? { ...entry, ...fields } : entry)));
     };
-    setExchanges((all) => [...all, { id, question, images, answer: '', reasoning: '', status: 'writing', sources: [], flagged: false, nearest: [] }]);
+    setExchanges((all) => [...all, { id, question, images, answer: '', reasoning: '', status: 'writing', lean: world?.lean, sources: [], flagged: false, nearest: [] }]);
 
     void (async () => {
       try {
@@ -120,6 +127,7 @@ export function useHelpChat(index: DocsIndex | null, ai: HelpAi, settings: HelpS
           change({ stage: 'checking' });
           const found = await Promise.race([aiRef.current.revalidate(), stopped]);
           if (found !== true) {
+            restoreEntityAdds(added);
             change({ status: found === 'stopped' ? 'stopped' : 'no-ai' });
             return;
           }
@@ -133,7 +141,7 @@ export function useHelpChat(index: DocsIndex | null, ai: HelpAi, settings: HelpS
           if (reasoningAt && answered && reasoningMs === undefined) reasoningMs = Math.round(performance.now() - reasoningAt);
           return reasoningMs;
         };
-        for await (const event of askHelp({ question, history, language, settings: sentSettings, snapshot, index, surface, focus, images, world, signal: controller.signal })) {
+        for await (const event of askHelp({ question, history, added, language, settings: sentSettings, snapshot, index, surface, focus, images, world, signal: controller.signal })) {
           if (event.type === 'trace') change({ trace: event.trace });
           else if (event.type === 'stage') change({ stage: event.stage });
           else if (event.type === 'face') change({ face: event.face });
@@ -141,6 +149,7 @@ export function useHelpChat(index: DocsIndex | null, ai: HelpAi, settings: HelpS
           else change({ answer: event.text, reasoning: event.reasoning, reasoningMs: timeReasoning(event.reasoning, true), sources: event.sources, lead: event.lead, flagged: event.flagged, nearest: event.nearest, status: event.stopped ? 'stopped' : 'answered', stage: undefined });
         }
       } catch (error) {
+        restoreEntityAdds(added);
         if (!mountedRef.current) return;
         toastAiRequestFailure(error, () => { openDocs({ page: 'Connect-Your-Own-AI' }); });
         change({ status: 'failed' });
@@ -157,10 +166,15 @@ export function useHelpChat(index: DocsIndex | null, ai: HelpAi, settings: HelpS
     setExchanges([]);
     setPending([]);
   }, []);
+  const seed = useCallback((seeded: HelpExchange[]) => {
+    running.current?.abort();
+    running.current = null;
+    setExchanges(seeded);
+  }, []);
   const busy = exchanges.at(-1)?.status === 'writing';
   const { readsImages } = ai;
   return useMemo(
-    () => ({ exchanges, busy, held, readsImages, pending, setPending, ask, stop, clear }),
-    [exchanges, busy, held, readsImages, pending, ask, stop, clear],
+    () => ({ exchanges, busy, held, readsImages, pending, setPending, ask, stop, clear, ...(import.meta.env.DEV && { seed }) }),
+    [exchanges, busy, held, readsImages, pending, ask, stop, clear, seed],
   );
 }

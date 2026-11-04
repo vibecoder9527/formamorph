@@ -20,10 +20,12 @@ export function useScriptWorldNames(): ScriptWorldNames {
   const gameData = useGameDataOptional();
   const playStats = gameData?.playStats;
   const locations = gameData?.locations;
+  const items = gameData?.items;
+  const currencies = gameData?.currencies;
   // `stats` is the world's play stats in every box.
   const names = useMemo(() => statCodeWorldNames({
-    playStats: playStats ?? [], playEntities, traits, traitGroups, entityGroups, placeholders, placeholderOwners, dictionaries, locations,
-  }), [playStats, playEntities, traits, traitGroups, entityGroups, placeholders, placeholderOwners, dictionaries, locations]);
+    playStats: playStats ?? [], playEntities, traits, traitGroups, entityGroups, placeholders, placeholderOwners, dictionaries, locations, items, currencies,
+  }), [playStats, playEntities, traits, traitGroups, entityGroups, placeholders, placeholderOwners, dictionaries, locations, items, currencies]);
   const placeholderPlaces = useMemo(
     () => worldPlaceholderPlaces({ list: placeholders, owners: placeholderOwners, groups: placeholderGroups }),
     [placeholders, placeholderOwners, placeholderGroups],
@@ -33,12 +35,15 @@ export function useScriptWorldNames(): ScriptWorldNames {
   const entities = gameData?.entities;
   const worldPlaceholders = gameData?.worldPlaceholders;
   const connections = gameData?.connections;
+  const placements = gameData?.placements;
+  const slots = gameData?.slots;
   const onWorld = !!gameData;
   const world = useMemo<OpeningFoldWorld>(() => (onWorld ? {
     stats, statGroups, traits, traitGroups, entities, entityGroups, placeholders: worldPlaceholders, placeholderGroups, dictionaries, locations, connections,
+    items, placements, slots, currencies,
   } : { placeholders }), [
     onWorld, stats, statGroups, traits, traitGroups, entities, entityGroups, worldPlaceholders, placeholderGroups, dictionaries, locations, connections,
-    placeholders,
+    items, placements, slots, currencies, placeholders,
   ]);
   return { names, placeholderPlaces, world };
 }

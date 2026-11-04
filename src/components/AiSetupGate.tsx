@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { FieldError, Hint, Meta } from '@/components/ui/typography';
 import { toastError } from '@/lib/linkToast';
 import {
   VRAM_TIERS, downloadBytes, formatModelSize, groupModelsByFit, tierForVram, type LocalModelInfo, type VramTier,
@@ -14,6 +15,11 @@ import {
 import { fmtGB, useVramStats } from '@/lib/useVramStats';
 import { useLocalLlmStatus } from '@/lib/useLocalLlmStatus';
 import { useSettings } from '@/contexts/SettingsContext';
+import { StoryCard } from '@/components/road/StoryCard';
+import { openRoadScene } from '@/components/road/roadSceneStore';
+import { isPledged } from '@/components/road/useDemoAIOffer';
+import { aiSetupLeadsWithHostedAi } from '@/lib/firstTimeFlow';
+import { HOSTED_AI_AVAILABLE } from '@/lib/hostedAi/hostedUrls';
 import { isCrossOriginEmbed, isLocalEndpoint, openInOwnTab, shouldOfferPopOut } from '@/lib/localNetworkEmbed';
 import type { AiBlocker, AiMode } from '@/lib/useAiReachable';
 import {
@@ -60,7 +66,7 @@ function ModelRow({ model, recommended, dimmed, onDownload }: {
         <div className="text-meta text-muted-foreground">
           {model.params} · {model.quant} · {formatModelSize(downloadBytes(model))}
         </div>
-        <p className="mt-1 text-helper text-muted-foreground">{model.note}</p>
+        <Hint className="mt-1">{model.note}</Hint>
       </div>
       <Button size="sm" variant={recommended ? 'default' : 'outline'} className="shrink-0" onClick={onDownload}>
         Download
@@ -83,7 +89,7 @@ function Section({ title, helper, models, recommendedId, dimmed, onDownload }: {
     <div className="space-y-2">
       <div>
         <div className="text-meta font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
-        {helper && <p className="text-helper text-muted-foreground">{helper}</p>}
+        {helper && <Hint>{helper}</Hint>}
       </div>
       <div className="space-y-2">
         {models.map((m) => (
@@ -125,7 +131,7 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
   const engine = useLocalLlmStatus();
   // Read from context rather than taken as a prop: it must be the exact URL the probe used, and a
   // caller passing its own copy is how the two would drift apart.
-  const { activeEndpointUrl } = useSettings();
+  const { activeEndpointUrl, hostedAi } = useSettings();
   const vram = useVramStats('', { enabled: open && mode === 'local' });
   const [tier, setTier] = useState<VramTier>('tier8');
   const [showAll, setShowAll] = useState(false);
@@ -219,14 +225,14 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
     const body = phase === 'loading' ? (
       <div>
         <div>Loading {workingName}…</div>
-        <div className="text-meta text-muted-foreground">Download complete · loading into your GPU.</div>
+        <Meta as="div">Download complete · loading into your GPU…</Meta>
       </div>
     ) : (
       <div>
         <div>Downloading {workingName}…</div>
-        <div className="text-meta text-muted-foreground">
+        <Meta as="div">
           {formatModelSize(progress?.received ?? 0)} / {formatModelSize(progress?.total ?? 0)} ({pct}%)
-        </div>
+        </Meta>
       </div>
     );
     // The loading phase has no byte figures, so hold the bar where the download left it rather than
@@ -249,7 +255,7 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
       <div className="space-y-2">
         <div>
           <div>Your model is ready</div>
-          <div className="text-meta text-muted-foreground">{readyName} is loaded and answering.</div>
+          <Meta as="div">{readyName} is loaded and answering.</Meta>
         </div>
         <Button size="sm" variant="outline" onClick={() => { toast.dismiss(READY_TOAST); onOpenSettings(); }}>
           Open Settings
@@ -299,11 +305,14 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
   const inFlow = localFlow && phase !== 'choose';
 
   const gpu = vram.status === 'online' ? vram.gpus[0] : undefined;
+  const leadsWithHostedAi = localFlow && phase === 'choose' && aiSetupLeadsWithHostedAi({
+    totalVramMb: gpu?.totalMB ?? null, hostedAvailable: HOSTED_AI_AVAILABLE, pledged: isPledged(hostedAi),
+  });
   const tierLabel = VRAM_TIERS.find((t) => t.value === tier)?.label;
   const detected = gpu?.name && gpu.totalMB ? (
-    <p className="text-meta text-muted-foreground">
+    <Meta as="p">
       Detected: {gpu.name} · {fmtGB(gpu.totalMB)} GB VRAM{tierLabel ? ` · ${tierLabel} class` : ''}
-    </p>
+    </Meta>
   ) : null;
 
   const title = phase === 'downloading' && inFlow
@@ -328,16 +337,16 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
     : phase === 'ready' && inFlow
     ? `${readyName} is loaded and answering on your machine.`
     : blocker === 'unknownModel'
-    ? 'Your endpoint is answering, but it has no model loaded and doesn’t recognize the model name Formamorph is set to ask for — so every turn would fail. Load a model, or set the model name to one your server lists.'
+    ? 'Your endpoint answers, but it has no model loaded and doesn’t know the model name in your settings, so every turn fails. Load a model, or set “Model Name” to one your server lists.'
     : embedBlocked
-    ? 'Formamorph is running inside another site’s page, and browsers don’t let an embedded page reach servers on your machine or local network — only a tab of its own can ask your browser for that permission.'
+    ? 'Formamorph is running inside another site’s page. Browsers don’t let an embedded page reach servers on your machine or local network. A tab of its own can ask your browser for that permission.'
     : custom
     ? 'Formamorph couldn’t get a response from your custom endpoint. Check that the server is running and the URL is right.'
     : blocker === 'engineDown'
-    ? 'A model is installed but the engine couldn’t load it — it may not fit in VRAM at the current settings.'
+    ? 'A model is installed, but the engine couldn’t load it. It may not fit in VRAM at the current settings.'
     : localFlow && showAll
     ? 'Pick a model for your machine. Bigger models write better and run slower.'
-    : 'Formamorph runs its AI on your own machine. Download a model to start playing — no account, no endpoint setup.';
+    : 'Formamorph runs its AI on your own machine. Download a model to start playing. You need no account and no endpoint.';
 
   /** Close the dialog, handing an in-flight download or load to the toast on the way out. */
   const dismiss = () => {
@@ -355,7 +364,17 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        {error && <p className="text-helper text-destructive">{error}</p>}
+        {error && <FieldError>{error}</FieldError>}
+
+        {leadsWithHostedAi && (
+          <StoryCard
+            testId="ai-setup-lead"
+            className={cn(expanded && 'shrink-0')}
+            title="Better Narration, Nothing to Download"
+            body="Formamorph AI writes better narration and keeps characters more consistent than the models that fit your GPU. Your support also helps fund new updates."
+            onSeeLevels={openRoadScene}
+          />
+        )}
 
         {inFlow && phase === 'downloading' ? (
           <div className="space-y-2">
@@ -366,42 +385,41 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
               </span>
               <Button size="sm" variant="ghost" onClick={() => cancelLocalDownload()}>Pause</Button>
             </div>
-            <p className="text-helper text-muted-foreground">
-              You can close this window — the download keeps going, and a toast shows the progress.
-            </p>
+            <Hint>
+              You can close this window. The download continues, and a notification shows its progress.
+            </Hint>
           </div>
         ) : inFlow && phase === 'loading' ? (
           <div className="space-y-2">
             <div className="flex items-center gap-3 rounded-md border border-border p-3">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              <div className="text-helper text-muted-foreground">Download complete · loading weights…</div>
+              <Hint as="div">Download complete · loading into your GPU…</Hint>
             </div>
-            <p className="text-helper text-muted-foreground">
-              You can close this window — a toast tells you when it’s ready.
-            </p>
+            <Hint>
+              You can close this window. A notification tells you when the model is ready.
+            </Hint>
           </div>
         ) : inFlow && phase === 'ready' ? (
           <div className="flex items-center gap-3 rounded-md border border-border p-3">
             <CheckCircle2 className="h-5 w-5 text-success" />
-            <div className="text-helper text-muted-foreground">
-              Everything runs locally — no account, no internet needed during the game.
-            </div>
+            <Hint as="div">
+              Everything runs on your machine. You need no account and no internet to play.
+            </Hint>
           </div>
         ) : blocker === 'unknownModel' ? (
-          <p className="text-helper text-muted-foreground">
-            Load a model in LM Studio and this continues on its own — no need to reload.
-          </p>
+          <Hint>
+            Load a model on your server, and this window continues on its own. You don&apos;t need to reload.
+          </Hint>
         ) : embedBlocked ? (
-          <p className="text-helper text-muted-foreground">
-            A new tab can connect — allow the prompt when it appears — but it starts with storage of its
-            own, so worlds and saves made here stay here. Export anything you want to keep and import it
-            in the new tab. For regular play on a local model, the desktop app connects directly; a cloud
-            endpoint works right here in the embed.
-          </p>
+          <Hint>
+            A new tab can connect after you allow your browser&apos;s prompt. The new tab has its own storage, so
+            export the worlds and saves you want to keep, then import them there. For regular play, use the
+            desktop app with a local model, or a cloud endpoint here.
+          </Hint>
         ) : custom ? (
-          <p className="text-helper text-muted-foreground">
-            Start your server and this will continue on its own — no need to reload.
-          </p>
+          <Hint>
+            Start your server, and this window continues on its own. You don&apos;t need to reload.
+          </Hint>
         ) : blocker === 'engineDown' ? null : !showAll ? (
           <div className="space-y-3">
             {detected}
@@ -475,9 +493,9 @@ export function AiSetupGate({ open, reason, mode, blocker, reachable, recheck, o
                 {reason === 'play' ? 'Continue anyway' : 'Later'}
               </Button>
               {localFlow && !showAll && (
-                <span className="self-center text-helper text-muted-foreground">
-                  You can set this up anytime in Settings → Endpoints.
-                </span>
+                <Hint as="span" className="self-center">
+                  You can set this up anytime in <strong>Settings → Endpoints</strong>
+                </Hint>
               )}
             </>
           )}

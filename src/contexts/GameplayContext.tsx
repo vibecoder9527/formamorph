@@ -4,6 +4,7 @@ import { putSaveRecord, getSaveRecord, getAllSaveRecords, deleteSaveRecord } fro
 import { autosaveName, autosavesToTrim } from '../lib/autosave';
 import { toast } from 'react-toastify';
 import { toastError } from '@/lib/linkToast';
+import { toastAutosaveFailure } from '@/lib/saveFailureToast';
 import { convertSaveFile, terminateWorker } from '../lib/saveConversionWorkerUtils';
 import { useTtsPlayback } from '../lib/useTtsPlayback';
 import { APP_VERSION, isSaveEnvelope, migrateSave, migrateLegacySaveState, stripSnapshotHistory } from '../lib/version';
@@ -14,12 +15,13 @@ import { setLiveReasoning } from '../lib/reasoningStreamStore';
 import { usePlaceholderSession } from './PlaceholderSessionContext';
 import { parseTurnContent, serializeTurnContent } from '../lib/turnDigest';
 import type { SceneImageMap } from '../lib/sceneImages';
+import type { StrangerLabels } from '../lib/locationContext';
 import { restoreAttachments, type AttachmentMap } from '../lib/actionAttachments';
 import { restoreTells, type TellMap } from '../lib/scriptTells';
 import { matchChoicesToAction, CONTINUE_CHOICE } from '../lib/choices';
 import { pageStatDeltas } from '../lib/statChanges';
 import { activeTraits, recoverStatBases, type AppliedTraitValues } from '../lib/traitRuntime';
-import { settleItemEffects, withoutOrphanCopies, type OwnerStatTraits } from '../lib/inventory';
+import { settleItemEffects, withoutOrphanCopies, withoutOrphanTimedTraits, type OwnerStatTraits } from '../lib/inventory';
 import { heldEntityIds, withHeldOwners } from '../lib/ownedTraitState';
 import { pageAssistantIndex, pageNextActionIndex, placeSnapshot } from '../lib/turnHistory';
 import { backfillGameStateStats } from '../lib/statBackfill';
@@ -52,7 +54,9 @@ import type {
   ImageAttachment,
   Item,
   ItemCopy,
+  RuntimeItem,
   ItemEffectLedger,
+  BodyRuntime,
   LogEntry,
   GameLocation,
   Stat,
@@ -75,9 +79,13 @@ import type {
 } from '@/types';
 import { remapChosenVrm } from '../lib/legacyVrm';
 
+/** A save write's outcome; a failure carries what the write rejected with. */
+type SaveWriteResult = { ok: true } | { ok: false; error: unknown };
+
 // Frozen empties for the `view*` fallbacks: a literal `[]` there is a new identity per render, which
 // leaks into consumers' dependency arrays and can drive a render loop while viewing a past page.
 const EMPTY_IDS: string[] = [];
+
 const EMPTY_OWNED: OwnedTraitStates = {};
 const EMPTY_ENTITY_CHANGES: EntityStatChanges = {};
 const EMPTY_CHOICES: Choice[] = [];
@@ -85,6 +93,8 @@ const EMPTY_INDICES: number[] = [];
 const EMPTY_PINS: CodePins = {};
 const NO_ITEM_COPIES: readonly ItemCopy[] = [];
 const NO_ITEM_EFFECTS: ItemEffectLedger = {};
+const NO_BODIES: BodyRuntime = {};
+const NO_RUNTIME_ITEMS: readonly RuntimeItem[] = [];
 
 const EMPTY_ENTITY_STATS: EntityStatValues = {};
 
@@ -136,8 +146,12 @@ function useProvideGameplay() {
     entityFollowersRef.current = followers;
     setFollowersState(followers);
   }, []);
+  /** The followers as the latest write left them, ahead of the render. */
+  const currentFollowers = useCallback(() => entityFollowersRef.current, []);
   // The ids of the entities the player has met. Snapshotted per turn too.
   const [metEntities, setMetEntities] = useState<readonly string[]>([]);
+  // The latest alias each stranger was seen under, by entity id. Snapshotted per turn too.
+  const [strangerAliases, setStrangerAliases] = useState<StrangerLabels>({});
   // The runtime character ids, so a join can tell their positions from the world entities'. A join adds its
   // peeled ids at once, so a move in the same batch reads them.
   const runtimeIdsRef = useRef<ReadonlySet<string>>(new Set());
@@ -182,6 +196,10 @@ function useProvideGameplay() {
   const [itemCopies, setItemCopies] = useState<readonly ItemCopy[]>(NO_ITEM_COPIES);
   // What item effects have applied, beside the Item Copies they follow.
   const [itemEffects, setItemEffects] = useState<ItemEffectLedger>(NO_ITEM_EFFECTS);
+  // The Body state beyond the authored picks. Snapshotted per turn, so undo and re-roll restore it.
+  const [bodies, setBodies] = useState<BodyRuntime>(NO_BODIES);
+  // The runtime items the Inventory pass made, which runtime Item Copies point at.
+  const [runtimeItems, setRuntimeItems] = useState<readonly RuntimeItem[]>(NO_RUNTIME_ITEMS);
   // Per-playthrough dictionary set chosen at world entry (or restored from a save). Runtime-only: the
   // authored world's books live in GameDataContext and are never mutated by gameplay.
   const [runtimeDictionaries, setRuntimeDictionaries] = useState<Dictionary[]>([]);
@@ -285,7 +303,7 @@ function useProvideGameplay() {
   const [isWaitingForAI, setIsWaitingForAI] = useState(false);
   // True only while the narration is actively streaming into the reveal — distinct from isWaitingForAI,
   // which is true across the whole turn (setup/thinking/aux). The reveal view keys on this so the stale
-  // last-turn text can't animate during setup (e.g. the re-generate flash).
+  // last-turn text can't animate during setup (e.g. the regenerate flash).
   const [isRevealingNarration, setIsRevealingNarration] = useState(false);
   // False from a turn's start until its narration's last word has faded in; the turn card's action row
   // opens then, ahead of the choices.
@@ -352,11 +370,14 @@ function useProvideGameplay() {
       ...(Object.keys(entityPositions).length ? { entityPositions } : {}),
       ...(entityFollowers.length ? { entityFollowers: [...entityFollowers] } : {}),
       ...(metEntities.length ? { metEntities: [...metEntities] } : {}),
+      ...(Object.keys(strangerAliases).length ? { strangerAliases: { ...strangerAliases } } : {}),
       ...(Object.keys(entityStatChanges).length ? { entityStatChanges } : {}),
       ...(Object.keys(codePins).length ? { codePins } : {}),
       ...(Object.keys(loreToggles).length ? { loreToggles } : {}),
       ...(itemCopies.length ? { itemCopies: [...itemCopies] } : {}),
+      ...(runtimeItems.length ? { runtimeItems: [...runtimeItems] } : {}),
       ...(Object.keys(itemEffects).length ? { itemEffects } : {}),
+      ...(Object.keys(bodies).length ? { bodies } : {}),
       visibleEntities,
       discoveredEntities,
       suppressedCharacterNames,
@@ -377,7 +398,7 @@ function useProvideGameplay() {
       // Add a version flag for backward compatibility
       stateVersion: 2
     };
-  }, [globalStats, globalTraits, disabledTraitIds, appliedTraitValues, cascadeOffTraitIds, ownedTraits, entityStats, entityPositions, entityFollowers, metEntities, entityStatChanges, codePins, loreToggles, itemCopies, itemEffects, visibleEntities, discoveredEntities, suppressedCharacterNames, logEntries,
+  }, [globalStats, globalTraits, disabledTraitIds, appliedTraitValues, cascadeOffTraitIds, ownedTraits, entityStats, entityPositions, entityFollowers, metEntities, strangerAliases, entityStatChanges, codePins, loreToggles, itemCopies, runtimeItems, itemEffects, bodies, visibleEntities, discoveredEntities, suppressedCharacterNames, logEntries,
       currentLocation, gameTime, startHour, fullMessageHistory, characterData, choices, isGameStarted, playerNotes, currentPage]);
 
   /** Restore a `GameState` into the live gameplay state, resolving `locationId` against `locations` and
@@ -405,12 +426,15 @@ function useProvideGameplay() {
       setEntityPositions(gameState.entityPositions ?? {});
       setEntityFollowers(gameState.entityFollowers ?? []);
       setMetEntities(gameState.metEntities ?? []);
+      setStrangerAliases(gameState.strangerAliases ?? {});
       setCodePins(gameState.codePins ?? EMPTY_PINS);
       setLoreToggles(gameState.loreToggles ?? NO_LORE_TOGGLES);
       setItemCopies(gameState.itemCopies ?? NO_ITEM_COPIES);
       setItemEffects(gameState.itemEffects ?? NO_ITEM_EFFECTS);
+      setBodies(gameState.bodies ?? NO_BODIES);
+      setRuntimeItems(gameState.runtimeItems ?? NO_RUNTIME_ITEMS);
       setVisibleEntities(normalizeVisibleEntities(gameState.visibleEntities));
-      // Rollback / re-generate also keep the live discovered cast + suppressed names (they carry the
+      // Rollback / regenerate also keep the live discovered cast + suppressed names (they carry the
       // player's edits and deletions, which land after the snapshot froze); the rewind handlers prune
       // the cast to the surviving turns themselves.
       if (!opts?.keepLiveHistory) {
@@ -425,7 +449,7 @@ function useProvideGameplay() {
       setGameplayText(gameState.gameplayText);
       setGameTime(gameState.gameTime);
       setStartHour(gameState.startHour ?? null);
-      // Rollback / re-generate keep the live narration + notes (they carry the player's post-turn edits) and
+      // Rollback / regenerate keep the live narration + notes (they carry the player's post-turn edits) and
       // rewind the flat history themselves; the snapshot's frozen copies would revert those edits.
       if (!opts?.keepLiveHistory) {
         setFullMessageHistory(gameState.fullMessageHistory ?? []);
@@ -482,7 +506,7 @@ function useProvideGameplay() {
   // Counts successful save loads, so the view settles traits against its world once per load.
   const [saveLoads, setSaveLoads] = useState(0);
 
-  const saveGame = useCallback(async (saveName: string, worldName: string, worldId?: string, saveId?: string, opts?: { isAutosave?: boolean; includeSceneImages?: boolean }) => {
+  const writeSave = useCallback(async (saveName: string, worldName: string, worldId?: string, saveId?: string, opts?: { isAutosave?: boolean; includeSceneImages?: boolean }): Promise<SaveWriteResult> => {
     const isAutosave = opts?.isAutosave ?? false;
     // Scene images ride along only when the player asked for them on this save (autosave never carries
     // them): each is around a megabyte of base64, so a long illustrated session would otherwise write a
@@ -523,16 +547,18 @@ function useProvideGameplay() {
         setLastSaveName(saveName);
         addSystemLogEntry(`Game saved as "${saveName}"`);
       }
-      return true;
+      return { ok: true };
     } catch (error) {
       console.error('Error saving game:', error);
       if (!isAutosave) {
         toastError(error, { headline: 'Failed to save game' });
         addSystemLogEntry('Failed to save game');
       }
-      return false;
+      return { ok: false, error };
     }
   }, [saveCurrentGameState, gameStates, runtimeDictionaries, placeholderRolls, memoryPins, entityVisualPreference, personaRef, milestoneSelection, memoryEdits, memoryDeleted, memoryNotes, sceneImages, actionAttachments, scriptTells, openingAction, addSystemLogEntry]);
+
+  const saveGame = useCallback(async (...args: Parameters<typeof writeSave>) => (await writeSave(...args)).ok, [writeSave]);
 
   // Autosave has failed at least once this session — used to toast only once, re-armed on a later success.
   const autosaveFailedRef = useRef(false);
@@ -542,16 +568,16 @@ function useProvideGameplay() {
    *  on success; toasts once per session on failure and keeps trying on later turns. */
   const autosaveGame = useCallback(async (worldName: string, worldId?: string, turn?: number, slots?: number) => {
     const trim = autosavesToTrim(await getAllSaveRecords(), worldName, worldId, slots, turn);
-    const ok = await saveGame(autosaveName(turn), worldName, worldId, undefined, { isAutosave: true });
-    if (ok) {
+    const result = await writeSave(autosaveName(turn), worldName, worldId, undefined, { isAutosave: true });
+    if (result.ok) {
       for (const id of trim) await deleteSaveRecord(id);
       autosaveFailedRef.current = false;
     } else if (!autosaveFailedRef.current) {
       autosaveFailedRef.current = true;
-      toast.error('Autosave failed — your manual saves still work.');
+      toastAutosaveFailure(result.error);
     }
-    return ok;
-  }, [saveGame]);
+    return result.ok;
+  }, [writeSave]);
 
   /** Load a save by its record `id` from IndexedDB and restore it. A flat envelope (`isSaveEnvelope`, current or
    *  legacy numeric version) loads directly; an older nested shape is flattened off-thread via the
@@ -565,24 +591,30 @@ function useProvideGameplay() {
   ) => {
     const locationIds = locations.map((l) => l.id);
     const orphanIds = new Set<string>();
-    /** The state without Item Copies whose item, owner entity or location the world no longer has, and its
+    /** The state without Item Copies whose item, owner entity or location the playthrough no longer holds, and its
      *  item effects settled, the dropped ones reversed (Q60). */
     const withoutOrphans = (state: GameState, persona?: PersonaRef): GameState => {
-      if (!items || !worldEntities || (!state.itemCopies?.length && !state.itemEffects?.applied)) return state;
+      if (!items || !worldEntities || (!state.itemCopies?.length && !state.itemEffects?.applied && !state.itemEffects?.timed)) return state;
+      const entityIds = heldEntityIds(worldEntities.map((e) => e.id), state, persona);
       const { copies, dropped } = withoutOrphanCopies(state.itemCopies ?? [], {
-        itemIds: new Set(items.map((item) => item.id)),
-        entityIds: new Set([...worldEntities.map((e) => e.id), ...(state.discoveredEntities ?? []).map((d) => d.entity.id)]),
-        locationIds: new Set(locationIds),
+        itemIds: new Set(items.map((item) => item.id)), entityIds, locationIds: new Set(locationIds),
+        runtimeItemIds: new Set((state.runtimeItems ?? []).map((r) => r.id)),
       });
       for (const copy of dropped) orphanIds.add(copy.id);
+      const traits = withoutOrphanTimedTraits(state.itemEffects ?? {}, { entityIds }, items);
+      for (const key of traits.dropped) orphanIds.add(`timed:${key}`);
       // Without the owners' traits the bounds can't derive; the ledger keeps the entries, and the next settle reverses them.
-      if (!ownerStatTraits) return dropped.length ? { ...state, itemCopies: [...copies] } : state;
+      if (!ownerStatTraits) {
+        return dropped.length || traits.dropped.length
+          ? { ...state, itemCopies: [...copies], ...(traits.dropped.length && { itemEffects: traits.ledger }) } : state;
+      }
       // Settled on every load, so the item bounds follow the world's current rows.
       const settled = settleItemEffects(
-        { copies, entityStats: state.entityStats ?? {}, ledger: state.itemEffects },
+        { copies, entityStats: state.entityStats ?? {}, ledger: traits.ledger },
         { items, entities: worldEntities, ...(persona && { persona }) },
         ownerStatTraits(state, persona),
       );
+      for (const key of settled.orphaned) orphanIds.add(`timed:${key}`);
       return {
         ...state, ...(dropped.length && { itemCopies: [...copies] }), entityStats: settled.entityStats, itemEffects: settled.ledger,
       };
@@ -846,9 +878,9 @@ function useProvideGameplay() {
   }, [currentPage, totalPages, messagesPerPage]);
 
   // A manual stat edit (the in-game slider) is authoritative post-turn state, so it must also update the
-  // current page's snapshot — the mechanical baseline a later re-generate of the *next* turn restores from
+  // current page's snapshot — the mechanical baseline a later regenerate of the *next* turn restores from
   // (regenerateState reads gameStates[nextPage - 2] = this page's snapshot). Without this the edit lives
-  // only in `globalStats` and gets reverted on the next re-generate. Editing is disabled while viewing the
+  // only in `globalStats` and gets reverted on the next regenerate. Editing is disabled while viewing the
   // past, so this always targets the latest snapshot; guarded so a not-yet-captured slot is left alone.
   const commitManualStatEdit = useCallback((newStats: PlayerStat[]) => {
     setGlobalStats(newStats);
@@ -921,9 +953,12 @@ function useProvideGameplay() {
     setEntityFollowers,
     carryFollowersTo,
     applyFollowerState,
+    currentFollowers,
     viewEntityFollowers,
     metEntities,
     setMetEntities,
+    strangerAliases,
+    setStrangerAliases,
     codePins,
     setCodePins,
     loreToggles,
@@ -932,6 +967,10 @@ function useProvideGameplay() {
     setItemCopies,
     itemEffects,
     setItemEffects,
+    bodies,
+    setBodies,
+    runtimeItems,
+    setRuntimeItems,
     runtimeDictionaries,
     setRuntimeDictionaries,
     libraryDictionaries,

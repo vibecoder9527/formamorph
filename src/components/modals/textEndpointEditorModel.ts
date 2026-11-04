@@ -1,6 +1,6 @@
 import { DEFAULT_CONTEXT_WINDOW } from '@/contexts/settingsDefaults';
 import type { EndpointSampler, EndpointSamplerOverride } from '@/lib/endpointSamplers';
-import { BUILTIN_ENGINE_PRESET_ID, isDemoAI, type TextEndpointValues } from '@/lib/textEndpointPresets';
+import { BUILTIN_ENGINE_PRESET_ID, isDemoAI, isFormamorphAiId, type TextEndpointValues } from '@/lib/textEndpointPresets';
 import type { PresetEditorSource, TextEndpointSource } from './settingsSource';
 
 type S = TextEndpointSource;
@@ -14,6 +14,8 @@ export interface EditedTextPreset {
   demoAI: boolean;
   /** The bundled engine, whose runtime panel stands in for the fields. */
   engine: boolean;
+  /** Formamorph AI, whose status stands in for the fields. */
+  hosted: boolean;
 }
 
 /** What the text-endpoint editor reads and calls. The caller decides which preset it edits. */
@@ -23,7 +25,11 @@ export interface TextEndpointEditorModel {
   fields: Pick<S,
     | 'endpointUrl' | 'apiToken' | 'modelName' | 'maxTokens' | 'maxOutputOverrideEnabled'
     | 'contextWindow' | 'contextWindowOverride' | 'detectedContextWindow' | 'detectStatus' | 'extraParams'
-  > & { samplerOverrides: S['endpointSamplerOverrides'] };
+  > & {
+    samplerOverrides: S['endpointSamplerOverrides'];
+    /** The server's output cap, which bounds Formamorph AI's Max Output. */
+    hostedMaxOutputCap?: number;
+  };
   edit: Pick<S,
     | 'setEndpointUrl' | 'setApiToken' | 'setModelName' | 'setMaxTokens' | 'setMaxOutputOverrideEnabled'
     | 'setContextWindowOverride' | 'detectContextWindow' | 'setExtraParams'
@@ -35,7 +41,7 @@ export interface TextEndpointEditorModel {
   onReset: (id: string) => void;
 }
 
-/** The editor on the active preset, as Settings → AI Endpoints uses it: a pick changes the active endpoint. */
+/** The editor on the active preset, as Settings → Endpoints uses it: a pick changes the active endpoint. */
 export function activePresetEditor(s: TextEndpointSource): TextEndpointEditorModel {
   return {
     presets: { builtIn: s.builtinTextEndpointPresets, user: s.textEndpointPresets },
@@ -45,6 +51,7 @@ export function activePresetEditor(s: TextEndpointSource): TextEndpointEditorMod
       builtIn: s.activeTextEndpointPresetIsBuiltIn,
       demoAI: s.activeTextEndpointIsDemoAI,
       engine: s.localModelActive,
+      hosted: isFormamorphAiId(s.activeTextEndpointPresetId),
     },
     fields: {
       endpointUrl: s.endpointUrl,
@@ -57,6 +64,7 @@ export function activePresetEditor(s: TextEndpointSource): TextEndpointEditorMod
       detectedContextWindow: s.detectedContextWindow,
       detectStatus: s.detectStatus,
       samplerOverrides: s.endpointSamplerOverrides,
+      hostedMaxOutputCap: s.hostedMaxOutputCap,
       extraParams: s.extraParams,
     },
     edit: {
@@ -105,7 +113,7 @@ export function presetEditor(s: PresetEditorSource, id: string, view: PresetEdit
   }));
   return {
     presets: { builtIn: s.builtinTextEndpointPresets, user: s.textEndpointPresets },
-    edited: { id, name, builtIn, demoAI: isDemoAI({ endpointId: id, endpoint: values.endpoint }), engine: id === BUILTIN_ENGINE_PRESET_ID },
+    edited: { id, name, builtIn, demoAI: isDemoAI({ endpointId: id, endpoint: values.endpoint }), engine: id === BUILTIN_ENGINE_PRESET_ID, hosted: isFormamorphAiId(id) },
     fields: {
       endpointUrl: values.endpoint,
       apiToken: values.apiToken,
@@ -117,6 +125,7 @@ export function presetEditor(s: PresetEditorSource, id: string, view: PresetEdit
       detectedContextWindow: detected,
       detectStatus: view.detectStatus,
       samplerOverrides: values.samplerOverrides,
+      hostedMaxOutputCap: s.hostedMaxOutputCap,
       extraParams: values.extraParams,
     },
     edit: {

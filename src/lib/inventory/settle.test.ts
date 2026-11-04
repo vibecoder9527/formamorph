@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { bodyFixture } from '@/test/bodyFixture';
 import { applyInventoryOps, equipRequirement, settleInventory, type InventoryOp, type InventorySettleWorld } from '.';
 import { groupPickStates } from '@/lib/traitGates';
 import { activeOwnedTraitIds } from '@/lib/ownedTraitsInPlay';
 import { applyCodeTraitSwitches, seedStatBases, switchPlayerTrait, traitGateInput, type TraitRuntimeState, type TraitWorld } from '@/lib/traitRuntime';
 import type {
-  Item, ItemCopy, ItemCopyWhere, ItemEffectLedger, ItemStatEffect, ItemTraitEffect, PlayerStat, Slot, StatChange, Trait, TraitGroup,
+  Body, Item, ItemCopy, ItemCopyWhere, ItemEffectLedger, ItemStatEffect, ItemTraitEffect, PlayerStat, Slot, StatChange, Trait, TraitGroup,
   TraitRequirementRow,
 } from '@/types';
 
@@ -20,9 +21,10 @@ const item = (id: string, name: string, over: Partial<Item> = {}): Item =>
 const trait = (id: string, over: Partial<Trait> = {}, statChanges: StatChange[] = []): Trait =>
   ({ id, name: id[0].toUpperCase() + id.slice(1), statChanges, playerToggle: true, ...over });
 
-const hand: Slot = { id: 'hand', name: 'Hand', capacity: 2 };
+const hand: Slot = { id: 'hand', name: 'Hand' };
 const body: Slot = { id: 'body', name: 'Body' };
 const finger: Slot = { id: 'finger', name: 'Finger' };
+const humanoid: Body = bodyFixture({ id: 'humanoid', name: 'Humanoid', entries: [{ slotId: 'hand', capacity: 2 }, { slotId: 'body' }, { slotId: 'finger' }] });
 const stance: TraitGroup = { id: 'stance', name: 'Stance', parentId: null, maxPicks: 1 } as TraitGroup;
 
 const cursed = trait('cursed', {}, [{ statId: 'luck', value: -1, type: 'starting' }]);
@@ -38,12 +40,13 @@ const charm = item('charm', 'Bold Charm', { traitEffects: [grant('bold', 'owned'
 const halo = item('halo', 'Halo', { traitEffects: [grant('blessed', 'owned')] });
 const relic = item('relic', 'Relic', { traitEffects: [grant('cursed', 'firstObtain')] });
 const fate = item('fate', 'Fate Coin', { traitEffects: [grant('fated', 'owned')] });
-const strongSword = item('strong', 'Strong Sword', { slotId: 'hand', equipRequires: needs('strength', 5), statEffects: [statRow('strength', 2)] });
-const weakSword = item('weak', 'Cursed Sword', { slotId: 'hand', equipRequires: needs('strength', 5), statEffects: [statRow('strength', -2)] });
-const band = item('band', 'Iron Band', { slotId: 'finger', statEffects: [statRow('strength', 2)] });
-const signet = item('signet', 'Signet', { slotId: 'finger', equipRequires: needs('strength', 5) });
-const gauntlet = item('gauntlet', 'Gauntlet', { slotId: 'body', equipRequires: needs('luck', 1), statEffects: [statRow('strength', 2)] });
-const items = [ring, idol, charm, halo, relic, fate, strongSword, weakSword, gauntlet, band, signet];
+const strongSword = item('strong', 'Strong Sword', { slotRule: { mode: 'either', slotIds: ['hand'] }, equipRequires: needs('strength', 5), statEffects: [statRow('strength', 2)] });
+const weakSword = item('weak', 'Cursed Sword', { slotRule: { mode: 'either', slotIds: ['hand'] }, equipRequires: needs('strength', 5), statEffects: [statRow('strength', -2)] });
+const band = item('band', 'Iron Band', { slotRule: { mode: 'either', slotIds: ['finger'] }, statEffects: [statRow('strength', 2)] });
+const signet = item('signet', 'Signet', { slotRule: { mode: 'either', slotIds: ['finger'] }, equipRequires: needs('strength', 5) });
+const gauntlet = item('gauntlet', 'Gauntlet', { slotRule: { mode: 'either', slotIds: ['body'] }, equipRequires: needs('luck', 1), statEffects: [statRow('strength', 2)] });
+const veil = item('veil', 'Hex Veil', { unidentifiedName: 'Lace Veil', traitEffects: [grant('cursed', 'owned')] });
+const items = [ring, idol, charm, halo, relic, fate, strongSword, weakSword, gauntlet, band, signet, veil];
 
 const hero = { kind: 'entity', id: 'hero' } as const;
 const you = { kind: 'you' } as const;
@@ -70,7 +73,7 @@ function act(play: Play, ops: InventoryOp[], cap?: number): Play {
   let n = play.copies.length;
   const check = equipRequirement({ traits: play.traits, ledger: play.ledger }, world());
   const { copies, diagnostics } = applyInventoryOps(play.copies, ops, {
-    world: { items, slots: [hand, body, finger] }, source: 'script', newId: () => `c${n++}`, requirement: check,
+    world: { items, slots: [hand, body, finger], bodies: [humanoid] }, source: 'script', newId: () => `c${n++}`, requirement: check,
   });
   const settled = settleInventory({ copies, previous: play.copies, traits: play.traits, ledger: play.ledger }, world(cap));
   return { copies: settled.copies, traits: settled.traits, ledger: settled.ledger, log: settled.log, skipped: diagnostics };
@@ -163,6 +166,31 @@ describe('item trait grants', () => {
     let play = start([stat('luck', 5)]);
     play = { ...play, copies: [{ id: 'h', item: { kind: 'item', itemId: 'ring' }, where: hero, quantity: 1, visibility: 'hidden' }] };
     expect(settle(play).log).toContain('Trait switched on: Cursed (by An item)');
+  });
+
+  it('names an unidentified Item Copy by its unidentified face, on and off (Q17)', () => {
+    let play = start([stat('luck', 5)]);
+    play = { ...play, copies: [{ id: 'v', item: { kind: 'item', itemId: 'veil' }, where: hero, quantity: 1, visibility: 'visible', state: { unidentified: true } }] };
+    play = settle(play);
+    expect(play.log).toContain('Trait switched on: Cursed (by Lace Veil)');
+    play = act(play, [lose(play, 'veil')]);
+    expect(play.log).toContain('Trait switched off: Cursed (by Lace Veil)');
+  });
+
+  it('names the true item once any Item Copy behind a grant is identified', () => {
+    const veilCopy = (id: string, unidentified: boolean): ItemCopy => ({
+      id, item: { kind: 'item', itemId: 'veil' }, where: hero, quantity: 1, visibility: 'visible', ...(unidentified && { state: { unidentified: true as const } }),
+    });
+    const play = settle({ ...start([stat('luck', 5)]), copies: [veilCopy('a', true), veilCopy('b', false)] });
+    expect(play.log).toContain('Trait switched on: Cursed (by Hex Veil)');
+  });
+
+  it('keeps the unidentified face while the only identified copy is hidden (Q39)', () => {
+    const copies: ItemCopy[] = [
+      { id: 'h', item: { kind: 'item', itemId: 'veil' }, where: hero, quantity: 1, visibility: 'hidden' },
+      { id: 'v', item: { kind: 'item', itemId: 'veil' }, where: hero, quantity: 1, visibility: 'visible', state: { unidentified: true } },
+    ];
+    expect(settle({ ...start([stat('luck', 5)]), copies }).log).toContain('Trait switched on: Cursed (by Lace Veil)');
   });
 
   it('skips an Automatic trait and a trait the owner lacks, with a diagnostic', () => {

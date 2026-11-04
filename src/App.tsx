@@ -7,6 +7,8 @@ import { watchSessionForClaim } from './lib/anonymousLikeClaim';
 import { watchSupporterContent } from './lib/supporterContent';
 import { watchSupporterMascots } from './components/formaquestion/supporterMascots';
 import { COMMUNITY_ENABLED } from './lib/featureFlags';
+import { HOSTED_AI_AVAILABLE } from './lib/hostedAi/hostedUrls';
+import { RoadSceneHost } from './components/road/RoadSceneHost';
 import { useDevRoute, installDevRouter, registerDevHook } from './lib/devRouter';
 import { installViewportHeightVar, APP_HEIGHT_VAR } from './lib/viewportHeight';
 import { type DevView } from './lib/devRoutes';
@@ -24,6 +26,7 @@ import { AgeGateProvider } from './contexts/AgeGateContext';
 import { PrivacyPolicyProvider } from './contexts/PrivacyPolicyContext';
 import { AccountDeletionProvider } from './contexts/AccountDeletionContext';
 import { UpdateRequiredGate } from './components/modals/UpdateRequiredDialog';
+import { HostedAiStateSync } from './components/HostedAiStateSync';
 import { UsernameRenameGate } from './components/modals/UsernameRenameDialog';
 import { SignInHost } from './components/SignInHost';
 import { EXIT_TO_MENU_PROMPT } from './lib/leavePrompts';
@@ -65,6 +68,12 @@ function AppViews() {
     if (typeof window === 'undefined') return null;
     if (window.location.hash.includes('dev')) return null;
     try { return localStorage.getItem(INTRO_SEEN_KEY) ? null : 'cine'; } catch { return null; }
+  });
+  // The record as launch found it: the intro writes it when it ends, and a replay must not make the first-run step due.
+  // A dev-router hash counts as seen, so a steered session never meets the step unasked.
+  const [introSeenAtLaunch] = useState(() => {
+    if (typeof window === 'undefined' || window.location.hash.includes('dev')) return true;
+    try { return localStorage.getItem(INTRO_SEEN_KEY) !== null; } catch { return true; }
   });
   const handleIntroDone = () => {
     setIntroPace(null);
@@ -201,6 +210,7 @@ function AppViews() {
             onLoadSaveGame={handleLoadSaveGame}
             onReplayIntro={() => setIntroPace('snap')}
             introActive={introPace !== null}
+            introSeenAtLaunch={introSeenAtLaunch}
           />
         </SurfaceLayer>
       )}
@@ -279,10 +289,12 @@ function App() {
                           made from either screen, and sibling effects run in order — so the header this
                           installs is on `fetch` before any screen's mount effect asks for anything. */}
                       <UpdateRequiredGate />
+                      <HostedAiStateSync />
                       {COMMUNITY_ENABLED && <UsernameRenameGate />}
                       {/* One sign-in for every view, inside the age gate and the privacy prompt it
                           answers to. A view swap never remounts it. */}
                       {COMMUNITY_ENABLED && <SignInHost />}
+                      {HOSTED_AI_AVAILABLE && <RoadSceneHost />}
                       <AppViews />
                     </PrivacyPolicyProvider>
                   </AccountDeletionProvider>

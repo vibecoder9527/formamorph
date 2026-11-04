@@ -3,7 +3,34 @@
  * The server parses the same grammar to resolve targets; `feedbackLinkCases.json` is the case table both
  * copies run, copied from the server's `tests/fixtures/feedbackLinkCases.json`.
  */
+import type { FeedbackType } from '@/types';
 import { usernameProfilePath } from './usernameRule';
+
+/** One community listing, by the kind and id its address carries. */
+export interface ListingRef {
+  kind: string;
+  id: string;
+}
+
+/** Where feedback links go on this surface. */
+export interface FeedbackLinkPlace {
+  /** The boards this surface shows; a thread on any other renders unavailable. */
+  boards: readonly FeedbackType[];
+  /** The address a thread chip carries, for a new tab or a copied link. None means the thread opens only in place. */
+  threadHref: (number: number, type: FeedbackType) => string | undefined;
+  /** Opens a thread here. Without it a chip follows its address. */
+  openThread?: (number: number) => void;
+  /** `openThread` opens above the comment box and leaves its draft alone, so Preview keeps it. */
+  threadOpensAbove?: boolean;
+  /** The address a listing chip carries. */
+  listingHref: (listing: ListingRef) => string;
+  /** Opens a listing here. Without it a chip follows its address. */
+  openListing?: (listing: ListingRef) => void;
+  /** The address a user chip carries, for a new tab or a copied link. A click opens the profile through the surface's profile provider. */
+  profileHref: (username: string) => string;
+  /** Unsent text sits behind these chips, so an address with no opener here opens in a new tab, whatever its host. */
+  staysOnPage?: boolean;
+}
 
 /** The kinds of link a post can hold. */
 export type FeedbackLinkKind = 'thread' | 'user' | 'listing';
@@ -20,16 +47,23 @@ export interface FeedbackLink {
 /** The website's host; a pasted URL links only on it. */
 export const FEEDBACK_SITE_HOST = 'formamorph.ai';
 
+/** The path of one thread on the website. */
+export const feedbackThreadPath = (number: string | number): string => `/feedback/${number}`;
+
 /** The website address of one thread. */
-export const feedbackThreadUrl = (number: string | number): string => `https://${FEEDBACK_SITE_HOST}/feedback/${number}`;
+export const feedbackThreadUrl = (number: string | number): string => `https://${FEEDBACK_SITE_HOST}${feedbackThreadPath(number)}`;
 
 /** The address a thread chip carries in the app: none for a bug, which the website never serves. */
 export const feedbackThreadChipHref = (number: number, type: string): string | undefined =>
   type === 'bug' ? undefined : feedbackThreadUrl(number);
 
+/** The path of one community listing on the website. */
+export const feedbackListingPath = ({ kind, id }: ListingRef): string =>
+  `/community/${kind}/${encodeURIComponent(id)}`;
+
 /** The site address of one community listing. */
-export const feedbackListingUrl = ({ kind, id }: { kind: string; id: string }): string =>
-  `https://${FEEDBACK_SITE_HOST}/community/${kind}/${encodeURIComponent(id)}`;
+export const feedbackListingUrl = (listing: ListingRef): string =>
+  `https://${FEEDBACK_SITE_HOST}${feedbackListingPath(listing)}`;
 
 /** The website address of one player's profile. */
 export const feedbackProfileUrl = (username: string): string => `https://${FEEDBACK_SITE_HOST}${usernameProfilePath(username)}`;

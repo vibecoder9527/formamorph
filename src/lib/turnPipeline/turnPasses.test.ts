@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { TURN_PASSES, TURN_PASS_CAPS, sceneTagsPass, SCENE_TAGS_EMPTY_CAST, milestoneSelectPass } from './turnPasses';
+import { TURN_PASSES, TURN_PASS_CAPS, sceneTagsPass, SCENE_TAGS_EMPTY_CAST, milestoneSelectPass, statItemEffectsLine, statPassOmits } from './turnPasses';
+import { INVENTORY_JSON_FORMAT, INVENTORY_TEXT_FORMAT, inventoryPassSchema } from '@/lib/inventory/pass';
 import { defaultMilestoneSelectUserPrompt } from '@/components/game/GamePrompts';
 import { renderPromptTemplate } from '@/lib/promptTemplate';
 import { layerValues } from '@/lib/promptValues';
 import { planTurn } from './planTurn';
-import type { ChatMessage, Entity, GameLocation, PlayerStat } from '@/types';
+import type { ChatMessage, Currency, Entity, GameLocation, PlayerStat } from '@/types';
 import type { TurnMaterial, TurnPassId, TurnPassRecord, TurnPassSubject, TurnPlanInput, TurnPrompts, TurnSettings } from './turnPlan';
 import type { SectionStyle } from '@/lib/promptPresets';
 import { runsTile } from '@/lib/requestAnatomy';
@@ -367,6 +368,7 @@ describe('turn pass requests', () => {
       expect(lastMessage('thinking')).toMatch(/^What just happened:/);
       expect(build('thinking').maxTokens).toBe(TURN_PASS_CAPS.thinking);
     });
+
   });
 
   describe('the post-narration passes', () => {
@@ -700,6 +702,7 @@ describe('every pass request anatomy', () => {
     openingTime: { system: true, user: true },
     diary: { system: true, user: false },
     discoverEntity: { system: true, user: true },
+    inventory: { system: true, user: true },
   };
   const LABELED = Object.keys(SOURCES) as TurnPassId[];
   const subject = { subject: { name: 'Bram', entity: BRAM, stance: 'at the rail' } };
@@ -942,5 +945,90 @@ describe('Strip Links And Images at the request', () => {
     const content = build('character', { subject: { ...subject, entity }, effectiveAction: action }, {}, { stripLinksAndImages: true }).messages[0].content;
     expect(content).toContain(action);
     expect(content).toContain('Sells [maps](https://a.test/maps).');
+  });
+});
+
+describe('the Inventory pass', () => {
+  const due = { inventoryDue: true };
+
+  it('is due only in a world with items or Item Copies (Q37)', () => {
+    expect(planTurn(input()).passes.map((p) => p.id)).not.toContain('inventory');
+    expect(planTurn(input({}, due)).passes.map((p) => p.id)).toContain('inventory');
+  });
+
+  it('runs in the post-narration batch beside the stat pass', () => {
+    const record = pass('inventory');
+    expect(record.stage).toBe('postNarration');
+    expect(record.companion).toBeFalsy();
+  });
+
+  it('sends the schema request, with the text request and its line format as the fallback', () => {
+    const request = build('inventory', {}, {}, due);
+    expect(request.type).toBe('inventory');
+    expect(request.responseSchema).toEqual(inventoryPassSchema());
+    expect(request.systemPrompt).toBe('ITEMS TURN-LOCATION');
+    const user = 'Items: I read the notices. | The notices are damp and half-illegible.';
+    expect(request.messages[0].content).toBe(user + INVENTORY_JSON_FORMAT);
+    expect(runsTile(request.messages[0].content, request.anatomy!.messages[0])).toBe(true);
+    expect(request.textFallback?.systemPrompt).toBe(request.systemPrompt);
+    expect(request.textFallback?.messages[0].content).toBe(user + INVENTORY_TEXT_FORMAT);
+    expect(request.maxTokens).toBe(TURN_PASS_CAPS.inventory);
+    const fallback = request.textFallback!;
+    expect(runsTile(fallback.messages[0].content, fallback.anatomy!.messages[0])).toBe(true);
+  });
+
+  it('sends the text request alone for an endpoint that refused the schema', () => {
+    const request = build('inventory', {}, {}, { ...due, inventoryTextPass: true });
+    expect(request).not.toHaveProperty('responseSchema');
+    expect(request).not.toHaveProperty('textFallback');
+    expect(request.messages[0].content.endsWith(INVENTORY_TEXT_FORMAT)).toBe(true);
+  });
+});
+
+describe('the stat pass and money (Q9, Q27)', () => {
+  const CREDITS: Currency = { id: 'credits', name: 'Credits', backing: { kind: 'stat', statId: 'funds' } };
+  const omits = (over: Partial<TurnPlanInput>, settings: Partial<TurnSettings>) => [...statPassOmits(input(over, settings), [CREDITS])];
+
+  it('omits a backing stat while the Inventory pass is due', () => {
+    expect(omits({}, { inventoryDue: true })).toEqual(['funds']);
+  });
+
+  it('keeps it when the Inventory pass is not due, by world or by a blank prompt', () => {
+    expect(omits({}, { inventoryDue: false })).toEqual([]);
+    expect(omits({ prompts: { ...TEST_PROMPTS, inventory: '' } }, { inventoryDue: true })).toEqual([]);
+  });
+
+  it('leaves it out for every owner of a request, and other stats stay', () => {
+    const owner = (id: string) => ({ id, name: id, stats: [playerStat('funds', 'Funds'), playerStat('vigor', 'Vigor')] });
+    const request = createStatRequest([playerStat('funds', 'Funds'), playerStat('health', 'Health')], {
+      persona: owner('hero'), played: [owner('twin')], entities: [owner('mara')], omit: new Set(['funds']),
+    });
+    expect(request.targets.map((target) => target.id).sort()).toEqual(['health', 'vigor', 'vigor', 'vigor']);
+    expect(JSON.stringify(statRequestSchema(request))).not.toContain('Funds');
+  });
+
+  it('asks nothing when the backing stat is the only stat', () => {
+    const request = createStatRequest([playerStat('funds', 'Funds')], { omit: new Set(['funds']) });
+    expect(pass('statUpdates').isReady?.(material({ statRequest: request }))).toBe(false);
+  });
+});
+
+describe('the stat request item line (Q53)', () => {
+  const health = createStatRequest([playerStat('health', 'Health')]);
+  const stat = (settings: Partial<TurnSettings>, over: Partial<TurnMaterial> = {}) =>
+    pass('statUpdates').buildRequest(input({}, { statCount: 1, ...settings }), material({ statRequest: health, ...over }));
+
+  it('names the present items whose effects the game applies, on both paths, while the Inventory pass is due', () => {
+    const request = stat({ inventoryDue: true }, { statItemNames: ['Healing Potion'] });
+    const line = statItemEffectsLine(['Healing Potion']);
+    expect(request.systemPrompt.endsWith(line)).toBe(true);
+    expect(request.textFallback?.systemPrompt.endsWith(line)).toBe(true);
+    expect(runsTile(request.systemPrompt, request.anatomy!.system)).toBe(true);
+  });
+
+  it('leaves the request byte-equal in a world where the pass is not due, or with no item to name', () => {
+    const plain = stat({});
+    expect(stat({}, { statItemNames: ['Healing Potion'] })).toEqual(plain);
+    expect(stat({ inventoryDue: true }, { statItemNames: [] })).toEqual(plain);
   });
 });

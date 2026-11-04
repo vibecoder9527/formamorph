@@ -4,6 +4,7 @@ import { harborWorld, renderGameViewer } from '@/test/gameViewer';
 import { sseResponse, sseReply } from '@/test/aiTextFixtures';
 import { useGameplay } from '@/contexts/GameplayContext';
 import { deleteSaveRecord, getAllSaveRecords, getSaveRecord, putSaveRecord } from '@/components/modals/dbUtils';
+import { getGameplayText, setGameplayText } from '@/lib/gameplayTextStore';
 import { closedTurns } from '@/lib/memoryView';
 import { OPENING_SCENE_CUE } from '@/components/game/GamePrompts';
 import type { ChatMessage, PlayerStat, SaveRecord, Script, World } from '@/types';
@@ -70,7 +71,7 @@ beforeEach(async () => {
 });
 
 const box = () => screen.getByPlaceholderText(/Type your action/);
-const turnDone = () => waitFor(() => expect(screen.getByRole('button', { name: 'Re-generate Stats' })).toBeEnabled());
+const turnDone = () => waitFor(() => expect(screen.getByRole('button', { name: 'Regenerate Stats' })).toBeEnabled());
 
 async function enter(world: World) {
   renderGameViewer(world, { inGameplay: <Probe /> });
@@ -88,7 +89,7 @@ async function send(action?: string) {
 
 async function rerollStats() {
   const asked = statCalls;
-  fireEvent.click(screen.getByRole('button', { name: 'Re-generate Stats' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Regenerate Stats' }));
   await waitFor(() => expect(statCalls).toBe(asked + 1));
   await turnDone();
 }
@@ -106,6 +107,22 @@ async function reload(id: string, world: World) {
 const OPENING = '  [OOC: keep it short] I walk the pier.  ';
 const TRIMMED = OPENING.trim();
 const WADE = 'I wade into the shallows.';
+
+describe('Text to Speech reads an Opening Narration', () => {
+  it('holds page one as the live text, over a past game, and through a save and reload', async () => {
+    setGameplayText('The last playthrough ended here.');
+    const world = narrationWorld();
+    await enter(world);
+    await waitFor(() => expect(closedTurns(history)).toBe(1));
+    await turnDone();
+    expect(getGameplayText()).toBe(PAGE_ONE);
+
+    await saved('narration-text');
+    setGameplayText('');
+    await reload('narration-text', world);
+    expect(getGameplayText()).toBe(PAGE_ONE);
+  });
+});
 
 describe('the save keeps the opening cue', () => {
   it('writes the cue an Opening Action start sent, edited or not', async () => {
@@ -149,7 +166,7 @@ describe('a page-one re-roll reads the saved cue', () => {
     const world = actionWorld();
     await enter(world);
     await send(OPENING);
-    fireEvent.click(screen.getByRole('button', { name: 'Re-generate Narration' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate Narration' }));
     await waitFor(() => expect(closedTurns(history)).toBe(0));
     await send(WADE);
     expect(read).toBe(1000 + WADE.length);

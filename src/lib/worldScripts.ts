@@ -5,11 +5,12 @@
 
 import type { Entity, Placeholder, Script, ScriptTiming, Stat, StatGroup, Trait, TraitGroup } from '@/types';
 import { setTraitLinkScripts } from './blueprints';
+import type { UnitHome } from './sandboxSnapshot';
 import { rowIdOf, WORLD_SCRIPT_OWNER } from './codeUses';
 import { updateOwnedStat } from './ownedStats';
 import { linksInTreeOrder } from './owners';
 import { updateOwnedTrait } from './ownedTraits';
-import { filledScripts, inRunOrder, SCRIPT_TIMINGS, scriptLabel, scriptsOf } from './scripts';
+import { filledScripts, inRowOrder, SCRIPT_TIMINGS, scriptLabel, scriptsOf } from './scripts';
 import { setStatLinkScripts, withStatLinks } from './statLinks';
 import { traitOrderIndex } from './traitEffects';
 import {
@@ -18,7 +19,10 @@ import {
 } from './statCodeTargets';
 
 /** Where a script is stored: the world's own list, or a stat's or trait's home as Find All Uses names it. */
-export type ScriptHomeRef = WorldScriptHome | CodeHome | TraitCodeHome;
+export type ScriptHomeRef = WorldScriptHome | CodeHome | TraitCodeHome | ItemScriptHome;
+
+/** Where an item's scripts are authored: the item's own list. */
+export type ItemScriptHome = { kind: 'item'; itemId: string };
 
 /** What the tree reads from a world. */
 export interface ScriptTreeWorld {
@@ -47,7 +51,8 @@ export interface ScriptEntry {
   box?: StatCodeBox | TraitCodeBox;
 }
 
-const homeKey = (home: ScriptHomeRef): string => {
+/** One key per stored script list. */
+export const homeKey = (home: ScriptHomeRef): string => {
   switch (home.kind) {
     case 'world': return 'world';
     case 'stat': return `stat/${home.statId}`;
@@ -56,6 +61,7 @@ const homeKey = (home: ScriptHomeRef): string => {
     case 'trait': return `trait/${home.traitId}`;
     case 'entityTrait': return `entityTrait/${home.entityId}/${home.traitId}`;
     case 'traitLink': return `traitLink/${home.entityId}/${home.linkId}/${home.traitId}`;
+    case 'item': return `item/${home.itemId}`;
   }
 };
 
@@ -104,8 +110,8 @@ export const ownerRowId = (entry: ScriptEntry): string | null => (entry.box ? ro
 /**
  * Every script in the world, blank ones included, in the order the runner reaches owners: the world's, the global
  * stats' in stat order, the global traits', each entity's stats then traits in authored order, then the Blueprints'.
- * A Blueprint script runs under each owner that links it, so its one row comes last. The played persona's move to
- * the front is a play-time fact the editor can't show.
+ * A Blueprint script runs under each owner that links it, so its one row comes last. Who plays doesn't change the
+ * order.
  */
 export function worldScriptEntries(world: ScriptTreeWorld): ScriptEntry[] {
   const listed = worldScriptList(world, scriptsOf);
@@ -143,8 +149,49 @@ export function worldScriptEntries(world: ScriptTreeWorld): ScriptEntry[] {
 /** `entries` filed by timing, each timing in run order. */
 export function scriptsByTiming(entries: readonly ScriptEntry[]): Record<ScriptTiming, ScriptEntry[]> {
   return Object.fromEntries(SCRIPT_TIMINGS.map((timing) => [
-    timing, inRunOrder(entries.filter((entry) => entry.script.timing === timing)),
+    timing, inRowOrder(entries.filter((entry) => entry.script.timing === timing).map((entry) => [entry])),
   ])) as Record<ScriptTiming, ScriptEntry[]>;
+}
+
+/**
+ * The key of the Scripts tab row a running script belongs to, or null where the tab lists none, such as an item's
+ * script. `entities` are the authored entities by id: they tell an entity's own stat or trait from a link's
+ * override and from a Blueprint's.
+ */
+export function rowKeyOf(home: UnitHome, scriptId: string, entities: ReadonlyMap<string, Entity>): string | null {
+  const key = (at: ScriptHomeRef) => scriptEntryKey(at, scriptId);
+  switch (home.kind) {
+    case 'world': return key({ kind: 'world' });
+    case 'globalStat': return key({ kind: 'stat', statId: home.stat.id });
+    case 'entityStat': {
+      const entity = entities.get(home.entityId);
+      if (!entity) return null;
+      const statId = home.stat.id;
+      if (entity.stats?.some((stat) => stat.id === statId)) return key({ kind: 'entity', entityId: entity.id, statId });
+      const link = entity.statLinks?.find((each) => each.overrides?.[statId]?.scripts);
+      return key(link ? { kind: 'link', entityId: entity.id, linkId: link.id, statId } : { kind: 'stat', statId });
+    }
+    case 'trait': {
+      const traitId = home.trait.id;
+      const entity = home.entityId === null ? undefined : entities.get(home.entityId);
+      if (home.entityId !== null && !entity) return null;
+      if (entity?.traits?.some((trait) => trait.id === traitId)) return key({ kind: 'entityTrait', entityId: entity.id, traitId });
+      const link = entity?.traitLinks?.find((each) => each.overrides?.[traitId]?.scripts);
+      return key(entity && link ? { kind: 'traitLink', entityId: entity.id, linkId: link.id, traitId } : { kind: 'trait', traitId });
+    }
+    default: return null;
+  }
+}
+
+/** The row keys of `world`'s scripts at `timing` in run order: where the Scripts tab lists them, and where the turn runs them.
+ *  An item's timing has no row. */
+export const runRowKeys = (world: ScriptTreeWorld, timing: ScriptTiming): string[] =>
+  (scriptsByTiming(worldScriptEntries(world))[timing] ?? []).map((entry) => entry.key);
+
+/** Each row's place at `timing` in run order; a key with no row sorts last. */
+export function runRowPlace(world: ScriptTreeWorld, timing: ScriptTiming): (key: string | null) => number {
+  const place = new Map(runRowKeys(world, timing).map((key, i) => [key, i]));
+  return (key) => (key === null ? place.size : place.get(key) ?? place.size);
 }
 
 /** One script's new `order`. */

@@ -4,10 +4,20 @@
  * the executor, so the editor, the readers and the migration can import it without pulling QuickJS in.
  */
 
-import type { Script, ScriptTiming } from '@/types';
+import type { ItemScriptTiming, Script, ScriptTiming } from '@/types';
 
-/** Every timing, in the order a playthrough first reaches them. */
-export const SCRIPT_TIMINGS = ['before', 'after', 'output', 'start', 'switch'] as const satisfies readonly ScriptTiming[];
+/** Every timing of a stat, a trait or the world, in the order a turn reaches them: the lists and menus an author reads. */
+export const SCRIPT_TIMINGS = ['start', 'before', 'output', 'after', 'switch'] as const satisfies readonly ScriptTiming[];
+
+/** The timings in the order the AI prompt text and the help tool's schema list them, which a byte test pins. */
+export const HELP_SCRIPT_TIMINGS = ['before', 'after', 'output', 'start', 'switch'] as const satisfies readonly ScriptTiming[];
+
+/** The timings an item's scripts run at, one per Item Copy event (Q33). */
+export const ITEM_SCRIPT_TIMINGS = ['gained', 'lost', 'equipped', 'unequipped', 'used'] as const satisfies readonly ItemScriptTiming[];
+
+/** Whether `timing` is one of an item's. */
+export const isItemTiming = (timing: ScriptTiming): timing is ItemScriptTiming =>
+  (ITEM_SCRIPT_TIMINGS as readonly ScriptTiming[]).includes(timing);
 
 /** A timing's name wherever an author reads it. */
 export const SCRIPT_TIMING_LABEL: Record<ScriptTiming, string> = {
@@ -16,6 +26,11 @@ export const SCRIPT_TIMING_LABEL: Record<ScriptTiming, string> = {
   output: 'During AI Output',
   start: 'At Game Start',
   switch: 'When a Trait Switches',
+  gained: 'When Gained',
+  lost: 'When Lost',
+  equipped: 'When Equipped',
+  unequipped: 'When Unequipped',
+  used: 'When Used',
 };
 
 /** When a timing runs and what it is for, shown when an author selects the timing. */
@@ -25,9 +40,14 @@ export const SCRIPT_TIMING_DESCRIPTION: Record<ScriptTiming, string> = {
   output: 'Runs once for each narration sentence as it completes. Use it to rewrite or filter the narration.',
   start: 'Runs once on the opening turn of a new game, before Before the AI. Use it to roll starting values or pin placeholders.',
   switch: 'Runs each time a trait turns on or off in play. Use it to apply or undo what the trait changes.',
+  gained: 'Runs when an owner or a location gains one of its Item Copies. Use it to react to a pickup or a gift.',
+  lost: 'Runs when an owner or a location loses one of its Item Copies. Use it to undo what the item started.',
+  equipped: 'Runs when one of its Item Copies is equipped. Use it for effects the effect rows can’t express.',
+  unequipped: 'Runs when one of its Item Copies is unequipped, swapped out included. Use it to undo what equipping did.',
+  used: 'Runs when one of its Item Copies is used. Use it for what the use does.',
 };
 
-/** Anything that holds scripts: a stat, a trait, the world. */
+/** Anything that holds scripts: a stat, a trait, the world, an item. */
 export interface ScriptHome {
   scripts?: readonly Script[];
 }
@@ -79,6 +99,16 @@ export function inRunOrder<T extends { script: Pick<Script, 'order'> }>(units: r
   const ordered = units.filter((unit) => typeof unit.script.order === 'number')
     .sort((a, b) => (a.script.order as number) - (b.script.order as number));
   return [...ordered, ...units.filter((unit) => typeof unit.script.order !== 'number')];
+}
+
+/**
+ * The one run order. `rows` are the script rows in the order given, each row holding the units it runs back to
+ * back (a Blueprint row holds one per owner); `last` are the units that run after every row and ignore any
+ * `order`. A row sorts by its first unit's script, which its units share.
+ */
+export function inRowOrder<T extends { script: Pick<Script, 'order'> }>(rows: readonly (readonly T[])[], last: readonly T[] = []): T[] {
+  const placed = inRunOrder(rows.filter((row) => row.length).map((row) => ({ script: row[0].script, row })));
+  return [...placed.flatMap(({ row }) => row), ...last];
 }
 
 // ---- Migration from the two code boxes ----

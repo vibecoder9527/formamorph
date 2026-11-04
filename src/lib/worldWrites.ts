@@ -1,3 +1,4 @@
+import type { BodyPick } from '@/types';
 import type { DiscoverWrite, WorldWrites } from './statCodeExecutor';
 
 /** Story hours the turn's prompts and scripts read: `turnStart` plus every advance `writes` holds (Q45).
@@ -8,7 +9,7 @@ export function advancedClock(turnStart: number, writes: WorldWrites | undefined
 
 /** `later` laid over `earlier`: the later move wins, advances add, discoveries join once per name, a
  *  described one filling in a bare one, and memory lines, pins, diary lines, entity writes and memory entry writes
- *  join in order. */
+ *  join in order, as do inventory writes. */
 export function mergeWorldWrites(earlier: WorldWrites | undefined, later: WorldWrites | undefined): WorldWrites | undefined {
   if (!earlier || !later) return later ?? earlier;
   const location = later.location ?? earlier.location;
@@ -24,6 +25,8 @@ export function mergeWorldWrites(earlier: WorldWrites | undefined, later: WorldW
   const diary = [...earlier.diary ?? [], ...later.diary ?? []];
   const entities = [...earlier.entities ?? [], ...later.entities ?? []];
   const memoryWrites = [...earlier.memoryWrites ?? [], ...later.memoryWrites ?? []];
+  const inventory = [...earlier.inventory ?? [], ...later.inventory ?? []];
+  const bodies = [...earlier.bodies ?? [], ...later.bodies ?? []];
   return {
     ...(location === undefined ? {} : { location }),
     ...(minutes === undefined ? {} : { minutes }),
@@ -33,5 +36,13 @@ export function mergeWorldWrites(earlier: WorldWrites | undefined, later: WorldW
     ...(diary.length ? { diary } : {}),
     ...(entities.length ? { entities } : {}),
     ...(memoryWrites.length ? { memoryWrites } : {}),
+    ...(inventory.length ? { inventory } : {}),
+    ...(bodies.length ? { bodies } : {}),
   };
+}
+
+/** The base Bodies `writes` set, by owner key; the last write to an owner wins. Undefined when it sets none. */
+export function baseWritesOf(writes: WorldWrites | undefined): Record<string, BodyPick> | undefined {
+  if (!writes?.bodies?.length) return undefined;
+  return Object.fromEntries(writes.bodies.map(({ owner, pick }) => [owner, pick]));
 }

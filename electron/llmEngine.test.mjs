@@ -34,6 +34,8 @@ const TWO_DEVICES = 'Available devices:\r\n  Vulkan0: Intel(R) UHD Graphics 770 
 
 let engine = null;
 let workRoot = null;
+// Every engine and folder this test built: a test that starts twice calls setup twice.
+const built = [];
 
 /** An engine over a fake server, recording every status it pushes. Windows unless `platform` says otherwise. */
 function setup(fakeOptions = {}, { platform = 'win32', binaryPath = ({ cpu } = {}) => (cpu ? 'llama-server-cpu' : 'llama-server') } = {}) {
@@ -41,15 +43,16 @@ function setup(fakeOptions = {}, { platform = 'win32', binaryPath = ({ cpu } = {
   workRoot = mkdtempSync(path.join(os.tmpdir(), 'engine-test-'));
   const chatEvents = [];
   engine = createEngine({ spawn: fake.spawn, binaryPath, platform, workRoot, listProcesses: fake.listProcesses, onChatEvent: (e) => chatEvents.push(e) });
+  built.push({ engine, workRoot });
   const seen = [];
   engine.onStatus((s) => seen.push(s));
   return { fake, seen, chatEvents };
 }
 
 afterEach(async () => {
-  await engine?.stop();
+  for (const each of new Set([...built.map((b) => b.engine), engine].filter(Boolean))) await each.stop();
+  for (const { workRoot: root } of built.splice(0)) rmSync(root, { recursive: true, force: true });
   engine = null;
-  if (workRoot) rmSync(workRoot, { recursive: true, force: true });
   workRoot = null;
 });
 
@@ -916,6 +919,29 @@ describe('VRAM viewer fields from the load log', () => {
     expect(s.serverPid).not.toBe(fake.routers[0].pid);
     await engine.stop();
     expect(engine.getState().serverPid).toBeNull();
+  });
+
+  it('stays ready with no pid when the process listing rejects', async () => {
+    const { fake } = setup();
+    const lookups = [];
+    engine = createEngine({
+      spawn: fake.spawn, binaryPath: () => 'llama-server', platform: 'win32', workRoot,
+      listProcesses: () => { const p = Promise.reject(new Error('powershell.exe did not answer within 15000 ms')); lookups.push(p); return p; },
+    });
+    built.push({ engine, workRoot });
+    const unhandled = [];
+    const onUnhandled = (e) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const s = await engine.start({ ...SETTINGS, modelPath: MODEL, port: await freePort() });
+      expect(s.status).toBe('ready');
+      expect(lookups).toHaveLength(1);
+      await new Promise((r) => setImmediate(r));
+      expect(engine.getState()).toMatchObject({ status: 'ready', serverPid: null });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('finds the instance under the POSIX supervising shell', async () => {

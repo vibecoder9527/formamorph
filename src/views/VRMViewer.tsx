@@ -8,8 +8,9 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VRM, VRMHumanBoneName } from '@pixiv/three-vrm';
 import type { HairTypeDef } from '@/types';
-import { DEFAULT_AVATAR_URL } from '@/lib/defaultAvatar';
+import { BUNDLED_DEFAULT_URL } from '@/lib/defaultAvatar';
 import { resolveMorphAlias } from '@/lib/bodyMorphs';
+import { medianOpaqueRGB, tintFactors, tintSeedRGB, toByte } from '@/lib/textureMedian';
 
 // VRM/MToon material: the base three Material plus the standard/MToon fields the color code touches.
 type VrmMaterial = THREE.Material & {
@@ -134,7 +135,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
   skinColor,
   currentHairStyle,
   hairLength,
-  modelUrl = DEFAULT_AVATAR_URL,
+  modelUrl = BUNDLED_DEFAULT_URL,
   animationFiles = ['./idle.fbx', './bashful.fbx', './idle_dwarf.fbx'],
   extraColors,
   onCapabilities,
@@ -195,50 +196,41 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     return result;
   };
 
-  // Average opaque pixels of a material's texture → normalized [r,g,b] (0..1), cached. Null if it has no texture.
-  const getAvgRGB = (material: VrmMaterial): number[] | null => {
-    if (material.userData.__avgRGB !== undefined) return material.userData.__avgRGB;
+  // Median opaque pixel of a material's texture → normalized [r,g,b] (0..1), cached. Null if it has no texture.
+  const getMedianRGB = (material: VrmMaterial): [number, number, number] | null => {
+    if (material.userData.__medianRGB !== undefined) return material.userData.__medianRGB;
     const src = getOriginalImageData(material);
-    let avg: number[] | null = null;
-    if (src) {
-      const d = src.data;
-      let r = 0, g = 0, b = 0, n = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i + 3] < 10) continue;
-        r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
-      }
-      if (n) avg = [r / n / 255, g / n / 255, b / n / 255];
-    }
-    material.userData.__avgRGB = avg;
-    return avg;
+    const median = src ? medianOpaqueRGB(src.data) : null;
+    material.userData.__medianRGB = median;
+    return median;
   };
 
-  // A representative current color for a material (to seed a picker): texture average, else the color factor.
-  const averageColor = (material: VrmMaterial) => {
-    const avg = getAvgRGB(material);
-    const rgb = avg ?? (material.color?.isColor ? [material.color.r, material.color.g, material.color.b] : null);
+  // A material's untinted color (to seed a picker): texture median under the original color factor, else that factor.
+  const untintedColor = (material: VrmMaterial) => {
+    const median = getMedianRGB(material);
+    const color: THREE.Color | null | undefined = material.userData.__origColor ?? material.color;
+    const factor: [number, number, number] | null = color?.isColor ? [color.r, color.g, color.b] : null;
+    const rgb = median ? tintSeedRGB(median, factor ?? [1, 1, 1]) : factor;
     if (!rgb) return null;
-    return '#' + rgb.map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0')).join('');
+    return '#' + rgb.map(x => toByte(x).toString(16).padStart(2, '0')).join('');
   };
 
-  // GPU tint (no per-pixel work). Textured material: scale the color factor so the texture's average shifts to
-  // `hex` (result ≈ texture × target/avg → matches the picker; target==avg is identity). Factor-only material
-  // (no texture, e.g. some Blender exports): set the color factor to `hex` directly.
-  const tintByAverage = (material: VrmMaterial, hex: string) => {
+  // GPU tint (no per-pixel work). Textured material: scale the color factor so the texture's median shifts to
+  // `hex` (result ≈ texture × target/median → matches the picker). Factor-only material (no texture, e.g. some
+  // Blender exports): set the color factor to `hex` directly.
+  const tintByMedian = (material: VrmMaterial, hex: string) => {
     // Remember the untinted colors once, so a revert can restore them exactly.
     if (material.userData.__origColor === undefined)
       material.userData.__origColor = material.color?.isColor ? material.color.clone() : null;
     if (material.userData.__origShade === undefined)
       material.userData.__origShade = material.shadeColorFactor?.isColor ? material.shadeColorFactor.clone() : null;
     const [tr, tg, tb] = hexToRgb(hex).map(v => v / 255);
-    const avg = getAvgRGB(material);
-    let r = tr, g = tg, b = tb;
-    if (avg) {
-      const f = (t: number, a: number) => Math.max(0, Math.min(4, t / Math.max(a, 0.01)));
-      r = f(tr, avg[0]); g = f(tg, avg[1]); b = f(tb, avg[2]);
-    }
-    if (material.color?.isColor) material.color.setRGB(r, g, b);
-    if (material.shadeColorFactor?.isColor) material.shadeColorFactor.setRGB(r, g, b);
+    const origColor: THREE.Color | null = material.userData.__origColor;
+    const origShade: THREE.Color | null = material.userData.__origShade;
+    const base: [number, number, number] = origColor ? [origColor.r, origColor.g, origColor.b] : [1, 1, 1];
+    const { color, shade } = tintFactors([tr, tg, tb], getMedianRGB(material), base, origShade ? [origShade.r, origShade.g, origShade.b] : base);
+    if (material.color?.isColor) material.color.setRGB(...color);
+    if (material.shadeColorFactor?.isColor) material.shadeColorFactor.setRGB(...shade);
     material.needsUpdate = true;
   };
 
@@ -347,7 +339,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     });
   };
 
-  const tintTarget = (target: string, hex: string) => forEachTargetMaterial(target, (m) => tintByAverage(m, hex));
+  const tintTarget = (target: string, hex: string) => forEachTargetMaterial(target, (m) => tintByMedian(m, hex));
 
   // Restore a target's materials to their untinted colors (the "no color" / revert state).
   const resetTarget = (target: string) => forEachTargetMaterial(target, (m) => {
@@ -356,10 +348,10 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     m.needsUpdate = true;
   });
 
-  // Calculated representative color of a target (its first material's average) — for seeding a picker.
+  // Calculated representative color of a target (its first material's median) — for seeding a picker.
   const calcColor = (target: string) => {
     let c: string | null = null;
-    forEachTargetMaterial(target, (m) => { if (!c) c = averageColor(m); });
+    forEachTargetMaterial(target, (m) => { if (!c) c = untintedColor(m); });
     return c;
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- calcColor reads live refs; a stable handle is fine.
@@ -460,7 +452,8 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    loader.load(
+    // No URL on a build with no bundled default: the scene stays empty.
+    if (modelUrl) loader.load(
       modelUrl,
       (gltf) => {
         if (cancelled) return;
@@ -500,7 +493,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
           // Sample each part's current color from its texture so the pickers start at the model's real colors.
           const sampleColor = (channel: string) => {
             let c: string | null = null;
-            forEachChannelMaterial(channel, (m) => { if (!c) c = averageColor(m); });
+            forEachChannelMaterial(channel, (m) => { if (!c) c = untintedColor(m); });
             return c;
           };
           const colors = { hair: sampleColor('hair') ?? undefined, skin: sampleColor('skin') ?? undefined, eye: sampleColor('eye') ?? undefined };
@@ -783,7 +776,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
-      {!ready && (
+      {modelUrl && !ready && (
         <div style={{
           position: 'absolute',
           top: '50%',

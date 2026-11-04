@@ -1,4 +1,4 @@
-import type { Stat, Trait, Entity, Dictionary, CommunityLink, ScriptTiming, PlacementWhere } from './world';
+import type { Stat, Trait, Entity, Dictionary, CommunityLink, ScriptTiming, PlacementWhere, BodyPick } from './world';
 import type { ChatMessage } from './ai';
 
 /** A director-invented character promoted to a persisted, per-playthrough entity (runtime characters,
@@ -189,8 +189,17 @@ export interface VrmLicense {
   allowRedistribution?: boolean;
   commercialUse?: 'allow' | 'disallow' | 'personalNonProfit' | 'personalProfit' | 'corporation';
   creditRequired?: boolean;
-  /** VRM 1.0 only, read from `avatarPermission`. Always present (even as `undefined`) once normalized by
-   *  current code, so a record missing the key entirely predates these fields — see `avatarLicenseGate.ts`. */
+  /** VRM 1.0 only, read from `creditNotation`. */
+  creditNotation?: 'required' | 'unnecessary';
+  /** VRM 1.0 only, read from `otherLicenseUrl`. `null` is kept as read: it is not an absent field, and the gate refuses it. */
+  otherLicenseUrl?: string | null;
+  /** VRM 1.0 only: the four expression flags. Always present (even as `undefined`) once normalized by current
+   *  code, so a record missing `allowExcessivelySexualUsage` entirely predates them — see `ModelStorageService`. */
+  allowExcessivelySexualUsage?: boolean;
+  allowExcessivelyViolentUsage?: boolean;
+  allowPoliticalOrReligiousUsage?: boolean;
+  allowAntisocialOrHateUsage?: boolean;
+  /** VRM 1.0 only, read from `avatarPermission`. */
   avatarPermission?: 'onlyAuthor' | 'explicitlyLicensedPerson' | 'everyone';
   /** VRM 1.0 only, read from `modification`. Unset for VRM 0.0, which has no equivalent concept. */
   modification?: 'prohibited' | 'allowModification' | 'allowModificationRedistribution';
@@ -229,6 +238,44 @@ export interface AvatarListingContent {
 /** What an Item Copy is a copy of: an authored item, or a runtime item the Inventory pass made. */
 export type ItemRef = { kind: 'item'; itemId: string } | { kind: 'runtime'; runtimeItemId: string };
 
+/** An item the Inventory pass named that the world does not define: Stackable and Consumable, no slot, no
+ *  effects (Q56). */
+export interface RuntimeItem {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export type InventoryPassOpKind = 'gain' | 'lose' | 'transfer' | 'equip' | 'unequip' | 'use' | 'change' | 'reveal' | 'pay' | 'buy';
+
+/** What a use leaves of a runtime item (Q10). */
+export type InventoryUseAfter = 'kept' | 'used up';
+
+/** One operation as the Inventory pass names it. `owner` holds the item now; `to` receives it (gain, transfer).
+ *  `state` is the new State (change), absent when the reply named none; `after` is what a use leaves, absent when
+ *  the reply named neither word. `target` is the other item a use acts on, absent when it named none. `slot` is the
+ *  slot name an equip goes in, absent when it named none. `price` and `currency` are the money a pay or buy moves, as
+ *  the reply stated them; a pay names no item. On a buy, `owner` is the seller and `to` the buyer. */
+export interface InventoryPassOp {
+  op: InventoryPassOpKind;
+  item: string;
+  quantity: number;
+  owner: string;
+  to: string;
+  state?: string;
+  after?: InventoryUseAfter;
+  target?: string;
+  slot?: string;
+  price?: string;
+  currency?: string;
+}
+
+/** An entity the Inventory pass can name as an owner. */
+export interface InventoryOwner {
+  id: string;
+  name: string;
+}
+
 /** Where an Item Copy is: owned by the played Persona or an entity, or lying at a location. */
 export type ItemCopyWhere = PlacementWhere;
 
@@ -236,8 +283,12 @@ export type ItemCopyVisibility = 'visible' | 'hidden';
 
 /** State one Item Copy keeps of its own. */
 export interface ItemCopyState {
-  /** Charges left. Absent = the item has no charges. */
-  charges?: number;
+  /** Uses left. Absent = full, or the item has no Uses. */
+  uses?: number;
+  /** The copy's current State word. Absent = none. */
+  state?: string;
+  /** Shows the item's unidentified face to the player. Apart from visibility (Q15). */
+  unidentified?: true;
 }
 
 /** One item in play: a stack of `quantity` copies of an item in one place. */
@@ -263,6 +314,26 @@ export interface AppliedItemEffect {
   values: Record<string, number>;
   /** Every Item Copy behind it is hidden, so its log lines name no item. */
   hidden?: boolean;
+  /** Every Item Copy behind it is unidentified, so its log lines use the unidentified face. */
+  unidentified?: boolean;
+}
+
+/** One running After Use row on an owner, which ends at a story-clock hour (Q40). */
+export interface TimedItemEffect {
+  /** A stat row moves the owner's stats; a trait row grants a trait. */
+  row: 'stat' | 'trait';
+  /** The entity whose own stats or trait tree it acts on. */
+  ownerId: string;
+  itemId: string;
+  rowId: string;
+  /** The `gameTime` it ends at. A second use moves it (Q64). */
+  endsAt: number;
+  /** Stat rows: stat id → value delta. Expiry negates this. */
+  values?: Record<string, number>;
+  /** The use came from a hidden Item Copy, so its lines name no item. */
+  hidden?: boolean;
+  /** The use came from an unidentified Item Copy, so its lines use the unidentified face. */
+  unidentified?: boolean;
 }
 
 /** The item effects in force. Bound facets are derived from the Item Copies and recorded nowhere. */
@@ -271,8 +342,24 @@ export interface ItemEffectLedger {
   applied?: Record<string, AppliedItemEffect>;
   /** Stat owner id → the items whose On First Obtain effects it got. */
   firstObtained?: Record<string, string[]>;
-  /** Trait owner id → the traits On First Obtain rows grant it for good (Q121). */
+  /** Trait owner id → the traits On First Obtain and Permanent After Use rows grant it for good (Q121). */
   firstObtainTraits?: Record<string, string[]>;
+  /** `<owner id>:<item id>:<row id>` → the After Use row running there. */
+  timed?: Record<string, TimedItemEffect>;
+}
+
+/** One active trait with a Body pick: global (`ownerId` null) or an entity owner's. */
+export interface BodyTraitOn {
+  ownerId: string | null;
+  traitId: string;
+}
+
+/** The Body state play keeps beyond the authored picks. */
+export interface BodyRuntime {
+  /** The active Body-setting traits, oldest switch-on first. The last one an owner holds wins (Q13). Absent ⇒ none. */
+  traitsOn?: BodyTraitOn[];
+  /** Each owner's base Body a script wrote, by owner key (the empty string is the played Persona). Absent ⇒ the authored picks. */
+  base?: Record<string, BodyPick>;
 }
 
 /** One saved snapshot of a play session (see GameplayContext.saveCurrentGameState). */
@@ -299,12 +386,18 @@ export interface GameState {
   entityFollowers?: string[];
   /** The ids of the entities the player has met, in the order they met. Absent ⇒ none. */
   metEntities?: string[];
+  /** The latest alias each stranger was seen under, by entity id. Absent ⇒ none. */
+  strangerAliases?: Record<string, string>;
   /** What this turn moved each entity stat, AI, regen and code together. Absent ⇒ none. */
   entityStatChanges?: EntityStatChanges;
   /** Every Item Copy in play. A new game seeds them; an older save never gains any. Absent ⇒ none. */
   itemCopies?: ItemCopy[];
+  /** The runtime items the Inventory pass made. Absent ⇒ none. */
+  runtimeItems?: RuntimeItem[];
   /** What item effects have applied. Absent ⇒ none. */
   itemEffects?: ItemEffectLedger;
+  /** Body state beyond the authored picks. Absent ⇒ none. */
+  bodies?: BodyRuntime;
   /** Absent ⇒ none. */
   codePins?: CodePins;
   /** Absent ⇒ none. */

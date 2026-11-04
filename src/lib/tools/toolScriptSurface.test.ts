@@ -28,7 +28,7 @@ describe('the Tool script surface matches the sandbox', () => {
   it('lists every global the script can reach, and each is really there', async () => {
     const globals = surface.globals.map((g) => g.name);
     expect(globals).toEqual([
-      'args', 'stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'console',
+      'args', 'stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'items', 'currencies', 'console',
     ]);
     const probe = `return [${globals.map((g) => `typeof ${g}`).join(', ')}];`;
     const result = await runToolScript(probe, { name: 'Wren' }, snapshot);
@@ -40,18 +40,18 @@ describe('the Tool script surface matches the sandbox', () => {
     expect(absent.sort()).toEqual(['discover', 'owner', 'self']);
     const probe = `return [${[...absent, 'player', 'world', 'scene'].map((g) => `typeof ${g}`).join(', ')}];`;
     const result = await runToolScript(probe, {}, snapshot);
-    expect(JSON.parse((result as { text: string }).text)).toEqual(['undefined', 'undefined', 'undefined', 'undefined', 'undefined', 'undefined']);
+    expect(JSON.parse((result as { text: string }).text)).toEqual(Array(6).fill('undefined'));
   });
 });
 
 describe('no verb on the surface', () => {
   it('offers the fields of each world value and none of its calls', () => {
-    expect(labelsAt('return location.|')).toEqual(['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits']);
+    expect(labelsAt('return location.|')).toEqual(['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits', 'items']);
     expect(labelsAt('return clock.|')).toEqual(['day', 'daypart', 'hour', 'minute', 'deltaHours', 'elapsedHours', 'previous']);
     expect(labelsAt('return memories.|')).toEqual([]);
     expect(labelsAt('return entities.Mara.|', named)).not.toEqual(expect.arrayContaining(['move']));
-    expect(labelsAt('return entities.Mara.|', named)).toEqual(expect.arrayContaining(['location', 'following', 'stats']));
-    expect(labelsAt('return entities.Mara.|', named).filter((label) => ['move', 'follow', 'unfollow', 'diary'].includes(label))).toEqual([]);
+    expect(labelsAt('return entities.Mara.|', named)).toEqual(expect.arrayContaining(['location', 'following', 'met', 'stats']));
+    expect(labelsAt('return entities.Mara.|', named).filter((label) => ['move', 'follow', 'unfollow', 'meet', 'diary'].includes(label))).toEqual([]);
   });
 
   it('keeps a built-in’s calls', () => {
@@ -83,6 +83,6 @@ describe('diagnostics read the surface', () => {
 
   it('accepts a script that reads the script surface and warns when it returns nothing', () => {
     expect(messages('return Object.values(entities).filter((e) => e.name === args.name).map((e) => e.location);')).toEqual([]);
-    expect(messages('const x = notes;')).toEqual(['This script never returns, so the Tool sends its empty result.']);
+    expect(messages('const x = notes;')).toEqual(['This script never returns. The Tool sends its “Empty Result”.']);
   });
 });

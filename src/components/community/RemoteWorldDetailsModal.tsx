@@ -14,8 +14,13 @@ import { ActionIcon } from "@/lib/actionIcons";
 import { THUMB_FRAME, thumbAspectFor, thumbFit } from "@/lib/thumbAspect";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { MarkdownRenderer } from "@/components/game/MarkdownRenderer";
+import { openFeedbackThread } from "@/lib/feedbackOpener";
+import { APP_FEEDBACK_LINK_PLACE, FeedbackLinkContext, FeedbackMarkdown } from "@/components/menu/FeedbackMarkdown";
+import type { FeedbackLinkPlace } from "@/lib/feedbackLinks";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import PromptField from "@/components/prompt/PromptField";
+import { FeedbackPreview } from "@/components/menu/FeedbackPreview";
+import { FeedbackSuggestPlugin } from "@/components/menu/FeedbackSuggestPlugin";
 import { plainVocabulary } from "@/lib/chipVocabulary";
 import { canModerate, isAdmin, isStaff } from "@/lib/roles";
 import { cn } from "@/lib/utils";
@@ -49,10 +54,14 @@ import { useMountedRef } from "@/lib/useMountedRef";
 import type { DownloadPlan } from "@/lib/useDownloadCoordinator";
 import { PlaceBadges } from "@/components/PlaceBadges";
 import { ModerationMarker } from "@/components/community/ModerationMarker";
+import { LikesMarker } from "@/components/community/LikesMarker";
+import { likesMarkerOf } from "@/lib/likesMarker";
+import type { LikesMarkerReason } from "@/types";
 import { PendingUpdateSection } from "@/components/community/PendingUpdateSection";
 import { heldChangelogEntries, type PendingUpdate } from "@/lib/listingModeration";
 import { placementsBy } from "@/lib/contests";
 import { Tip } from "@/components/ui/tooltip";
+import { Hint, Meta } from "@/components/ui/typography";
 import { VrmFileDetails } from "@/components/VrmFileDetails";
 import type { ListingVisibility } from "@/lib/publishLinks";
 import type { WorldAssociation } from "@/lib/compatibleWorlds";
@@ -74,7 +83,7 @@ interface RemoteWorldDetailsModalProps {
   onContextualDownload?: (world: WorldRecord, state: DownloadState, plan?: DownloadPlan) => void;
   onDeviceDownload?: (world: WorldRecord) => void;
   /** Which mutable app actions this shell exposes. */
-  capabilities?: Pick<CommunityBrowserCapabilities, 'localLibrary' | 'deviceDownloads' | 'likes' | 'comments' | 'moderation' | 'reports'>;
+  capabilities?: Pick<CommunityBrowserCapabilities, 'localLibrary' | 'deviceDownloads' | 'likes' | 'comments' | 'moderation' | 'reports' | 'commentLinkPlace'>;
   /** Who is reading, so the heart is a control only for somebody who could press it. */
   currentUser?: WorldRecord | null;
   /** Records a like. Absent leaves the heart a plain count. */
@@ -176,6 +185,9 @@ export function RemoteWorldDetailsModal({
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   // Whether the likers list is up. Staff only; nothing else can raise it.
   const [showLikers, setShowLikers] = useState(false);
+  // Whether the likers list was opened from the Likes Marker, which lands it on the audit.
+  const [auditLikers, setAuditLikers] = useState(false);
+  const [freshLikesMarker, setFreshLikesMarker] = useState<LikesMarkerReason[] | undefined>(undefined);
 
   // What this world requires and what it is offered as an add-on, read only while the listing is open.
   const downloadPlan = useWorldDownloadPlan(world, open && capabilities.localLibrary);
@@ -204,6 +216,14 @@ export function RemoteWorldDetailsModal({
   const reportsEnabled = capabilities.reports && reportFeatureEnabled;
 
   const plainVocab = useMemo(() => plainVocabulary(), []);
+  const commentLinkPlace = useMemo<FeedbackLinkPlace>(() => capabilities.commentLinkPlace ?? {
+    ...APP_FEEDBACK_LINK_PLACE,
+    // The focused chip gets focus back when the dialog closes.
+    openThread: (number) => openFeedbackThread(number, document.activeElement instanceof HTMLElement ? document.activeElement : null),
+    threadOpensAbove: true,
+    // The link grammar admits only the catalog's listing kinds, so the server's kind string is one of them.
+    openListing: onOpenListing && (({ kind, id }) => onOpenListing({ kind: kind as CatalogKind, id })),
+  }, [capabilities.commentLinkPlace, onOpenListing]);
 
   // Token each comments fetch so a slow response for a since-closed world can't land in a different world's
   // modal: opening world B fires a newer request, and world A's late result is discarded.
@@ -341,6 +361,8 @@ export function RemoteWorldDetailsModal({
       // The fresher answer about the setting: this response was read now, and the catalog may be a visit
       // old. Cached details and a failed request say nothing about it, so nothing is reported.
       onAnonymousLikes?.(fresh.details.anonymousLikes);
+      // Read now, never from the disk cache: a marker clears when the likes behind it age out.
+      setFreshLikesMarker(fresh.details.likesMarker);
       apply(fresh.details);
     } else if (fresh.status === 'gone' || !cached) {
       apply(null);
@@ -369,6 +391,7 @@ export function RemoteWorldDetailsModal({
       setAssociations(undefined);
       setListingVisibility(undefined);
       setPendingUpdate(undefined);
+      setFreshLikesMarker(undefined);
       tabPickedRef.current = false;
       setTab(seededChangelog === undefined ? 'comments' : defaultTabForCount(seededChangelog, downloadStateForWorld(world)));
       setReportTarget(null);
@@ -423,6 +446,8 @@ export function RemoteWorldDetailsModal({
   // Who liked something is a moderation surface, not a social one: an author does not get it on their
   // own listing, and nothing on screen tells anybody else it exists.
   const canSeeLikers = capabilities.moderation && isStaff(currentUser);
+  // The single-listing answer is newer than the catalog row it was opened from, so it wins once it lands.
+  const likesMarkerReasons = freshLikesMarker ?? likesMarkerOf(world);
 
   // The row's count says so at open; the details answer, once it lands, is the authority.
   const changelogUsable = hasChangelog(changelog ? changelog.length : detailsSettled ? undefined : seededChangelog, isOwnListing);
@@ -441,6 +466,7 @@ export function RemoteWorldDetailsModal({
   // likers list left open would reopen itself over whichever listing came next, unasked.
   useEffect(() => {
     setShowLikers(false);
+    setAuditLikers(false);
   }, [open, listingKey]);
 
   // DEV: `#dev?modal=likers` lands on the likers list without clicking through the catalog first. Runs
@@ -638,6 +664,9 @@ export function RemoteWorldDetailsModal({
           {world && <PlaceBadges placements={placementsBy(world, contests)} className="mr-8" shine onSelect={onOpenContest} />}
           {world && <PinnedMark listing={world} className="mr-8" />}
           {markedListing && <ModerationMarker listing={markedListing} showStaffQuarantine={false} className="mr-8" />}
+          {canSeeLikers && likesMarkerReasons.length > 0 && (
+            <LikesMarker reasons={likesMarkerReasons} onOpen={() => { setAuditLikers(true); setShowLikers(true); }} className="mr-8 w-auto self-start" />
+          )}
         </DialogHeader>
 
         {world && (
@@ -709,7 +738,7 @@ export function RemoteWorldDetailsModal({
                           </>
                         )}
                         {madeFor && (
-                          <p className="mt-2 text-meta text-muted-foreground">Made for Formamorph {madeFor}</p>
+                          <Meta as="p" className="mt-2">Made for Formamorph {madeFor}</Meta>
                         )}
                       </div>
                     )}
@@ -815,7 +844,7 @@ export function RemoteWorldDetailsModal({
                   onPendingUpdateChange={changePendingUpdate}
                 />
               ) : (
-                <>
+                <FeedbackLinkContext.Provider value={commentLinkPlace}>
               <h3 className="text-helper font-semibold text-muted-foreground">Comments ({commentsCount})</h3>
 
               {capabilities.comments && isAuthenticated ? (
@@ -826,25 +855,28 @@ export function RemoteWorldDetailsModal({
                     vocabulary={plainVocab}
                     markdown
                     ariaLabel="Comment"
-                    placeholder="Leave a comment..."
-                  />
+                    placeholder="Write a comment"
+                    markdownPreview={FeedbackPreview}
+                  >
+                    <FeedbackSuggestPlugin threadTypes={null} />
+                  </PromptField>
                   <div className="flex items-center gap-2">
                     <Button
                       size="sm"
                       disabled={postingComment || !commentText.trim()}
                       onClick={handlePostComment}
                     >
-                      {postingComment ? 'Posting...' : 'Post Comment'}
+                      {postingComment ? 'Posting…' : 'Post Comment'}
                     </Button>
-                    <span className="ml-auto text-meta text-muted-foreground">
+                    <Meta className="ml-auto">
                       {commentText.length} / {COMMENT_MAX}
-                    </span>
+                    </Meta>
                   </div>
                 </div>
               ) : (
-                <p className="text-helper text-muted-foreground">
+                <Hint>
                   {capabilities.comments ? 'Log in to leave a comment.' : 'Comments are read-only on the website.'}
-                </p>
+                </Hint>
               )}
 
               <div className="space-y-3">
@@ -916,7 +948,10 @@ export function RemoteWorldDetailsModal({
                           vocabulary={plainVocab}
                           markdown
                           ariaLabel="Comment text"
-                        />
+                          markdownPreview={FeedbackPreview}
+                        >
+                          <FeedbackSuggestPlugin threadTypes={null} />
+                        </PromptField>
                         <div className="flex items-center gap-2">
                           <Button size="sm" onClick={handleSaveEdit} disabled={savingEdit || !editDraft.trim()}>
                             {savingEdit ? 'Saving…' : 'Save'}
@@ -924,13 +959,18 @@ export function RemoteWorldDetailsModal({
                           <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
                             <X className="mr-2 h-4 w-4" /> Cancel
                           </Button>
-                          <span className="ml-auto text-meta text-muted-foreground">
+                          <Meta className="ml-auto">
                             {editDraft.length} / {COMMENT_MAX}
-                          </span>
+                          </Meta>
                         </div>
                       </div>
                     ) : (
-                      <div className="mt-1 min-w-0"><MarkdownRenderer text={c.content || ''} /></div>
+                      <div className="mt-1 min-w-0">
+                        {/* Only a server that resolves links sends targets; without them a link stays as typed. */}
+                        {c.targets
+                          ? <FeedbackMarkdown text={c.content || ''} targets={c.targets} />
+                          : <MarkdownRenderer text={c.content || ''} />}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -940,7 +980,7 @@ export function RemoteWorldDetailsModal({
                   <Skeleton key={i} className="h-14 w-full" data-testid="comment-placeholder" />
                 ))}
                 {comments.length === 0 && (commentsAnswered ? !commentsLoading : seededComments === 0) && (
-                  <p className="text-helper text-muted-foreground">No comments yet.</p>
+                  <Hint>No comments yet.</Hint>
                 )}
                 {commentsHasMore && (
                   <Button
@@ -949,11 +989,11 @@ export function RemoteWorldDetailsModal({
                     disabled={commentsLoading}
                     onClick={() => loadComments(world._id || world.id, commentsShown + COMMENTS_PAGE)}
                   >
-                    {commentsLoading ? 'Loading...' : 'Load more'}
+                    {commentsLoading ? 'Loading…' : 'Load more'}
                   </Button>
                 )}
               </div>
-                </>
+                </FeedbackLinkContext.Provider>
               )}
             </div>
           </div>
@@ -968,7 +1008,8 @@ export function RemoteWorldDetailsModal({
         {canSeeLikers && (
           <LikersDialog
             open={showLikers}
-            onOpenChange={setShowLikers}
+            onOpenChange={(next) => { setShowLikers(next); if (!next) setAuditLikers(false); }}
+            auditOnOpen={auditLikers}
             listingId={world ? String(world._id || world.id) : null}
             listingName={world?.name}
             currentUser={currentUser}
@@ -980,7 +1021,8 @@ export function RemoteWorldDetailsModal({
           open={!!pendingDelete}
           onOpenChange={(isOpen) => { if (!isOpen) setPendingDelete(null); }}
           title="Delete this comment?"
-          description="It goes for good, and the rest of the thread stays as it is."
+          description="This deletes the comment from the thread. You can't undo this."
+          confirmLabel="Delete"
           onConfirm={() => {
             const commentId = pendingDelete;
             setPendingDelete(null);

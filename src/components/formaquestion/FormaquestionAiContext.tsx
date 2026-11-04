@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, ScrollText } from 'lucide-react';
 import { AiContextExportButton } from '@/components/aiContext/AiContextExportButton';
 import { AiContextRequestCard, AiContextSection, type AiContextCardSection } from '@/components/aiContext/AiContextRequestCard';
-import { DebugChip } from '@/components/game/DebugChip';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle, dialogFullHeightMobile } from '@/components/ui/dialog';
 import { Pager } from '@/components/ui/pagination';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tip } from '@/components/ui/tooltip';
-import { HELP_SAMPLER_FIELDS, type HelpQueryTrace, type HelpRequestTrace, type HelpSamplers, type HelpTrace, type HelpTraceSection } from '@/lib/formaquestion/helpTrace';
+import type { HelpQueryTrace, HelpRequestTrace, HelpTrace, HelpTraceSource } from '@/lib/formaquestion/helpTrace';
+import { isWorldSource, sourceKey } from '@/lib/formaquestion/helpWorldSource';
 import { cn } from '@/lib/utils';
 import type { SurfaceRoute } from '@/lib/surface/surfaceRoute';
 import { routeText } from '@/lib/surface/surfaceTargets';
@@ -28,40 +28,29 @@ type TracedExchange = HelpExchange & { trace: HelpTrace };
 
 const hasTrace = (exchange: HelpExchange): exchange is TracedExchange => exchange.trace !== undefined;
 
-/** The sampler chip's words: the settings' names on the chip, the wire names in the tip. */
-function samplersChip(samplers: HelpSamplers): { label: string; tip: string } | null {
-  const sent = HELP_SAMPLER_FIELDS.flatMap((field) => (samplers[field.key] === undefined ? [] : [{ ...field, value: samplers[field.key] }]));
-  if (sent.length === 0) return null;
-  return { label: sent.map(({ label, value }) => `${label} ${value}`).join(' · '), tip: sent.map(({ wire, value }) => `${wire}: ${value}`).join(' · ') };
-}
-
-/** The chips the help card adds after the endpoint chips: the samplers, and the custom-prompt mark. */
+/** The chip the help card adds after the endpoint's settings: the custom-prompt mark. */
 function HelpChips({ request }: { request: HelpRequestTrace }) {
-  const samplers = samplersChip(request.samplers);
+  if (!request.customPrompt) return null;
   return (
-    <>
-      {samplers && <DebugChip label={samplers.label} tip={samplers.tip} />}
-      {request.customPrompt && (
-        <Tip tip={AI_CONTEXT_COPY.customPrompt.tip} labelsChild={false}>
-          <span className="rounded border border-primary/60 bg-primary/15 px-1.5 py-0.5 text-meta font-normal text-foreground">{AI_CONTEXT_COPY.customPrompt.label}</span>
-        </Tip>
-      )}
-    </>
+    <Tip tip={AI_CONTEXT_COPY.customPrompt.tip} labelsChild={false}>
+      <span className="rounded border border-primary/60 bg-primary/15 px-1.5 py-0.5 text-meta font-normal text-foreground">{AI_CONTEXT_COPY.customPrompt.label}</span>
+    </Tip>
   );
 }
 
-/** One ranked list of sections, with the ones that reached the model marked. */
-function SectionList({ sections, sent, label }: { sections: readonly HelpTraceSection[]; sent: ReadonlySet<string>; label: string }) {
-  if (sections.length === 0) return <p className="text-muted-foreground">{label}: {AI_CONTEXT_COPY.noRanking}</p>;
+/** One ranked list of sections, with the ones that reached the model marked. A world item reads "kind · name". */
+function SectionList({ sources, sent, label }: { sources: readonly HelpTraceSource[]; sent: ReadonlySet<string>; label: string }) {
+  if (sources.length === 0) return <p className="text-muted-foreground">{label}: {AI_CONTEXT_COPY.noRanking}</p>;
   return (
     <div>
       <p className="font-medium">{label}</p>
       <ol className="list-decimal pl-6">
-        {sections.map((section) => {
-          const reached = sent.has(section.id);
+        {sources.map((source) => {
+          const key = sourceKey(source);
+          const reached = sent.has(key);
           return (
-            <li key={section.id} data-sent={reached ? '' : undefined} className={reached ? 'font-semibold' : 'text-muted-foreground'}>
-              {section.page} › {section.label}
+            <li key={key} data-sent={reached ? '' : undefined} className={reached ? 'font-semibold' : 'text-muted-foreground'}>
+              {isWorldSource(source) ? `${source.worldKind} · ${source.name}` : `${source.page} › ${source.label}`}
               {reached && <span className="ml-1 rounded bg-primary/15 px-1 font-normal text-foreground">{AI_CONTEXT_COPY.sent}</span>}
             </li>
           );
@@ -76,15 +65,15 @@ function QueryBlock({ query, sent }: { query: HelpQueryTrace; sent: ReadonlySet<
   return (
     <div className="space-y-2 rounded-md border border-border p-2">
       <p>{AI_CONTEXT_COPY.query}: <q>{query.query}</q></p>
-      {query.sources.map((source) => <SectionList key={source.source} label={AI_CONTEXT_COPY.sources[source.source]} sections={source.sections} sent={sent} />)}
-      <SectionList label={AI_CONTEXT_COPY.merged} sections={query.merged} sent={sent} />
+      {query.sources.map((source) => <SectionList key={source.source} label={AI_CONTEXT_COPY.sources[source.source]} sources={source.sections} sent={sent} />)}
+      <SectionList label={AI_CONTEXT_COPY.merged} sources={query.merged} sent={sent} />
     </div>
   );
 }
 
 /** The Search block of one question: the screen, the preset, each query, the sections sent, and the route. */
 function SearchBlock({ trace, route }: { trace: HelpTrace; route: SurfaceRoute | null }) {
-  const sent = useMemo(() => new Set(trace.sent.map((section) => section.id)), [trace.sent]);
+  const sent = useMemo(() => new Set(trace.sent.map(sourceKey)), [trace.sent]);
   const off = trace.search?.on.length === 0;
   return (
     <div className="space-y-2 text-meta">
@@ -95,6 +84,7 @@ function SearchBlock({ trace, route }: { trace: HelpTrace; route: SurfaceRoute |
         {trace.lead && <> · {AI_CONTEXT_COPY.lead}: {trace.lead.page} › {trace.lead.label}</>}
       </p>
       <p>{AI_CONTEXT_COPY.preset}: {trace.preset}</p>
+      {trace.intent !== undefined && <p>{AI_CONTEXT_COPY.intent}: {trace.intent ?? AI_CONTEXT_COPY.noIntent}</p>}
       {trace.search === null ? (
         <p className="text-muted-foreground">{AI_CONTEXT_COPY.bare}</p>
       ) : (
@@ -103,7 +93,7 @@ function SearchBlock({ trace, route }: { trace: HelpTrace; route: SurfaceRoute |
           {trace.search.queries.map((query) => <QueryBlock key={query.query} query={query} sent={sent} />)}
         </>
       )}
-      <SectionList label={AI_CONTEXT_COPY.sentList} sections={trace.sent} sent={sent} />
+      <SectionList label={AI_CONTEXT_COPY.sentList} sources={trace.sent} sent={sent} />
       <p>{AI_CONTEXT_COPY.route}: {route ? routeText(route.id, route.target) : AI_CONTEXT_COPY.none}</p>
     </div>
   );

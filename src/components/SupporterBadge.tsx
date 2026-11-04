@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
-import { Heart, HeartPlus } from "lucide-react";
+import { Heart, HeartHandshake, HeartPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tip } from "@/components/ui/tooltip";
-import { SUPPORTER_BADGE_STYLES, SUPPORTER_LABELS, supporterTenure } from "@/lib/supporterFlair";
+import { SUPPORTER_BADGE_STYLES, supporterTenure } from "@/lib/supporterFlair";
+import { useTierName } from "@/lib/tierNames";
 import type { SupporterTier } from "@/types";
+
+const TIER_ICONS: Record<SupporterTier, typeof Heart> = {
+  supporter: Heart,
+  supporter_plus: HeartPlus,
+  supporter_top: HeartHandshake,
+};
 
 /** Keys whose badge already beat on arrival this page load. */
 const arrived = new Set<string>();
@@ -30,7 +37,8 @@ interface SupporterBadgeProps {
  * Mounting a badge for a key that already beat stays still, so a scrolled list does not replay it.
  */
 export function SupporterBadge({ tier, since, beatKey, className }: SupporterBadgeProps) {
-  const Icon = tier === 'supporter_plus' ? HeartPlus : Heart;
+  const Icon = TIER_ICONS[tier];
+  const tierNameOf = useTierName();
   // Read at mount, recorded in an effect: Strict Mode runs both twice and the first mount still beats.
   const [arriving, setArriving] = useState(() => !!beatKey && !prefersReducedMotion() && !arrived.has(beatKey));
   useEffect(() => {
@@ -56,7 +64,7 @@ export function SupporterBadge({ tier, since, beatKey, className }: SupporterBad
         // The class comes off so a later hover starts the same animation again.
         onAnimationEnd={() => setArriving(false)}
       />
-      {SUPPORTER_LABELS[tier]}
+      {tierNameOf(tier)}
     </span>
   );
 

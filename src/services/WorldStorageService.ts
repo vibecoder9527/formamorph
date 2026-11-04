@@ -15,7 +15,7 @@ import {
 import { contentHash } from '@/lib/contentHash';
 import { announceWorldDeleted, announceWorldSaved } from '@/lib/worldChangeSignal';
 import {
-  forgetDeletedDefaultWorld, readDeletedDefaultWorlds, seedWorldData, tombstoneDefaultWorld, type DefaultWorldSeed,
+  forgetDeletedDefaultWorld, readDeletedDefaultWorlds, seedWorldData, tombstoneDefaultWorld, type BundledWorlds, type DefaultWorldSeed,
 } from '@/lib/defaultWorlds';
 import { changelogOf, type ChangelogDraft, type ChangelogEntry } from '@/lib/listingChangelog';
 import type { ReviewState, WorldAssociation } from '@/lib/compatibleWorlds';
@@ -25,8 +25,9 @@ import type { AddonRow, DependencyRow } from '@/lib/worldDependencies';
 import type { SourceCheckStatus } from '@/lib/sourceChecks';
 import type { LikeState } from '@/lib/likeCount';
 import type {
-  AnonymousLikeRow, AnonymousLikesRemoved, LikerAuditRow, LikerRow, VrmLicense, WorldMetadata,
+  AnonymousLikeRow, AnonymousLikesRemoved, LikerAuditRow, LikerRow, LikesMarkerReason, LikesSummary, VrmLicense, WorldMetadata,
 } from '@/types';
+import { likesMarkerOf } from '@/lib/likesMarker';
 import {
   INSTALL_HEADER_NAME, installHeaderInUse, noteInstallHeaderRefused, readerInstallId, storedInstallId,
 } from '@/lib/anonymousLikes';
@@ -86,6 +87,8 @@ export interface ListingDetails {
   name?: string;
   /** The author's waiting update, null when none waits, absent for a player or an older server. */
   pendingUpdate?: PendingUpdate | null;
+  /** Why the listing's likes look inflated. Staff only: absent for everybody else and an older server. */
+  likesMarker?: LikesMarkerReason[];
 }
 
 /**
@@ -107,6 +110,8 @@ export type ListingDetailsRead =
 /** The toast shown while another tab on an older build holds the library upgrade back. */
 const LIBRARY_BLOCKED_TOAST = 'world-library-upgrade-blocked';
 export const LIBRARY_BLOCKED_MESSAGE = 'Your world library is waiting to update. Close other Formamorph tabs to finish.';
+const UNREADABLE_WORLDS_TOAST = 'world-library-unreadable';
+export const UNREADABLE_WORLDS_MESSAGE = 'A world in your library can\'t be read, so it is hidden. Your other worlds still load.';
 
 /** The publish refused because this author already has an entry in the contest. */
 export const CONTEST_ALREADY_ENTERED = 'CONTEST_ALREADY_ENTERED';
@@ -116,6 +121,20 @@ export const CONTEST_NOT_ACTIVE = 'CONTEST_NOT_ACTIVE';
 
 /** The withdrawal was refused because this entry is on the contest's podium. */
 export const CONTEST_PLACED = 'CONTEST_PLACED';
+
+/** World data that lacks a field `storeWorld` requires. */
+export class InvalidWorldDataError extends Error {
+  override name = 'InvalidWorldDataError';
+  constructor() { super('Invalid world data: missing required fields'); }
+}
+
+/** Throws unless `data` has the fields `storeWorld` requires of a world. */
+export function assertWorldFields(data: StoredWorldRecord['data'] | null | undefined): void {
+  if (!data || !data.worldOverview || !data.stats || !data.locations ||
+      !data.entities || !data.traits || !data.statUpdates) {
+    throw new InvalidWorldDataError();
+  }
+}
 
 /** A locally-stored world record (metadata + nested world `data`). Inner fields stay loose since
  *  they round-trip through IndexedDB/JSON and aren't read field-by-field here. */
@@ -285,7 +304,12 @@ class WorldStorageService {
   /** Every metadata record, read from the metadata store alone. */
   private async readMeta(): Promise<WorldMetaRecord[]> {
     await this.ensureInitialized();
-    return readAllWorldMeta(this.db!);
+    const { meta, unreadable } = await readAllWorldMeta(this.db!);
+    if (unreadable.length > 0) {
+      console.error('Unreadable worlds in the library:', unreadable);
+      toast.error(UNREADABLE_WORLDS_MESSAGE, { toastId: UNREADABLE_WORLDS_TOAST });
+    }
+    return meta;
   }
 
   /** One world's metadata record, or undefined when it is not stored. */
@@ -465,13 +489,8 @@ class WorldStorageService {
     // world.id = `world-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     //  console.log('Generated new world ID:', world.id);
 
-    // Validate world data structure
-    if (!world.name || !world.data ||
-        !world.data.worldOverview || !world.data.stats ||
-        !world.data.locations || !world.data.entities ||
-        !world.data.traits || !world.data.statUpdates) {
-      throw new Error('Invalid world data: missing required fields');
-    }
+    if (!world.name) throw new InvalidWorldDataError();
+    assertWorldFields(world.data);
 
     const transaction = libraryTransaction(this.db!, 'readwrite');
     // Read-merge so the download link survives saves: sourceId is sticky (inherited unless the
@@ -508,20 +527,26 @@ class WorldStorageService {
    *  the player has edited it (`dirty`), since that diverges from the bundled default (git-dirty model), or if
    *  they deleted it — absent alone can't be trusted to mean "never seeded", so a deleted default carries a
    *  tombstone and stays gone even when the bundled copy changes.
-   *  `readBundled` is `readBundledWorld`, passed in so this module never bundles the worlds.
+   *  `bundled` is `bundledWorlds`, passed in so this module never bundles the worlds.
    *  Returns the ids that failed to load plus the display names auto-updated in place. */
   async loadDefaultWorlds(
     defaultWorlds: DefaultWorldSeed[],
-    readBundled: (id: string) => Promise<string>,
+    bundled: BundledWorlds,
   ): Promise<DefaultWorldSyncResult> {
     await this.ensureInitialized();
     const deleted = readDeletedDefaultWorlds();
     defaultWorlds = defaultWorlds.filter((w) => !deleted.has(w.id));
     // Metadata by id: only the bundled defaults are compared, and only their `sourceHash` and `dirty`.
-    const stored = await Promise.all(defaultWorlds.map((w) => readWorldMeta(this.db!, w.id)));
+    const [stored, worldIds] = await Promise.all([
+      Promise.all(defaultWorlds.map((w) => readWorldMeta(this.db!, w.id))),
+      this.getWorldIds(),
+    ]);
     const byId = new Map<string, { dirty?: boolean; sourceHash?: string }>(
       stored.filter((w): w is WorldMetaRecord => !!w).map((w) => [w.id, w]),
     );
+    // A stored world without readable metadata may hold edits, so a reseed could overwrite them.
+    const unknown = new Set(worldIds.filter((id) => !byId.has(id)));
+    defaultWorlds = defaultWorlds.filter((w) => !unknown.has(w.id));
 
     const failed: string[] = [];
     const errors: Error[] = [];
@@ -530,9 +555,6 @@ class WorldStorageService {
       defaultWorlds.map(async world => {
         try {
           const existing = byId.get(world.id);
-          // Hash the raw text, then parse it — one read, and no re-serializing a multi-MB parsed world.
-          const raw = await readBundled(world.id);
-          const hash = contentHash(raw);
           // A copy seeded before hashing existed has no hash to compare; reseed once to adopt the current
           // bundle (its content may genuinely differ), then it converges like any other.
           const backfill = existing !== undefined && existing.sourceHash === undefined;
@@ -541,9 +563,12 @@ class WorldStorageService {
             // Replace only an unedited copy whose content differs from the bundle. An edited world (`dirty`)
             // is always left alone (git-dirty model). Comparing the *content* — not a version — is what makes
             // this converge: after a reseed the hashes match, so it can't re-fire on every launch.
-            if (existing.dirty || existing.sourceHash === hash) return;
+            if (existing.dirty || existing.sourceHash === await bundled.hashOf(world.id)) return;
           }
 
+          // Hash the raw text, then parse it — one read, and no re-serializing a multi-MB parsed world.
+          const raw = await bundled.read(world.id);
+          const hash = contentHash(raw);
           // storeWorld keeps sticky local fields (createdAt, sourceId) and a false `dirty` on this update.
           const data = seedWorldData(JSON.parse(raw), world);
           const fullWorld = {
@@ -1048,6 +1073,7 @@ class WorldStorageService {
           updatedAt: typeof body.data?.updated_at === 'string' ? body.data.updated_at : undefined,
           name: typeof body.data?.name === 'string' ? body.data.name : undefined,
           ...(body.data && 'pending_update' in body.data ? { pendingUpdate: body.data.pending_update ?? null } : {}),
+          ...(body.data && 'likes_marker' in body.data ? { likesMarker: likesMarkerOf(body.data) } : {}),
         },
       };
     } catch (error) {
@@ -1369,6 +1395,7 @@ class WorldStorageService {
     rows: LikerAuditRow[];
     anonymous: number;
     anonymousRows: AnonymousLikeRow[];
+    summary?: LikesSummary | null;
   }> {
     const response = await fetch(`${this.API_URL}/worlds/${worldId}/likes/audit`, {
       headers: authHeaders(),
@@ -1382,6 +1409,7 @@ class WorldStorageService {
       rows?: LikerAuditRow[];
       anonymous?: number;
       anonymousRows?: AnonymousLikeRow[];
+      summary?: LikesSummary | null;
     } | undefined;
 
     return {
@@ -1389,6 +1417,7 @@ class WorldStorageService {
       rows: data?.rows ?? [],
       anonymous: Number(data?.anonymous) || 0,
       anonymousRows: data?.anonymousRows ?? [],
+      summary: data?.summary ?? null,
     };
   }
 

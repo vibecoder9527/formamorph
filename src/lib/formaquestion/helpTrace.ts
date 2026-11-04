@@ -5,7 +5,9 @@
  */
 import type { AiRequestRecord } from '@/lib/aiContext/requestRecord';
 import type { DocSection } from '@/lib/docs/docsIndex';
+import type { Intent } from '@/types';
 import type { HelpSources } from './helpSettings';
+import { isWorldSource, sourceKey, type AnswerSource, type WorldSource } from './helpWorldSource';
 
 /** A search source of a help question. */
 export type HelpSource = keyof HelpSources;
@@ -16,10 +18,14 @@ export const HELP_TRACE_DEPTH = 10;
 /** A docs section as the trace names it: enough to list it and open it, without its text. */
 export type HelpTraceSection = Pick<DocSection, 'id' | 'page' | 'label'>;
 
+/** A source that reached the model, as the trace names it: a docs section or a world item. */
+export type HelpTraceSource = HelpTraceSection | WorldSource;
+
 /** The sections one source ranked for one query, best first, cut to the trace depth. */
 export interface HelpSourceTrace {
   source: HelpSource;
-  sections: HelpTraceSection[];
+  /** Docs sections, or world items in the world search. */
+  sections: HelpTraceSource[];
 }
 
 /** One query the search ran: each source's ranking, then the merged order. */
@@ -28,31 +34,12 @@ export interface HelpQueryTrace {
   /** One row per source that was on. A failed pick, or a semantic source with no model, has no sections. */
   sources: HelpSourceTrace[];
   /** The merged order, cut to the trace depth; every section that reached the model stays in. */
-  merged: HelpTraceSection[];
+  merged: HelpTraceSource[];
 }
-
-/** The sampler values one request carried, in the settings' names. Absent where the body sent none. */
-export interface HelpSamplers {
-  temperature?: number;
-  repetitionPenalty?: number;
-  topP?: number;
-  topK?: number;
-  minP?: number;
-}
-
-/** Each sampler: its name here, the wire field the session reads it from, and the label the chip shows. */
-export const HELP_SAMPLER_FIELDS: readonly { key: keyof HelpSamplers; wire: string; label: string }[] = [
-  { key: 'temperature', wire: 'temperature', label: 'Temp' },
-  { key: 'repetitionPenalty', wire: 'repetition_penalty', label: 'Rep' },
-  { key: 'topP', wire: 'top_p', label: 'Top P' },
-  { key: 'topK', wire: 'top_k', label: 'Top K' },
-  { key: 'minP', wire: 'min_p', label: 'Min P' },
-];
 
 /** One request of a help question: the shared record, plus what the help card marks beside its endpoint. */
 export interface HelpRequestTrace {
   record: AiRequestRecord;
-  samplers: HelpSamplers;
   /** The prompt this request carried differs from the default text. */
   customPrompt: boolean;
 }
@@ -79,14 +66,21 @@ export interface HelpTrace {
   preset: string;
   /** Null for a bare question, which runs no search. */
   search: HelpSearchTrace | null;
-  /** The sections that reached the model in the prompt, in order. */
-  sent: HelpTraceSection[];
-  /** The AI Search request, when it ran, then the answer request. */
+  /** The search of the open world's pool, when the question read a world. */
+  worldSearch?: HelpSearchTrace;
+  /** The sources that reached the model in the prompt, in order. */
+  sent: HelpTraceSource[];
+  /** The Intent Classifier's Intent, when it ran; null when it failed or named none, and the full request went. */
+  intent?: Intent | null;
+  /** The Intent Classifier request, then the AI Search requests, when they ran, then the answer request. */
   requests: HelpRequestTrace[];
 }
 
 /** The trace's view of a section. */
 export const traceSection = ({ id, page, label }: DocSection): HelpTraceSection => ({ id, page, label });
+
+/** The trace's view of a source: a world item stays as it is. */
+export const traceSource = (source: AnswerSource): HelpTraceSource => (isWorldSource(source) ? source : traceSection(source));
 
 /** What the search of one question ranked, in full, before the trace cuts it. The session fills it as the search runs. */
 export interface HelpSearchRecord {
@@ -102,21 +96,33 @@ export function recordQuery(record: HelpSearchRecord, query: HelpSearchRecord['q
   if (!record.queries.some((known) => known.query === query.query)) record.queries.push(query);
 }
 
-/** A ranking cut to the trace depth, with every section that reached the model kept past the cut. */
-function cutToDepth(sections: readonly DocSection[], sent: ReadonlySet<string>): HelpTraceSection[] {
-  return sections.filter((section, at) => at < HELP_TRACE_DEPTH || sent.has(section.id)).map(traceSection);
+/**
+ * A ranking cut to the trace depth, with every section that reached the model kept past the cut. Sections that
+ * read as one trace row, such as the parts of one world item, show once.
+ */
+function cutToDepth(sections: readonly DocSection[], sent: ReadonlySet<string>, view: (section: DocSection) => HelpTraceSource): HelpTraceSource[] {
+  const rows = new Map<string, HelpTraceSource>();
+  sections.forEach((section, at) => {
+    if (at >= HELP_TRACE_DEPTH && !sent.has(section.id)) return;
+    const row = view(section);
+    if (!rows.has(sourceKey(row))) rows.set(sourceKey(row), row);
+  });
+  return [...rows.values()];
 }
 
-/** The search trace of a question: the record cut to the trace depth, with the sent sections kept. */
-export function searchTraceOf(record: HelpSearchRecord, sent: readonly DocSection[]): HelpSearchTrace {
+/**
+ * The search trace of a question: the record cut to the trace depth, with the sent sections kept. `view` names
+ * each section as the trace lists it; the world search lists its items.
+ */
+export function searchTraceOf(record: HelpSearchRecord, sent: readonly DocSection[], view: (section: DocSection) => HelpTraceSource = traceSection): HelpSearchTrace {
   const sentIds = new Set(sent.map((section) => section.id));
   return {
     on: record.on,
     pick: record.pick,
     queries: record.queries.map(({ query, sources, merged }) => ({
       query,
-      sources: sources.map(({ source, sections }) => ({ source, sections: cutToDepth(sections, sentIds) })),
-      merged: cutToDepth(merged, sentIds),
+      sources: sources.map(({ source, sections }) => ({ source, sections: cutToDepth(sections, sentIds, view) })),
+      merged: cutToDepth(merged, sentIds, view),
     })),
   };
 }

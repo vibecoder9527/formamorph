@@ -1,4 +1,5 @@
 import type { WorldMetadata } from './world';
+import type { InventoryOwner, InventoryPassOp } from './gameplay';
 import type { SavedScriptWrites } from '@/lib/statCodeTurn';
 
 /** Sender role of a chat message, matching the OpenAI chat-completion roles. */
@@ -90,6 +91,7 @@ export type AIRequestType =
   | 'timePassed'
   | 'openingTime'
   | 'sceneTags'
+  | 'inventory'
   | EditorRequestType;
 
 /** The World Editor's generate buttons and the Formaquestion help prompt. No preset rows: they follow the
@@ -134,6 +136,9 @@ export interface ToolScriptHandler {
   stack?: boolean;
 }
 
+/** What a help question asks for, which decides what its answer request carries. */
+export type Intent = 'Chat' | 'Help' | 'Code' | 'World' | 'Create';
+
 /** A function the AI can call during a request. User Tools live in one global list; built-in Tools are the catalog. */
 export interface Tool {
   id: string;
@@ -147,6 +152,8 @@ export interface Tool {
   emptyResult: string;
   /** The prompts that send this Tool. */
   offeredTo: AIRequestType[];
+  /** Formaquestion Tools only: the Intents that send this Tool. Absent reads as Help, Code and World. */
+  intents?: Intent[];
   /** Calls allowed per request; absent uses the global default. */
   callLimit?: number;
 }
@@ -180,7 +187,7 @@ export interface AITurnResult {
    *  AI's list. A stats re-roll starts the scripts' edits from it (Q18). */
   aiChoices?: string[];
   stat_changes: Array<Record<string, number>>;
-  /** The stat tracker's asks this turn, by owner and stat: the ones Re-generate Choices replays (Q28). Absent ⇒ none,
+  /** The stat tracker's asks this turn, by owner and stat: the ones Regenerate Choices replays (Q28). Absent ⇒ none,
    *  or a turn saved before the field, which replays `stat_changes`. */
   statAsks?: TurnStatAsk[];
   /** Stable per-turn id (`randomUUID()`); powers the digest async-apply guard. */
@@ -227,6 +234,12 @@ export interface AITurnResult {
   /** The turn's Script World Tool calls, in call order, which a stat re-roll replays (Q39). Absent when the
    *  AI called none. */
   toolCalls?: TurnToolCall[];
+  /** What the Inventory pass returned, which a stat re-roll replays. Absent when it changed nothing. */
+  inventoryOps?: InventoryPassOp[];
+  /** The owners present when the pass landed (Q62), which the re-roll validates against. Set with `inventoryOps`. */
+  inventoryOwners?: InventoryOwner[];
+  /** Where the pass landed, which the re-roll validates against. Set with `inventoryOps`; absent when it had no location. */
+  inventoryLocationId?: string;
 }
 
 /** One Script World Tool call a turn made. */

@@ -2,6 +2,7 @@ import { findSavesUsingModel } from '@/lib/modelUsage';
 import { replaceLibraryItemContent } from '@/lib/librarySources';
 import EntityStorageService from '@/services/EntityStorageService';
 import { withVrmPick } from '@/lib/worldVrmStore';
+import { BUNDLED_DEFAULT_URL } from '@/lib/defaultAvatar';
 
 /** What a library Avatar delete reaches: the saves and the library entities that use it, by name. */
 export interface ModelUsage {
@@ -28,17 +29,19 @@ export async function findModelUsage(modelId: string): Promise<ModelUsage> {
   return { saves, entities: entities.map((entity) => entity.name || 'Unnamed') };
 }
 
-/** What the delete confirmation says. `null` while the usage is still being read. */
-export function deleteModelDescription(usage: ModelUsage | null): string {
+/** What the delete confirmation says. `null` while the usage is still being read. A build with no bundled Avatar has
+ *  no Default Avatar for saves to fall back on, so they use the device default or show none. */
+export function deleteModelDescription(usage: ModelUsage | null, hasBundledDefault = !!BUNDLED_DEFAULT_URL): string {
   if (!usage) return 'Checking what uses this Avatar…';
   const { saves, entities } = usage;
-  if (!saves.length && !entities.length) return 'Are you sure you want to delete this Avatar? This action cannot be undone.';
+  const instead = hasBundledDefault ? 'the Default Avatar' : "your Default Avatar, or show none if you haven't set one";
   const parts = [
+    'This Avatar is deleted from your library.',
     ...(entities.length ? [`${listNames(entities)} will show no Avatar.`] : []),
     ...(saves.length
-      ? [`${saves.length === 1 ? 'One save uses' : `${saves.length} saves use`} this Avatar: ${listNames(saves)}. ${saves.length === 1 ? 'It' : 'They'} will fall back to the Default Avatar.`]
+      ? [`${saves.length === 1 ? 'One save uses' : `${saves.length} saves use`} this Avatar: ${listNames(saves)}. ${saves.length === 1 ? 'It' : 'They'}'ll use ${instead}${hasBundledDefault ? ' instead' : ''}.`]
       : []),
-    'This action cannot be undone.',
+    "You can't undo this.",
   ];
   return parts.join(' ');
 }

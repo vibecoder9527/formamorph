@@ -45,7 +45,7 @@ scan must work before the renderer hydrates:
 
 ```json
 // <userData>/model-locations.json
-{ "externalDir": "C:\\Users\\benny\\.lmstudio\\models", "searchSubfolders": true }
+{ "externalDir": "C:\\Users\\user\\.lmstudio\\models", "searchSubfolders": true }
 ```
 
 `userData` is already redirected for portable builds, so the setting travels with a portable root.

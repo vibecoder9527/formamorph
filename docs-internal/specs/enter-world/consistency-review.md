@@ -10,7 +10,7 @@ Should the approved Enter World flow adopt consistent choice controls and explic
 
 - Branch: `prototype/enter-world-consistency`
 - Commit: `818148f8` — Prototype Enter World Consistency
-- Worktree: `C:/Users/benny/.codex/worktrees/1660/formamorph`
+- Worktree: `C:/Users/user/.codex/worktrees/1660/formamorph`
 - Launch there with `npm run prototype:enter-world`.
 - [Open the comparison](http://127.0.0.1:5181/?variant=C#dev?modal=enterWorld).
 - Detailed review and desktop/phone screenshots are in `docs-internal/specs/enter-world/consistency-prototype.md` on the prototype branch.

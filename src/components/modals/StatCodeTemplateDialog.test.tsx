@@ -295,7 +295,7 @@ describe('the form a template presents', () => {
     await authoring(user, 'traits[{{t:trait}}].enabled = true;');
 
     const slot = await screen.findByRole('combobox', { name: 'T' });
-    expect(slot).toHaveTextContent('Pick a trait…');
+    expect(slot).toHaveTextContent('Pick a trait');
     await user.click(slot);
     expect(await rows()).toEqual(['Storm TouchedLineage › Storms', 'HeirLineage', 'CursedWorld']);
     await user.click(screen.getByRole('option', { name: /^Storm Touched/ }));
@@ -686,7 +686,7 @@ describe('which templates a box offers', () => {
     await user.click(await screen.findByRole('option', { name: /At Game Start/ }));
     await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Save Template' }));
-    await waitFor(() => expect(library).toEqual([expect.objectContaining({ name: 'Twice', timings: ['before', 'start'] })]));
+    await waitFor(() => expect(library).toEqual([expect.objectContaining({ name: 'Twice', timings: ['start', 'before'] })]));
     unmount();
 
     for (const timing of ['before', 'start'] as const) {

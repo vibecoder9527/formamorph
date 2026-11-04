@@ -10,8 +10,9 @@
 //   switching it off must give back nothing. Each switch stores what actually moved and the next switch of
 //   that trait reverses it, rather than the authored number.
 
+import type { ItemScriptEvent } from './inventory';
 import type {
-  CascadeOffTraitIds, CodeBoundDeltas, CodeBounds, Daypart, EntityStatValues, ItemCopy, ItemEffectLedger, LegacyCodeBoundsStat, OwnedTraitPicks, OwnedTraitStates, PersonaRef,
+  BodyRuntime, CascadeOffTraitIds, CodeBoundDeltas, CodeBounds, Daypart, EntityStatValues, ItemCopy, ItemEffectLedger, LegacyCodeBoundsStat, OwnedTraitPicks, OwnedTraitStates, PersonaRef,
   PlayerStat, Stat, StatChange, Trait, TraitGroup,
 } from '@/types';
 import { clamp } from './utils';
@@ -93,15 +94,16 @@ export function heldGlobalTraits(traits: readonly Trait[], world: TraitWorld): T
 
 /** The traits in force in two parts: the global part holds the active held global traits; each entity
  *  owner's part holds its active traits, owned or linked, in its tree order. A played entity's traits sit only
- *  under its own id, and every played id has a part. */
+ *  under its own id, and every played id has a part. The parts follow owner order, a played id with no owner last. */
 export function traitForceScope(state: TraitForceState, world: TraitWorld): Scoped<Trait[]> & { played: readonly string[] } {
   const active = activeOwnedTraitIds(state.ownedTraits ?? {});
   const played = world.persona ? playedEntityIds(world.persona, world.entities) : [];
-  const owners: Record<string, Trait[]> = Object.fromEntries(played.map((id) => [id, []]));
+  const owners: Record<string, Trait[]> = {};
   for (const owner of entityOwners(world)) {
     const on = new Set(active[owner.id] ?? []);
     owners[owner.id] = owner.traits.filter((t) => on.has(t.id));
   }
+  for (const id of played) owners[id] ??= [];
   return { global: heldGlobalTraits(activeTraits(state.traits, state.disabledTraitIds), world), owners, played };
 }
 
@@ -944,8 +946,17 @@ export interface GatedTraitResult {
   log: string[];
   cascade: Trait[];
   cascadeNames: string[];
-  /** The Item Copies and item ledger a settle that ran the inventory settle left. Absent ⇒ unchanged. */
-  items?: { copies: readonly ItemCopy[]; ledger: ItemEffectLedger };
+  /** What a settle that ran the inventory settle left. Absent ⇒ unchanged. */
+  items?: {
+    copies: readonly ItemCopy[];
+    ledger: ItemEffectLedger;
+    bodies: BodyRuntime;
+    /** The Body change lines, apart from `log` (Q41, Q42). */
+    bodyLog: readonly string[];
+    bodyUnequipped: number;
+    /** The When Unequipped events of the copies it unequipped. */
+    events: readonly ItemScriptEvent[];
+  };
 }
 
 /** A settle of every owner's traits: {@link settleTraits}, or one that also settles the inventory. */

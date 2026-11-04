@@ -20,8 +20,11 @@ import { cn } from '@/lib/utils';
 import { Hint, FieldError } from '@/components/ui/typography';
 import { PresetHeader } from '@/components/presetHeader/PresetHeader';
 import { presetHeaderActions } from '@/lib/presetHeaderActions';
-import { EndpointReachabilityBadge } from './EndpointReachabilityBadge';
+import { EndpointReachabilityBadge, HostedReachabilityBadge } from './EndpointReachabilityBadge';
 import { PresetNameDialog } from './PresetNameDialog';
+import { PresetAllowanceRing } from '@/components/game/AllowanceRing';
+import { HostedPresetStatus } from './HostedPresetStatus';
+import type { HostedPresetState } from '@/lib/hostedAi/refusals';
 import { SamplerControl, type SamplerControlProps } from './SamplerControl';
 import type { TextEndpointEditorModel } from './textEndpointEditorModel';
 
@@ -56,8 +59,10 @@ function EditedPresetBadge({ url, apiToken, model }: { url: string; apiToken: st
  * prompt can be routed to it. The select stays visible for every preset, including the engine, or there'd be
  * no way back. A `heading` swaps the select for a title.
  */
-export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, presetDescription = SETTINGS_COPY.textPreset.description, heading }: {
+export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, presetDescription = SETTINGS_COPY.textPreset.description, heading, hostedState }: {
   model: TextEndpointEditorModel;
+  /** Formamorph AI's state to show in place of the live one: the dev-router. */
+  hostedState?: HostedPresetState;
   advanced: boolean;
   onOpenConnectionGuide: () => void;
   /** The help line under the preset select or heading. */
@@ -92,7 +97,8 @@ export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, pre
   // A copy needs no name dialog. The model's `onAdd` clones the edited preset and moves the caller to the copy.
   // The engine has no fields to vary, so a copy of it is just a second engine.
   const presetActions = presetHeaderActions(builtIn, {
-    duplicate: edited.engine ? undefined : () => onAdd(`${edited.name} (copy)`),
+    // Formamorph AI's connection is the account's, so a copy of it could never send.
+    duplicate: edited.engine || edited.hosted ? undefined : () => onAdd(`${edited.name} (copy)`),
     rename: () => setPresetDialog({ mode: 'rename' }),
     reset: {
       run: () => onReset(edited.id),
@@ -151,6 +157,18 @@ export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, pre
     };
   });
 
+  const samplingSection = (
+    <Section title="Sampling">
+      <Hint>
+        Your per-prompt settings and built-in prompt values take priority over <strong>Temperature</strong> and <strong>Repetition Penalty</strong>. Leave a checkbox unchecked to send no override.
+      </Hint>
+      <div className="grid gap-4 pt-3">
+        {samplerControls.map((control) => <SamplerControl key={control.id} {...control} />)}
+      </div>
+    </Section>
+  );
+  const hostedCap = fields.hostedMaxOutputCap ?? DEFAULT_MAX_TOKENS;
+
   const readOnlyField = builtIn ? 'opacity-60 cursor-not-allowed' : undefined;
 
   return (
@@ -162,25 +180,28 @@ export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, pre
             ? {
                 label: SETTINGS_COPY.textPreset.label,
                 select: (
-                  <Select value={edited.id} onValueChange={handlePresetSelect}>
-                    <SelectTrigger
-                      aria-label={SETTINGS_COPY.textPreset.label}
-                      className="flex-1 min-w-0"
-                      {...targetAttribute('settingsEndpoints.text', 'text-preset')}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {presets.builtIn.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                      ))}
-                      {presets.user.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                      ))}
-                      <SelectSeparator />
-                      <SelectItem value={ADD_PRESET_SENTINEL}>Add New Preset…</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <>
+                    <Select value={edited.id} onValueChange={handlePresetSelect}>
+                      <SelectTrigger
+                        aria-label={SETTINGS_COPY.textPreset.label}
+                        className="flex-1 min-w-0"
+                        {...targetAttribute('settingsEndpoints.text', 'text-preset')}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {presets.builtIn.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                        ))}
+                        {presets.user.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                        ))}
+                        <SelectSeparator />
+                        <SelectItem value={ADD_PRESET_SENTINEL}>Add New Preset…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {edited.hosted && <PresetAllowanceRing state={hostedState} />}
+                  </>
                 ),
               }
             : { heading })}
@@ -189,12 +210,41 @@ export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, pre
       {/* The engine has no URL to probe. */}
       {!edited.engine && (
         <div className="flex-shrink-0 pt-1">
-          <EditedPresetBadge key={edited.id} url={endpointUrl} apiToken={apiToken} model={modelName} />
+          {edited.hosted
+            ? <HostedReachabilityBadge state={hostedState} />
+            : <EditedPresetBadge key={edited.id} url={endpointUrl} apiToken={apiToken} model={modelName} />}
         </div>
       )}
       <Hint className="flex-shrink-0 pt-1">{presetDescription}</Hint>
       {/* The engine has no URL or token to edit — its runtime panel stands in for the field set. */}
-      {edited.engine ? <LocalModelPanel /> : (
+      {edited.engine ? <LocalModelPanel /> : edited.hosted ? (
+        <ScrollArea landingRoom className="flex-1 min-h-0">
+          <HostedPresetStatus state={hostedState} lockedPanel showUsage={false} className="pb-0" />
+          {advanced && (
+            <div className="grid gap-4 py-4">
+              <Row htmlFor="maxTokens" {...rowCopy('maxOutputTokens')}>
+                <div className="space-y-2">
+                  <Input
+                    id="maxTokens"
+                    type="number"
+                    min={1}
+                    max={hostedCap}
+                    value={Math.min(maxTokens, hostedCap)}
+                    onChange={(e) => setMaxTokens(Math.min(hostedCap, numInput(e.target.value, 1)))}
+                  />
+                  <Hint>Up to {hostedCap.toLocaleString()} tokens</Hint>
+                </div>
+              </Row>
+              {samplingSection}
+              <Row>
+                <Button variant="outline" className="justify-self-start" onClick={() => onReset(edited.id)}>
+                  {SETTINGS_BUTTONS.resetToDefaults}
+                </Button>
+              </Row>
+            </div>
+          )}
+        </ScrollArea>
+      ) : (
         <ScrollArea landingRoom className="flex-1 min-h-0">
           <div className="grid gap-4 py-4">
             <Row top htmlFor="endpointUrl" target={targetAttribute('settingsEndpoints.text', 'endpoint-url')} {...rowCopy('endpointUrl')}>
@@ -287,14 +337,7 @@ export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, pre
                   </div>
                 </div>
               </Row>
-              <Section title="Sampling">
-                <Hint>
-                  Your per-prompt settings and built-in prompt values take priority over “Temperature” and “Repetition Penalty”. Leave a checkbox unchecked to send no override.
-                </Hint>
-                <div className="grid gap-4 pt-3">
-                  {samplerControls.map((control) => <SamplerControl key={control.id} {...control} />)}
-                </div>
-              </Section>
+              {samplingSection}
               <Row top htmlFor="extraParams" {...rowCopy('extraParams')}>
                 <Textarea
                   id="extraParams"
@@ -315,7 +358,7 @@ export function TextEndpointEditor({ model, advanced, onOpenConnectionGuide, pre
           </div>
         </ScrollArea>
       )}
-      {!edited.engine && (
+      {!edited.engine && !edited.hosted && (
         <div className="flex flex-wrap justify-start items-center gap-2 flex-shrink-0 pt-4">
           <ConfirmDialog
             {...SETTINGS_CONFIRMS.resetAiEndpoint}

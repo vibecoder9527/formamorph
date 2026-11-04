@@ -9,6 +9,7 @@ import { makeVrm1, THUMB_DATA_URL } from '@/test/glbFixture';
 import { readVrmMeta } from '@/lib/vrmMeta';
 import { renderVrmThumbnail } from '@/lib/vrmThumbnail';
 import type { VrmLicense } from '@/types';
+import { PASSING_LICENSE } from '@/test/avatarLicenseFixtures';
 
 // Wraps the real reader so every existing test still exercises real GLB parsing; only the stale-license test
 // below overrides it once, to avoid re-parsing a Blob that fake-indexeddb's structured clone has stripped
@@ -208,52 +209,51 @@ describe('deleteModel', () => {
   });
 });
 
-describe('seedDefaultModel', () => {
-  const vrmUrl = './default-avatar.vrm';
-  const serve = (blob: Blob) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ blob: async () => blob }));
+describe('seedBundledAvatars', () => {
+  const serve = (blob: Blob) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => blob }));
 
   afterEach(() => vi.unstubAllGlobals());
 
   it('seeds the bundled model under a stable id, named from its own title', async () => {
     serve(await makeVrm1({ name: 'Default Avatar' }));
-    await ModelStorageService.seedDefaultModel(vrmUrl);
+    await ModelStorageService.seedBundledAvatars();
     const [meta] = await ModelStorageService.getModelMetadata();
     expect(meta).toMatchObject({ id: 'default-avatar', name: 'Default Avatar' });
   });
 
   it('only seeds once, so a deleted default stays deleted', async () => {
     serve(await makeVrm1({ name: 'Default Avatar' }));
-    await ModelStorageService.seedDefaultModel(vrmUrl);
+    await ModelStorageService.seedBundledAvatars();
     await ModelStorageService.addModel(new File([blob('other')], 'Other.vrm', { type: 'model/vrm' }));
     await ModelStorageService.deleteModel('default-avatar');
 
-    await ModelStorageService.seedDefaultModel(vrmUrl);
+    await ModelStorageService.seedBundledAvatars();
     const names = (await ModelStorageService.getModelMetadata()).map((m) => m.id);
     expect(names).not.toContain('default-avatar');
   });
 
   it('does not re-fetch on a later launch', async () => {
     serve(await makeVrm1({ name: 'Default Avatar' }));
-    await ModelStorageService.seedDefaultModel(vrmUrl);
-    await ModelStorageService.seedDefaultModel(vrmUrl);
+    await ModelStorageService.seedBundledAvatars();
+    await ModelStorageService.seedBundledAvatars();
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 
   it('survives a fetch failure rather than breaking the library', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
-    await expect(ModelStorageService.seedDefaultModel(vrmUrl)).resolves.toBeUndefined();
+    await expect(ModelStorageService.seedBundledAvatars()).resolves.toBeUndefined();
     await expect(ModelStorageService.getModelMetadata()).resolves.toEqual([]);
   });
 
   it('retries on the next launch after a failure, rather than locking the default out forever', async () => {
     // A transient failure must not set the seeded flag, or the default could never appear.
     vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('offline')));
-    await ModelStorageService.seedDefaultModel(vrmUrl);
+    await ModelStorageService.seedBundledAvatars();
     expect((await ModelStorageService.getModelMetadata()).map((m) => m.id)).not.toContain('default-avatar');
 
     // Next launch: fetch works, and because the flag was never set, it seeds now.
     serve(await makeVrm1({ name: 'Default Avatar' }));
-    await ModelStorageService.seedDefaultModel(vrmUrl);
+    await ModelStorageService.seedBundledAvatars();
     expect((await ModelStorageService.getModelMetadata()).map((m) => m.id)).toContain('default-avatar');
   });
 });
@@ -332,7 +332,8 @@ describe('ensureThumbnail', () => {
   });
 
   it('re-reads a record whose license predates the Permissive License gate fields, and keeps its thumbnail', async () => {
-    const staleLicense = { metaVersion: '1' } as VrmLicense; // no `avatarPermission` key at all — the pre-gate shape
+    // The shape the first gate wrote: it has `avatarPermission` but none of the four expression flags.
+    const staleLicense = { metaVersion: '1', avatarPermission: 'everyone' } as VrmLicense;
     const existingThumbnail = 'data:image/webp;base64,EXISTING';
     await putRaw({
       id: 'stale',
@@ -342,13 +343,7 @@ describe('ensureThumbnail', () => {
       data: { type: 'model/vrm', blob: blob(), size: 9, hash: 'already-hashed', license: staleLicense, thumbnail: existingThumbnail },
     } satisfies StoredModelRecord);
 
-    const freshLicense: VrmLicense = {
-      metaVersion: '1',
-      avatarPermission: 'everyone',
-      allowRedistribution: true,
-      modification: 'allowModificationRedistribution',
-      commercialUse: 'corporation',
-    };
+    const freshLicense: VrmLicense = { ...PASSING_LICENSE, allowExcessivelySexualUsage: false };
     vi.mocked(readVrmMeta).mockResolvedValueOnce({ license: freshLicense });
 
     await expect(ModelStorageService.ensureThumbnail('stale')).resolves.toBe(existingThumbnail);
@@ -357,11 +352,26 @@ describe('ensureThumbnail', () => {
     expect((raw.data as { license: VrmLicense }).license).toEqual(freshLicense);
     expect((raw.data as { hash: string }).hash).toBe('already-hashed'); // an existing hash is not redone
   });
+
+  it('does not re-read a record whose license already carries the expression flags', async () => {
+    const existingThumbnail = 'data:image/webp;base64,EXISTING';
+    await putRaw({
+      id: 'current',
+      name: 'Current',
+      createdAt: '2025-01-01T00:00:00.000Z',
+      lastAccessed: '2025-01-01T00:00:00.000Z',
+      data: { type: 'model/vrm', blob: blob(), size: 9, hash: 'h', fileThumbnail: null, license: PASSING_LICENSE, thumbnail: existingThumbnail },
+    } satisfies StoredModelRecord);
+    vi.mocked(readVrmMeta).mockClear();
+
+    await expect(ModelStorageService.ensureThumbnail('current')).resolves.toBe(existingThumbnail);
+    expect(readVrmMeta).not.toHaveBeenCalled();
+  });
 });
 
 describe('thumbnail source', () => {
   const GENERATED = 'data:image/webp;base64,GENERATED';
-  const FRESH_LICENSE: VrmLicense = { metaVersion: '1', avatarPermission: 'everyone' };
+  const FRESH_LICENSE: VrmLicense = PASSING_LICENSE;
   const addThumbed = async (name = 'Thumbed') =>
     ModelStorageService.addModel(new File([await makeVrm1({ name }, true).arrayBuffer()], `${name}.vrm`, { type: 'model/vrm' }));
   const metaOf = async (id: string) => (await ModelStorageService.getModelMetadata()).find((m) => m.id === id);
@@ -512,12 +522,12 @@ describe('validation', () => {
   });
 });
 
-describe('defaultAvatarHashes', () => {
+describe('bundledAvatarHashes', () => {
   const serve = (body: Blob) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => body }));
 
   beforeEach(() => {
     // The bundled file's hash memoizes per instance; reset it so each test's served file is actually read.
-    (ModelStorageService as unknown as { bundledDefaultHash: unknown }).bundledDefaultHash = null;
+    (ModelStorageService as unknown as { bundledHashes: Map<string, unknown> }).bundledHashes.clear();
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -525,21 +535,21 @@ describe('defaultAvatarHashes', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     await putRaw({ id: 'default-avatar', name: 'Default Avatar', data: { type: 'model/vrm', blob: blob(), size: 9, hash: 'seeded-hash' } });
 
-    await expect(ModelStorageService.defaultAvatarHashes()).resolves.toEqual(['seeded-hash']);
+    await expect(ModelStorageService.bundledAvatarHashes()).resolves.toEqual(['seeded-hash']);
   });
 
   it('holds the bundled file’s hash after the seeded copy is gone', async () => {
     serve(new Blob(['bundled-bytes']));
     const imported = await ModelStorageService.addModel(new File([blob('bundled-bytes')], 'Renamed.vrm', { type: 'model/vrm' }));
 
-    await expect(ModelStorageService.defaultAvatarHashes()).resolves.toEqual([imported.data.hash]);
+    await expect(ModelStorageService.bundledAvatarHashes()).resolves.toEqual([imported.data.hash]);
   });
 
   it('holds both when an older build seeded a different file', async () => {
     serve(new Blob(['bundled-bytes']));
     await putRaw({ id: 'default-avatar', name: 'Default Avatar', data: { type: 'model/vrm', blob: blob(), size: 9, hash: 'old-build-hash' } });
 
-    const hashes = await ModelStorageService.defaultAvatarHashes();
+    const hashes = await ModelStorageService.bundledAvatarHashes();
 
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).toBe('old-build-hash');
@@ -547,21 +557,21 @@ describe('defaultAvatarHashes', () => {
 
   it('reads the bundled file once per session', async () => {
     serve(new Blob(['bundled-bytes']));
-    await ModelStorageService.defaultAvatarHashes();
-    await ModelStorageService.defaultAvatarHashes();
+    await ModelStorageService.bundledAvatarHashes();
+    await ModelStorageService.bundledAvatarHashes();
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 
   it('reads the bundled file again after a failed read', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('offline')));
-    await expect(ModelStorageService.defaultAvatarHashes()).resolves.toEqual([]);
+    await expect(ModelStorageService.bundledAvatarHashes()).resolves.toEqual([]);
 
     serve(new Blob(['bundled-bytes']));
-    await expect(ModelStorageService.defaultAvatarHashes()).resolves.toHaveLength(1);
+    await expect(ModelStorageService.bundledAvatarHashes()).resolves.toHaveLength(1);
   });
 
   it('ignores a response that is not the file', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, blob: async () => new Blob(['<html>']) }));
-    await expect(ModelStorageService.defaultAvatarHashes()).resolves.toEqual([]);
+    await expect(ModelStorageService.bundledAvatarHashes()).resolves.toEqual([]);
   });
 });

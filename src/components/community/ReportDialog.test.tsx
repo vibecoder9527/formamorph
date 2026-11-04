@@ -83,7 +83,7 @@ describe('filing a report', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send Report' }));
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(vi.mocked(toast.success).mock.calls[0][0]).toMatch(/messages/i);
+    expect(vi.mocked(toast.success).mock.calls[0][0]).toMatch(/get a message/i);
   });
 
   it('calls the thing what the surface that opened it calls it', async () => {
@@ -104,11 +104,11 @@ describe('filing a report', () => {
   it('names the commenter and the listing when reporting a comment', async () => {
     // A comment has no name of its own; showing the listing's name alone reads as the comment's title.
     render(<ReportDialog open onOpenChange={vi.fn()} target={{
-      kind: 'comment', id: 'c1', name: 'Sedge Landing', author: 'benny',
+      kind: 'comment', id: 'c1', name: 'Sedge Landing', author: 'marrow',
     }} />);
 
     const line = screen.getByText(/Reporting/).closest('p');
-    expect(line?.textContent).toBe('Reporting benny’s comment on Sedge Landing');
+    expect(line?.textContent).toBe('Reporting marrow’s comment on Sedge Landing');
   });
 
   it('still points at the listing when the commenter has no name', async () => {
@@ -120,11 +120,11 @@ describe('filing a report', () => {
     expect(line?.textContent).toBe('Reporting a comment on Sedge Landing');
   });
 
-  it('says up front that the author never learns who reported them', async () => {
+  it('says up front that the author never learns who sent the report', async () => {
     // The question that decides whether somebody reports at all, so it is answered before they start.
     render(<ReportDialog open onOpenChange={vi.fn()} target={listing} />);
 
-    expect(screen.getByText(/never learns who reported them/i)).toBeTruthy();
+    expect(screen.getByText(/never learns who sent it/i)).toBeTruthy();
   });
 });
 

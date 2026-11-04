@@ -1,9 +1,11 @@
 // @vitest-environment node
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALWAYS_RUN, GRAPH_COVERED, PATH_TRIGGERS, cjsRequires, gateOptions, gitFiles, relatedFiles, requirersOf } from './testSelection.mjs';
+import { ALWAYS_RUN, GRAPH_COVERED, PATH_TRIGGERS, changedSince, cjsRequires, gateOptions, gitFiles, relatedFiles, requirersOf, touchedSince } from './testSelection.mjs';
 
 // Tracked and new files; a tracked file deleted in the working tree is gone.
 const FILES = gitFiles('ls-files', '--cached', '--others', '--exclude-standard').filter((file) => existsSync(file));
@@ -145,6 +147,18 @@ describe('relatedFiles', () => {
     expect(relatedFiles(['src/a/__snapshots__/B.test.tsx.snap'], new Map())).toContain('src/a/B.test.tsx');
   });
 
+  it('reaches the llama-server module from the pin, and its test from the recorded asset list', () => {
+    expect(relatedFiles(['scripts/llamaServerPin.json'], new Map())).toContain('scripts/fetchLlamaServer.mjs');
+    expect(relatedFiles(['scripts/fixtures/llamaServerAssets.b12078.json'], new Map())).toContain('scripts/fetchLlamaServer.test.mjs');
+  });
+
+  it.each(['public/default-avatar.vrm', 'build-assets/alternate-avatar.vrm', 'build-assets/praline-avatar.vrm', 'vite.site.config.js', 'legal/notices-map.json'])(
+    'selects the notices test when %s changes',
+    (file) => {
+      expect(relatedFiles([file], new Map())).toContain('scripts/shipNotices.test.ts');
+    },
+  );
+
   it('always adds the always-run tests', () => {
     expect(relatedFiles([], new Map())).toEqual(Object.keys(ALWAYS_RUN).sort());
   });
@@ -153,6 +167,98 @@ describe('relatedFiles', () => {
 describe('gitFiles', () => {
   it('splits the list of a command that ends in a pathspec', () => {
     expect(gitFiles('ls-files', '--', '*.cjs')).toContain('electron/main.cjs');
+  });
+});
+
+describe('a @<path> change source', () => {
+  const withList = (text, check) => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'gate-list-'));
+    try {
+      const list = path.join(dir, 'files');
+      writeFileSync(list, text);
+      check(`@${list}`);
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  };
+
+  it('reads its paths and ignores what git says changed', () => {
+    withList('package.json\r\n\r\neslint.config.js\n', (source) => {
+      expect(changedSince(source)).toEqual(['package.json', 'eslint.config.js']);
+      expect(touchedSince(source)).toEqual(['package.json', 'eslint.config.js']);
+    });
+  });
+
+  it('keeps a deleted path for the test and build gates and drops it for lint', () => {
+    withList('package.json\nsrc/no-such-file.ts\n', (source) => {
+      expect(changedSince(source)).toEqual(['package.json']);
+      expect(touchedSince(source)).toEqual(['package.json', 'src/no-such-file.ts']);
+    });
+  });
+});
+
+describe('the affected-test listing', () => {
+  const SCRIPT = path.resolve('scripts/affectedTests.mjs');
+  const FIXTURE = {
+    'docs/Settings.md': 'page',
+    'src/defaultworlds/slime.json': '{}',
+    'electron/llmEngineHost.cjs': '',
+    'electron/stream.cjs': '',
+    'electron/download.cjs': "require('./stream.cjs');",
+  };
+
+  /** The listing of a real git repo holding FIXTURE, after `change` runs in it. */
+  const listing = (change, base = 'HEAD') => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'gate-listing-'));
+    const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, stdio: 'ignore' });
+    try {
+      git('init');
+      for (const [file, text] of Object.entries(FIXTURE)) {
+        mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+        writeFileSync(path.join(dir, file), text);
+      }
+      git('add', '.');
+      git('commit', '-m', 'start');
+      change({ dir, git });
+      return execFileSync(process.execPath, [SCRIPT, base, '--list'], { cwd: dir, encoding: 'utf8' }).split(/\r?\n/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const gone = (file) => ({ dir }) => rmSync(path.join(dir, file));
+
+  it('fires the path triggers of a doc deleted in the working tree', () => {
+    expect(listing(gone('docs/Settings.md'))).toEqual(expect.arrayContaining(PATH_TRIGGERS['docs/*.md']));
+  });
+
+  it('fires the shared and own triggers of a world deleted in a commit', () => {
+    const related = listing(({ git }) => {
+      git('rm', 'src/defaultworlds/slime.json');
+      git('commit', '-m', 'drop');
+    }, 'HEAD~1');
+    expect(related).toEqual(expect.arrayContaining([...PATH_TRIGGERS['src/defaultworlds/*.json'], ...PATH_TRIGGERS['src/defaultworlds/slime.json']]));
+  });
+
+  it('fires the triggers of the old path of a renamed file', () => {
+    const related = listing(({ git }) => {
+      git('mv', 'docs/Settings.md', 'Settings.md');
+      git('commit', '-m', 'move');
+    }, 'HEAD~1');
+    expect(related).toEqual(expect.arrayContaining(PATH_TRIGGERS['docs/*.md']));
+  });
+
+  it('reaches the proxy from a deleted forked file', () => {
+    expect(listing(gone('electron/llmEngineHost.cjs'))).toContain('electron/llmEngineProxy.cjs');
+  });
+
+  it('lists the requirers of a CommonJS file deleted in the working tree', () => {
+    expect(listing(gone('electron/stream.cjs'))).toContain('electron/download.cjs');
+  });
+
+  it('fires no trigger when nothing changed', () => {
+    const onlyTriggered = PATH_TRIGGERS['docs/*.md'].filter((file) => !(file in ALWAYS_RUN));
+    expect(onlyTriggered.length).toBeGreaterThan(0);
+    expect(listing(() => {}).filter((file) => onlyTriggered.includes(file))).toEqual([]);
   });
 });
 

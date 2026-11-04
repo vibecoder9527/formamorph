@@ -11,9 +11,11 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   RotateCcw, ArrowDownWideNarrow, ArrowUpNarrowWide, X, SlidersHorizontal, ChevronDown,
-  ShieldAlert, Trophy, Eye,
+  ShieldAlert, Trophy, Flag,
   type LucideIcon,
 } from "lucide-react";
+import { LikersDialog } from "@/components/community/LikersDialog";
+import { isLikesMarked } from "@/lib/likesMarker";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Tip } from "@/components/ui/tooltip";
 import { CATALOG_KINDS, KIND_TAB_ICONS, KIND_LABELS, kindOf, kindHasThumbnail, showsMorphArt, type CatalogKind } from "@/lib/catalogKinds";
@@ -30,6 +32,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { TokenAutocomplete } from "@/components/TokenAutocomplete";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { Meta } from "@/components/ui/typography";
 import { usePersistentState, boolCodec } from "@/lib/usePersistentState";
 import { CHIP_BASE } from "@/components/Chip";
 import { useCatalogSync } from "@/lib/useCatalogSync";
@@ -54,7 +57,8 @@ import { EventBanner, EventBannerChips } from "@/components/events/EventBanner";
 import { useEventBanners } from "@/components/events/useEventBanners";
 import { useClosingSnapshot } from "@/lib/useClosingSnapshot";
 import { useCommunityBrowserFilters, type CommunityFilterPreferences, type ReviewPinning } from "@/lib/useCommunityBrowserFilters";
-import { useDevReviewViewer } from "@/lib/dev/devReviewViewer";
+import { useDevReviewViewer, useDevModerationOpen } from "@/lib/dev/devReviewViewer";
+import { ModerationMenu, type ModerationChoice, type ModerationView } from "@/components/community/ModerationMenu";
 import { PinnedReviewGroup } from "@/components/community/PinnedReviewGroup";
 import { useReviewDecision } from "@/components/community/useReviewDecision";
 import { decidedRow, listingIdOf, reviewSubjectOf } from "@/lib/reviewRows";
@@ -190,28 +194,6 @@ const PageHeading = ({ className, children }: { className?: string; children: Re
   <h1 className={className}>{children}</h1>
 );
 
-/** A staff view toggle in the filter row: outline when off, filled when on. */
-const StaffToggle = ({ tip, icon: Icon, pressed, onToggle, children }: {
-  tip: string;
-  icon: LucideIcon;
-  pressed: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) => (
-  <Tip tip={tip} labelsChild={false}>
-    <Button
-      variant={pressed ? 'default' : 'outline'}
-      size="sm"
-      className="shrink-0 gap-1"
-      aria-pressed={pressed}
-      onClick={onToggle}
-    >
-      <Icon className="h-4 w-4" />
-      {children}
-    </Button>
-  </Tip>
-);
-
 interface CommunityCreationsBrowserProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -278,6 +260,7 @@ const CommunityCreationsBrowser = ({
   events = [], onOpenEvent, openLikersOnMount = false, openManageAddonsOnMount = false,
 }: CommunityCreationsBrowserProps) => {
   const currentUser = useDevReviewViewer(signedInUser);
+  const devModerationOpen = useDevModerationOpen();
   const requestKey = useRequestKey(landingKey);
   // Stated here rather than in an effect, because the catalog request below goes out in an effect of
   // its own: a shell that sends its guests to sign-in is not an Install and must name none.
@@ -303,7 +286,9 @@ const CommunityCreationsBrowser = ({
   const [quarantineNotice, setQuarantineNotice] = useState<QuarantineTarget | null>(null);
   // Admin-only view of just what is hidden — the whole catalog is already in memory, so this is a filter
   // over it rather than another request.
-  const [quarantinedOnly, setQuarantinedOnly] = useState(false);
+  const [moderationView, setModerationView] = useState<ModerationView>('all');
+  // The listing whose likes audit a Likes Marker opened.
+  const [auditing, setAuditing] = useState<WorldRecord | null>(null);
   // Staff only: off shows the browser as players see it.
   const [showPending, setShowPending] = usePersistentState(SHOW_PENDING_KEY, true, boolCodec);
   // The published world whose add-on offers the author is reviewing.
@@ -447,7 +432,13 @@ const CommunityCreationsBrowser = ({
   // Narrowed before paging, not after: filtering the page in hand would leave the pager counting pages
   // that are mostly empty. The catalog is one request that already carries every quarantined listing this
   // account may see, so this is a filter over it rather than another fetch — the same as search and tags.
-  const catalogForKinds = quarantinedOnly ? remoteWorlds.filter(isQuarantined) : remoteWorlds;
+  // One view at a time. The contest tab has no Quarantined view, so it reads the stored pick as All Listings.
+  const staffView: ModerationView = browseTab === 'contest' && moderationView === 'quarantined' ? 'all' : moderationView;
+  const quarantinedOnly = staffView === 'quarantined';
+  const flaggedOnly = staffView === 'flaggedLikes';
+  const catalogForKinds = quarantinedOnly ? remoteWorlds.filter(isQuarantined)
+    : flaggedOnly ? remoteWorlds.filter(isLikesMarked)
+    : remoteWorlds;
   const quarantinedCount = remoteWorlds.filter(isQuarantined).length;
 
   // Contests: the one running now and the archives behind it. The tab appears while there is either.
@@ -538,8 +529,9 @@ const CommunityCreationsBrowser = ({
   // Contest entries are worlds, so the contest tab keeps the stacked grid.
   const gridLayout = browseTab === 'contest' ? 'stacked' : cardLayoutFor(thumbAspectFor(browseTab));
 
+  const contestEntries = browseTab === 'contest' ? entriesOf(remoteWorlds, shownContest?.id) : [];
   const catalogInView = browseTab === 'contest'
-    ? entriesOf(remoteWorlds, shownContest?.id)
+    ? flaggedOnly ? contestEntries.filter(isLikesMarked) : contestEntries
     : catalogForKinds;
 
   // Staff review from the catalog tabs only; the contest tab and the Quarantined view keep every row in place.
@@ -591,29 +583,53 @@ const CommunityCreationsBrowser = ({
   /** Whether anything is narrowing the grid — what tells an empty result from an empty catalog. */
   const anyFilterApplied = Boolean(searchQuery) || activeFilterCount > 0;
 
-  // Admin-only, and only once something is actually quarantined: a toggle that can only ever show an
-  // empty list is a control that teaches nothing.
-  const quarantineControl = capabilities.moderation && viewerIsStaff && quarantinedCount > 0 && browseTab !== 'contest' ? (
-    <StaffToggle
-      tip="Show only what is hidden pending changes"
-      icon={ShieldAlert}
-      pressed={quarantinedOnly}
-      onToggle={() => setQuarantinedOnly((prev) => !prev)}
-    >
-      Quarantined ({quarantinedCount})
-    </StaffToggle>
-  ) : null;
-
-  const showPendingControl = reviewsHere ? (
-    <StaffToggle
-      tip="Show listings that wait for review"
-      icon={Eye}
-      pressed={showPending}
-      onToggle={() => setShowPending((prev) => !prev)}
-    >
-      Show Pending
-    </StaffToggle>
-  ) : null;
+  // One popover for the staff view options. A zero count disables an option (unless it is on, so it can be
+  // switched off); a tab it does not suit hides it.
+  const moderationHere = capabilities.moderation && viewerIsStaff;
+  const staffHere = moderationHere && browseTab !== 'contest';
+  // Counted over what the tab shows: the contest's entries there, the whole catalog elsewhere.
+  const flaggedCount = (browseTab === 'contest' ? contestEntries : remoteWorlds).filter(isLikesMarked).length;
+  const moderationChoices: ModerationChoice[] = [
+    {
+      value: 'all',
+      label: 'All Listings',
+      applies: moderationHere,
+      help: 'Show every listing',
+    },
+    {
+      value: 'quarantined',
+      label: 'Quarantined',
+      icon: ShieldAlert,
+      count: quarantinedCount,
+      applies: staffHere,
+      disabled: quarantinedCount === 0 && !quarantinedOnly,
+      help: 'Show only quarantined listings',
+    },
+    {
+      value: 'flaggedLikes',
+      label: 'Flagged Likes',
+      icon: Flag,
+      count: flaggedCount,
+      applies: moderationHere,
+      disabled: flaggedCount === 0 && !flaggedOnly,
+      help: 'Show only listings whose likes are flagged',
+    },
+  ];
+  const moderationControl = (
+    <ModerationMenu
+      choices={moderationChoices}
+      view={staffView}
+      onViewChange={setModerationView}
+      pin={{
+        applies: staffHere,
+        checked: showPending,
+        disabled: quarantinedOnly,
+        help: 'Show listings that wait for review above the other results',
+        onChange: setShowPending,
+      }}
+      defaultOpen={devModerationOpen}
+    />
+  );
 
   // On mobile the sort/filter controls collapse behind a "Filters" toggle; on desktop they stay inline.
   const isMobile = useIsMobile();
@@ -662,7 +678,7 @@ const CommunityCreationsBrowser = ({
 
       setRemoteWorlds(prev => prev.filter(w => (w._id || w.id) !== worldId));
       setRemoteWorldToDelete(null);
-      toast.success(`${noun} deleted successfully`);
+      toast.success(`${noun} deleted`);
 
       // Someone else's work: offer to tell them why it went. Their own needs no explanation.
       setTakedown(takedownTargetFor(record, currentUser?.id));
@@ -1125,21 +1141,21 @@ const CommunityCreationsBrowser = ({
         {/* Type to hide tags/authors (autocompletes over the catalog); chips are the hidden items. */}
         <div className="space-y-1">
           <span className="text-meta font-medium text-muted-foreground">Tags</span>
-          <TokenAutocomplete values={hiddenTags} onChange={setHiddenTagsList} options={allTags} placeholder="tag…" openOnFocus />
+          <TokenAutocomplete values={hiddenTags} onChange={setHiddenTagsList} options={allTags} placeholder="Hide a tag" openOnFocus />
         </div>
         <div className="space-y-1">
           <span className="text-meta font-medium text-muted-foreground">Authors</span>
-          <TokenAutocomplete values={hiddenAuthors} onChange={setHiddenAuthorsList} options={allAuthors} placeholder="author…" openOnFocus />
+          <TokenAutocomplete values={hiddenAuthors} onChange={setHiddenAuthorsList} options={allAuthors} placeholder="Hide an author" openOnFocus />
         </div>
         {hiddenWorldIds.length > 0 && (
           <div className="space-y-1">
-            <span className="text-meta font-medium text-muted-foreground">Worlds</span>
+            <span className="text-meta font-medium text-muted-foreground">Listings</span>
             <ScrollArea className="max-h-48">
               <div className="flex flex-wrap gap-1">
                 {hiddenWorldIds.map((id) => (
                   <span key={`w-${id}`} className={cn(CHIP_BASE, "bg-secondary text-secondary-foreground")}>
                     {hiddenWorldName(id)}
-                    <button onClick={() => unhideWorld(id)} className="hover:text-destructive" aria-label="Unhide world"><X className="h-3 w-3" /></button>
+                    <button onClick={() => unhideWorld(id)} className="hover:text-destructive" aria-label={`Unhide ${hiddenWorldName(id)}`}><X className="h-3 w-3" /></button>
                   </span>
                 ))}
               </div>
@@ -1272,6 +1288,7 @@ const CommunityCreationsBrowser = ({
         onApprove={decides ? approveCard : undefined}
         onReject={decides ? rejectCard : undefined}
         reviewBusy={decides && review.busyId !== null}
+        onOpenLikes={moderationHere ? setAuditing : undefined}
       />
     );
   };
@@ -1385,9 +1402,7 @@ const CommunityCreationsBrowser = ({
                     </CollapsibleTrigger>
                     </TutorialPopover>
                   </div>
-                  {(showPendingControl || quarantineControl) && (
-                    <div className="flex flex-wrap items-center gap-2">{showPendingControl}{quarantineControl}</div>
-                  )}
+                  {moderationHere && <div className="flex flex-wrap items-center gap-2">{moderationControl}</div>}
                 </>
               ) : (
                 // The title row fills its header, so the search box grows into the free space. Refresh ends
@@ -1399,8 +1414,7 @@ const CommunityCreationsBrowser = ({
                       <Heading className="ml-1 whitespace-nowrap text-title font-semibold">Community Creations</Heading>
                     </div>
                     {searchControl}
-                    {showPendingControl}
-                    {quarantineControl}
+                    {moderationControl}
                     <div className="flex items-center gap-1">
                       {sortControl}
                       {refreshControl}
@@ -1473,15 +1487,15 @@ const CommunityCreationsBrowser = ({
                 <div className="col-span-full text-center py-12 text-muted-foreground">
                   {/* Filters now outlive the session, so an empty grid names them rather than reading as an
                       empty catalog. */}
-                  {browseTab === 'contest' && !anyFilterApplied ?
+                  {browseTab === 'contest' && !anyFilterApplied && !flaggedOnly ?
                     (shownContest && contestPhase(shownContest) === 'live'
-                      ? 'No entries yet. Publish a world with the contest switch on to be the first.'
+                      ? <>No entries yet. To enter, turn on <strong>Enter into {shownContest.title}</strong> when you publish a world.</>
                       : 'This contest ended with no entries.') :
-                    quarantinedOnly ?
-                    `No ${BROWSE_TAB_LABELS[browseTab].many.toLowerCase()} are quarantined.` :
+                    quarantinedOnly || flaggedOnly ?
+                    `No ${BROWSE_TAB_LABELS[browseTab].many.toLowerCase()} ${quarantinedOnly ? 'are quarantined' : 'have flagged likes'}.` :
                     anyFilterApplied ?
                       `No ${BROWSE_TAB_LABELS[browseTab].many.toLowerCase()} match your filters. Clear them to see everything.` :
-                      `No ${BROWSE_TAB_LABELS[browseTab].many.toLowerCase()} available. Be the first to publish one!`}
+                      `No ${BROWSE_TAB_LABELS[browseTab].many.toLowerCase()} yet. Publish one to be the first.`}
                 </div>
               )) : (
                 deferredRows.map((world) => renderCard(world))
@@ -1565,7 +1579,7 @@ const CommunityCreationsBrowser = ({
               <li key={failure.id} className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-label font-medium">{failure.name}</p>
-                  <p className="text-meta text-muted-foreground">{failure.message}</p>
+                  <Meta as="p">{failure.message}</Meta>
                 </div>
                 {/* One row's own Retry, which only an add-on gets: a world still waiting on a required
                     source cannot be installed until every one of them is in. */}
@@ -1633,7 +1647,7 @@ const CommunityCreationsBrowser = ({
           <DialogHeader>
             <DialogTitle>{shownAction?.mode === 'update' ? 'Choose a copy to update' : 'Choose a copy to overwrite'}</DialogTitle>
             <DialogDescription>
-              You have several local copies of this world. Pick which one to replace with the fresh download — edited copies lose their local changes.
+              You have several copies of this world. Pick the one to replace with the new download. An edited copy loses its changes.
             </DialogDescription>
           </DialogHeader>
           <div className="py-2">
@@ -1654,7 +1668,7 @@ const CommunityCreationsBrowser = ({
                         {upToDate && <span className="ml-2 font-normal text-success">• up to date</span>}
                         {copy.dirty && <span className="ml-2 font-normal text-warning">• edited</span>}
                       </span>
-                      <span className="text-meta text-muted-foreground">Last edited: {edited}</span>
+                      <Meta>Last edited: {edited}</Meta>
                     </Label>
                   </div>
                 );
@@ -1679,8 +1693,9 @@ const CommunityCreationsBrowser = ({
       <ConfirmDialog
         open={!!remoteWorldToDelete}
         onOpenChange={(o) => !o && setRemoteWorldToDelete(null)}
-        title={`Delete Published ${BROWSE_TAB_LABELS[browseTab].one}`}
-        description={`Are you sure you want to delete this published ${BROWSE_TAB_LABELS[browseTab].one.toLowerCase()}? This will remove it from the server and it will no longer be available to other users. This action cannot be undone.`}
+        title={`Delete Published ${BROWSE_TAB_LABELS[browseTab].one}?`}
+        description={`This deletes the ${BROWSE_TAB_LABELS[browseTab].one.toLowerCase()} from the server, and no one can download it again. You can't undo this.`}
+        confirmLabel="Delete"
         onConfirm={() => handleRemoteWorldDelete(remoteWorldToDelete!)}
       />
 
@@ -1693,9 +1708,22 @@ const CommunityCreationsBrowser = ({
         description={takedown
           ? `${takedown.author.username}'s ${KIND_LABELS[takedown.kind].one.toLowerCase()} "${takedown.name}" has been removed. Send them a message explaining why?`
           : ''}
+        confirmLabel="Write Message"
         onConfirm={() => { setNotifyAuthor(takedown); setTakedown(null); }}
         onCancel={() => setTakedown(null)}
       />
+
+      {moderationHere && (
+        <LikersDialog
+          open={auditing !== null}
+          onOpenChange={(o) => { if (!o) setAuditing(null); }}
+          listingId={auditing ? String(auditing._id || auditing.id) : null}
+          listingName={auditing?.name}
+          currentUser={currentUser}
+          onLikesChanged={(likes) => { if (auditing) handleLikesChanged(auditing, likes); }}
+          auditOnOpen
+        />
+      )}
 
       <QuarantineDialog
         open={quarantining !== null}

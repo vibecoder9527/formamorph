@@ -38,16 +38,28 @@ describe('findModelUsage', () => {
 describe('deleteModelDescription', () => {
   it('names entities and saves together', () => {
     expect(deleteModelDescription({ entities: ['Wren', 'Odd Wick'], saves: ['Night One'] })).toBe(
-      '"Wren" and "Odd Wick" will show no Avatar. One save uses this Avatar: "Night One". It will fall back to the Default Avatar. This action cannot be undone.',
+      "This Avatar is deleted from your library. \"Wren\" and \"Odd Wick\" will show no Avatar. One save uses this Avatar: \"Night One\". It'll use the Default Avatar instead. You can't undo this.",
     );
   });
 
-  it('names only entities when no save uses it', () => {
-    expect(deleteModelDescription({ entities: ['Wren'], saves: [] })).toBe('"Wren" will show no Avatar. This action cannot be undone.');
+  it('sends saves to the device default, or to none, on a build with no bundled Avatar', () => {
+    const usage = { entities: ['Wren'], saves: ['Night One', 'Two'] };
+    expect(deleteModelDescription(usage, false)).toBe(
+      "This Avatar is deleted from your library. \"Wren\" will show no Avatar. 2 saves use this Avatar: \"Night One\" and \"Two\". They'll use your Default Avatar, or show none if you haven't set one. You can't undo this.",
+    );
+    expect(deleteModelDescription(usage, true)).toContain("They'll use the Default Avatar instead.");
   });
 
-  it('asks plainly when nothing uses it, and waits while the scan runs', () => {
-    expect(deleteModelDescription({ entities: [], saves: [] })).toBe('Are you sure you want to delete this Avatar? This action cannot be undone.');
+  it('reads the build when it is not told', () => {
+    expect(deleteModelDescription({ entities: [], saves: ['Night One'] })).toContain('the Default Avatar instead');
+  });
+
+  it('names only entities when no save uses it', () => {
+    expect(deleteModelDescription({ entities: ['Wren'], saves: [] })).toBe("This Avatar is deleted from your library. \"Wren\" will show no Avatar. You can't undo this.");
+  });
+
+  it('states the deletion alone when nothing uses it, and waits while the scan runs', () => {
+    expect(deleteModelDescription({ entities: [], saves: [] })).toBe("This Avatar is deleted from your library. You can't undo this.");
     expect(deleteModelDescription(null)).toBe('Checking what uses this Avatar…');
   });
 });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import CommunityCreationsBrowser from './CommunityCreationsBrowser';
@@ -204,7 +204,7 @@ describe('whether the Contest tab is there at all', () => {
 });
 
 describe('staff review on the contest tab', () => {
-  it('pins nothing and offers no Show Pending, leaving a pending entry in the grid', async () => {
+  it('pins nothing and offers no Pin Pending, leaving a pending entry in the grid', async () => {
     const admin = { id: 'a1', username: 'root-admin', accountType: 'admin' } as unknown as WorldRecord;
     server.events = [contest()];
     catalog.items = [
@@ -218,7 +218,88 @@ describe('staff review on the contest tab', () => {
 
     await waitFor(() => expect(gridNames().sort()).toEqual(['Saltmarsh', 'Thawline']));
     expect(screen.queryByRole('region', { name: 'Awaiting Review' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Show Pending' })).not.toBeInTheDocument();
+    // Only All Listings and Flagged Likes apply here, so the button stays; Quarantined and Pin Pending are hidden.
+    fireEvent.click(screen.getByRole('button', { name: /^Moderation/ }));
+    expect(screen.getByRole('radio', { name: 'All Listings' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^Flagged Likes/ })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Pin Pending' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /^Quarantined/ })).not.toBeInTheDocument();
+  });
+
+  it('reads a Quarantined pick from a catalog tab as All Listings, and gets it back on return', async () => {
+    const admin = { id: 'a1', username: 'root-admin', accountType: 'admin' } as unknown as WorldRecord;
+    server.events = [contest()];
+    catalog.items = [
+      listing('Saltmarsh', { contest_event_id: 'e1' }),
+      listing('Coldkeep', { quarantined_at: at(-1), quarantine_expires_at: at(28) }),
+    ];
+    renderBrowser({ currentUser: admin });
+    fireEvent.click(await screen.findByRole('button', { name: /^Moderation/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /^Quarantined/ }));
+    expect(screen.getByRole('button', { name: 'Moderation, 1 changed' })).toBeInTheDocument();
+
+    await openContestTab();
+
+    await waitFor(() => expect(gridNames()).toEqual(['Saltmarsh']));
+    expect(screen.getByRole('button', { name: 'Moderation' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Moderation' }));
+    expect(screen.getByRole('radio', { name: 'All Listings' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Flagged Likes on the contest tab', () => {
+  const admin = { id: 'a1', username: 'root-admin', accountType: 'admin' } as unknown as WorldRecord;
+
+  beforeEach(() => {
+    server.events = [contest()];
+    catalog.items = [
+      listing('Saltmarsh', { contest_event_id: 'e1', likes_marker: ['burst'] }),
+      listing('Thawline', { contest_event_id: 'e1' }),
+      // Marked, but entered in no contest: the contest tab neither counts nor shows it.
+      listing('Coldkeep', { likes_marker: ['flagged_share'] }),
+    ];
+  });
+
+  const flaggedOption = async () => {
+    if (!screen.queryByRole('radio', { name: /^Flagged Likes/ })) fireEvent.click(await screen.findByRole('button', { name: /^Moderation/ }));
+    return screen.getByRole('radio', { name: /^Flagged Likes/ });
+  };
+
+  it('counts the shown contest’s marked entries and narrows to them, on the marker too', async () => {
+    renderBrowser({ currentUser: admin });
+    await openContestTab();
+
+    expect(await flaggedOption()).toHaveAccessibleName('Flagged Likes (1)');
+    fireEvent.click(await flaggedOption());
+
+    await waitFor(() => expect(gridNames()).toEqual(['Saltmarsh']));
+    expect(document.querySelector('[data-likes-marker="burst"]')).not.toBeNull();
+  });
+
+  it('keeps the option on when the reader moves from the catalog to the contest tab', async () => {
+    renderBrowser({ currentUser: admin });
+    await screen.findByRole('tab', { name: 'Contest' });
+    fireEvent.click(await flaggedOption());
+    expect(await flaggedOption()).toHaveAttribute('aria-checked', 'true');
+
+    await openContestTab();
+
+    expect(await flaggedOption()).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(gridNames()).toEqual(['Saltmarsh']));
+  });
+
+  it('shows the marker to staff and never to a player', async () => {
+    const view = renderBrowser({ currentUser: admin });
+    await openContestTab();
+    await waitFor(() => expect(gridNames().sort()).toEqual(['Saltmarsh', 'Thawline']));
+    expect(document.querySelector('[data-likes-marker]')).not.toBeNull();
+    view.unmount();
+
+    renderBrowser();
+    await openContestTab();
+    await waitFor(() => expect(gridNames().sort()).toEqual(['Saltmarsh', 'Thawline']));
+    expect(document.querySelector('[data-likes-marker]')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Moderation/ })).not.toBeInTheDocument();
   });
 });
 
@@ -250,7 +331,7 @@ describe('what the contest grid shows in each of its three states', () => {
 
     // The order is a shuffle (covered in contests.test.ts); the grid only has to show all three entries.
     await waitFor(() => expect(gridNames().sort()).toEqual(['Coldkeep', 'Saltmarsh', 'Thawline']));
-    expect(screen.getByText(/being judged/)).toBeInTheDocument();
+    expect(screen.getByText(/· Judging/)).toBeInTheDocument();
   });
 
   it('pins the whole podium first, in podium order, and badges each place', async () => {
@@ -296,7 +377,7 @@ describe('what the contest grid shows in each of its three states', () => {
     renderBrowser();
     await openContestTab();
 
-    expect(await screen.findByText('Won by Saltmarsh — sedgewright · 1 more placed')).toBeInTheDocument();
+    expect(await screen.findByText('Winner: Saltmarsh by sedgewright · 1 more placed')).toBeInTheDocument();
   });
 
   it('counts a shared 1st in the status line, and counts only the worlds below it', async () => {
@@ -434,7 +515,7 @@ describe('what the contest grid shows in each of its three states', () => {
     renderBrowser();
     await openContestTab();
 
-    expect(await screen.findByText(/Publish a world with the contest switch on/)).toBeInTheDocument();
+    expect(await screen.findByText(/No entries yet\. To enter, turn on/)).toBeInTheDocument();
   });
 });
 

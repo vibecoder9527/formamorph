@@ -1,7 +1,7 @@
 import type { AIRequestType } from '@/types';
 import {
   DEFAULT_TEXT_PRESET_ID, BUILTIN_ENGINE_PRESET_ID, BUILTIN_ENGINE_VALUES,
-  canonicalPresetId, isBuiltInPresetId, valuesForId,
+  canonicalPresetId, isBuiltInPresetId, isFormamorphAiId, valuesForId,
   type TextEndpointPresetStore, type TextEndpointValues,
 } from './textEndpointPresets';
 import type { EndpointSamplerOverrides } from './endpointSamplers';
@@ -37,6 +37,8 @@ export interface ResolvedPromptEndpoint {
   isBuiltIn: boolean;
   /** Send the desktop bundled engine's body shape (top_p/top_k/min_p, token-budget reasoning). */
   localEngine: boolean;
+  /** The target is Formamorph AI. */
+  hosted: boolean;
 }
 
 /** The globally-active endpoint state an unpinned kind resolves to. */
@@ -54,6 +56,8 @@ export interface ActiveEndpointState {
    *  loaded regardless of the name asked for, but sending the real id keeps `/models` probes and the
    *  AI-context viewer honest about which model actually answered. */
   engineModelId: string;
+  /** The server's output cap for Formamorph AI and its served model, from the hosted state. */
+  hosted?: { cap: number; modelId: string };
 }
 
 /**
@@ -98,6 +102,24 @@ export function resolvePromptEndpoint(
   // An unpinned kind resolves to whatever the active selection is, reported under that preset's own id.
   const id = routed ?? active.activeId;
 
+  if (isFormamorphAiId(id)) {
+    const v = valuesForId(store, id);
+    return {
+      presetId: routed,
+      endpointId: id,
+      endpoint: v.endpoint,
+      apiToken: v.apiToken,
+      model: active.hosted?.modelId || v.model,
+      // The player's number, held to the server's cap even when the cap dropped after it was set.
+      maxTokens: Math.min(v.maxOutputOverride.value, active.hosted?.cap ?? v.maxOutputOverride.value),
+      samplerOverrides: v.samplerOverrides,
+      // The connection is the account's, so no Extra Parameters ride along.
+      contextWindowOverride: null,
+      isBuiltIn: true,
+      localEngine: false,
+      hosted: true,
+    };
+  }
   if (id === BUILTIN_ENGINE_PRESET_ID) {
     const e = BUILTIN_ENGINE_VALUES;
     return {
@@ -113,6 +135,7 @@ export function resolvePromptEndpoint(
       contextWindowOverride: e.contextWindowOverride,
       isBuiltIn: true,
       localEngine: true,
+      hosted: false,
     };
   }
   if (routed === null) {
@@ -128,6 +151,7 @@ export function resolvePromptEndpoint(
       contextWindowOverride: active.values.contextWindowOverride,
       isBuiltIn: active.isBuiltIn,
       localEngine: false,
+      hosted: false,
     };
   }
   const values = valuesForId(store, routed);
@@ -143,6 +167,7 @@ export function resolvePromptEndpoint(
     contextWindowOverride: values.contextWindowOverride,
     isBuiltIn: routed === DEFAULT_TEXT_PRESET_ID,
     localEngine: false,
+    hosted: false,
   };
 }
 
@@ -159,6 +184,32 @@ export interface DebugEndpointInfo {
   reasoningFields: ReasoningWireField[];
   /** The `max_tokens` the request sent. Absent where it sent none. */
   maxTokens?: number;
+  /** The samplers the request carried under their wire names, temperature first. */
+  samplers: DebugSampler[];
+}
+
+/** One sampler a request carried. */
+export interface DebugSampler {
+  name: string;
+  value: number;
+}
+
+interface SamplerBodyFields {
+  temperature?: number;
+  repetition_penalty?: number;
+  repeat_penalty?: number;
+  top_p?: number;
+  top_k?: number;
+  min_p?: number;
+}
+
+/** The samplers a body sent. The engine spells the penalty `repeat_penalty`, and the app can send both spellings. */
+function samplersOf(body: SamplerBodyFields): DebugSampler[] {
+  const penalty = body.repetition_penalty === undefined ? 'repeat_penalty' : 'repetition_penalty';
+  return (['temperature', penalty, 'top_p', 'top_k', 'min_p'] as const).flatMap((name) => {
+    const value = body[name];
+    return value === undefined ? [] : [{ name, value }];
+  });
 }
 
 /**
@@ -177,7 +228,7 @@ export function toDebugEndpoint(
     url: string;
     apiToken: string;
   },
-  body: ReasoningBodyFields & { max_tokens?: number },
+  body: ReasoningBodyFields & SamplerBodyFields & { max_tokens?: number },
   dialect: ReasoningDialect,
 ): DebugEndpointInfo {
   return {
@@ -187,6 +238,7 @@ export function toDebugEndpoint(
     url: target.url,
     reasoningFields: reasoningWireFields(dialect, body),
     ...(body.max_tokens !== undefined && { maxTokens: body.max_tokens }),
+    samplers: samplersOf(body),
   };
 }
 

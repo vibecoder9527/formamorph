@@ -1,12 +1,12 @@
 {
   "name": "formamorph",
   "private": true,
-  "version": "3.5.1",
+  "version": "3.6.0",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "main": "electron/main.cjs",
   "engines": {
-    "node": ">=20.19"
+    "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
   },
   "scripts": {
     "postinstall": "patch-package",
@@ -18,6 +18,7 @@
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node scripts/runTests.mjs run",
     "test:watch": "vitest",
+    "test:ledger": "node scripts/testLedger.mjs",
     "coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
@@ -38,6 +39,8 @@
     "llama-server:fetch": "node scripts/fetchLlamaServer.mjs",
     "vram-helper": "node scripts/vram-helper.mjs",
     "gen-tags": "node scripts/genDanbooruTags.mjs",
+    "gen-item-icons": "node scripts/genItemIcons.mjs",
+    "gen-notices": "vite-node scripts/genNotices.mjs",
     "docs": "typedoc",
     "changelog:notes": "node scripts/extractReleaseNotes.mjs",
     "copy:sweep": "node scripts/copySweep.mjs",
@@ -48,6 +51,7 @@
     "probe:narration-tools": "vite-node testing/baseline/harness/narration-tool-call-probe.cli.ts",
     "probe:help": "vite-node testing/baseline/harness/help-baseline.cli.ts --",
     "probe:help-recall": "vite-node testing/baseline/harness/help-recall.cli.ts --",
+    "probe:world-question": "vite-node testing/baseline/harness/world-question-probe.cli.ts --",
     "probe:help-route": "vite-node testing/baseline/harness/help-route-probe.cli.ts",
     "screen": "node testing/baseline/harness/screen.mjs",
     "title-card": "node scripts/captureTitleCard.mjs"
@@ -123,6 +127,8 @@
     "@radix-ui/react-slider": "^1.5.0",
     "@radix-ui/react-slot": "^1.4.0",
     "@radix-ui/react-tabs": "^1.1.22",
+    "@stryker-mutator/core": "^10.1.1",
+    "@stryker-mutator/vitest-runner": "^10.1.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -130,14 +136,16 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.184.1",
-    "@vitejs/plugin-react": "^4.3.1",
-    "@vitest/coverage-v8": "^3.2.6",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@vitest/coverage-v8": "^5.0.5",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "compromise": "^14.19.0",
     "electron": "^42.5.0",
     "electron-builder": "^26.15.7",
+    "esbuild": "^0.28.2",
     "eslint": "^9.8.0",
     "eslint-plugin-react": "^7.35.0",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
@@ -148,7 +156,6 @@
     "hast-util-to-html": "^9.0.5",
     "jsdom": "^25.0.1",
     "json5": "^2.2.3",
-    "kokoro-js": "^1.2.0",
     "lexical": "^0.50.0",
     "lucide-react": "^1.31.0",
     "next-themes": "^0.4.6",
@@ -177,8 +184,9 @@
     "typescript-eslint": "^8.62.0",
     "unified": "^11.0.5",
     "vaul": "^1.1.2",
-    "vite": "^5.4.0",
-    "vitest": "^3.2.6",
+    "vite": "^8.3.5",
+    "vite-node": "^6.0.0",
+    "vitest": "^5.0.5",
     "wasm-webp": "^0.1.0"
   }
 }

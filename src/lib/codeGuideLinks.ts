@@ -5,13 +5,13 @@
 
 import type { DocTarget } from '@/lib/docs/docsLinks';
 
-/** A heading of the Scripts Guide. */
-const scripts = (anchor: string): DocTarget => ({ page: 'ScriptsGuide', anchor });
+/** A heading of the Scripts Reference. */
+const scripts = (anchor: string): DocTarget => ({ page: 'Scripts-Reference', anchor });
 
 /** A heading of the Tools doc. */
 const tools = (anchor: string): DocTarget => ({ page: 'Tools', anchor });
 
-/** The Scripts Guide heading of each script global. A script's timing decides which of them it reads. */
+/** The Scripts Reference heading of each script global. A script's timing decides which of them it reads. */
 export const STAT_CODE_GUIDE_LINKS: Readonly<Record<string, DocTarget>> = {
   self: scripts('self'),
   stats: scripts('stats'),
@@ -30,6 +30,8 @@ export const STAT_CODE_GUIDE_LINKS: Readonly<Record<string, DocTarget>> = {
   entities: scripts('entities'),
   persona: scripts('persona'),
   dictionaries: scripts('dictionaries'),
+  items: scripts('items'),
+  currencies: scripts('currencies'),
   narration: scripts('narration'),
   player: scripts('player'),
   trait: scripts('trait'),
@@ -42,7 +44,7 @@ export const ARGS_GUIDE_LINK: DocTarget = tools('args');
  *  Guide, as a Script's card links them (Q24). */
 export const TOOL_GUIDE_LINKS: Readonly<Record<string, DocTarget>> = {
   args: ARGS_GUIDE_LINK,
-  ...Object.fromEntries((['stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries'] as const)
+  ...Object.fromEntries((['stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'items', 'currencies'] as const)
     .map((name) => [name, STAT_CODE_GUIDE_LINKS[name]])),
 };
 

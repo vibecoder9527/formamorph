@@ -8,7 +8,7 @@ import { codePinText } from '@/lib/placeholderPins';
 import { PLACEHOLDER_PATH_SEPARATOR } from '@/lib/placeholders';
 import {
   clampToOwnRange, CODE_BOUND_FIELDS, entityTraitsPath, memberPath, traitWritesPath, SELF_WRITABLE_FIELDS, type CodeBoundField,
-  type OwnerStatWrites, type PlaceholderWrite, type SandboxPlace, type StatWrite, type TraitWrite, type WorldWrites,
+  type OwnerStatWrites, type PlaceholderWrite, type SandboxPlace, type ScriptPayment, type StatWrite, type TraitWrite, type WorldWrites,
 } from '@/lib/statCodeExecutor';
 import type { MissingName } from '@/lib/statCodeAnalysis';
 import { cardWorldNames, codeLocationsOf, type StatCodeNames } from '@/lib/statCodeBoxOptions';
@@ -20,7 +20,7 @@ import { turnOneClock } from '@/lib/statCodeTiming';
 import { sampleTurn } from '@/lib/scriptTestSamples';
 import type { ScriptPromptHost } from '@/lib/scriptPrompts';
 import type { ToolArgs } from '@/lib/tools/toolRunner';
-import { openingHomeOf, openingStateOf, type OpeningFoldWorld } from '@/lib/openingState';
+import { openingHomeOf, openingStateOf, type OpeningFoldWorld, type OpeningPersona } from '@/lib/openingState';
 import {
   ownerOfHome, PENDING_PERSONA_ID, snapshotOf, type SandboxSnapshot, type ScriptRunUnit, type SnapshotOptions, type UnitHome,
 } from '@/lib/sandboxSnapshot';
@@ -31,7 +31,7 @@ const BOUND_LABELS: Record<CodeBoundField, string> = { min: 'Min', max: 'Max', r
 
 /** The parts of an authored world a stat's code reaches. */
 export type StatCodeWorld = Pick<World, 'stats' | 'statGroups' | 'traits' | 'traitGroups' | 'entities' | 'entityGroups' | 'placeholders' | 'placeholderGroups' | 'dictionaries'>
-  & Partial<Pick<World, 'locations'>>;
+  & Partial<Pick<World, 'locations' | 'currencies'>>;
 
 /** The names of `world` as the stat panel reads them: the global stats without Blueprints, and each entity's
  *  with its links. */
@@ -116,6 +116,8 @@ export interface TestRunOptions {
   /** Take `persona` as the persona to be played: it holds every trait and placeholder a persona-capable
    *  entity holds, and its writes are pending. */
   pendingPersona?: boolean;
+  /** The persona the caller holds, so `met` reads the start rule under it. Absent, no persona plays. */
+  persona?: OpeningPersona;
   /** Names the world does not have yet. Each stat among them runs as a number at 0 in 0–100, and a write
    *  to any of them is left out of `dropped`. */
   missing?: readonly MissingName[];
@@ -198,12 +200,24 @@ const worldWriteLines = (
   ];
 };
 
+/** One line per `pay` call as code names its Currency: the amount and parties, and why a refused one failed. */
+const paymentLines = (
+  payments: readonly ScriptPayment[], currencyName: (id: string) => string, entityNames: ReadonlyMap<string, string>,
+): string[] => {
+  const party = (who: NonNullable<ScriptPayment['payer']>) => (who.kind === 'you' ? 'persona' : entityNames.get(who.id) ?? who.id);
+  return payments.map(({ currencyId, payer, payee, amount, paid, reason }) => {
+    const parties = [...(payer ? [`from ${party(payer)}`] : []), ...(payee ? [`to ${party(payee)}`] : [])];
+    return `${memberPath('currencies', currencyName(currencyId))}.pay: ${[amount, ...parties].join(' ')}${paid ? '' : `, refused: ${reason}`}`;
+  });
+};
+
 /** Test Code's snapshot of `world` at turn one for a `timing` run. No playthrough: no picks, no persona and no
  *  rolls (Q3). The editor holds no discovered cast, so a `diary` name it lacks is a warning (Q46). */
 export const testCodeSnapshotOf = (
-  world: OpeningFoldWorld, timing: ScriptTiming, overlays: Pick<SnapshotOptions, 'pendingPersona' | 'assumedStats'> = {},
+  world: OpeningFoldWorld, timing: ScriptTiming,
+  { persona, ...overlays }: Pick<SnapshotOptions, 'pendingPersona' | 'assumedStats'> & { persona?: OpeningPersona } = {},
 ): SandboxSnapshot => snapshotOf(
-  { ...openingStateOf(world), clock: turnOneClock(timing), turn: sampleTurn(world.worldOverview, timing) }, { openCast: true, ...overlays },
+  { ...openingStateOf(world, undefined, persona), clock: turnOneClock(timing), turn: sampleTurn(world.worldOverview, timing) }, { openCast: true, ...overlays },
 );
 
 /**
@@ -212,15 +226,16 @@ export const testCodeSnapshotOf = (
  */
 export async function runTestCode(
   code: string, timing: ScriptTiming, home: UnitHome, world: OpeningFoldWorld,
-  { pendingPersona: pending = false, missing, sentence, prompts, args }: TestRunOptions = {},
+  { pendingPersona: pending = false, persona, missing, sentence, prompts, args }: TestRunOptions = {},
 ): Promise<TestCodeReport> {
   const seeded = openingHomeOf(home);
   const stat = 'stat' in seeded ? seeded.stat : null;
   const list = allPlaceholders(world);
   const entityNames = new Map((world.entities ?? []).map((entity) => [entity.id, statCodeName(entity.name, list)]));
   const { locations } = codeLocationsOf(world.locations ?? [], list);
+  const currencyName = (id: string) => statCodeName(world.currencies?.find((currency) => currency.id === id)?.name ?? id, list);
   const assumed = [...new Set((missing ?? []).filter(({ kind }) => kind === 'stat').map(({ segments }) => segments[0]))];
-  const snapshot = testCodeSnapshotOf(world, timing, { pendingPersona: pending, ...(assumed.length && { assumedStats: assumed }) });
+  const snapshot = testCodeSnapshotOf(world, timing, { pendingPersona: pending, persona, ...(assumed.length && { assumedStats: assumed }) });
   const unit: ScriptRunUnit = {
     home: seeded, timing, code,
     ...(timing === 'output' && { narration: sentence ?? '' }),
@@ -256,6 +271,7 @@ export async function runTestCode(
     ...(outcome.lore ?? []).map(({ path, value }) => `${path} = ${value}`),
     ...(outcome.choices ? [`turn.choices = ${JSON.stringify(outcome.choices)}`] : []),
     ...worldWriteLines(outcome.worldWrites, locations, entityNames),
+    ...paymentLines(outcome.payments ?? [], currencyName, entityNames),
   ];
   const keep = missing ? droppedFilter(missing) : KEEP_DROPPED;
   const dropped = [

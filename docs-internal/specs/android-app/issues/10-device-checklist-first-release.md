@@ -41,9 +41,9 @@ The lines above need a phone. The tamper test must come before the good download
 
 ### Local setup verified September 7
 
-- Release key: [formamorph-release.p12](C:/Users/benny/formamorph-android-signing/formamorph-release.p12). Password and backup are in LastPass; see [signing setup](01-developer-verification-and-signing-key.md#comments).
-- Saved signing directory and alias: [.formamorph-android-signing.env](C:/Users/benny/.formamorph-android-signing.env). This file does not contain the password.
-- Android SDK: [Sdk](C:/Users/benny/AppData/Local/Android/Sdk), including build-tools and [adb.exe](C:/Users/benny/AppData/Local/Android/Sdk/platform-tools/adb.exe).
+- Release key: [formamorph-release.p12](C:/Users/user/formamorph-android-signing/formamorph-release.p12). Password and backup are in LastPass; see [signing setup](01-developer-verification-and-signing-key.md#comments).
+- Saved signing directory and alias: [.formamorph-android-signing.env](C:/Users/user/.formamorph-android-signing.env). This file does not contain the password.
+- Android SDK: [Sdk](C:/Users/user/AppData/Local/Android/Sdk), including build-tools and [adb.exe](C:/Users/user/AppData/Local/Android/Sdk/platform-tools/adb.exe).
 - Java 21: [Temurin JDK](<C:/Program Files/Eclipse Adoptium/jdk-21.0.11.10-hotspot>).
 - Device: Pixel 6 Pro, visible and authorized through wireless ADB.
 - After pushing the workflow changes, **Actions → Release → Run workflow → android_only** builds and verifies the signed APK as the `android` artifact without publishing. Leave the other inputs off. Use that APK for installation and gameplay checks; it does not replace the published update tests below.

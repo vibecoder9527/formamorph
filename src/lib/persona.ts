@@ -29,7 +29,7 @@ export function enteredPersona(entity: Entity, ref: NoneRef | undefined): Entity
 
 /** The world's entities with the Custom Persona entity carrying the player's entry, or the picked library
  *  persona's name, for the surfaces that read the marked entity from the list: its tree node and its
- *  Character Name. The same list otherwise. */
+ *  Entity Name. The same list otherwise. */
 export function withPersonaEntry(entities: readonly Entity[], ref: PersonaRef | undefined, libraryName?: string): readonly Entity[] {
   if (ref?.source === 'world') return entities;
   const marked = customPersonaEntity(entities);
@@ -40,6 +40,9 @@ export function withPersonaEntry(entities: readonly Entity[], ref: PersonaRef | 
 }
 
 const namesOf = (entity: Entity): string[] => [entity.name, ...(entity.aliases ?? [])].map((n) => n.trim()).filter(Boolean);
+
+/** The names and aliases of every played entity, each once. */
+export const playedNames = (played: readonly Entity[]): string[] => [...new Set(played.flatMap(namesOf))];
 
 export interface PersonaResolution {
   /** Null for no reference, an explicit None, or a reference that no longer resolves. */

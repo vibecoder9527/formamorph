@@ -3,9 +3,52 @@
 
 In the browser and on Android, Formamorph starts on the **Demo AI**. It is a small free model, and it is there so you can try the app with no setup. The desktop app starts on its **Built-In Engine** instead.
 
-The AI writes everything you read. A stronger model gives you sharper narration, a better memory of your story, and entities that act the same from turn to turn. Nothing else changes the experience as much.
+The AI writes everything you read. Nothing else changes the experience as much. A stronger model gives you:
 
-Every route ends in the same place: Settings → **Endpoints** → **Text**. The **Endpoints** tab shows in Simple and Advanced mode.
+- sharper narration
+- a better memory of your story
+- entities that act the same from turn to turn
+
+## Formamorph AI for Supporters
+<!-- keywords: formamorph ai, supporter, patreon, allowance, weekly allowance, turns left, used up, ran out, switch back, hosted ai, no setup, no key -->
+<!-- route: settingsEndpoints.text#text-preset -->
+
+**Formamorph AI** is a built-in preset that thanks Patreon Supporters. It needs no key. Your support includes a context window and a weekly allowance. Their size depends on how you support the project.
+
+To use it:
+
+1. Sign in.
+2. Accept the current Privacy Policy.
+3. Confirm that you are 18 or older.
+
+The panel shows **Sign In**, **Review Policy** or **Confirm Age** for each step that is still open.
+
+The first time a device sees your support, Formamorph selects **Formamorph AI** for you. It does this once on each device. After that, your choice stays.
+
+While you play, the ring beside **Send** shows your allowance. See [How to Check Your Formamorph AI Allowance](How-to-Play#how-to-check-your-formamorph-ai-allowance).
+
+To see your allowance in settings, open Settings → **Endpoints** → **Text**, select **Formamorph AI**, and select the ring beside it. The ring shows your support, the percent used, about how many turns are left, and when it resets, in your local time. The numbers update after each turn.
+
+- Each turn on any device counts against one shared allowance.
+- The allowance resets every week. The ring shows the day and time in your local time.
+- A notice appears after a turn when you reach the highest warning level, with a **Support on Patreon** link. It shows once a week across all your devices.
+- When the allowance runs out, Formamorph AI stops until the reset, including background requests such as diaries. A notice says so after the turn and stays until you close it. Select **Switch Back** to return to your last preset, or **Support on Patreon** to open the Patreon page.
+
+If you are signed out, have not confirmed that you are 18 or older, or are not a Supporter, the preset shows Morphie, a fire and the three levels.
+
+Pick a level to see its fire change. **See Levels** opens the full scene. **Support on Patreon** opens a checklist that starts at the first step you have not finished.
+
+The panel also shows when Formamorph AI can't serve you:
+
+- **Paused for everyone:** select **Check Again**. A pause doesn't use your allowance.
+- **Your Patreon pledge can't be confirmed:** Formamorph AI works again as soon as it's confirmed. Select **Check Again**, or **Switch Back** to use your own AI.
+- **Your app is out of date:** select **Update**.
+- **The allowance can't be read:** select **Check Again**. Your turns still send.
+- **Your account is suspended:** the preset can't be used.
+
+Every way to connect your own AI uses the same tab: Settings → **Endpoints** → **Text**. The **Endpoints** tab shows in Simple and Advanced mode. [Endpoint Settings](Endpoint-Settings) explains each of its fields.
+
+In Advanced mode, one prompt can also use a different endpoint. See [How to Route a Prompt to Another Endpoint](Prompts#how-to-route-a-prompt-to-another-endpoint).
 
 ## How to Connect LM Studio
 <!-- keywords: local model, own model, set up, hook up, link, use, run locally, offline, localhost, cors, gguf, lmstudio, port 1234, developer tab server, failed to fetch, connection refused, browser blocks request, self hosted llm -->
@@ -65,7 +108,7 @@ Every route ends in the same place: Settings → **Endpoints** → **Text**. The
 5. Open **Recommended**. It groups models by the GPU memory they need, and starts on the group for your GPU.
 6. Select **Download** on a model.
 
-With **Auto-Load** on, the default, the model loads when its download finishes. With it off, select **Load** on the model.
+The model loads when its download finishes. That is **Auto-Load**, on by default, in the dialog's **Options** view. With **Auto-Load** off, select **Load** on the model.
 
 ## How to Play Against Your PC from Another Device
 <!-- keywords: phone, tablet, laptop, network, wifi, lan, remote, mobile, home server, connect, ip address, same router, second computer, ipad, steam deck, tailscale, port forwarding, host elsewhere, private network blocked -->
@@ -104,6 +147,8 @@ In the browser, Chrome may block a public page from reaching your own network. T
 | **Endpoint URL** | The server address. A bare address such as `http://localhost:1234`, or one that ends in `/v1`, gets `/v1/chat/completions` added. The line under the field shows the full URL. Any other path stays as you typed it. |
 | **API Token** | The service's token. Leave it empty for a local server. |
 | **Model Name** | The model identifier, exactly as the server shows it. |
+
+Under **Preset**, a badge shows whether the endpoint answers: **Reachable**, **Reachable, but no "*model*"** or **Didn't answer**. Select **Recheck** to test again.
 
 > 💡 If the connection fails, select **Trouble Connecting?** under **Endpoint URL**. It opens a checklist of the usual causes.
 
@@ -145,14 +190,27 @@ A model with no projector drops images, and the turn still answers.
 <!-- keywords: first launch popup, no model found, ai unreachable, onboarding, wizard, detected hardware, model too big, start playing button, skip for now -->
 <!-- route: aiSetup -->
 
-On the desktop app, a **Set up your AI** dialog opens when the engine has no model to run. It also opens when you enter a world and the AI can't be reached.
+The **Set up your AI** dialog opens in two cases:
+
+- On the desktop app, at first launch, when the engine has no model. It opens only once.
+- On every platform, when you enter a world and the AI can't be reached.
+
+In the second case, its title names the cause:
+
+- **Can't reach your endpoint**
+- **No model loaded on your server**
+- **This site's embed is blocking your server**, with **Open in a New Tab**
+- **Your model didn't load**
+
+When the desktop engine has no model, the title stays **Set up your AI**.
 
 | Part | What it does |
 |---|---|
+| Formamorph AI card | Shows above the model list on the desktop app when your GPU reports 8 GB of memory or less and your Patreon support does not include Formamorph AI. **See Levels** opens the levels scene. The model download stays below it. |
 | Detected line | Shows your GPU, its memory and its class |
 | Recommended model | One model that fits your GPU, with a download button |
 | **Show all models** | Lists every model under **Best for Your GPU**, **Also Fits** and **Too Big for Your GPU** |
 | **Open Settings** | Opens Settings → **Endpoints**, to use a server or a service instead |
-| **Later** | Closes the dialog. You can set this up any time in Settings → **Endpoints**. |
+| **Later**, **Continue anyway** | Closes the dialog. In a world, the button reads **Continue anyway**, and turns fail until the AI answers. You can set this up any time in Settings → **Endpoints**. |
 
-When the model is ready, the title reads **You're ready**, and **Start Playing** closes it. For a custom endpoint that fails, **Try again** checks it again.
+When the model is ready, the title reads **You're ready**. **Start Playing**, or **Continue** in a world, closes it. For a custom endpoint that fails, **Try again** checks it again.

@@ -1,9 +1,8 @@
 import type { AIRequestType } from '@/types';
 
 /**
- * How the prompt list is grouped in Settings → Prompts' rail. Thirteen flat tabs wrapped into three rows
- * and told the reader nothing about what each prompt is for; grouped by the job they do, the list reads as
- * a map of the pipeline. Order within a group is the order the pipeline runs them.
+ * How the prompt list is grouped in Settings → Prompts' rail. Grouped by the job each prompt does, the list
+ * reads as a map of the pipeline. Order within a group is the order the pipeline runs them.
  *
  * The ids are the same `promptTab` keys the panel already switches on, so grouping is presentation only —
  * `promptTabAvailability` still decides which exist, and a prompt whose feature is off never appears.
@@ -16,7 +15,7 @@ export interface PromptGroup {
 
 export const PROMPT_GROUPS: PromptGroup[] = [
   { label: 'Story', tabs: ['narration', 'thinking', 'director', 'character', 'discover', 'storyboard', 'choices'] },
-  { label: 'Trackers', tabs: ['statupdates', 'location', 'entitylocation', 'timepassed', 'timeopening'] },
+  { label: 'Trackers', tabs: ['statupdates', 'inventory', 'location', 'entitylocation', 'timepassed', 'timeopening'] },
   { label: 'Memory', tabs: ['summary', 'milestone', 'diary'] },
   { label: 'Images', tabs: ['scenetags'] },
 ];
@@ -25,7 +24,7 @@ export const PROMPT_GROUPS: PromptGroup[] = [
  *  a map keyed by it is total and a lookup needs no fallback. */
 export type PromptTab =
   | 'narration' | 'thinking' | 'director' | 'character' | 'discover' | 'storyboard' | 'choices'
-  | 'statupdates' | 'location' | 'entitylocation' | 'timepassed' | 'timeopening'
+  | 'statupdates' | 'inventory' | 'location' | 'entitylocation' | 'timepassed' | 'timeopening'
   | 'summary' | 'milestone' | 'diary'
   | 'scenetags';
 
@@ -39,6 +38,7 @@ export const PROMPT_TAB_REQUESTS: Record<PromptTab, AIRequestType> = {
   storyboard: 'storyboard',
   choices: 'choices',
   statupdates: 'statUpdates',
+  inventory: 'inventory',
   location: 'locationChange',
   entitylocation: 'entityLocation',
   timepassed: 'timePassed',
@@ -60,6 +60,7 @@ export const PROMPT_LABELS: Record<PromptTab, string> = {
   thinking: 'Planning',
   choices: 'Choices',
   statupdates: 'Stat Updates',
+  inventory: 'Inventory',
   location: 'Location Change',
   entitylocation: 'Entity Location',
   summary: 'Summaries',
@@ -91,15 +92,16 @@ export const PROMPT_DESCRIPTIONS: Record<string, string> = {
   narration: 'Writes the story itself, the prose you read each turn',
   thinking: "Plans the turn before it's written: who's present, and what happens next",
   choices: 'Offers your options for the turn, written in your own voice',
-  statupdates: 'Reads what happened and records which stats it moved',
+  statupdates: 'Reads what happened and records which stats it changed',
+  inventory: 'Reads what happened and records who gained, lost, moved, used or found an item',
   location: 'Decides whether your action takes you somewhere new',
   entitylocation: 'Decides whether each entity here comes with you or stays',
-  summary: 'Condenses an older turn into one line the storyteller can still read later',
-  milestone: 'Decides, between turns, which condensed turns stay in long-term memory',
+  summary: 'Condenses an older turn into one line the AI can still read later',
+  milestone: 'Decides, between turns, which summarized turns stay in long-term memory',
   diary: "Records each present character's private, first-person note on the turn",
   timepassed: 'Measures how much in-world time a turn took',
   timeopening: 'Reads the opening scene once to decide what time of day the story starts',
-  scenetags: "Tags only the action in a scene image. The characters' looks and the setting come from their own tags.",
+  scenetags: "Tags only the action in a scene image. The entities' looks and the location come from their own tags.",
   director: "Describes the scene for the turn: who's here, and what each of them is doing",
   character: 'States what one character wants this turn, in the first person',
   discover: 'Writes a lasting note for each new character the story names, and rewrites it on request',

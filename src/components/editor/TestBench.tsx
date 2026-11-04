@@ -6,13 +6,12 @@
  * renders identically embedded in the editor's list panel, docked beside it, and inside the mobile sheet.
  */
 import { CircleX, FlaskConical, PanelLeft, PanelRight, X, type LucideIcon } from 'lucide-react';
-import { EntityIcon, LocationIcon } from '@/lib/elementIcons';
+import { LocationIcon, PersonaIcon } from '@/lib/elementIcons';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { CollapsingTabsList } from '@/components/ui/collapsing-tabs-list';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { describeBrokenPin, type LensOption } from '@/lib/testBench/lens';
 import { BENCH_TABS, type BenchTab } from '@/lib/testBench/benchTabs';
@@ -23,6 +22,7 @@ import { IssuesInstrument } from './IssuesInstrument';
 import { OpeningInstrument } from './OpeningInstrument';
 import { TriggersInstrument } from './TriggersInstrument';
 import { Tip } from '@/components/ui/tooltip';
+import { Meta } from '@/components/ui/typography';
 
 /** The toggle names the placement it would move to, not the one it is in — it is an action, not a label. */
 const PLACEMENT_TOGGLE: Record<BenchPlacement, { label: string; icon: typeof PanelLeft }> = {
@@ -34,8 +34,9 @@ export function TestBench({
   tab, onTabChange, onClose, onFixRule, issues, lens, triggers, aiContext, opening, placementControl,
 }: TestBenchProps) {
   const toggle = placementControl && PLACEMENT_TOGGLE[placementControl.placement];
+  const parts = BENCH_TABS.find((t) => t.value === tab)?.lens;
   return (
-    // Embedded sits inside the editor's CardContent, which already pads — its own padding would stack, and
+    // Embedded renders inside the editor's CardContent, which already pads — its own padding would stack, and
     // the Bench's chrome would no longer start where the tab strip it replaced did.
     <div className={cn('flex h-full flex-col gap-2', placementControl?.placement !== 'embedded' && 'p-3')}>
       <div className="flex items-center gap-2">
@@ -69,19 +70,18 @@ export function TestBench({
         onValueChange={(v) => onTabChange(v as BenchTab)}
         className="flex min-h-0 flex-grow flex-col gap-2"
       >
-        <TabsList className="grid h-auto w-full grid-cols-4">
-          {BENCH_TABS.map((t) => (
-            <TabsTrigger key={t.value} value={t.value} className="px-1">
-              {t.label}
-              {t.value === 'issues' && issues.groups.length > 0 && (
-                <span className="ml-1 rounded-full bg-warning/20 px-1 text-meta text-warning">{issues.groups.length}</span>
-              )}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <CollapsingTabsList
+          aria-label="Test Bench"
+          value={tab}
+          tabs={BENCH_TABS.map((t) => ({
+            value: t.value,
+            icon: t.icon,
+            label: t.value === 'issues' && issues.groups.length > 0 ? `${t.label} (${issues.groups.length})` : t.label,
+          }))}
+        />
         {/* Below the strip, and only on the instruments that read it — the selection itself is Bench-level
             state, so it survives visits to a tab that hides the bar. */}
-        {BENCH_TABS.find((t) => t.value === tab)?.usesLens && <LensBar {...lens} />}
+        {parts && (parts.persona || parts.location) && <LensBar {...lens} parts={parts} />}
         {/* One panel per trigger so every `aria-controls` resolves. */}
         {BENCH_TABS.map((t) => (
           <TabsContent key={t.value} value={t.value} className="mt-0 min-h-0 flex-grow">
@@ -123,67 +123,64 @@ const NO_SELECTION = '__none__';
 const LensSelect = ({ icon: Icon, label, none, value, options, onChange }: {
   icon: LucideIcon;
   label: string;
-  /** What the no-selection row reads as — also what the trigger shows while nothing is picked. */
-  none: string;
+  /** What the no-selection row reads as — also what the trigger shows while nothing is picked. Null drops the row. */
+  none: string | null;
   value: string | null;
   options: LensOption[];
   onChange: (id: string | null) => void;
-}) => {
-  // Consecutive options sharing a heading become one labeled group; ungrouped options (locations) stay flat.
-  const groups: Array<{ name?: string; options: LensOption[] }> = [];
-  for (const option of options) {
-    const last = groups[groups.length - 1];
-    if (last && last.name === option.groupName) last.options.push(option);
-    else groups.push({ name: option.groupName, options: [option] });
-  }
-  return (
-    <Select
-      value={value ?? NO_SELECTION}
-      onValueChange={(next) => onChange(next === NO_SELECTION ? null : next)}
-      disabled={options.length === 0}
-    >
-      <SelectTrigger size="sm" aria-label={label} className="min-w-0 flex-grow gap-1">
-        <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <SelectValue placeholder={none} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={NO_SELECTION}>{none}</SelectItem>
-        {groups.map((group, index) => (
-          <SelectGroup key={group.name ?? index}>
-            {group.name && <SelectLabel>{group.name}</SelectLabel>}
-            {group.options.map((option) => (
-              <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>
-            ))}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-};
+}) => (
+  <Select
+    value={value ?? NO_SELECTION}
+    onValueChange={(next) => onChange(next === NO_SELECTION ? null : next)}
+    disabled={options.length === 0}
+  >
+    <SelectTrigger size="sm" aria-label={label} className="min-w-0 flex-grow gap-1">
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <SelectValue placeholder={none ?? undefined} />
+    </SelectTrigger>
+    <SelectContent>
+      {none !== null && <SelectItem value={NO_SELECTION}>{none}</SelectItem>}
+      {options.map((option) => (
+        <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>
+      ))}
+    </SelectContent>
+  </Select>
+);
 
-/** The Bench-level lens every instrument reads: who is being played, and where they are standing. Its notes
- *  sit under it because both are consequences of the PC on the selector directly above them. */
-const LensBar = ({ lens, pcOptions, locationOptions, statOverrides, onPcChange, onLocationChange }: LensBarProps) => (
+/** The Bench-level lens: who is being played, and at which location, as far as the open instrument reads. Its notes go
+ *  under it because both follow from the picks directly above them. */
+const LensBar = ({ lens, personaOptions, noneLabel, locationOptions, statOverrides, onPersonaChange, onLocationChange, parts }: LensBarProps & {
+  /** The lens parts the open instrument reads. */
+  parts: { persona: boolean; location: boolean };
+}) => (
   <div className="flex flex-col gap-1">
     <div className="flex items-center gap-1.5">
-      <span className="shrink-0 text-meta text-muted-foreground">Testing as</span>
-      <LensSelect
-        icon={EntityIcon}
-        label="Test as character"
-        none="Anyone"
-        value={lens.state.pcTraitId}
-        options={pcOptions}
-        onChange={onPcChange}
-      />
-      <span className="shrink-0 text-meta text-muted-foreground">at</span>
-      <LensSelect
-        icon={LocationIcon}
-        label="Test at location"
-        none="Nowhere"
-        value={lens.state.locationId}
-        options={locationOptions}
-        onChange={onLocationChange}
-      />
+      {parts.persona && (
+        <>
+          <Meta className="shrink-0">Testing as</Meta>
+          <LensSelect
+            icon={PersonaIcon}
+            label="Testing as"
+            none={noneLabel}
+            value={lens.persona?.id ?? null}
+            options={personaOptions}
+            onChange={onPersonaChange}
+          />
+        </>
+      )}
+      {parts.location && (
+        <>
+          <Meta className="shrink-0">at</Meta>
+          <LensSelect
+            icon={LocationIcon}
+            label="Testing at"
+            none="Nowhere"
+            value={lens.state.locationId}
+            options={locationOptions}
+            onChange={onLocationChange}
+          />
+        </>
+      )}
     </div>
     {lens.brokenPins.map((pin) => (
       <p key={`${pin.placeholderId}:${pin.value}`} className="flex items-start gap-1 text-meta text-destructive">
@@ -192,9 +189,9 @@ const LensBar = ({ lens, pcOptions, locationOptions, statOverrides, onPcChange, 
       </p>
     ))}
     {statOverrides.length > 0 && (
-      <p className="text-meta text-muted-foreground">
+      <Meta as="p">
         {statOverrides.map((o) => `${o.enabled ? 'Adds' : 'Removes'} ${o.stat}`).join(' · ')}
-      </p>
+      </Meta>
     )}
   </div>
 );

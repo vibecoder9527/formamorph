@@ -18,9 +18,10 @@ vi.mock('@capacitor/core', async (orig) => {
 import { SettingsProvider, useSettings } from '@/contexts/SettingsContext';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { DEFAULT_TEXT_PRESET_ID } from '@/lib/textEndpointPresets';
-import { DemoAIBadge, DemoAINotice, type DemoAINoticeHandle } from './DemoAINotice';
+import { DemoAIBadge, DemoAIEntryLine, DemoAINotice, type DemoAINoticeHandle } from './DemoAINotice';
+import { closeRoadScene, isRoadSceneOpen } from '@/components/road/roadSceneStore';
 import { registerDocsOpener } from '@/lib/formaquestion/docsOpener';
-import { DEMO_AI_SEEN_KEY } from './demoAISeen';
+import { DEMO_AI_SEEN_KEY, useDemoAIEntryLine } from './demoAISeen';
 
 const UA = {
   windowsChrome: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
@@ -47,24 +48,37 @@ function Probe() {
   return null;
 }
 
-/** Mounts the notice and its badge the way the game view does. `entry` is the entry order releasing the dialog. */
-function mountNotice(entry = true) {
-  const onEntryDone = vi.fn();
+function EntryLine({ aiGateDue }: { aiGateDue: boolean | null }) {
+  return useDemoAIEntryLine(aiGateDue) ? <DemoAIEntryLine /> : null;
+}
+
+/** Mounts the notice, its badge and the entry line the way the game view does. `aiGateDue` is the entry's gate fact. */
+function mountEntry(aiGateDue: boolean | null = false) {
   const ref = createRef<DemoAINoticeHandle>();
-  const tree = (e: boolean) => (
+  const tree = (due: boolean | null) => (
     <TooltipProvider>
       <SettingsProvider>
         <Probe />
+        <EntryLine aiGateDue={due} />
         <DemoAIBadge onOpen={() => ref.current?.open()} />
-        <DemoAINotice ref={ref} entry={e} onEntryDone={onEntryDone} />
+        <DemoAINotice ref={ref} />
       </SettingsProvider>
     </TooltipProvider>
   );
-  const view = render(tree(entry));
-  return { ...view, onEntryDone, ref, enter: () => view.rerender(tree(true)) };
+  const view = render(tree(aiGateDue));
+  return { ...view, ref, setGateDue: (due: boolean | null) => view.rerender(tree(due)) };
+}
+
+/** Mounts the entry, with the dialog open by default as the badge opens it. */
+function mountNotice(open = true) {
+  const view = mountEntry();
+  if (open) act(() => view.ref.current?.open());
+  return view;
 }
 
 const TITLE = "You're Playing on the Demo AI";
+const ENTRY_LINE = "You're on the Demo AI, a small free model. Select its badge to learn more.";
+const entryLine = () => screen.queryByText(ENTRY_LINE);
 const dialog = () => screen.queryByRole('dialog');
 /** A paragraph whose whole text, across its bold and link runs, reads exactly `text`. */
 const paragraph = (text: string) =>
@@ -100,14 +114,101 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('DemoAINotice on entry', () => {
-  it('shows the spec copy word for word when narration resolves to the Demo AI', () => {
+describe('the Demo AI entry line', () => {
+  it('shows with no dialog and no control of its own, and writes the seen-key', () => {
+    mountEntry();
+    expect(entryLine()).not.toBeNull();
+    expect(dialog()).toBeNull();
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Demo AI']);
+    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).not.toBeNull();
+  });
+
+  it('stays on after the seen-key is written, and a later entry shows nothing', () => {
+    const first = mountEntry();
+    expect(entryLine()).not.toBeNull();
+    first.setGateDue(false);
+    expect(entryLine()).not.toBeNull();
+    first.unmount();
+
+    mountEntry();
+    expect(entryLine()).toBeNull();
+  });
+
+  it('stays hidden after a switch to another endpoint and back', () => {
+    const first = mountEntry();
+    const userId = addUserPreset();
+    act(() => settings.selectTextEndpointPreset(userId));
+    expect(entryLine()).toBeNull();
+    first.unmount();
+
+    const away = mountEntry();
+    expect(entryLine()).toBeNull();
+    act(() => settings.selectTextEndpointPreset(DEFAULT_TEXT_PRESET_ID));
+    away.unmount();
+
+    mountEntry();
+    expect(settings.narrationIsDemoAI).toBe(true);
+    expect(entryLine()).toBeNull();
+  });
+
+  it('leaves the seen-key unset when narration routes to another endpoint, even with other prompts on the Demo AI', () => {
+    const view = mountEntry(null);
+    const userId = addUserPreset();
+    route({ narration: userId, choices: DEFAULT_TEXT_PRESET_ID });
+    expect(settings.activeTextEndpointIsDemoAI).toBe(true);
+    view.setGateDue(false);
+    expect(entryLine()).toBeNull();
+    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).toBeNull();
+  });
+
+  it('shows when narration routes to the Demo AI while another endpoint is active', () => {
+    const view = mountEntry(null);
+    const userId = addUserPreset();
+    act(() => settings.selectTextEndpointPreset(userId));
+    route({ narration: DEFAULT_TEXT_PRESET_ID });
+    view.setGateDue(false);
+    expect(entryLine()).not.toBeNull();
+  });
+
+  it('waits for reachability, with the seen-key unset until then', () => {
+    const view = mountEntry(null);
+    expect(entryLine()).toBeNull();
+    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).toBeNull();
+    view.setGateDue(false);
+    expect(entryLine()).not.toBeNull();
+  });
+
+  it('gives the entry to a due gate and shows on the next entry instead', () => {
+    const first = mountEntry(true);
+    first.setGateDue(false);
+    expect(entryLine()).toBeNull();
+    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).toBeNull();
+    first.unmount();
+
+    mountEntry();
+    expect(entryLine()).not.toBeNull();
+  });
+
+  it('shows nothing on a later switch to the Demo AI in the same entry', () => {
+    const view = mountEntry(null);
+    const userId = addUserPreset();
+    act(() => settings.selectTextEndpointPreset(userId));
+    view.setGateDue(false);
+    expect(entryLine()).toBeNull();
+    act(() => settings.selectTextEndpointPreset(DEFAULT_TEXT_PRESET_ID));
+    expect(entryLine()).toBeNull();
+    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).toBeNull();
+  });
+});
+
+describe('DemoAINotice content', () => {
+  it('shows the spec copy word for word', () => {
     mountNotice();
     expect(screen.getByRole('heading', { name: TITLE })).toBeInTheDocument();
     for (const text of [
-      "Formamorph is using its free built-in AI. It's a small model, and it's here so you can try the app with zero setup.",
-      'The AI writes everything you read. A stronger model gives you sharper narration, a better memory of your story, and characters who stay in character. Nothing else in Formamorph changes the experience as much.',
-      'If a world feels flat, try it on a stronger model before you judge it.',
+      "You're playing on Formamorph's free built-in AI. It's a small model, and it's here so you can try the app with no setup.",
+      'The AI writes everything you read. A stronger model writes sharper narration, keeps each entity consistent, and remembers more of your story. Nothing else in Formamorph changes your game as much.',
+      'If a world seems dull, try it on a stronger model before you judge it.',
       'For the full experience, connect your own AI in Settings. Any OpenAI-compatible endpoint works, local or hosted. How to set up your own AI',
       DESKTOP_PITCH,
     ]) {
@@ -119,78 +220,30 @@ describe('DemoAINotice on entry', () => {
     expect(buttons.getByRole('button', { name: 'Keep Playing' })).toBeInTheDocument();
   });
 
-  it('writes the seen-key when it shows, and a later entry opens nothing', () => {
-    const first = mountNotice();
-    expect(dialog()).not.toBeNull();
+  it('writes the seen-key when the badge opens it before any line has shown', async () => {
+    const view = mountEntry(null);
+    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).toBeNull();
+    act(() => view.ref.current?.open());
     expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).not.toBeNull();
-    first.unmount();
-
-    const second = mountNotice();
-    expect(dialog()).toBeNull();
-    expect(second.onEntryDone).toHaveBeenCalledTimes(1);
-  });
-
-  it('stays seen after a switch to another endpoint and back', async () => {
-    const first = mountNotice();
     await userEvent.click(screen.getByRole('button', { name: 'Keep Playing' }));
-    const userId = addUserPreset();
-    act(() => settings.selectTextEndpointPreset(userId));
-    first.unmount();
-
-    const away = mountNotice();
-    expect(dialog()).toBeNull();
-    act(() => settings.selectTextEndpointPreset(DEFAULT_TEXT_PRESET_ID));
-    away.unmount();
-
-    mountNotice();
-    expect(settings.narrationIsDemoAI).toBe(true);
-    expect(dialog()).toBeNull();
-  });
-
-  it('opens nothing when narration routes to another endpoint, even with other prompts on the Demo AI', () => {
-    const view = mountNotice(false);
-    const userId = addUserPreset();
-    route({ narration: userId, choices: DEFAULT_TEXT_PRESET_ID });
-    expect(settings.activeTextEndpointIsDemoAI).toBe(true);
-    view.enter();
-    expect(dialog()).toBeNull();
-    expect(view.onEntryDone).toHaveBeenCalledTimes(1);
-    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).toBeNull();
-  });
-
-  it('opens when narration routes to the Demo AI while another endpoint is active', () => {
-    const view = mountNotice(false);
-    const userId = addUserPreset();
-    act(() => settings.selectTextEndpointPreset(userId));
-    route({ narration: DEFAULT_TEXT_PRESET_ID });
-    view.enter();
-    expect(screen.getByRole('heading', { name: TITLE })).toBeInTheDocument();
-  });
-
-  it('waits for the entry order to release it', () => {
-    const view = mountNotice(false);
-    expect(dialog()).toBeNull();
-    expect(localStorage.getItem(DEMO_AI_SEEN_KEY)).toBeNull();
-    view.enter();
-    expect(dialog()).not.toBeNull();
+    view.setGateDue(false);
+    expect(entryLine()).toBeNull();
   });
 });
 
 describe('DemoAINotice controls', () => {
   it('Connect an AI closes the dialog and asks for Settings on the Endpoints tab', async () => {
-    const view = mountNotice();
+    mountNotice();
     await userEvent.click(screen.getByRole('button', { name: 'Connect an AI' }));
     expect(dialog()).toBeNull();
     expect(settings.settingsRequest).toMatchObject({ tab: 'endpoints' });
-    expect(view.onEntryDone).toHaveBeenCalledTimes(1);
   });
 
-  it('Keep Playing closes the dialog and ends the entry turn', async () => {
-    const view = mountNotice();
+  it('Keep Playing closes the dialog', async () => {
+    mountNotice();
     await userEvent.click(screen.getByRole('button', { name: 'Keep Playing' }));
     expect(dialog()).toBeNull();
     expect(settings.settingsRequest).toBeNull();
-    expect(view.onEntryDone).toHaveBeenCalledTimes(1);
   });
 
   it('Get the Desktop App opens formamorph.ai in a new tab', () => {
@@ -227,7 +280,22 @@ describe('DemoAINotice controls', () => {
       .filter((el) => el.textContent !== 'Close')
       .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
       .map((el) => el.textContent);
-    expect(actions).toEqual(['Keep Playing', 'Get the Desktop App', 'Connect an AI']);
+    expect(actions).toEqual(['See Levels', 'Keep Playing', 'Get the Desktop App', 'Connect an AI']);
+  });
+
+  it('See Levels closes the dialog and raises the scene', async () => {
+    mountNotice();
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'See Levels' }));
+    expect(dialog()).toBeNull();
+    expect(isRoadSceneOpen()).toBe(true);
+    closeRoadScene();
+  });
+
+  it('hides See Levels when narration routes away from the Demo AI', () => {
+    mountNotice();
+    expect(within(screen.getByRole('dialog')).queryByRole('button', { name: 'See Levels' })).not.toBeNull();
+    act(() => settings.selectTextEndpointPreset(addUserPreset()));
+    expect(within(screen.getByRole('dialog')).queryByRole('button', { name: 'See Levels' })).toBeNull();
   });
 
   it('puts the initial focus on Connect an AI', async () => {
@@ -241,15 +309,6 @@ describe('DemoAINotice controls', () => {
     expect(body).toContainElement(screen.getByRole('link', { name: 'How to set up your own AI' }));
     expect(body).not.toContainElement(screen.getByRole('button', { name: 'Connect an AI' }));
     expect(body).not.toContainElement(screen.getByRole('button', { name: 'Keep Playing' }));
-  });
-
-  it('opens from outside the entry path without ending an entry turn', async () => {
-    const view = mountNotice(false);
-    act(() => view.ref.current?.open());
-    expect(screen.getByRole('heading', { name: TITLE })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Playing' }));
-    expect(dialog()).toBeNull();
-    expect(view.onEntryDone).not.toHaveBeenCalled();
   });
 });
 
@@ -335,13 +394,12 @@ describe('DemoAINotice badge', () => {
 
   it('opens the dialog on click, and it stays after the dialog closes', async () => {
     localStorage.setItem(DEMO_AI_SEEN_KEY, '1');
-    const view = mountNotice(false);
+    mountNotice(false);
     await userEvent.click(badge()!);
     expect(screen.getByRole('heading', { name: TITLE })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Keep Playing' }));
     expect(dialog()).toBeNull();
     expect(badge()).not.toBeNull();
-    expect(view.onEntryDone).not.toHaveBeenCalled();
   });
 
   it('opens the dialog from the keyboard', async () => {

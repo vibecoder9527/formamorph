@@ -7,7 +7,11 @@ import { survivingTurnIds } from './turnDigest';
 
 const PREFIX = 'script:';
 
-const pinId = (turnId: string, index: number) => `${PREFIX}${turnId}:${index}`;
+/** The id the turn's `index`th script pin takes as a Memory Manager note. */
+export const pinId = (turnId: string, index: number) => `${PREFIX}${turnId}:${index}`;
+
+/** Whether a note or row id is one of the turn's script pins. */
+export const isScriptPinOf = (id: string, turnId: string): boolean => id.startsWith(`${PREFIX}${turnId}:`);
 
 /** The turn id a script pin's note id names, or null for a note the player wrote. */
 const pinTurn = (note: MemoryNote): string | null =>
@@ -31,7 +35,7 @@ export function addScriptPins(notes: readonly MemoryNote[], turnId: string, line
   return [...notes, ...lines.map((text, index) => ({ id: pinId(turnId, next + index), text, anchorTurn }))];
 }
 
-/** `notes` without the pins of turns no longer in `history`: a failed, rolled-back or re-generated turn. */
+/** `notes` without the pins of turns no longer in `history`: a failed, rolled-back or regenerated turn. */
 export function pruneScriptPins(notes: readonly MemoryNote[], history: ChatMessage[]): MemoryNote[] {
   const live = survivingTurnIds(history);
   const kept = notes.filter((note) => {

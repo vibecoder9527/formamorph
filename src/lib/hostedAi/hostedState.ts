@@ -1,0 +1,146 @@
+import { isReasoningDialect } from '@/lib/reasoningDialect';
+import {
+  REASONING_CANDIDATES, UNKNOWN_REASONING_CAPABILITY,
+  type ReasoningCapability, type ReasoningEffortField,
+} from '@/lib/reasoningEffort';
+
+/** The states the hosted-state route itself reports. */
+const SERVER_STATES = ['age-gate', 'locked', 'unconfirmed', 'paused', 'exhausted', 'warned', 'ready'] as const;
+type ServerState = (typeof SERVER_STATES)[number];
+
+/** The served model's capability record, as the admin entered it. */
+export interface HostedCapabilities {
+  tools?: boolean;
+  /** The reasoning dialect id, or null for a model that does not reason. */
+  reasoning?: string | null;
+  budget?: boolean;
+  efforts?: string[];
+}
+
+/** The account's hosted state, as the hosted-state route answers it. */
+export interface HostedState {
+  tier: string | null;
+  state: ServerState;
+  window: number | null;
+  /** How long a turn id stays valid; null means the client never expires one. */
+  turnLimitSeconds: number | null;
+  maxTokens: number | null;
+  tokenMargin: number | null;
+  model: { id: string; capabilities: HostedCapabilities } | null;
+  percentUsed: number | null;
+  turnsLeft: number | null;
+  resetAt: string | null;
+  acknowledged: number[];
+  /** The percents that raise a warning, ascending; null when the server sent none or a malformed list. */
+  warnThresholds: number[] | null;
+  /** This week's share of spend per prompt type, in percent; null when the server sent none or a malformed map. */
+  breakdown: Record<string, number> | null;
+  /** The percent at which a single prompt is named under its group; null with no breakdown. */
+  breakdownThreshold: number | null;
+}
+
+/** What the proxy reports after a call settles. */
+export interface HostedUsage {
+  percentUsed: number;
+  turnsLeft: number | null;
+  resetAt: string;
+}
+
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+export const recordOf = (v: unknown): Record<string, unknown> | null =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+
+/** A non-empty, strictly ascending list of positive integers; anything else is null. */
+function parseWarnThresholds(v: unknown): number[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const ascending = v.every((n, i) => Number.isInteger(n) && n >= 1 && (i === 0 || n > v[i - 1]));
+  return ascending ? [...v] : null;
+}
+
+/** A map of prompt type to a finite non-negative percent; anything else is null. */
+function parseBreakdown(v: unknown): Record<string, number> | null {
+  const map = recordOf(v);
+  if (!map) return null;
+  const entries = Object.entries(map);
+  return entries.every(([, share]) => typeof share === 'number' && Number.isFinite(share) && share >= 0)
+    ? Object.fromEntries(entries) as Record<string, number>
+    : null;
+}
+
+/** Reads the route's `data`; null when it is not a hosted state. */
+export function parseHostedState(raw: unknown): HostedState | null {
+  const data = recordOf(raw);
+  const state = data?.state;
+  if (!data || !SERVER_STATES.includes(state as ServerState)) return null;
+  const model = recordOf(data.model);
+  const id = str(model?.id);
+  const breakdown = parseBreakdown(data.breakdown);
+  const threshold = num(data.breakdownThreshold);
+  // The two travel together: a map with no usable threshold, or the reverse, shows no breakdown.
+  const usable = breakdown && threshold !== null && Number.isInteger(threshold) && threshold >= 1 && threshold <= 100;
+  const turnLimit = num(data.turnLimitSeconds);
+  return {
+    tier: str(data.tier),
+    state: state as ServerState,
+    window: num(data.window),
+    turnLimitSeconds: turnLimit !== null && turnLimit > 0 ? turnLimit : null,
+    maxTokens: num(data.maxTokens),
+    tokenMargin: num(data.tokenMargin),
+    model: model && id ? { id, capabilities: (recordOf(model.capabilities) ?? {}) as HostedCapabilities } : null,
+    percentUsed: num(data.percentUsed),
+    turnsLeft: num(data.turnsLeft),
+    resetAt: str(data.resetAt),
+    acknowledged: Array.isArray(data.acknowledged) ? data.acknowledged.filter((n): n is number => typeof n === 'number') : [],
+    warnThresholds: parseWarnThresholds(data.warnThresholds),
+    breakdown: usable ? breakdown : null,
+    breakdownThreshold: usable ? threshold : null,
+  };
+}
+
+/** Reads one `event: usage` payload; null when it is not one. */
+export function parseHostedUsage(raw: unknown): HostedUsage | null {
+  const data = recordOf(raw);
+  const percentUsed = num(data?.percentUsed);
+  const resetAt = str(data?.resetAt);
+  if (percentUsed === null || resetAt === null) return null;
+  return { percentUsed, turnsLeft: num(data?.turnsLeft), resetAt };
+}
+
+/** The prompt budget: the window less the server's estimate margin, or null with no window. */
+export function hostedPromptWindow(state: HostedState | null): number | null {
+  if (state?.window == null) return null;
+  return Math.max(0, state.window - (state.tokenMargin ?? 0));
+}
+
+/** The served model's capability record, in the request layer's terms. A field the admin left out stays unknown. */
+export function hostedReasoningCapability(capabilities: HostedCapabilities | undefined): ReasoningCapability {
+  if (!capabilities) return UNKNOWN_REASONING_CAPABILITY;
+  const { tools, reasoning, budget, efforts } = capabilities;
+  const dialect = isReasoningDialect(reasoning) ? reasoning : 'unknown';
+  // An explicit null says the model does not reason; an absent or unknown dialect says nothing.
+  const reasons = reasoning === null ? false : dialect !== 'unknown' ? true : null;
+  const levels = reasons === false
+    ? []
+    : Array.isArray(efforts)
+      ? efforts.filter((e): e is ReasoningEffortField => REASONING_CANDIDATES.includes(e as ReasoningEffortField))
+      : null;
+  const known = <T,>(value: T | null) => value !== null && value !== undefined;
+  const toolsAnswer = typeof tools === 'boolean' ? tools : null;
+  const budgetAnswer = typeof budget === 'boolean' ? budget : null;
+  return {
+    ...UNKNOWN_REASONING_CAPABILITY,
+    reasons,
+    levels,
+    budget: budgetAnswer,
+    dialect,
+    tools: toolsAnswer,
+    sources: {
+      ...(known(reasons) && { reasons: 'native' as const }),
+      ...(known(levels) && { levels: 'native' as const }),
+      ...(known(budgetAnswer) && { budget: 'native' as const }),
+      ...(dialect !== 'unknown' && { dialect: 'native' as const }),
+      ...(known(toolsAnswer) && { tools: 'native' as const }),
+    },
+  };
+}

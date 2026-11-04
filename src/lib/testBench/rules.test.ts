@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { bodyFixture } from '@/test/bodyFixture';
 import type {
   Daypart, Dictionary, DictionaryEntry, Entity, GameLocation, Placeholder, PlaceholderPin, Stat, Trait, TraitGroup, TraitLink,
-  GalleryImage, Script, StatRequirement, Tool, TraitRequirement, TraitRequirementRow, WorldOverview,
+  GalleryImage, Item, Script, StatRequirement, Tool, TraitRequirement, TraitRequirementRow, WorldOverview,
 } from '@/types';
 import { estimateTokens } from '@/lib/memoryUtils';
 import { IMAGE_CAPS } from '@/lib/imageOptim';
+import { blankItem } from '@/lib/items';
 import { phValueId, phValues } from '@/test/placeholderValues';
 import {
   applyRuleFix, ownerWorldOf, runRules, groupFindings, isAdvancedRule, isRuleFixable, selectMatchingFindings,
@@ -286,6 +288,21 @@ describe('reference-integrity rules', () => {
     expect(runRules(toggled('s1'))).toEqual([]);
   });
 
+  it('flags an item that becomes a deleted item when used up, and quiets when the target exists or Uses is blank', () => {
+    const becomes = (itemId: string, uses?: number) => base({
+      items: [
+        { id: 'potion', name: 'Potion', statEffects: [], traitEffects: [], equipRequires: [], uses, whenEmpty: { kind: 'becomes', itemId } },
+        { id: 'bottle', name: 'Empty Bottle', statEffects: [], traitEffects: [], equipRequires: [] },
+      ],
+    });
+    const found = only(becomes('gone', 1), 'item-becomes-missing-item');
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe('error');
+    expect(found[0].items).toEqual([{ id: 'potion', name: 'Potion', section: 'items' }]);
+    expect(only(becomes('bottle', 1), 'item-becomes-missing-item')).toEqual([]);
+    expect(only(becomes('gone'), 'item-becomes-missing-item')).toEqual([]);
+  });
+
   it('leaves an owned trait’s toggles to the owner rule', () => {
     const w = base({
       stats: [stat({ id: 's1', name: 'Mana' })],
@@ -499,6 +516,37 @@ describe('reference-integrity rules', () => {
     expect(found[0].items.map((i) => i.id)).toEqual(['s1']);
   });
 
+  describe('a script assigning a Body name', () => {
+    const bodyWorld = (code: string) => base({
+      bodies: [bodyFixture({ id: 'b1', name: 'Wolf', entries: [] }), bodyFixture({ id: 'b2', name: 'Two Words', entries: [] })],
+      stats: [stat({ id: 's1', name: 'Mana', scripts: boxScripts({ after: code }) })],
+    });
+
+    it('flags a literal name the world has no Body for', () => {
+      const found = only(bodyWorld('persona.body = "Wolff";'), 'script-unknown-body');
+      expect(found).toHaveLength(1);
+      expect(found[0].severity).toBe('error');
+      expect(found[0].message).toContain('“Wolff”');
+      expect(found[0].items.map((i) => i.id)).toEqual(['s1']);
+    });
+
+    it('flags each owner path once per name and stays quiet on real names', () => {
+      const code = 'entities.Rex.body = "Dragon"; entities["Rex"].body = \'Dragon\'; owner.body = "Wolf"; persona.body = "Two Words";';
+      expect(only(bodyWorld(code), 'script-unknown-body').map((f) => f.message)).toHaveLength(1);
+      expect(only(bodyWorld('persona.body = "Wolf"; entities.Rex.body = "Two Words";'), 'script-unknown-body')).toEqual([]);
+    });
+
+    it('skips a comparison, a read and a computed name', () => {
+      expect(only(bodyWorld('if (persona.body === "Nope") return 1; const n = persona.body; persona.body = pick;'), 'script-unknown-body')).toEqual([]);
+      expect(only(bodyWorld('persona.body = `Wolf ${1}`;'), 'script-unknown-body')).toEqual([]);
+    });
+
+    it('flags every name when the world has no Bodies', () => {
+      const none = base({ stats: [stat({ id: 's1', name: 'Mana', scripts: boxScripts({ after: 'persona.body = "Wolf";' }) })] });
+      expect(only(none, 'script-unknown-body')).toHaveLength(1);
+    });
+  });
+
   it('flags a script looking up a stat name that doesn’t exist, in either comparison direction', () => {
     const coded = (code: string) => base({
       stats: [
@@ -558,7 +606,7 @@ describe('reference-integrity rules', () => {
     expect(only(coded('return entities.Bram?.stats["Trust"].value + persona.stats.Trust.value;'), 'script-unknown-stat')).toEqual([]);
     // A world stat's name is no entity's.
     expect(only(coded('return entities.Bram.stats.Vigor.value;'), 'script-unknown-stat').map((f) => f.message)).toEqual([
-      '“Mana · After the AI” looks up a stat named “Vigor” on “Bram”, which does not exist',
+      '“Mana · After the AI” looks up the unknown stat name “Vigor” on “Bram”',
     ]);
     // The world's own map still checks, beside a qualified read in the same code.
     const mixed = only(coded('return entities.Bram.stats.Trust.value + stats.Vigro.value;'), 'script-unknown-stat');
@@ -583,26 +631,26 @@ describe('reference-integrity rules', () => {
       expect(messages(ownedBox('return stats.Destruction.value + owner.stats.Rage.value + owner.stats["Fury"].value;'))).toEqual([]);
       const found = only(ownedBox('return stats.Rage.value + owner.stats.Rgae.value;'), RULE);
       expect(found.map((f) => f.message)).toEqual([
-        '“Fury · After the AI” of “The Creature” looks up a stat named “Rage”, which does not exist',
-        '“Fury · After the AI” of “The Creature” looks up a stat named “Rgae” on its owner, which does not exist',
+        '“Fury · After the AI” of “The Creature” looks up the unknown stat name “Rage”',
+        '“Fury · After the AI” of “The Creature” looks up the unknown stat name “Rgae” on its owner',
       ]);
       expect(found[0].items).toEqual([{ id: 'creature', name: 'The Creature', section: 'entities' }]);
     });
 
     it('reports an unknown name after entities and persona in an owned box and a world box', () => {
       expect(messages(ownedBox('entities["The Creature"].stats.Rgae.value = 1; persona.stats.Stamina.max = 2;'))).toEqual([
-        '“Fury · After the AI” of “The Creature” looks up a stat named “Rgae” on “The Creature”, which does not exist',
-        '“Fury · After the AI” of “The Creature” looks up a stat named “Stamina” on the persona, but no entity that can be played has it',
+        '“Fury · After the AI” of “The Creature” looks up the unknown stat name “Rgae” on “The Creature”',
+        '“Fury · After the AI” of “The Creature” looks up the stat “Stamina” on the persona, but no playable entity has it',
       ]);
       expect(messages(worldBox('entities["The Creature"].stats.Rgae.value = 1; persona.stats.Stamina.max = 2;'))).toEqual([
-        '“Alarm · After the AI” looks up a stat named “Rgae” on “The Creature”, which does not exist',
-        '“Alarm · After the AI” looks up a stat named “Stamina” on the persona, but no entity that can be played has it',
+        '“Alarm · After the AI” looks up the unknown stat name “Rgae” on “The Creature”',
+        '“Alarm · After the AI” looks up the stat “Stamina” on the persona, but no playable entity has it',
       ]);
     });
 
     it('names a missing entity, and leaves a computed entity name alone', () => {
       expect(messages(worldBox('return entities.Brm.stats.Rage.value;'))).toEqual([
-        '“Alarm · After the AI” looks up a stat on “Brm”, but no entity is named “Brm”',
+        '“Alarm · After the AI” looks up a stat on the unknown entity name “Brm”',
       ]);
       expect(messages(worldBox('const who = "Brm"; return entities[who].stats.Rage.value;'))).toEqual([]);
     });
@@ -613,7 +661,7 @@ describe('reference-integrity rules', () => {
       const bram = creature({ id: 'bram', name: 'Bram', stats: [stat({ id: 'grit', name: 'Grit' })] });
       expect(messages(worldBox('return persona.stats.Stamina.value;', [tobb, maren, bram]))).toEqual([]);
       expect(messages(worldBox('return persona.stats.Grit.value;', [tobb, maren, bram]))).toEqual([
-        '“Alarm · After the AI” looks up a stat named “Grit” on the persona, but no entity that can be played has it',
+        '“Alarm · After the AI” looks up the stat “Grit” on the persona, but no playable entity has it',
       ]);
     });
 
@@ -638,13 +686,13 @@ describe('reference-integrity rules', () => {
       const w = blueprint('return stats.Watch.value + owner.stats.Rage.value;');
       const found = only(w, RULE);
       expect(found.map((f) => f.message)).toEqual([
-        '“Guard · After the AI” looks up a stat named “Watch”, which does not exist',
+        '“Guard · After the AI” looks up the unknown stat name “Watch”',
       ]);
       expect(found[0].items).toEqual([{ id: 'guard', name: 'Guard', section: 'stats' }]);
       // An owner can hold more than the group, so an owner.stats miss is only a warning.
       expect(only(w, 'script-unknown-blueprint-owner-stat').map(({ severity, message, items }) => ({ severity, message, items }))).toEqual([{
         severity: 'warning',
-        message: '“Guard · After the AI” looks up a stat named “Rage” on its owner, which its Blueprint group does not have',
+        message: '“Guard · After the AI” looks up the stat “Rage” on its owner, which its Blueprint group doesn’t have',
         items: [{ id: 'guard', name: 'Guard', section: 'stats' }],
       }]);
       // An owner's own box reads the owner's stats, so its miss stays an error.
@@ -661,10 +709,10 @@ describe('reference-integrity rules', () => {
       });
       const linked = (code?: string) => messages(base({ statGroups: [blueprints], stats: [guard], entities: [owner(code)] }));
       // The owner's copy holds the Blueprint's code, which the Blueprint's own row already reports.
-      const own = '“Guard · After the AI” looks up a stat named “Vigro”, which does not exist';
+      const own = '“Guard · After the AI” looks up the unknown stat name “Vigro”';
       expect(linked()).toEqual([own]);
       expect(linked('return owner.stats.Rage.value + owner.stats.Rgae.value;')).toEqual([
-        own, '“Guard · After the AI” of “The Creature” looks up a stat named “Rgae” on its owner, which does not exist',
+        own, '“Guard · After the AI” of “The Creature” looks up the unknown stat name “Rgae” on its owner',
       ]);
     });
   });
@@ -700,19 +748,19 @@ describe('reference-integrity rules', () => {
     const beforeOnly = only(boxed({ scripts: boxScripts({ before: miss, after: hit }) }), 'script-unknown-stat');
     expect(beforeOnly).toHaveLength(1);
     expect(beforeOnly[0].message).toBe(
-      '“Mana · Before the AI” looks up a stat named “Vigour”, which does not exist',
+      '“Mana · Before the AI” looks up the unknown stat name “Vigour”',
     );
 
     const afterOnly = only(boxed({ scripts: boxScripts({ before: hit, after: miss }) }), 'script-unknown-stat');
     expect(afterOnly).toHaveLength(1);
     expect(afterOnly[0].message).toBe(
-      '“Mana · After the AI” looks up a stat named “Vigour”, which does not exist',
+      '“Mana · After the AI” looks up the unknown stat name “Vigour”',
     );
 
     // One miss per box, so an author who typed it twice is told twice rather than once.
     expect(only(boxed({ scripts: boxScripts({ before: miss, after: miss }) }), 'script-unknown-stat').map((f) => f.message)).toEqual([
-      '“Mana · Before the AI” looks up a stat named “Vigour”, which does not exist',
-      '“Mana · After the AI” looks up a stat named “Vigour”, which does not exist',
+      '“Mana · Before the AI” looks up the unknown stat name “Vigour”',
+      '“Mana · After the AI” looks up the unknown stat name “Vigour”',
     ]);
   });
 
@@ -724,8 +772,7 @@ describe('reference-integrity rules', () => {
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('warning');
     expect(found[0].message).toBe(
-      '“Mana · Before the AI” reads delta, but it runs before the AI asks and before regen — '
-      + 'every delta reads zero there',
+      '“Mana · Before the AI” reads delta, but it runs before the AI and before Regen, so every delta is zero',
     );
     expect(found[0].items.map((i) => i.id)).toEqual(['s1']);
 
@@ -758,8 +805,8 @@ describe('reference-integrity rules', () => {
       { id: 'b2', name: 'Gain', timing: 'before', code: 'return self.delta.regen.value;' },
     ];
     expect(only(base({ stats: [stat({ id: 's1', name: 'Mana', scripts })] }), 'script-before-reads-delta').map((f) => f.message)).toEqual([
-      '“Drain” (Before the AI) on “Mana” reads delta, but it runs before the AI asks and before regen — every delta reads zero there',
-      '“Gain” (Before the AI) on “Mana” reads delta, but it runs before the AI asks and before regen — every delta reads zero there',
+      '“Drain” (Before the AI) on “Mana” reads delta, but it runs before the AI and before Regen, so every delta is zero',
+      '“Gain” (Before the AI) on “Mana” reads delta, but it runs before the AI and before Regen, so every delta is zero',
     ]);
   });
 });
@@ -780,7 +827,7 @@ describe('script rules read trait and world scripts', () => {
   it('flags an unknown stat in a global trait script, filed under Traits', () => {
     const found = only(withTrait(after('return stats.Vigro.value;')), UNKNOWN);
     expect(found.map(({ message, items }) => ({ message, items }))).toEqual([{
-      message: '“Brave · After the AI” looks up a stat named “Vigro”, which does not exist',
+      message: '“Brave · After the AI” looks up the unknown stat name “Vigro”',
       items: [{ id: 'brave', name: 'Brave', section: 'traits' }],
     }]);
     expect(only(withTrait(after('return stats.Vigor.value;')), UNKNOWN)).toEqual([]);
@@ -789,7 +836,7 @@ describe('script rules read trait and world scripts', () => {
   it('flags an unknown stat in a world script, filed under Scripts', () => {
     const found = only(withWorldScript(after('const v = stats.find(s => s.name === "Vigour"); return 0;')), UNKNOWN);
     expect(found.map(({ message, items }) => ({ message, items }))).toEqual([{
-      message: '“World · After the AI” looks up a stat named “Vigour”, which does not exist',
+      message: '“World · After the AI” looks up the unknown stat name “Vigour”',
       items: [worldItem],
     }]);
   });
@@ -798,7 +845,7 @@ describe('script rules read trait and world scripts', () => {
     const ash: Entity = { ...resident, id: 'ash', name: 'Ash', traits: [trait({ id: 'own', name: 'Grim', scripts: after('return stats.Vigro.value;') })] };
     const found = only(base({ stats: [vigor], entities: [resident, ash] }), UNKNOWN);
     expect(found.map(({ message, items }) => ({ message, items }))).toEqual([{
-      message: '“Grim · After the AI” of “Ash” looks up a stat named “Vigro”, which does not exist',
+      message: '“Grim · After the AI” of “Ash” looks up the unknown stat name “Vigro”',
       items: [{ id: 'ash', name: 'Ash', section: 'entities' }],
     }]);
   });
@@ -833,7 +880,7 @@ describe('script rules read trait and world scripts', () => {
     it('judges owner.stats against each entity that links it, and names the one that misses', () => {
       const w = blueprintWorld('return owner.stats.Rage.value;', [linker('ash', 'Ash', [rage]), linker('bree', 'Bree', [])]);
       expect(only(w, UNKNOWN).map(({ message, items }) => ({ message, items }))).toEqual([{
-        message: '“Guard · After the AI” looks up a stat named “Rage” on its owner, which “Bree” does not have',
+        message: '“Guard · After the AI” looks up the stat “Rage” on its owner, which “Bree” doesn’t have',
         items: [{ id: 'guard', name: 'Guard', section: 'traits' }],
       }]);
       expect(only(w, 'script-unknown-blueprint-owner-stat')).toEqual([]);
@@ -848,7 +895,7 @@ describe('script rules read trait and world scripts', () => {
       expect(only(w, UNKNOWN)).toEqual([]);
       const typo = blueprintWorld('return 1;', [linker('bree', 'Bree', [], after('return owner.stats.Rgae.value;'))]);
       expect(only(typo, UNKNOWN).map(({ message, items }) => ({ message, items }))).toEqual([{
-        message: '“Guard · After the AI” of “Bree” looks up a stat named “Rgae” on its owner, which does not exist',
+        message: '“Guard · After the AI” of “Bree” looks up the unknown stat name “Rgae” on its owner',
         items: [{ id: 'bree', name: 'Bree', section: 'entities' }],
       }]);
     });
@@ -858,11 +905,11 @@ describe('script rules read trait and world scripts', () => {
     const reads = 'return stats.Vigor.delta.ai.value;';
     expect(only(withTrait(before(reads)), DELTA).map(({ severity, message, items }) => ({ severity, message, items }))).toEqual([{
       severity: 'warning',
-      message: '“Brave · Before the AI” reads delta, but it runs before the AI asks and before regen — every delta reads zero there',
+      message: '“Brave · Before the AI” reads delta, but it runs before the AI and before Regen, so every delta is zero',
       items: [{ id: 'brave', name: 'Brave', section: 'traits' }],
     }]);
     expect(only(withWorldScript(before(reads)), DELTA).map(({ message, items }) => ({ message, items }))).toEqual([{
-      message: '“World · Before the AI” reads delta, but it runs before the AI asks and before regen — every delta reads zero there',
+      message: '“World · Before the AI” reads delta, but it runs before the AI and before Regen, so every delta is zero',
       items: [{ ...worldItem, name: 'World · Before the AI' }],
     }]);
     expect(only(withTrait(after(reads)), DELTA)).toEqual([]);
@@ -874,8 +921,8 @@ describe('script rules read trait and world scripts', () => {
   });
 
   it('counts scripts, not stats, in the summaries', () => {
-    expect(summaryOf(UNKNOWN)).toBe('2 scripts look up stat names that don’t exist');
-    expect(summaryOf(DELTA)).toBe('2 scripts read delta in their Before the AI timing, where every source is zero');
+    expect(summaryOf(UNKNOWN)).toBe('2 scripts look up unknown stat names');
+    expect(summaryOf(DELTA)).toBe('2 scripts read delta in their Before the AI timing, where every delta is zero');
   });
 });
 
@@ -891,7 +938,7 @@ describe('script two writers rule', () => {
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('warning');
     expect(found[0].message).toBe(
-      'Two scripts write the value of “Health”: “Health · After the AI” and “Fate · After the AI”',
+      'Two scripts write the value of “Health”, in this order: “Health · After the AI”, then “Fate · After the AI”. Each reads what the one before it wrote.',
     );
     expect(found[0].items.map((i) => i.id)).toEqual(['h']);
   });
@@ -904,7 +951,7 @@ describe('script two writers rule', () => {
     ]);
     expect(found).toHaveLength(1);
     expect(found[0].message).toBe(
-      'Two scripts write the max of “Health”: “Fate · After the AI” and “Luck · After the AI”',
+      'Two scripts write the max of “Health”, in this order: “Fate · After the AI”, then “Luck · After the AI”. Each reads what the one before it wrote.',
     );
   });
 
@@ -921,7 +968,7 @@ describe('script two writers rule', () => {
       stat({ id: 'h', name: 'Health', scripts: [{ id: 's1', name: 'Clamp', timing: 'after', code: 'self.value = 1;' }] }),
       stat({ id: 'a', name: 'Fate', scripts: boxScripts({ after: 'stats.Health.value = 2;' }) }),
     ]);
-    expect(found.message).toBe('Two scripts write the value of “Health”: “Clamp” (After the AI) on “Health” and “Fate · After the AI”');
+    expect(found.message).toBe('Two scripts write the value of “Health”, in this order: “Clamp” (After the AI) on “Health”, then “Fate · After the AI”. Each reads what the one before it wrote.');
   });
 
   it('counts a world script and a trait script as writers', () => {
@@ -931,7 +978,7 @@ describe('script two writers rule', () => {
       traits: [{ id: 't1', name: 'Brave', statChanges: [], scripts: [{ id: 'ts', timing: 'after', code: 'stats.Health.value = 2;' }] }],
     }), RULE);
     expect(found.map((f) => f.message)).toEqual([
-      'Two scripts write the value of “Health”: “World · After the AI” and “Brave · After the AI”',
+      'Two scripts write the value of “Health”, in this order: “World · After the AI”, then “Brave · After the AI”. Each reads what the one before it wrote.',
     ]);
     // A named world script names the world as its home.
     const named = only(base({
@@ -939,7 +986,7 @@ describe('script two writers rule', () => {
       stats: [stat({ id: 'h', name: 'Health', scripts: boxScripts({ after: 'self.value = 2;' }) })],
     }), RULE);
     expect(named.map((f) => f.message)).toEqual([
-      'Two scripts write the value of “Health”: “Tide” (After the AI) on the world and “Health · After the AI”',
+      'Two scripts write the value of “Health”, in this order: “Tide” (After the AI) on the world, then “Health · After the AI”. Each reads what the one before it wrote.',
     ]);
   });
 
@@ -982,6 +1029,13 @@ describe('script two writers rule', () => {
     expect(coded([stat({ id: 'h', name: 'Health', scripts: boxScripts({ before: 'self.value = 1;', after: 'self.value += 2;' }) })])).toEqual([]);
   });
 
+  it('lists the writers in the Scripts tab’s order, which a drag changes', () => {
+    const script = (name: string, order?: number): Script => ({ id: name, name, timing: 'after', code: 'stats.Health.value = 1;', ...(order === undefined ? {} : { order }) });
+    const names = (scripts: Script[]) => only(base({ stats: [stat({ id: 'h', name: 'Health' })], scripts }), RULE)[0].message;
+    expect(names([script('Alpha'), script('Beta')])).toMatch(/Alpha.*then.*Beta/);
+    expect(names([script('Alpha', 1), script('Beta', 0)])).toMatch(/Beta.*then.*Alpha/);
+  });
+
   it('counts the scripts when more than two write one field, and names each', () => {
     const [found] = coded([
       stat({ id: 'h', name: 'Health', scripts: boxScripts({ after: 'self.max = 1;' }) }),
@@ -989,7 +1043,7 @@ describe('script two writers rule', () => {
       stat({ id: 'b', name: 'Luck', scripts: boxScripts({ after: 'stats.Health.max = 3;' }) }),
     ]);
     expect(found.message).toBe(
-      '3 scripts write the max of “Health”: “Health · After the AI”, “Fate · After the AI” and “Luck · After the AI”',
+      '3 scripts write the max of “Health”, in this order: “Health · After the AI”, then “Fate · After the AI”, then “Luck · After the AI”. Each reads what the one before it wrote.',
     );
   });
 
@@ -1051,7 +1105,7 @@ describe('script two writers rule', () => {
       }), RULE);
       expect(found).toHaveLength(1);
       expect(found[0].message).toBe(
-        'Two scripts write the value of “Guard” on “Maren”: “Hub · After the AI” and “Guard · After the AI”',
+        'Two scripts write the value of “Guard” on “Maren”, in this order: “Hub · After the AI”, then “Guard · After the AI”. Each reads what the one before it wrote.',
       );
       expect(found[0].items).toEqual([{ id: 'Maren', name: 'Maren', section: 'entities' }]);
     });
@@ -1108,7 +1162,7 @@ describe('script two writers rule', () => {
       }), RULE);
       expect(found).toHaveLength(1);
       expect(found[0].message).toBe(
-        'Two scripts write the value of “Destruction”: “Destruction · After the AI” and “Rage · After the AI” of “The Creature”',
+        'Two scripts write the value of “Destruction”, in this order: “Destruction · After the AI”, then “Rage · After the AI” of “The Creature”. Each reads what the one before it wrote.',
       );
       expect(found[0].items).toEqual([{ id: 'dest', name: 'Destruction' }]);
     });
@@ -1123,8 +1177,8 @@ describe('script two writers rule', () => {
       }), RULE);
       expect(found).toHaveLength(1);
       expect(found[0].message).toBe(
-        '4 scripts write the max of “Rage” on “The Creature”: “Alarm · After the AI”, “Dread · After the AI”, '
-        + '“Rage · After the AI” and “Fury · After the AI”',
+        '4 scripts write the max of “Rage” on “The Creature”, in this order: “Alarm · After the AI”, then “Dread · After the AI”, '
+        + 'then “Rage · After the AI”, then “Fury · After the AI”. Each reads what the one before it wrote.',
       );
       expect(found[0].items).toEqual([{ id: 'creature', name: 'The Creature', section: 'entities' }]);
     });
@@ -1172,7 +1226,7 @@ describe('script two writers rule', () => {
       const found = owners('Maren', 'Tobb');
       expect(found).toHaveLength(1);
       expect(found[0].message).toBe(
-        'Two scripts write the value of “Destruction”: “Guard · After the AI” of “Maren” and “Guard · After the AI” of “Tobb”',
+        'Two scripts write the value of “Destruction”, in this order: “Guard · After the AI” of “Maren”, then “Guard · After the AI” of “Tobb”. Each reads what the one before it wrote.',
       );
       expect(owners('Maren')).toEqual([]);
     });
@@ -1238,7 +1292,7 @@ describe('reachability rules', () => {
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('warning');
     expect(found[0].items.map((i) => i.id)).toEqual(['harbor']);
-    expect(found[0].message).toContain('flag it as a starting location instead');
+    expect(found[0].message).toContain('Mark it as a starting location instead.');
     expect(runRules(base({ locations: [{ id: 'harbor', name: 'Fen', isStarting: true }] }))).toEqual([]);
   });
 
@@ -1249,7 +1303,7 @@ describe('reachability rules', () => {
       locations: [{ id: 'harbor', name: 'Fen', isStarting: true, isStartLocation: true } as GameLocation],
     }), 'legacy-start-location');
     expect(found).toHaveLength(1);
-    expect(found[0].message).toContain('delete the field');
+    expect(found[0].message).toContain('Delete the field.');
     expect(found[0].message).not.toContain('starting location instead');
   });
 
@@ -1259,7 +1313,7 @@ describe('reachability rules', () => {
       locations: [{ id: 'l1', name: 'Fen', isStarting: true, isStartLocation: false } as GameLocation],
     }), 'legacy-start-location');
     expect(found).toHaveLength(1);
-    expect(found[0].message).toContain('delete the field');
+    expect(found[0].message).toContain('Delete the field.');
     expect(found[0].message).not.toContain('starting location instead');
   });
 
@@ -1280,11 +1334,11 @@ describe('reachability rules', () => {
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('warning');
     expect(found[0].items.map((i) => i.id)).toEqual(['e1']);
-    expect(found[0].message).toBe('An entity has no name, so scripts can’t reach it');
-    expect(RULES.find((rule) => rule.id === 'entity-no-code-name')?.summary(2)).toBe('2 entities have no code name, so scripts can’t reach them');
+    expect(found[0].message).toBe('An entity has no name, so scripts can’t look it up');
+    expect(RULES.find((rule) => rule.id === 'entity-no-code-name')?.summary(2)).toBe('2 entities have no code name, so scripts can’t look them up');
     // A name of only a chip no placeholder answers is written, but reads as no code name.
     const [chipOnly] = only(coded('{{ph:gone:world:Gone}}'), 'entity-no-code-name');
-    expect(chipOnly.message).toMatch(/^“.+” has no code name, so scripts can’t reach it$/);
+    expect(chipOnly.message).toMatch(/^“.+” has no code name, so scripts can’t look it up$/);
     expect(only(coded('Maren'), 'entity-no-code-name')).toEqual([]);
     expect(only(coded('', ''), 'entity-no-code-name')).toEqual([]);
   });
@@ -1405,7 +1459,7 @@ describe('stat sanity rules', () => {
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('warning');
     expect(found[0].message).toContain('30 of 10');
-    expect(found[0].message).toContain('never climb that far');
+    expect(found[0].message).toContain('never reaches it');
   });
 
   it('flags a threshold under the floor, which no value can reach downward', () => {
@@ -1414,7 +1468,7 @@ describe('stat sanity rules', () => {
       { id: 'd2', threshold: 100, description: 'fertile' },
     ] }), 'stat-descriptor-out-of-range');
     expect(found).toHaveLength(1);
-    expect(found[0].message).toContain('never fall that low');
+    expect(found[0].message).toContain('never falls that low');
   });
 
   it('says nothing about thresholds inside the range, under either unit', () => {
@@ -1576,20 +1630,20 @@ describe('stat sanity rules', () => {
     // The after box reads the stat, so only the before box erases what the trait set.
     const beforeOnly = only(oneStat({ value: 40, scripts: boxScripts({ before: recomputes, after: reads }) }, [ashen]), 'script-overrides-trait');
     expect(beforeOnly.map((f) => f.message)).toEqual([
-      '“Ashen” lowers “Fertility” by 10, but that stat’s Before the AI code recomputes its value without '
-      + 'reading it — the change is gone by the next run',
+      '“Ashen” lowers “Fertility” by 10, but that stat’s Before the AI script recomputes its value without '
+      + 'reading it, so the next run overwrites the change',
     ]);
     const afterOnly = only(oneStat({ value: 40, scripts: boxScripts({ before: reads, after: recomputes }) }, [ashen]), 'script-overrides-trait');
     expect(afterOnly.map((f) => f.message)).toEqual([
-      '“Ashen” lowers “Fertility” by 10, but that stat’s After the AI code recomputes its value without '
-      + 'reading it — the change is gone by the next run',
+      '“Ashen” lowers “Fertility” by 10, but that stat’s After the AI script recomputes its value without '
+      + 'reading it, so the next run overwrites the change',
     ]);
     // Both boxes recompute. One trait change is still one finding, so the collapsed row's count stays a
     // count of trait changes; the message names both boxes instead.
     const both = only(oneStat({ value: 40, scripts: boxScripts({ before: recomputes, after: recomputes }) }, [ashen]), 'script-overrides-trait');
     expect(both.map((f) => f.message)).toEqual([
-      '“Ashen” lowers “Fertility” by 10, but that stat’s Before the AI and After the AI code recompute its '
-      + 'value without reading it — the change is gone by the next run',
+      '“Ashen” lowers “Fertility” by 10, but that stat’s Before the AI and After the AI scripts recompute its '
+      + 'value without reading it, so the next run overwrites the change',
     ]);
   });
 
@@ -1922,7 +1976,7 @@ describe('the deferred reference checks', () => {
   it('still reports a link both of whose ends are gone', () => {
     const found = only(linked('gone', 'lost'), 'connection-endpoint-orphan');
     expect(found).toHaveLength(1);
-    expect(found[0].message).toContain('between two locations that don’t exist');
+    expect(found[0].message).toContain('connects two locations that don’t exist');
   });
 
   const updating = (target: string) => base({
@@ -1995,10 +2049,10 @@ describe('entity completeness rules', () => {
     expect(bare).toHaveLength(1);
     expect(bare[0].severity).toBe('info');
     expect(bare[0].message).toContain('neither a player nor an AI description');
-    expect(bare[0].message).toContain('the prompt carries only its name');
+    expect(bare[0].message).toContain('so the AI gets only its name');
     const aiOnly = only(world([{ id: 'e1', name: 'Maren', aiDescription: '' }]), 'entity-missing-ai-description');
     expect(aiOnly[0].message).toContain('no AI description');
-    expect(aiOnly[0].message).toContain('the prompt carries only its name');
+    expect(aiOnly[0].message).toContain('so the AI gets only its name');
     const playerOnly = only(world([{ id: 'e1', name: 'Maren', playerDescription: ' ' }]), 'entity-missing-player-description');
     expect(playerOnly[0].message).toContain('no player description');
     expect(runRules(world([{ id: 'e1', name: 'Maren' }]))).toEqual([]);
@@ -2028,9 +2082,9 @@ describe('entity completeness rules', () => {
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('info');
     expect(found[0].message).toContain('no AI description');
-    expect(found[0].message).toContain('roster of who is here carries only its name');
-    expect(found[0].message).toContain('every other prompt serves the summary');
-    expect(found[0].message).not.toContain('the prompt carries only its name');
+    expect(found[0].message).toContain('The Narration Prompt’s list of entities here gets only its name');
+    expect(found[0].message).toContain('every other prompt gets its AI summary');
+    expect(found[0].message).not.toContain('so the AI gets only its name');
   });
 
   it('flags a long AI description with no AI summary, in ~tokens', () => {
@@ -2228,7 +2282,7 @@ describe('trait group rules', () => {
   it('flags defaults over any maximum, and passes defaults at the maximum', () => {
     const found = only(grouped({ max: 2, members: 3, defaults: 3 }), 'trait-group-defaults-over-max');
     expect(found).toHaveLength(1);
-    expect(found[0].message).toBe('“Origin” allows 2 active traits but marks Origin 1, Origin 2 and Origin 3 as defaults — only 2 can actually apply');
+    expect(found[0].message).toBe('“Origin” allows 2 active traits but marks Origin 1, Origin 2 and Origin 3 as defaults, so only 2 can apply');
     expect(only(grouped({ max: 2, members: 3, defaults: 2 }), 'trait-group-defaults-over-max')).toEqual([]);
   });
 
@@ -2265,7 +2319,7 @@ describe('trait group rules', () => {
     const found = only(grouped({ min: 2, max: null, members: 3, defaults: 1 }), 'trait-group-defaults-below-min');
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('error');
-    expect(found[0].message).toBe('“Origin” needs at least 2 picks but a new game starts with 1 — the defaults don’t meet the minimum');
+    expect(found[0].message).toBe('“Origin” needs at least 2 picks but a new game starts with 1, so the defaults don’t meet the minimum');
     expect(found[0].items.map((i) => i.id)).toEqual(['g1', 't1']);
     expect(only(grouped({ min: 2, max: null, members: 3, defaults: 2 }), 'trait-group-defaults-below-min')).toEqual([]);
     expect(only(grouped({ members: 3, defaults: 0 }), 'trait-group-defaults-below-min')).toEqual([]);
@@ -2350,7 +2404,7 @@ describe('trait gate rules', () => {
       const found = only(gates([gated('a', needs('b')), gated('b', needs('a'))]), rule);
       expect(ids(found)).toEqual([['a', 'b']]);
       expect(found[0].severity).toBe('error');
-      expect(found[0].message).toBe('“A” and “B” can never unlock — no pick or persona can meet their requirements');
+      expect(found[0].message).toBe('“A” and “B” can never unlock, because no pick or persona meets their requirements');
     });
 
     it('lists each separate set as its own finding', () => {
@@ -2365,7 +2419,7 @@ describe('trait gate rules', () => {
       );
       const found = only(w, rule);
       expect(ids(found)).toEqual([['a']]);
-      expect(found[0].message).toBe('“A” can never unlock — no pick or persona can meet its requirements');
+      expect(found[0].message).toBe('“A” can never unlock, because no pick or persona meets its requirements');
     });
 
     it('passes a loop that opens through a third trait', () => {
@@ -2433,7 +2487,7 @@ describe('trait gate rules', () => {
       const found = only(gates([gated('a', needs('b')), rowed('b', [{ all: [not(ref('a'))] }])]), rule);
       expect(ids(found)).toEqual([['a', 'b']]);
       expect(found[0].severity).toBe('error');
-      expect(found[0].message).toBe('“A” and “B” can never settle — their requirements loop through a Not');
+      expect(found[0].message).toBe('“A” and “B” can never settle, because their requirements loop through a Not');
     });
 
     it('flags a loop through three Nots', () => {
@@ -2473,7 +2527,7 @@ describe('trait gate rules', () => {
         entities: [resident, { ...resident, id: 'bree', name: 'Bree', traits: [ward] }],
       });
       const found = only(w, rule);
-      expect(found.map((f) => f.message)).toEqual(['“A” and “Ward” on “Bree” can never settle — their requirements loop through a Not']);
+      expect(found.map((f) => f.message)).toEqual(['“A” and “Ward” on “Bree” can never settle, because their requirements loop through a Not']);
       expect(ids(found)).toEqual([['a', 'ward']]);
     });
 
@@ -2642,7 +2696,7 @@ describe('trait gate rules', () => {
       ])('fires for %s', (_, effect) => {
         const found = only(gates([berserk(gate, effect)], { stats: [rage] }), rule);
         expect(ids(found)).toEqual([['berserk']]);
-        expect(found[0].message).toBe('“BERSERK” requires “Rage” and changes “Rage” — its own effect can flip the requirement, so gate it on another stat');
+        expect(found[0].message).toBe('“BERSERK” requires “Rage” and changes “Rage”, so its own effect can turn the requirement off. Base the requirement on another stat.');
       });
 
       it('stays silent when the trait changes another stat, or no gate reads the stat', () => {
@@ -2676,7 +2730,7 @@ describe('trait gate rules', () => {
         const found = only(w([gated('squire', [ref('paladin')])]), rule);
         expect(ids(found)).toEqual([['squire']]);
         expect(found[0].severity).toBe('warning');
-        expect(found[0].message).toBe('“SQUIRE” is a global trait and requires “Paladin” from the same owner. Only entities have it, so the requirement never holds. Pick You or an entity as the owner');
+        expect(found[0].message).toBe('“SQUIRE” is a global trait and requires “Paladin” from the same owner. Only entities have it, so the requirement never holds. Pick “You” or an entity as the owner.');
       });
 
       it('fires on a global trait that requires an entity’s stat from the same owner', () => {
@@ -2739,7 +2793,7 @@ describe('trait gate rules', () => {
         const gate = { smite: { requires: { value: [{ all: [atLeast('rage', 80)] }], blueprint: [] } } };
         const found = only(w(link(gate)), rule);
         expect(found.map((f) => f.message)).toEqual([
-          '“Smite” on “Bree” requires “Rage” and changes “Rage” — its own effect can flip the requirement, so gate it on another stat',
+          '“Smite” on “Bree” requires “Rage” and changes “Rage”, so its own effect can turn the requirement off. Base the requirement on another stat.',
         ]);
         expect(ids(found)).toEqual([['l-smite']]);
         expect(only(w(link()), rule)).toEqual([]);
@@ -2784,7 +2838,7 @@ describe('trait gate rules', () => {
         const found = only(gates([berserk(percent)], { stats: [flat] }), rule);
         expect(ids(found)).toEqual([['berserk']]);
         expect(found[0].message).toBe(
-          '“BERSERK” requires “Rage >= 50%”, but “Rage” has the same min and max, so it always reads 0% — use a raw number or widen its range',
+          '“BERSERK” requires “Rage >= 50%”, but “Rage” has the same min and max, so it always reads 0%. Use a raw number or widen its range.',
         );
       });
 
@@ -2910,7 +2964,7 @@ describe('trait gate rules', () => {
 
     describe('every image hideable', () => {
       const rule = 'entity-images-all-hideable';
-      const message = '“Ash” can end up with no image — every image has a Visibility rule, and the rules cover neither a Condition and its opposite nor every pick of a required one-pick group';
+      const message = '“Ash” can end up with no image. Every image has a Visibility Rule, and the rules cover neither a Condition and its opposite nor every pick of a required one-pick group.';
 
       it('fires when every image carries a rule', () => {
         const found = only(pictured([image([hasTamed]), image([atLeast('rage', 80)])]), rule);
@@ -3066,7 +3120,7 @@ describe('trait gate rules', () => {
         expect(ids(found)).toEqual([['ash']]);
         expect(found[0].severity).toBe('warning');
         expect(found[0].message).toBe(
-          '“Ash”, image 2 requires “Rage >= 50%”, but “Rage” has the same min and max, so it always reads 0% — use a raw number or widen its range',
+          '“Ash”, image 2 requires “Rage >= 50%”, but “Rage” has the same min and max, so it always reads 0%. Use a raw number or widen its range.',
         );
       });
 
@@ -3094,7 +3148,7 @@ describe('trait gate rules', () => {
       const found = only(w, rule);
       expect(ids(found)).toEqual([['a']]);
       expect(found[0].severity).toBe('warning');
-      expect(found[0].message).toBe('“A” is marked default but starts unselected — no starting default or persona choice meets “B”');
+      expect(found[0].message).toBe('“A” is a default but starts unselected, because no starting default or persona choice meets “B”');
       expect(only(gates([gated('a', needs('b'), def), trait({ id: 'b', name: 'B', ...def })]), rule)).toEqual([]);
     });
 
@@ -3102,7 +3156,7 @@ describe('trait gate rules', () => {
       const at = (...dayparts: Daypart[]) => only(gates([gated('a', [{ kind: 'time', dayparts }], def)]), rule);
       expect(at('morning')).toEqual([]);
       expect(at('evening', 'night').map((f) => f.message))
-        .toEqual(['“A” is marked default but starts unselected — no starting default or persona choice meets “evening or night”']);
+        .toEqual(['“A” is a default but starts unselected, because no starting default or persona choice meets “evening or night”']);
     });
 
     it('flags each default down a chain that has no open root', () => {
@@ -3115,7 +3169,7 @@ describe('trait gate rules', () => {
       expect(runRules(w([resident, ash]))).toEqual([]);
       const found = only(w([resident, { ...ash, persona: false }]), rule);
       expect(ids(found)).toEqual([['a']]);
-      expect(found[0].message).toBe('“A” is marked default but starts unselected — no starting default or persona choice meets “B” or “playing as Ash”');
+      expect(found[0].message).toBe('“A” is a default but starts unselected, because no starting default or persona choice meets “B” or “playing as Ash”');
     });
 
     it('flags the later of two defaults that exclude each other, and reads its rows (Q16)', () => {
@@ -3123,12 +3177,12 @@ describe('trait gate rules', () => {
         trait({ id: 'c', name: 'C' }), trait({ id: 'd', name: 'D' })]);
       const found = only(w, rule);
       expect(ids(found)).toEqual([['b']]);
-      expect(found[0].message).toBe('“B” is marked default but starts unselected — no starting default or persona choice meets “not A”, or “C” and “D”');
+      expect(found[0].message).toBe('“B” is a default but starts unselected, because no starting default or persona choice meets “not A”, or “C” and “D”');
     });
 
     it('flags a default that an earlier default excludes one way', () => {
       const w = gates([trait({ id: 'a', name: 'A', ...def }), rowed('b', [{ all: [not(ref('a'))] }], def)]);
-      expect(only(w, rule).map((f) => f.message)).toEqual(['“B” is marked default but starts unselected — no starting default or persona choice meets “not A”']);
+      expect(only(w, rule).map((f) => f.message)).toEqual(['“B” is a default but starts unselected, because no starting default or persona choice meets “not A”']);
     });
 
     it('leaves a default in a never-unlockable set to the error rule', () => {
@@ -3180,7 +3234,7 @@ describe('trait gate rules', () => {
       it('flags a default no owner keeps, and names what it requires', () => {
         const found = only(linked([albus('human'), sylvie('human')]), rule);
         expect(ids(found)).toEqual([['keen']]);
-        expect(found[0].message).toBe('“KEEN” is marked default but starts unselected — no starting default or persona choice meets “Elf”');
+        expect(found[0].message).toBe('“KEEN” is a default but starts unselected, because no starting default or persona choice meets “Elf”');
       });
 
       it('counts a default the Custom Persona entity keeps under None', () => {
@@ -3292,13 +3346,13 @@ describe('trait link rules', () => {
       const found = only(linked([albus({ traitLinks: [link('l-smite', 'smite', 'trait')] }), albus({ id: 'bree', name: 'Bree', traits: [oath] })], {
         traits: [faithful, ...blueprinted.map((t) => (t.id === 'smite' ? { ...t, requires: [{ all: [{ kind: 'trait' as const, id: 'oath', owner: { kind: 'entity' as const, id: 'bree' } }] }] } : t))],
       }), rule);
-      expect(found.map((f) => f.message)).toEqual(['“Smite” on “Albus” and “Oath” on “Bree” can never unlock — no pick or persona can meet their requirements']);
+      expect(found.map((f) => f.message)).toEqual(['“Smite” on “Albus” and “Oath” on “Bree” can never unlock, because no pick or persona meets their requirements']);
       expect(opened(found)).toEqual([['l-smite', 'oath']]);
       // Two entities that share a name are still two owners.
       const twin = only(linked([albus({ traitLinks: [link('l-smite', 'smite', 'trait')] }), albus({ id: 'bree', traits: [oath] })], {
         traits: [faithful, ...blueprinted.map((t) => (t.id === 'smite' ? { ...t, requires: [{ all: [{ kind: 'trait' as const, id: 'oath', owner: { kind: 'entity' as const, id: 'bree' } }] }] } : t))],
       }), rule);
-      expect(twin.map((f) => f.message)).toEqual(['“Smite” on “Albus” and “Oath” on “Albus” can never unlock — no pick or persona can meet their requirements']);
+      expect(twin.map((f) => f.message)).toEqual(['“Smite” on “Albus” and “Oath” on “Albus” can never unlock, because no pick or persona meets their requirements']);
     });
   });
 
@@ -3312,7 +3366,7 @@ describe('trait link rules', () => {
     it('flags a loop through a Not that a linked trait closes, and opens the link', () => {
       const oath = trait({ id: 'oath', name: 'Oath', requires: needs('smite') });
       const found = run('trait-requirement-unstable', albus({ traits: [oath], traitLinks: [smiteRows([{ all: [notTrait('oath')] }])] }));
-      expect(found.map((f) => f.message)).toEqual(['“Oath” on “Albus” and “Smite” on “Albus” can never settle — their requirements loop through a Not']);
+      expect(found.map((f) => f.message)).toEqual(['“Oath” on “Albus” and “Smite” on “Albus” can never settle, because their requirements loop through a Not']);
       expect(opened(found)).toEqual([['oath', 'l-smite']]);
       // The original's own rows hold no loop, so the world raises nothing.
       expect(only(linked([]), 'trait-requirement-unstable')).toEqual([]);
@@ -3399,7 +3453,7 @@ describe('trait link rules', () => {
         ],
       })], { traits: [faithful, ...smite] });
       const found = only(w, 'trait-default-gated');
-      expect(found.map((f) => f.message)).toEqual(['“Smite” is marked default but starts unselected — no starting default or persona choice meets “not Faithful”']);
+      expect(found.map((f) => f.message)).toEqual(['“Smite” is a default but starts unselected, because no starting default or persona choice meets “not Faithful”']);
     });
 
     describe('default-gated reads the link’s rows', () => {
@@ -3418,14 +3472,14 @@ describe('trait link rules', () => {
       it('quotes the link’s rows, names the entity and opens the link when the override can’t be met', () => {
         const w = linked([owning('albus', 'Albus', overrideTo('l-smite', wizard))], { traits: defaults(needs('faithful')) });
         const found = only(w, rule);
-        expect(found.map((f) => f.message)).toEqual(['“Smite” on “Albus” is marked default but starts unselected — no starting default or persona choice meets “Wizard”']);
+        expect(found.map((f) => f.message)).toEqual(['“Smite” on “Albus” is a default but starts unselected, because no starting default or persona choice meets “Wizard”']);
         expect(opened(found)).toEqual([['l-smite']]);
       });
 
       it('reads the original’s rows and opens the original for a link with no override', () => {
         const w = linked([owning('albus', 'Albus', link('l-smite', 'smite', 'trait'))], { traits: defaults(wizard) });
         const found = only(w, rule);
-        expect(found.map((f) => f.message)).toEqual(['“Smite” is marked default but starts unselected — no starting default or persona choice meets “Wizard”']);
+        expect(found.map((f) => f.message)).toEqual(['“Smite” is a default but starts unselected, because no starting default or persona choice meets “Wizard”']);
         expect(opened(found)).toEqual([['smite']]);
       });
 
@@ -3450,7 +3504,7 @@ describe('trait link rules', () => {
           { traits: defaults(needs('faithful')) },
         );
         const found = only(w, rule);
-        expect(found.map((f) => f.message)).toEqual(['“Smite” on “Albus” is marked default but starts unselected — no starting default or persona choice meets “Wizard”']);
+        expect(found.map((f) => f.message)).toEqual(['“Smite” on “Albus” is a default but starts unselected, because no starting default or persona choice meets “Wizard”']);
         expect(opened(found)).toEqual([['l-smite']]);
       });
     });
@@ -3480,7 +3534,7 @@ describe('trait link rules', () => {
       expect(only(w, 'trait-group-defaults-below-min')).toEqual([]);
       const short = only(withClasses({ minPicks: 1 }, [owning('albus', 'Albus')]), 'trait-group-defaults-below-min');
       expect(short.map((f) => f.message)).toEqual([
-        '“Classes” on “Albus” needs at least 1 pick but a new game starts with 0 — the defaults don’t meet the minimum',
+        '“Classes” on “Albus” needs at least 1 pick but a new game starts with 0, so the defaults don’t meet the minimum',
       ]);
       expect(opened(short)).toEqual([['l-albus']]);
     });
@@ -3503,7 +3557,7 @@ describe('trait link rules', () => {
         .toEqual(['“Classes” on “Albus” needs at least 2 picks but allows at most 1']);
       const over = only(w, 'trait-group-defaults-over-max');
       expect(over.map((f) => f.message)).toEqual([
-        '“Classes” on “Albus” allows one active trait but marks Paladin and Wizard as defaults — only one can actually apply',
+        '“Classes” on “Albus” allows one active trait but marks Paladin and Wizard as defaults, so only one can apply',
       ]);
       expect(opened(over)).toEqual([['l-albus', 'l-albus', 'l-albus']]);
     });
@@ -3596,7 +3650,7 @@ describe('blueprint and copy rules', () => {
     it('warns when a linked trait’s blueprint pin names a value the owner’s copy removed, and opens the copy', () => {
       const w = blueprinted([albus({ placeholders: [copyOf('garb', removesTabard)] })]);
       const found = only(w, rule);
-      expect(found.map((f) => f.message)).toEqual(['“Albus.Class Garb” removes “a tabard”, the value “Trait: Paladin” pins — the pin applies nothing']);
+      expect(found.map((f) => f.message)).toEqual(['“Albus.Class Garb” removes “a tabard”, the value “Trait: Paladin” pins, so the pin is ignored']);
       expect(found[0].severity).toBe('warning');
       expect(opened(found)).toEqual([[['c-garb', 'placeholders'], ['l-paladin', 'traits']]]);
       expect(rowOf(w, found[0].items[0].id)?.id).toBe('c-garb');
@@ -3635,7 +3689,7 @@ describe('blueprint and copy rules', () => {
       expect(only(w, 'placeholder-pin-unknown-value')).toEqual([]);
       const gone = blueprinted([albus({ traitLinks: [], traits: [{ ...own, placeholderPins: [{ placeholderId: 'c-garb', value: 'a cape', valueId: 'v:cape' }] }] })]);
       const found = only(gone, 'placeholder-pin-unknown-value');
-      expect(found.map((f) => f.message)).toEqual(['“Trait: Albus\'s Oath” pins “Albus.Class Garb” to a value it no longer has — “a cape” is forced as written']);
+      expect(found.map((f) => f.message)).toEqual(['“Trait: Albus\'s Oath” pins “Albus.Class Garb” to a value it no longer has, so “a cape” applies as written']);
       expect(opened(found)).toEqual([[['own', 'traits'], ['c-garb', 'placeholders']]]);
     });
 
@@ -3644,8 +3698,8 @@ describe('blueprint and copy rules', () => {
       const both = { ...paladin, placeholderPins: [tabardPin, { placeholderId: 'garb', value: 'blue robes', valueId: phValueId('blue robes') }] };
       const found = only(blueprinted([albus({ placeholders: [copyOf('garb', removesBoth)] })], { traits: [both, tailor] }), rule);
       expect(found.map((f) => f.message)).toEqual([
-        '“Albus.Class Garb” removes “a tabard”, the value “Trait: Paladin” pins — the pin applies nothing',
-        '“Albus.Class Garb” removes “blue robes”, the value “Trait: Paladin” pins — the pin applies nothing',
+        '“Albus.Class Garb” removes “a tabard”, the value “Trait: Paladin” pins, so the pin is ignored',
+        '“Albus.Class Garb” removes “blue robes”, the value “Trait: Paladin” pins, so the pin is ignored',
       ]);
     });
   });
@@ -3767,10 +3821,10 @@ describe('placeholder pin rules', () => {
   it('flags a pin whose value id names a value the placeholder no longer has, from any source', () => {
     const found = only(everywhere({ placeholderId: 'p1', value: 'crimson', valueId: 'v:crimson' }), 'placeholder-pin-unknown-value');
     expect(found.map((f) => f.message)).toEqual([
-      '“Hunger ≤ 20” pins “Hue” to a value it no longer has — “crimson” is forced as written',
-      '“Location: Harbor Steps” pins “Hue” to a value it no longer has — “crimson” is forced as written',
-      '“Trait: Dyed” pins “Hue” to a value it no longer has — “crimson” is forced as written',
-      '“Region = Northern” pins “Hue” to a value it no longer has — “crimson” is forced as written',
+      '“Hunger ≤ 20” pins “Hue” to a value it no longer has, so “crimson” applies as written',
+      '“Location: Harbor Steps” pins “Hue” to a value it no longer has, so “crimson” applies as written',
+      '“Trait: Dyed” pins “Hue” to a value it no longer has, so “crimson” applies as written',
+      '“Region = Northern” pins “Hue” to a value it no longer has, so “crimson” applies as written',
     ]);
     expect(found[0].severity).toBe('warning');
     // The source first, so Open lands on the row to fix; the placeholder beside it, since the value went there.
@@ -3779,7 +3833,7 @@ describe('placeholder pin rules', () => {
 
   it('says what a dead id with no text behind it does: nothing', () => {
     const [found] = only(everywhere({ placeholderId: 'p1', value: '', valueId: 'v:crimson' }), 'placeholder-pin-unknown-value');
-    expect(found.message).toBe('“Hunger ≤ 20” pins “Hue” to a value it no longer has — the pin applies nothing');
+    expect(found.message).toBe('“Hunger ≤ 20” pins “Hue” to a value it no longer has, so the pin is ignored');
   });
 
   it('quiets for a live value id whatever the stored text says, and for a plain off-list text', () => {
@@ -3807,7 +3861,7 @@ describe('placeholder pin rules', () => {
       expect(found).toHaveLength(1);
       expect(found[0].severity).toBe('info');
       expect(found[0].message).toBe(
-        '“Hue” is pinned by “Location: Harbor Steps” and “Trait: Sworn” — “Location: Harbor Steps” wins whenever it is in force',
+        '“Hue” is pinned by “Location: Harbor Steps” and “Trait: Sworn”, and “Location: Harbor Steps” wins whenever it applies',
       );
       expect(found[0].items).toEqual([
         { id: 'p1', name: 'Hue' },
@@ -3823,7 +3877,7 @@ describe('placeholder pin rules', () => {
           trait({ id: 't2', name: 'Woven', placeholderPins: [pinTo('blue')] }),
         ],
       }), 'placeholder-pin-conflict');
-      expect(found.message).toContain('“Trait: Woven” wins whenever it is in force');
+      expect(found.message).toContain('“Trait: Woven” wins whenever it applies');
     });
 
     it('reads a cast entity’s owned trait as a rival that wins in its own text', () => {
@@ -3831,7 +3885,7 @@ describe('placeholder pin rules', () => {
         traits: [trait({ id: 't1', name: 'Sworn', placeholderPins: [pinTo('red')] })],
         entities: [{ id: 'ash', name: 'Ash', traits: [trait({ id: 'o1', name: 'Tamed', placeholderPins: [pinTo('blue')] })] }],
       }), 'placeholder-pin-conflict');
-      expect(found.message).toBe('“Hue” is pinned by “Trait: Sworn” and “Trait: Ash\'s Tamed” — “Trait: Ash\'s Tamed” wins whenever it is in force');
+      expect(found.message).toBe('“Hue” is pinned by “Trait: Sworn” and “Trait: Ash\'s Tamed”, and “Trait: Ash\'s Tamed” wins whenever it applies');
       expect(found.items).toContainEqual({ id: 'o1', name: 'Tamed', section: 'traits' });
     });
 
@@ -3851,7 +3905,7 @@ describe('placeholder pin rules', () => {
       });
       expect(only(two, 'placeholder-pin-conflict')).toEqual([]);
       const [found] = only({ ...two, entities: [persona('Albus', 'red'), persona('Ash', 'blue', { persona: false })] }, 'placeholder-pin-conflict');
-      expect(found.message).toBe('“Hue” is pinned by “Trait: Albus\'s Paladin” and “Trait: Ash\'s Paladin” — “Trait: Ash\'s Paladin” wins whenever it is in force');
+      expect(found.message).toBe('“Hue” is pinned by “Trait: Albus\'s Paladin” and “Trait: Ash\'s Paladin”, and “Trait: Ash\'s Paladin” wins whenever it applies');
     });
 
     it('stays quiet for pins that can never be in force together: exclusive siblings, bands of one stat', () => {
@@ -3889,7 +3943,7 @@ describe('placeholder pin rules', () => {
         placeholders: [hue, { id: 'p2', name: 'Region', values: [{ id: 'v-n', text: 'Northern', pins: [pinTo('blue')] }] }],
       }), 'placeholder-pin-conflict');
       expect(found.message).toBe(
-        '“Hue” is pinned by “Trait: Sworn”, “Trait: Woven” and “Region = Northern” — “Trait: Sworn” or “Trait: Woven” wins, whichever is in force',
+        '“Hue” is pinned by “Trait: Sworn”, “Trait: Woven” and “Region = Northern”, and “Trait: Sworn” or “Trait: Woven” wins, whichever applies',
       );
     });
   });
@@ -3914,7 +3968,7 @@ describe('placeholder pin rules', () => {
       expect(found).toHaveLength(1);
       expect(found[0].severity).toBe('error');
       expect(found[0].message).toBe(
-        '“Alpha” and “Beta” pin each other in a loop: rolled Alpha = a1, Beta = b1, they flip to Alpha = a2, Beta = b2, then Alpha = a1, Beta = b1, and round again',
+        '“Alpha” and “Beta” pin each other in a loop: rolled Alpha = a1, Beta = b1, they resolve to Alpha = a2, Beta = b2, then Alpha = a1, Beta = b1, and repeat',
       );
       expect(found[0].items.map((i) => i.id)).toEqual(['a', 'b']);
     });
@@ -3956,7 +4010,7 @@ describe('placeholder pin rules', () => {
       expect(found).toHaveLength(1);
       expect(found[0].severity).toBe('error');
       expect(found[0].message).toBe(
-        '“Region = Northern” pins “Region”, the placeholder that value belongs to — a value cannot hold its own placeholder, so the pin applies nothing',
+        '“Region = Northern” pins “Region”, the placeholder that value belongs to. A value can’t pin its own placeholder, so the pin is ignored.',
       );
       expect(found[0].items.map((i) => i.id)).toEqual(['p2']);
     });
@@ -4026,13 +4080,13 @@ describe('placeholder pool rules', () => {
     expect(found).toHaveLength(1);
     expect(found[0].severity).toBe('warning');
     // A dead key is a value id, so the finding counts them rather than naming one.
-    expect(found[0].message).toBe('“Vice” weights a value it no longer has — that weight applies to nothing');
+    expect(found[0].message).toBe('“Vice” weights a value it doesn’t have, so that weight is ignored');
     expect(runRules(weighted({ ale: 2, dice: 1 }))).toEqual([]);
   });
 
   it('counts the dead weights when there is more than one', () => {
     const found = only(weighted({ grog: 3, mead: 1 }), 'placeholder-weight-unknown-value');
-    expect(found[0].message).toBe('“Vice” weights 2 values it no longer has — those weights apply to nothing');
+    expect(found[0].message).toBe('“Vice” weights 2 values it doesn’t have, so those weights are ignored');
   });
 
   it('drops only the dead weights as its fix, keeping the live ones', () => {
@@ -4266,7 +4320,7 @@ describe('placeholder ownership rules', () => {
     expect(found[0].section).toBe('placeholders');
     expect(found[0].items.map((i) => i.id)).toEqual(['north']);
     expect(found[0].message).toBe(
-      '“Northern” belongs to a placeholder that no longer exists, so it sits at the top level instead');
+      '“Northern” belongs to a placeholder that doesn’t exist, so it shows at the top level');
   });
 
   it('flags an owned placeholder its owner no longer holds, naming both sides', () => {
@@ -4275,7 +4329,7 @@ describe('placeholder ownership rules', () => {
     expect(found[0].severity).toBe('warning');
     expect(found[0].items.map((i) => i.id)).toEqual(['north']);
     expect(found[0].message).toBe(
-      '“Northern” says it belongs to “Molly”, which no longer holds it — so it sits at the top level instead');
+      '“Northern” belongs to “Molly”, which doesn’t hold it, so it shows at the top level');
   });
 
   it('keeps the two conditions apart — each fires on its own and stays out of the other', () => {
@@ -4328,8 +4382,8 @@ describe('placeholder ownership rules', () => {
   });
 
   it('gains the owner in the name once the row is owned, and nothing else', () => {
-    expect(only(broken(false), 'placeholder-slot-miss')[0].message).toContain('“Southern” carries no “Hair”');
-    expect(only(broken(true), 'placeholder-slot-miss')[0].message).toContain('“Molly › Southern” carries no “Hair”');
+    expect(only(broken(false), 'placeholder-slot-miss')[0].message).toContain('“Southern” has no “Hair”');
+    expect(only(broken(true), 'placeholder-slot-miss')[0].message).toContain('“Molly › Southern” has no “Hair”');
   });
 
   it('leaves the other rule’s finding standing — a fix repairs only what its row named', () => {
@@ -4395,14 +4449,14 @@ describe('shared row weight rules', () => {
     // The override lives on the placeholder, so that is where Open lands and what the repair edits.
     expect(found[0].items.map((i) => i.id)).toEqual(['molly']);
     expect(found[0].message).toBe(
-      '“Molly” weights a value “Eye Color” no longer carries — that weight applies to nothing');
+      '“Molly” weights a value “Eye Color” doesn’t have, so that weight is ignored');
   });
 
   it('counts the dead weights when there is more than one', () => {
     const found = only(shared({ [phValueId('grog')]: 3, [phValueId('mead')]: 1 }),
       'placeholder-shared-weight-unknown-value');
     expect(found[0].message).toBe(
-      '“Molly” weights 2 values “Eye Color” no longer carries — those weights apply to nothing');
+      '“Molly” weights 2 values “Eye Color” doesn’t have, so those weights are ignored');
   });
 
   it('names the original the key actually walks to, not the row it started from', () => {
@@ -4572,7 +4626,7 @@ describe('dictionary visibility rules', () => {
     const inline = 'if (stats.Suspicion.value >= 75) dictionaries["Ashburn Bulletin"].entries["Wanted Notice"].enabled = true;';
     const w = base({ dictionaries: [bulletin(), herbs()], scripts: [{ id: 'w1', timing: 'after', code: inline }] });
     expect(flaggedIds(w)).toEqual(['n2', 'd1']);
-    expect(only(w, 'dictionary-disabled')[0].message).toContain('no script switches it on');
+    expect(only(w, 'dictionary-disabled')[0].message).toContain('no script turns it on');
 
     const onStat = base({
       dictionaries: [herbs()],
@@ -4590,6 +4644,14 @@ describe('dictionary visibility rules', () => {
   it('leaves every book’s entry of that name alone when the book is not named in the write', () => {
     const aliased = 'const lore = dictionaries.Book;\nlore.entries.Herbs.enabled = true;';
     expect(flaggedIds(base({ dictionaries: [herbs()], tools: [scriptTool(aliased)] }))).toEqual([]);
+  });
+
+  it('leaves a disabled entry alone when an item script switches it on', () => {
+    const relic: Item = {
+      id: 'i1', name: 'Relic', statEffects: [], traitEffects: [], equipRequires: [],
+      scripts: [{ id: 'is1', timing: 'gained', code: 'dictionaries.Book.entries.Herbs.enabled = true;' }],
+    };
+    expect(flaggedIds(base({ dictionaries: [herbs()], items: [relic] }))).toEqual([]);
   });
 
   it('still flags an entry a script only reads or compares', () => {
@@ -4646,6 +4708,13 @@ describe('world-level rules', () => {
     expect(runRules(world([{ id: 'e1', name: 'Maren', images: [{ data: `data:image/webp;base64,${'A'.repeat(1_000)}` }] }]))).toEqual([]);
   });
 
+  it('budgets an item image against the entity cap, opening on the item', () => {
+    const big = `data:image/webp;base64,${'A'.repeat(Math.ceil((IMAGE_CAPS.entity.maxBytes * 4) / 3) + 8)}`;
+    const found = only(base({ items: [{ ...blankItem('lantern', 'Tin Lantern'), images: [{ data: big }] }] }), 'world-oversized-images');
+    expect(found).toHaveLength(1);
+    expect(found[0].items[0]).toMatchObject({ id: 'lantern', name: 'Tin Lantern', section: 'items' });
+  });
+
   it('leaves a linked image alone — it contributes no bytes to the world', () => {
     expect(only(
       world([{ id: 'e1', name: 'Maren', images: [{ data: 'https://example.com/a-very-large-portrait.png' }] }]),
@@ -4689,7 +4758,7 @@ describe('the lossless-WebP conversion rule', () => {
     const [png, gif] = only(mixed(), 'image-not-webp');
     expect(png.message).toContain('PNG');
     expect(gif.message).toContain('GIF');
-    expect(png.message).toContain('lossless WebP');
+    expect(png.message).toContain('Lossless WebP');
   });
 
   it('says nothing about a world whose every image is already WebP', () => {
@@ -4774,6 +4843,17 @@ describe('the mislabeled-image rule', () => {
     // The opaque payloads every other fixture uses — no signature, so no verdict to disagree with.
     const opaque = world([{ id: 'e1', name: 'Maren', images: [{ data: `data:image/png;base64,${'A'.repeat(80)}` }] }]);
     expect(only(opaque, 'image-mislabeled')).toEqual([]);
+  });
+
+  it('Fix relabels an item image and clears its row', () => {
+    const items = [{ ...blankItem('lantern', 'Tin Lantern'), images: [{ data: withBytes('image/png', JPEG_BYTES), requires: MAREN_RULE }] }];
+    const flagged = base({ items });
+    expect(only(flagged, 'image-mislabeled')[0].items[0]).toMatchObject({ id: 'lantern', section: 'items' });
+
+    const fixed = applyRuleFix(flagged, 'image-mislabeled');
+    expect(fixed.items?.[0].images?.[0].data.startsWith('data:image/jpeg;')).toBe(true);
+    expect(fixed.items?.[0].images?.[0].requires).toEqual(MAREN_RULE);
+    expect(only(fixed, 'image-mislabeled')).toEqual([]);
   });
 
   it('Fix relabels the thumbnail, a gallery image and a background in one pass', () => {
@@ -5191,6 +5271,7 @@ const RULE_SCOPE: Record<string, 'simple' | 'advanced'> = {
   'script-unknown-name': 'advanced',
   'script-overrides-trait': 'advanced',
   'script-unknown-stat': 'advanced',
+  'script-unknown-body': 'advanced',
   'script-unknown-blueprint-owner-stat': 'advanced',
   'script-before-reads-delta': 'advanced',
   'script-two-writers': 'advanced',
@@ -5207,6 +5288,7 @@ const RULE_SCOPE: Record<string, 'simple' | 'advanced'> = {
   'dictionary-entry-inert': 'simple',
   'dictionary-keyword-substring': 'simple',
   'entity-location-orphan': 'simple',
+  'item-becomes-missing-item': 'simple',
   // Rule-level granularity: a name-vs-name collision is Simple-fixable, and an alias-caused one riding the
   // same rule into Simple is the accepted cost of not classifying per finding.
   'entity-match-collision': 'simple',

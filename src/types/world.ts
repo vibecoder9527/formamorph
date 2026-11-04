@@ -31,10 +31,13 @@ export type ThresholdUnit = 'raw' | 'percent';
 export type RegenUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 
 /** When a script runs: before the turn's AI calls, after the AI's asks and regen land, on each completed
- *  narration sentence, once at a new playthrough's start, or when a trait switches in play. */
-export type ScriptTiming = 'before' | 'after' | 'output' | 'start' | 'switch';
+ *  narration sentence, once at a new playthrough's start, when a trait switches in play, or on an item's events. */
+export type ScriptTiming = 'before' | 'after' | 'output' | 'start' | 'switch' | ItemScriptTiming;
 
-/** One box of code with a timing, on a stat, a trait or the world. */
+/** When an item's script runs: its Item Copy is gained, lost, equipped, unequipped or used (Q33). */
+export type ItemScriptTiming = 'gained' | 'lost' | 'equipped' | 'unequipped' | 'used';
+
+/** One box of code with a timing, on a stat, a trait, the world or an item. */
 export interface Script {
   id: string;
   /** Absent or blank = the owner and timing name it. */
@@ -220,13 +223,16 @@ export type TraitRequirement =
 
 /** An item Condition: an owner has a copy of the item, or has one equipped. `name` is the item's name when it
  *  was stored, so an unresolved one still reads. An owner-less one means the host's owner; on an item it is
- *  the Item Copy's owner, and never holds while the copy lies at a location. */
+ *  the Item Copy's owner, and never holds while the copy lies at a location. `state` and `identity` narrow it
+ *  to a copy with that State word (trimmed, any case) or that identity (Q22). */
 export interface ItemRequirement {
   kind: 'item';
   id: string;
   name?: string;
   owner?: RequirementOwner;
   status: 'owned' | 'equipped';
+  state?: string;
+  identity?: 'identified' | 'unidentified';
   not?: true;
 }
 
@@ -358,6 +364,13 @@ export interface Trait {
   mode?: TraitMode;
   /** Scripts with this trait as `self`. Absent = none. */
   scripts?: Script[];
+  /** The Body its owner takes while it is active. Absent = no Body row. */
+  body?: TraitBodyRow;
+}
+
+/** A trait's Body row. Absent `pick` = blank: the row sets no Body. */
+export interface TraitBodyRow {
+  pick?: BodyPick;
 }
 
 /** A trait's non-Optional mode. */
@@ -389,7 +402,13 @@ export interface Entity {
    *  never in the cast (see lib/owners). At most one per world, at the root. Excludes the Persona marks and
    *  implies persona-only. */
   customPersona?: boolean;
+  /** The Body it equips into. Absent = the Default Body. */
+  body?: BodyPick;
   type?: string;
+  /** What the player calls the entity before meeting it. Absent, the entity starts met (see lib/presence). */
+  strangerName?: string;
+  /** What the player reads about the entity before meeting it. */
+  strangerDescription?: string;
   /** Shown to the player in game. */
   playerDescription?: string;
   /** Full description sent to the AI. */
@@ -510,11 +529,11 @@ export interface EntityGroup {
   order?: number;
 }
 
-/** When an item effect row acts: while its Item Copy is equipped, while it is owned, after it is consumed, or
+/** When an item effect row acts: while its Item Copy is equipped, while it is owned, after it is used, or
  *  once on the owner's first obtain. */
-export type ItemTiming = 'equipped' | 'owned' | 'consumed' | 'firstObtain';
+export type ItemTiming = 'equipped' | 'owned' | 'used' | 'firstObtain';
 
-/** How long an After Consumed effect runs: for good, or a span of story-clock hours. */
+/** How long an After Use effect runs: for good, or a span of story-clock hours. */
 export type ItemEffectDuration = { kind: 'permanent' } | { kind: 'time'; hours: number };
 
 /** The part of a stat an item effect row moves. */
@@ -526,7 +545,7 @@ export interface ItemStatEffect {
   statId: string;
   facet: ItemStatFacet;
   timing: ItemTiming;
-  /** Read only under the `consumed` timing. */
+  /** Read only under the `used` timing. */
   duration?: ItemEffectDuration;
   amount: number;
   op: 'add';
@@ -537,12 +556,29 @@ export interface ItemTraitEffect {
   id: string;
   traitId: string;
   timing: ItemTiming;
-  /** Read only under the `consumed` timing. */
+  /** Read only under the `used` timing. */
   duration?: ItemEffectDuration;
 }
 
-/** What an item's value counts in: a stat (such as Gold), or free text. */
-export type ItemValueUnit = { kind: 'stat'; statId: string } | { kind: 'text'; text: string };
+/** One Item of an Items-backed Currency: an item and its worth in the base unit. The smallest Item is worth 1. */
+export interface CurrencyItem {
+  itemId: string;
+  worth: number;
+}
+
+/** What holds a Currency: one stat, Items, or nothing, for a name only. */
+export type CurrencyBacking = { kind: 'stat'; statId: string } | { kind: 'items'; items: CurrencyItem[] } | { kind: 'name' };
+
+/** A kind of money in the world. The world's first is the Default, which a new item takes. */
+export interface Currency {
+  id: string;
+  name: string;
+  backing: CurrencyBacking;
+}
+
+/** What a copy's last use leaves: the copy at zero uses, nothing, one copy of another authored item, or the copy
+ *  at zero uses with a new State. */
+export type ItemWhenEmpty = { kind: 'stays' } | { kind: 'gone' } | { kind: 'becomes'; itemId: string } | { kind: 'changesState'; state: string };
 
 /** An authored item kind. In play the save holds Item Copies of it. */
 export interface Item {
@@ -554,39 +590,87 @@ export interface Item {
   aiDescription?: string;
   /** Short description sent to the AI where the full one is too long. */
   aiSummary?: string;
+  /** The name an unidentified Item Copy shows. Either unidentified field set ⇒ every copy starts unidentified (Q16). */
+  unidentifiedName?: string;
+  /** The description an unidentified Item Copy shows. Blank shows `playerDescription`. */
+  unidentifiedDescription?: string;
   /** The item's gallery, in author order. A rule's owner-less Condition reads the Item Copy's owner. */
   images?: GalleryImage[];
   /** Booru tags used for AI image generation; editor-only, not sent to the narrative AI. */
   imageTags?: string;
+  /** What it shows on the doll and in rows: an icon id, or `'none'` for its image. Absent = Auto. */
+  icon?: string;
   /** Placeholders of this item's own, live beside the world's through the combined view. They resolve once
    *  per playthrough, shared by every Item Copy. */
   placeholders?: Placeholder[];
+  /** What it's worth, in its Currency's base unit. */
   value?: number;
-  valueUnit?: ItemValueUnit;
-  /** Absent = stackable. Never read while `charges` is set. */
+  /** Absent = no price, whatever `value` holds. */
+  currencyId?: string;
+  /** Absent = stackable. Never read while `uses` is 2 or more. */
   stackable?: boolean;
-  consumable?: boolean;
-  /** The charge count each Item Copy starts with. Absent = no charges. */
-  charges?: number;
+  /** The uses each Item Copy starts with, from 1. Absent = unlimited. */
+  uses?: number;
+  /** What a copy's last use leaves. Read only while `uses` is set; absent = Gone (Q26). */
+  whenEmpty?: ItemWhenEmpty;
+  /** The State each Item Copy starts with: a short free-text word. Absent = none. */
+  state?: string;
   /** The player cannot drop or give its Item Copies. */
   bound?: boolean;
-  /** The world slot it equips into. Absent = not equippable. */
-  slotId?: string;
-  /** The slot capacity one Item Copy takes. Absent = 1. */
-  slotSize?: number;
+  /** The slots it equips into. Absent = not equippable. */
+  slotRule?: SlotRule;
   statEffects: ItemStatEffect[];
   traitEffects: ItemTraitEffect[];
   /** Any one row that holds lets an owner equip it. Empty = always. */
   equipRequires: TraitRequirementRow[];
+  /** Runs on its Item Copies' events, only at the item timings. */
+  scripts?: Script[];
 }
 
-/** One equipment slot of the world, shared by the Persona and every entity. */
+/** Which slots an item equips into. `either` takes one of them, in this order; `all` takes one unit in each. Never empty. */
+export interface SlotRule {
+  mode: 'either' | 'all';
+  slotIds: string[];
+}
+
+/** One equipment slot of the world: a name only. Its capacity comes from each Body that holds it. */
 export interface Slot {
   id: string;
   name: string;
+}
+
+/** Where one capacity unit sits on a Body's figure, as fractions (0–1) of the Backdrop. */
+export interface SlotBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** What a Body's Slot Boxes are laid out on. */
+export type Backdrop = { kind: 'humanoid' | 'quadruped' | 'plain' } | { kind: 'image'; image: GalleryImage; /** 0 to 1. Absent = 1. */ opacity?: number };
+
+/** One slot a Body holds. */
+export interface BodyEntry {
+  slotId: string;
   /** Absent = 1. */
   capacity?: number;
+  /** One per capacity unit. */
+  boxes: SlotBox[];
 }
+
+/** A named set of slots an owner equips into, in the order the Inventory panel lists them. */
+export interface Body {
+  id: string;
+  name: string;
+  entries: BodyEntry[];
+  backdrop: Backdrop;
+  /** The Backdrop's width / height. */
+  aspect: number;
+}
+
+/** An entity's Body pick. Absent = the Default Body, the world's first. */
+export type BodyPick = { kind: 'none' } | { kind: 'body'; id: string };
 
 /** Where a placement puts its Item Copies: on the played Persona, on an entity, or at a location. */
 export type PlacementWhere =
@@ -603,6 +687,10 @@ export interface Placement {
   where: PlacementWhere;
   quantity: number;
   hidden?: boolean;
+  /** Starts equipped at new game. An owner placement's only; a location placement never carries it. */
+  equipped?: boolean;
+  /** The slot an Equipped Either of item starts in. Absent = the first free one. */
+  slotId?: string;
   source: PlacementSource;
 }
 
@@ -911,8 +999,12 @@ export interface World {
   tools?: Tool[];
   /** Authored items, in Items-tab order. Absent = none. */
   items?: Item[];
+  /** The world's money, in order. The first is the Default. Absent = none. */
+  currencies?: Currency[];
   /** Equipment slots. Absent = none. */
   slots?: Slot[];
+  /** Bodies, in order. The first is the Default. Absent = none, so no owner has a slot. */
+  bodies?: Body[];
   /** Starting Item Copies. Absent = none. */
   placements?: Placement[];
 }

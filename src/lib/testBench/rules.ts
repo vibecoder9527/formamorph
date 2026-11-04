@@ -40,7 +40,7 @@ import { scanStatLookups, scanStatWrites } from '@/lib/statCodeWriteScan';
 import {
   isStatOn, routeTargets, statCodeOwners, traitCodeBoxes, type CodeOwner, type CodeOwners, type TraitRun,
 } from '@/lib/statCodeTargets';
-import { worldScriptList, type ListedScript } from '@/lib/worldScripts';
+import { rowKeyOf, runRowPlace, scriptEntryKey, worldScriptList, type ListedScript, type ScriptTreeWorld } from '@/lib/worldScripts';
 import { estimateTokens } from '@/lib/memoryUtils';
 import { entityImages } from '@/lib/entityImages';
 import { locationImages } from '@/lib/locationImages';
@@ -147,7 +147,7 @@ const quote = (text: string) => `“${text}”`;
 export const WORLD_SCRIPT_OWNER = 'World';
 
 /** A script as a finding names it: by its name, its timing and its home; unnamed, by its home and timing (Q6, Q49).
- *  A null home is the world. `of` names the entity the home sits on, as ` of “Mira”`. */
+ *  A null home is the world. `of` names the entity that holds the home, as ` of “Mira”`. */
 export const scriptRef = (script: Pick<Script, 'name' | 'timing'>, home: string | null, of = ''): string => {
   const name = script.name?.trim();
   const timing = TIMING_LABEL[script.timing];
@@ -234,7 +234,7 @@ const aliasesOf = (entity: Entity, world: RuleWorld): string[] =>
 const LEADING_ARTICLE = /^(?:the|an|a)\s+\S/i;
 const ARTICLE_PREFIX = /^(?:the|an|a)\s+/i;
 
-/** `aliases` with each leading article dropped. A strip can land on a form the entity already carries —
+/** `aliases` with each leading article dropped. A strip can produce a form the entity already carries —
  *  "the visitor" beside "visitor" — so one of that pair goes; an alias the strip never touched is left
  *  exactly as written, duplicates included, since it is no part of this finding. */
 const withoutArticles = (aliases: string[]): string[] => {
@@ -266,13 +266,13 @@ const aliasLeadingArticle: Rule = {
   matching: true,
   advanced: true,
   summary: (count) =>
-    `${count} aliases begin with an article — alias matching is case-sensitive, so they miss wherever the sentence capitalizes them differently`,
+    `${count} aliases begin with an article. Alias matching is case-sensitive, so they miss wherever a sentence capitalizes them differently.`,
   check: (world) => (world.entities ?? []).flatMap((entity) =>
     aliasesOf(entity, world)
       .filter((alias) => LEADING_ARTICLE.test(alias))
       .map((alias) => finding(
         aliasLeadingArticle,
-        `Alias ${quote(alias)} begins with an article — alias matching is case-sensitive, so it misses wherever the sentence capitalizes it differently`,
+        `Alias ${quote(alias)} begins with an article. Alias matching is case-sensitive, so it misses wherever a sentence capitalizes it differently.`,
         [asItem(entity, world)],
       )),
   ),
@@ -290,7 +290,7 @@ const entityMatchCollision: Rule = {
   section: 'entities',
   matching: true,
   summary: (count) =>
-    `${count} written forms match more than one entity — a mention of either detects both`,
+    `${count} written forms match more than one entity, so one mention detects all of them`,
   check: (world) => {
     // One bucket per piece of text the matcher can see, holding every entity that lays claim to it.
     const claims = new Map<string, { text: string; entities: Entity[] }>();
@@ -311,7 +311,7 @@ const entityMatchCollision: Rule = {
         const items = bucket.entities.map((e) => asItem(e, world));
         return finding(
           entityMatchCollision,
-          `${quote(bucket.text)} matches ${listNames(items.map((i) => i.name))} — a mention of ${items.length > 2 ? 'any one detects them all' : 'either detects both'}`,
+          `${quote(bucket.text)} matches ${listNames(items.map((i) => i.name))}, so a mention of ${items.length > 2 ? 'any one detects them all' : 'either detects both'}`,
           items,
         );
       });
@@ -392,7 +392,7 @@ const namedItem = (id: string, name: string | undefined, world: RuleWorld, secti
  * A placeholder as a finding names it: bare at the top level, a copy as `Owner.Blueprint`, and qualified
  * with `›` under an owner, so a
  * world carrying three rows called `Hair` says which Hair. The item keeps the placeholder's own id, so Open
- * still lands on the row rather than on whatever owns it.
+ * still goes on the row rather than on whatever owns it.
  */
 const placeholderItem = (id: string, world: RuleWorld, section?: FindingSection): FindingItem => {
   const copy = copiesOf(world).get(id);
@@ -417,7 +417,7 @@ const secondaryKeys = (entry: DictionaryEntry): string[] => (entry.secondaryKeys
  * A linked copy whose stored connection names something this world has since deleted. The copy still plays;
  * what breaks is the next update from its source, which would resolve that reference to a new placeholder
  * of its own instead of the one the author meant. Save Connections, in the selected copy's menu, is the
- * repair — it needs the author to say what the reference means now, so no `fix` can stand in for it.
+ * repair — it needs the author to say what the reference means now, so no `fix` can replace it.
  */
 const linkConnectionBroken: Rule = {
   id: 'link-connection-broken',
@@ -439,7 +439,7 @@ const linkConnectionBroken: Rule = {
       .filter(({ link }) => Object.values(link?.connections ?? {}).some((id) => !known.has(id)))
       .map(({ item }) => finding(
         linkConnectionBroken,
-        `${quote(item.name)} is connected to something this world no longer has — use Save Connections to point it at one it does`,
+        `${quote(item.name)} is connected to something this world no longer has. Use ${quote('Save Connections')} to connect it to an item this world has.`,
         [item],
       ));
   },
@@ -478,7 +478,7 @@ const traitToggleMissingStat: Rule = {
   severity: 'error',
   section: 'traits',
   advanced: true,
-  summary: (count) => `${count} trait stat toggles point at stats that don’t exist`,
+  summary: (count) => `${count} trait stat toggles name stats that don’t exist`,
   // An entity's own traits name its own stats, which trait-stat-no-target checks.
   check: (world) => {
     const known = new Set((world.stats ?? []).map((s) => s.id));
@@ -487,6 +487,23 @@ const traitToggleMissingStat: Rule = {
       .map((trait) => {
         const item = namedItem(trait.id, trait.name, world);
         return finding(traitToggleMissingStat, `${quote(item.name)} toggles a stat that doesn’t exist`, [item]);
+      });
+  },
+};
+
+const itemBecomesMissingItem: Rule = {
+  id: 'item-becomes-missing-item',
+  severity: 'error',
+  section: 'items',
+  summary: (count) => `${count} items become an item that doesn’t exist when used up`,
+  // An item with no Uses never reads its When Empty.
+  check: (world) => {
+    const known = new Set((world.items ?? []).map((i) => i.id));
+    return (world.items ?? [])
+      .filter((i) => i.uses !== undefined && i.whenEmpty?.kind === 'becomes' && !known.has(i.whenEmpty.itemId))
+      .map((i) => {
+        const item = namedItem(i.id, i.name, world, 'items');
+        return finding(itemBecomesMissingItem, `${quote(item.name)} becomes an item that doesn’t exist when used up`, [item]);
       });
   },
 };
@@ -598,11 +615,11 @@ const placeholderPinUnknownValue: Rule = {
       .map((row) => {
         const target = placeholderItem(row.pin.placeholderId, world);
         const applies = row.pin.value
-          ? `${quote(describePlaceholders(row.pin.value, placeholders))} is forced as written`
-          : 'the pin applies nothing';
+          ? `${quote(describePlaceholders(row.pin.value, placeholders))} applies as written`
+          : 'the pin is ignored';
         return finding(
           placeholderPinUnknownValue,
-          `${quote(row.label)} pins ${quote(target.name)} to a value it no longer has — ${applies}`,
+          `${quote(row.label)} pins ${quote(target.name)} to a value it no longer has, so ${applies}`,
           [pinSourceItem(row, world), target],
         );
       });
@@ -631,8 +648,8 @@ const placeholderPinConflict: Rule = {
   severity: 'info',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} placeholders are pinned by more than one source that can be in force at once`,
-  // The editors' own conflict note decides who competes: pins that can never be in force together (two
+  summary: (count) => `${count} placeholders are pinned by more than one source that can apply at once`,
+  // The editors' own conflict note decides who competes: pins that can never apply together (two
   // locations, two bands of one stat, two values of one Wildcard, exclusive trait siblings) are no contest,
   // and pins forcing the same text disagree about nothing.
   check: (world) => {
@@ -648,12 +665,12 @@ const placeholderPinConflict: Rule = {
       // A row no rival beats is a winner; two exclusive siblings can both be one, each over the same rival.
       const winners = contested.filter((entry) => entry.conflict?.winner === null).map((entry) => quote(entry.row.label));
       const verdict = winners.length === 1
-        ? `${winners[0]} wins whenever it is in force`
-        : `${winners.slice(0, -1).join(', ')} or ${winners[winners.length - 1]} wins, whichever is in force`;
+        ? `${winners[0]} wins whenever it applies`
+        : `${winners.slice(0, -1).join(', ')} or ${winners[winners.length - 1]} wins, whichever applies`;
       const target = placeholderItem(id, world);
       return [finding(
         placeholderPinConflict,
-        `${quote(target.name)} is pinned by ${listNames(contested.map((entry) => quote(entry.row.label)))} — ${verdict}`,
+        `${quote(target.name)} is pinned by ${listNames(contested.map((entry) => quote(entry.row.label)))}, and ${verdict}`,
         [target, ...contested.map((entry) => pinSourceItem(entry.row, world))],
       )];
     });
@@ -724,7 +741,7 @@ const placeholderPinCycle: Rule = {
   severity: 'error',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} sets of value pins flip each other forever`,
+  summary: (count) => `${count} sets of value pins overwrite each other in a loop`,
   // The game's own collector decides: each loop of placeholders whose values pin each other is settled
   // under every roll it can start from, and the first roll that never settles is the finding. Pins from
   // traits, locations and bands only fix a value in place, so they are left out — they can end a loop,
@@ -752,7 +769,7 @@ const placeholderPinCycle: Rule = {
         const start = readAs(rolled, ids.filter((id) => id in rolled));
         return [finding(
           placeholderPinCycle,
-          `${listNames(ids.map((id) => quote(name(id))))} pin each other in a loop: ${start ? `rolled ${start}, they` : 'they'} flip to ${hit.loop.map((s) => readAs(s, ids)).join(', then ')}, and round again`,
+          `${listNames(ids.map((id) => quote(name(id))))} pin each other in a loop: ${start ? `rolled ${start}, they` : 'they'} resolve to ${hit.loop.map((s) => readAs(s, ids)).join(', then ')}, and repeat`,
           ids.map((id) => placeholderItem(id, world)),
         )];
       }
@@ -779,7 +796,7 @@ const placeholderPinSelf: Rule = {
         const target = placeholderItem(row.pin.placeholderId, world);
         return finding(
           placeholderPinSelf,
-          `${quote(row.label)} pins ${quote(target.name)}, the placeholder that value belongs to — a value cannot hold its own placeholder, so the pin applies nothing`,
+          `${quote(row.label)} pins ${quote(target.name)}, the placeholder that value belongs to. A value can’t pin its own placeholder, so the pin is ignored.`,
           [target],
         );
       });
@@ -871,14 +888,14 @@ const chipUnknownPlaceholder: Rule = {
   severity: 'error',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} items contain chips pointing at placeholders that don’t exist`,
+  summary: (count) => `${count} items hold chips of placeholders that don’t exist`,
   check: (world) => {
     const known = new Set(allPlaceholders(world).map((p) => p.id));
     return chipOwners(world)
       .filter((owner) => [...chipIds(owner.texts)].some((id) => !known.has(id)))
       .map((owner) => finding(
         chipUnknownPlaceholder,
-        `${quote(owner.item.name)} contains a chip pointing at a placeholder that doesn’t exist`,
+        `${quote(owner.item.name)} holds a chip of a placeholder that doesn’t exist`,
         [owner.item],
       ));
   },
@@ -945,7 +962,7 @@ const placeholderPinnedUnused: Rule = {
   check: (world) => {
     const flagged = unplacedPlaceholders(world).filter(({ pinnedBy }) => pinnedBy.length > 0);
     // A trait's chip carries every flagged placeholder it pins. The grouped row dedups items by id, so a
-    // trait pinning two of them lands beside only the first — the label, not adjacency, says which is whose.
+    // trait pinning two of them goes beside only the first — the label, not adjacency, says which is whose.
     const flaggedNames = new Map(flagged.map(({ placeholder }) =>
       [placeholder.id, placeholderItem(placeholder.id, world).name]));
     const traitItem = (t: Trait): FindingItem => {
@@ -959,7 +976,7 @@ const placeholderPinnedUnused: Rule = {
       const item = placeholderItem(placeholder.id, world);
       return finding(
         placeholderPinnedUnused,
-        `${quote(item.name)} is pinned by ${listNames(pinnedBy.map((t) => namedItem(t.id, t.name, world).name))} but placed in no text — the pinned value never shows up`,
+        `${quote(item.name)} is pinned by ${listNames(pinnedBy.map((t) => namedItem(t.id, t.name, world).name))} but placed in no text, so the pinned value never shows`,
         [item, ...pinnedBy.map(traitItem)],
       );
     });
@@ -988,10 +1005,16 @@ const codeOwnersOf = (world: RuleWorld): CodeOwners => statCodeOwners({
   stats: world.stats, statGroups: world.statGroups, entities: world.entities, placeholders: allPlaceholders(world),
 });
 
+/** `world` as the Scripts tab lists it. */
+export const scriptTreeWorldOf = (world: RuleWorld): ScriptTreeWorld => ({
+  scripts: world.scripts, stats: world.stats ?? [], statGroups: world.statGroups ?? [], traits: world.traits ?? [],
+  traitGroups: world.traitGroups ?? [], entities: world.entities ?? [], placeholders: allPlaceholders(world),
+});
+
 /** One script of the world as a finding names it. */
 export interface RuleScript {
   listed: ListedScript;
-  /** The script by its name or its owner-and-timing fallback, then the entity it sits on (Q22, Q49). */
+  /** The script by its name or its owner-and-timing fallback, then the entity that holds it (Q22, Q49). */
   ref: string;
   /** The script's display name: its own name, or its home and timing (Q9). */
   label: string;
@@ -1001,11 +1024,7 @@ export interface RuleScript {
 
 /** Every filled script of the world once, from the list every script reader walks. */
 export const ruleScripts = (world: RuleWorld, owners: CodeOwners = codeOwnersOf(world)): RuleScript[] => {
-  const listWorld = {
-    scripts: world.scripts, stats: world.stats ?? [], statGroups: world.statGroups ?? [], traits: world.traits ?? [],
-    traitGroups: world.traitGroups ?? [], entities: world.entities ?? [], placeholders: allPlaceholders(world),
-  };
-  return worldScriptList(listWorld, filledScripts, owners).map((listed): RuleScript => {
+  return worldScriptList(scriptTreeWorldOf(world), filledScripts, owners).map((listed): RuleScript => {
     const { box, section } = listed;
     const label = (home: string) => scriptLabel(box, home);
     if (listed.kind === 'world') {
@@ -1053,29 +1072,29 @@ const unknownStatMisses = (world: RuleWorld): { label: string; item: FindingItem
     const misses = new Map<string, boolean>();
     const miss = (text: string, blueprintOwner = false) => misses.set(text, blueprintOwner);
     for (const name of comparedStatNames(code)) {
-      if (!inWorld.has(name) && !ownerKnows(name)) miss(`looks up a stat named ${quote(name)}, which does not exist`);
+      if (!inWorld.has(name) && !ownerKnows(name)) miss(`looks up the unknown stat name ${quote(name)}`);
     }
     for (const { root, entity = '', stat } of scanStatLookups(code)) {
       const named = quote(stat);
       if (root === 'stats') {
-        if (!inWorld.has(stat)) miss(`looks up a stat named ${named}, which does not exist`);
+        if (!inWorld.has(stat)) miss(`looks up the unknown stat name ${named}`);
       } else if (root === 'owner') {
         if ('none' in reach) miss(`looks up ${named} on its owner, but ${reach.none}`);
         else if ('linkers' in reach) {
           for (const { entity: linker } of reach.linkers.filter((owner) => !owner.byCodeName.has(stat))) {
-            miss(`looks up a stat named ${named} on its owner, which ${quote(labelOf(linker?.name, world))} does not have`);
+            miss(`looks up the stat ${named} on its owner, which ${quote(labelOf(linker?.name, world))} doesn’t have`);
           }
         } else if (reach.stats.has(stat)) continue;
-        else if (reach.blueprint) miss(`looks up a stat named ${named} on its owner, which its Blueprint group does not have`, true);
-        else miss(`looks up a stat named ${named} on its owner, which does not exist`);
+        else if (reach.blueprint) miss(`looks up the stat ${named} on its owner, which its Blueprint group doesn’t have`, true);
+        else miss(`looks up the unknown stat name ${named} on its owner`);
       } else if (root === 'persona') {
         if (!owners.playable.some((o) => o.byCodeName.has(stat))) {
-          miss(`looks up a stat named ${named} on the persona, but no entity that can be played has it`);
+          miss(`looks up the stat ${named} on the persona, but no playable entity has it`);
         }
       } else {
         const target = owners.byName.get(entity);
-        if (!target) miss(`looks up a stat on ${quote(entity)}, but no entity is named ${quote(entity)}`);
-        else if (!target.byCodeName.has(stat)) miss(`looks up a stat named ${named} on ${quote(entity)}, which does not exist`);
+        if (!target) miss(`looks up a stat on the unknown entity name ${quote(entity)}`);
+        else if (!target.byCodeName.has(stat)) miss(`looks up the unknown stat name ${named} on ${quote(entity)}`);
       }
     }
     return [...misses].map(([text, blueprintOwner]) => ({ label, item, miss: text, blueprintOwner }));
@@ -1087,7 +1106,7 @@ const scriptUnknownStat: Rule = {
   severity: 'error',
   section: 'stats',
   advanced: true,
-  summary: (count) => `${count} scripts look up stat names that don’t exist`,
+  summary: (count) => `${count} scripts look up unknown stat names`,
   // Code reaches a stat by its code name, which is the same in every playthrough.
   check: (world) => unknownStatMisses(world)
     .filter(({ blueprintOwner }) => !blueprintOwner)
@@ -1099,10 +1118,33 @@ const scriptUnknownBlueprintOwnerStat: Rule = {
   severity: 'warning',
   section: 'stats',
   advanced: true,
-  summary: (count) => `${count} Blueprint stats’ code looks up owner stats their Blueprint group doesn’t have`,
+  summary: (count) => `${count} Blueprint stat scripts look up owner stats their Blueprint group doesn’t have`,
   check: (world) => unknownStatMisses(world)
     .filter(({ blueprintOwner }) => blueprintOwner)
     .map(({ label, item, miss }) => finding(scriptUnknownBlueprintOwnerStat, `${label} ${miss}`, [item])),
+};
+
+// A literal Body name assigned to the `body` of the persona, the owner or an entity. A computed name is skipped.
+const BODY_WRITE = /(?:\b(?:persona|owner)|\bentities(?:\.[\w$]+|\[\s*(?:"[^"]*"|'[^']*')\s*\]))\??\.body\s*=(?!=)\s*(["'`])((?:\\.|(?!\1).)*)\1/g;
+
+/** Every Body name a script assigns to a `body`, unescaped. */
+const assignedBodyNames = (code: string): string[] => [...code.matchAll(BODY_WRITE)]
+  .map((m) => m[2])
+  .filter((literal) => !literal.includes('${'))
+  .map((literal) => literal.replace(/\\(.)/g, '$1'));
+
+const scriptUnknownBody: Rule = {
+  id: 'script-unknown-body',
+  severity: 'error',
+  section: 'stats',
+  advanced: true,
+  summary: (count) => `${count} scripts write Body names the world doesn’t have`,
+  check: (world) => {
+    const known = new Set((world.bodies ?? []).map((body) => body.name));
+    return ruleScripts(world).flatMap(({ listed, label, item }) => [...new Set(assignedBodyNames(listed.box.code))]
+      .filter((name) => !known.has(name))
+      .map((name) => scriptFinding(scriptUnknownBody, `${label} assigns the unknown Body name ${quote(name)}`, item)));
+  },
 };
 
 // A read of a stat's `delta`, in either lookup form. A bare `delta` is nothing the sandbox injects, so only
@@ -1114,12 +1156,12 @@ const scriptBeforeReadsDelta: Rule = {
   severity: 'warning',
   section: 'stats',
   advanced: true,
-  summary: (count) => `${count} scripts read delta in their ${TIMING_LABEL.before} timing, where every source is zero`,
+  summary: (count) => `${count} scripts read delta in their ${TIMING_LABEL.before} timing, where every delta is zero`,
   check: (world) => ruleScripts(world)
     .filter(({ listed: { box } }) => box.timing === 'before' && DELTA_READ.test(box.code))
     .map(({ ref, item }) => finding(
       scriptBeforeReadsDelta,
-      `${ref} reads delta, but it runs before the AI asks and before regen — every delta reads zero there`,
+      `${ref} reads delta, but it runs before the AI and before Regen, so every delta is zero`,
       [item],
     )),
 };
@@ -1129,8 +1171,10 @@ interface WrittenField {
   owner: CodeOwner;
   target: Stat;
   field: string;
-  /** Keyed by the writer's owner, home and script. The label names the script without its owner. */
-  writers: Map<string, { owner: CodeOwner; label: string }>;
+  timing: Script['timing'];
+  /** Keyed by the writer's owner, home and script. The label names the script without its owner; the row key is
+   *  the writer's row in the Scripts tab. */
+  writers: Map<string, { owner: CodeOwner; label: string; rowKey: string | null }>;
 }
 
 const scriptTwoWriters: Rule = {
@@ -1144,45 +1188,50 @@ const scriptTwoWriters: Rule = {
   check: (world) => {
     const owners = codeOwnersOf(world);
     const fields = new Map<string, WrittenField>();
-    const write = (writerKey: string, from: CodeOwner, label: string, script: Script, run: TraitRun & { self?: Stat }) => {
+    const authored = new Map((world.entities ?? []).map((entity) => [entity.id, entity]));
+    const write = (writerKey: string, from: CodeOwner, label: string, rowKey: string | null, script: Script, run: TraitRun & { self?: Stat }) => {
       for (const route of scanStatWrites(script.code)) {
         for (const { owner: targetOwner, stat: target } of routeTargets(owners, run, route)) {
           if (!isStatOn(target)) continue;
           const key = JSON.stringify([script.timing, targetOwner.entity?.id ?? null, target.id, route.field]);
-          const held = fields.get(key) ?? { owner: targetOwner, target, field: route.field, writers: new Map() };
-          held.writers.set(writerKey, { owner: from, label });
+          const held = fields.get(key) ?? { owner: targetOwner, target, field: route.field, timing: script.timing, writers: new Map() };
+          held.writers.set(writerKey, { owner: from, label, rowKey });
           fields.set(key, held);
         }
       }
     };
     for (const script of filledScripts(world)) {
-      write(JSON.stringify(['world', script.id]), owners.world, scriptRef(script, null), script, { owner: null });
+      write(JSON.stringify(['world', script.id]), owners.world, scriptRef(script, null), scriptEntryKey({ kind: 'world' }, script.id), script, { owner: null });
     }
     for (const owner of owners.all) {
       for (const writer of owner.stats.filter(isStatOn)) {
+        const { entity } = owner;
+        const home = entity ? { kind: 'entityStat' as const, entityId: entity.id, stat: writer } : { kind: 'globalStat' as const, stat: writer };
         for (const script of filledCodeBoxes(writer)) {
-          write(JSON.stringify([owner.entity?.id ?? null, 'stat', writer.id, script.id]), owner,
-            scriptRef(script, labelOf(writer.name, world)), script, { self: writer, owner: owner.entity ? owner : null });
+          write(JSON.stringify([entity?.id ?? null, 'stat', writer.id, script.id]), owner,
+            scriptRef(script, labelOf(writer.name, world)), rowKeyOf(home, script.id, authored), script, { self: writer, owner: entity ? owner : null });
         }
       }
     }
     for (const box of traitCodeBoxes(owners, { traits: world.traits ?? [], traitGroups: world.traitGroups ?? [] })) {
       for (const run of box.runs) {
         write(JSON.stringify([run.owner?.entity?.id ?? null, 'trait', box.trait.id, box.id]), run.owner ?? owners.world,
-          scriptRef(box, labelOf(box.trait.name, world)), box, run);
+          scriptRef(box, labelOf(box.trait.name, world)), scriptEntryKey(box.home, box.id), box, run);
       }
     }
-    return [...fields.values()].filter(({ writers }) => writers.size > 1).map(({ owner, target, field, writers }) => {
+    const treeWorld = scriptTreeWorldOf(world);
+    return [...fields.values()].filter(({ writers }) => writers.size > 1).map(({ owner, target, field, timing, writers }) => {
       const howMany = writers.size === 2 ? 'Two' : String(writers.size);
       const { entity } = owner;
       const at = entity ? ` on ${quote(labelOf(entity.name, world))}` : '';
       const item = entity ? { ...asItem(entity, world), section: 'entities' as const } : namedItem(target.id, target.name, world);
+      const placeOf = runRowPlace(treeWorld, timing);
       // A writer from another entity names it; a world script and a same-owner script need no owner.
-      const labels = [...writers.values()].map(({ owner: from, label }) =>
+      const labels = [...writers.values()].sort((a, b) => placeOf(a.rowKey) - placeOf(b.rowKey)).map(({ owner: from, label }) =>
         (from.entity && from !== owner ? `${label} of ${quote(labelOf(from.entity.name, world))}` : label));
       return finding(
         scriptTwoWriters,
-        `${howMany} scripts write the ${field} of ${quote(labelOf(target.name, world))}${at}: ${listNames(labels)}`,
+        `${howMany} scripts write the ${field} of ${quote(labelOf(target.name, world))}${at}, in this order: ${labels.join(', then ')}. Each reads what the one before it wrote.`,
         [item],
       );
     });
@@ -1197,7 +1246,7 @@ const entrySecondaryWithoutPrimary: Rule = {
   section: 'dictionary',
   matching: true,
   advanced: true,
-  summary: (count) => `${count} dictionary entries have secondary keywords but no primary ones, so they can never fire`,
+  summary: (count) => `${count} dictionary entries have secondary keywords but no primary ones, so they never activate`,
   check: (world) => allEntries(world)
     // A constant entry fires regardless of keys, so "can never fire" would be false of it.
     .filter((entry) => !entry.constant && primaryKeys(entry).length === 0 && secondaryKeys(entry).length > 0)
@@ -1205,7 +1254,7 @@ const entrySecondaryWithoutPrimary: Rule = {
       const item = entryItem(entry, world);
       return finding(
         entrySecondaryWithoutPrimary,
-        `${quote(item.name)} has secondary keywords but no primary ones — secondaries only gate a primary hit, so it can never fire`,
+        `${quote(item.name)} has secondary keywords but no primary ones. Secondary keywords only filter a primary match, so it never activates.`,
         [item],
       );
     }),
@@ -1216,13 +1265,13 @@ const entryInert: Rule = {
   severity: 'error',
   section: 'dictionary',
   matching: true,
-  summary: (count) => `${count} dictionary entries have no keywords and aren’t constant, so they can never fire`,
+  summary: (count) => `${count} dictionary entries have no keywords and ${quote('Always Inject')} off, so they never activate`,
   check: (world) => allEntries(world)
     // Secondary-without-primary is the sharper diagnosis; this rule covers the entries with nothing at all.
     .filter((entry) => !entry.constant && primaryKeys(entry).length === 0 && secondaryKeys(entry).length === 0)
     .map((entry) => {
       const item = entryItem(entry, world);
-      return finding(entryInert, `${quote(item.name)} has no keywords and isn’t constant, so it can never fire`, [item]);
+      return finding(entryInert, `${quote(item.name)} has no keywords and ${quote('Always Inject')} off, so it never activates`, [item]);
     }),
 };
 
@@ -1256,10 +1305,10 @@ const noStartingLocation: Rule = {
   id: 'no-starting-location',
   severity: 'error',
   section: 'locations',
-  summary: () => 'No location is flagged as a starting location',
+  summary: () => 'No location is a starting location',
   check: (world) => (world.locations ?? []).some((l) => l.isStarting) ? [] : [finding(
     noStartingLocation,
-    'No location is flagged as a starting location — a new game picks any location at random',
+    'No location is a starting location, so a new game picks any location at random',
     [{ id: 'locations', name: world.worldOverview?.name || 'This World' }],
   )],
 };
@@ -1275,7 +1324,7 @@ const legacyStartLocation: Rule = {
   id: 'legacy-start-location',
   severity: 'warning',
   section: 'locations',
-  summary: (count) => `${count} locations carry the legacy isStartLocation field, which the game no longer reads`,
+  summary: (count) => `${count} locations have the legacy isStartLocation field, which the game ignores`,
   check: (world) => {
     // Mirrors the fix: only a truthy value signals start intent, and only while no live flag carries it —
     // once one does, the leftover has nothing left to say and just needs deleting.
@@ -1283,11 +1332,11 @@ const legacyStartLocation: Rule = {
     return (world.locations ?? []).filter(hasLegacyStart).map((location) => {
       const item = namedItem(location.id, location.name, world);
       const advice = legacyStartValue(location) && !hasLiveStart
-        ? 'flag it as a starting location instead'
-        : 'delete the field';
+        ? 'Mark it as a starting location instead.'
+        : 'Delete the field.';
       return finding(
         legacyStartLocation,
-        `${quote(item.name)} carries the legacy isStartLocation field, which the game no longer reads — ${advice}`,
+        `${quote(item.name)} has the legacy isStartLocation field, which the game ignores. ${advice}`,
         [item],
       );
     });
@@ -1327,7 +1376,7 @@ const entityNoCodeName: Rule = {
   severity: 'warning',
   section: 'entities',
   advanced: true,
-  summary: (count) => `${count} entities have no code name, so scripts can’t reach them`,
+  summary: (count) => `${count} entities have no code name, so scripts can’t look them up`,
   check: (world) => {
     if (!(world.stats ?? []).some((stat) => filledCodeBoxes(stat).length)) return [];
     return (world.entities ?? [])
@@ -1335,7 +1384,7 @@ const entityNoCodeName: Rule = {
       .map((entity) => {
         const item = asItem(entity, world);
         const who = (entity.name ?? '').trim() ? `${quote(item.name)} has no code name` : 'An entity has no name';
-        return finding(entityNoCodeName, `${who}, so scripts can’t reach it`, [item]);
+        return finding(entityNoCodeName, `${who}, so scripts can’t look it up`, [item]);
       });
   },
 };
@@ -1410,7 +1459,7 @@ const statStartNoDescriptor: Rule = {
       return finding(
         statStartNoDescriptor,
         `${quote(item.name)} starts at ${describeInThresholdUnits(stat, statAuthoredStart(stat))}, above its top band, `
-        + `which stops at ${describeInThresholdUnits(stat, top.to)} — the AI is told no status for it until the value drops`,
+        + `which stops at ${describeInThresholdUnits(stat, top.to)}. The AI is told no status for it until the value drops.`,
         [item],
       );
     }),
@@ -1429,11 +1478,11 @@ const statDescriptorOutOfRange: Rule = {
     const above = thresholdValue(stat, stray.threshold) > stat.max;
     return [finding(
       statDescriptorOutOfRange,
-      `${quote(item.name)} bands ${quote(stray.description)} at ${describeThreshold(stat, stray.threshold)}, `
-      + `outside its range of ${stat.min} to ${stat.max} — `
+      `${quote(item.name)} has the band ${quote(stray.description)} at ${describeThreshold(stat, stray.threshold)}, `
+      + `outside its range of ${stat.min} to ${stat.max}. `
       + (above
-        ? 'the value can never climb that far, so the band below it covers everything up to the top'
-        : 'the value can never fall that low, so the band never shows'),
+        ? 'The value never reaches it, so the band below it covers the rest of the range up to Max.'
+        : 'The value never falls that low, so the band never applies.'),
       [item],
     )];
   }),
@@ -1454,7 +1503,7 @@ const statDescriptorCoverageGap: Rule = {
     const item = namedItem(stat.id, stat.name, world);
     return [finding(
       statDescriptorCoverageGap,
-      `${quote(item.name)}’s bands stop at ${describeInThresholdUnits(stat, gap.from)}, short of Max — the AI `
+      `${quote(item.name)}’s bands stop at ${describeInThresholdUnits(stat, gap.from)}, short of Max, so the AI `
       + 'is told no status for the rest of the range',
       [item],
     )];
@@ -1490,7 +1539,7 @@ const statDescriptorDuplicateThreshold: Rule = {
     const item = namedItem(stat.id, stat.name, world);
     return [finding(
       statDescriptorDuplicateThreshold,
-      `${quote(item.name)} has two descriptors at ${describeThreshold(stat, dead[0].threshold)} — only the first applies, so ${quote(dead[0].description)} never shows`,
+      `${quote(item.name)} has two descriptors at ${describeThreshold(stat, dead[0].threshold)}. Only the first applies, so ${quote(dead[0].description)} never shows.`,
       [item],
     )];
   }),
@@ -1518,7 +1567,7 @@ const statPercentageBounds: Rule = {
     const item = namedItem(stat.id, stat.name, world);
     return finding(
       statPercentageBounds,
-      `${quote(item.name)} is a percentage stat but runs from ${stat.min} to ${stat.max} — its value is displayed as a bare “%”, so the player is shown the raw number`,
+      `${quote(item.name)} is a percentage stat but runs from ${stat.min} to ${stat.max}, so the player sees the raw number with a “%”`,
       [item],
     );
   }),
@@ -1559,14 +1608,14 @@ const statTraitDeltaClamped: Rule = {
   severity: 'warning',
   section: 'stats',
   advanced: true,
-  summary: (count) => `${count} trait stat penalties land on a stat already at its floor, so the clamp swallows them whole`,
+  summary: (count) => `${count} trait stat penalties apply to a stat already at its floor, so the clamp cancels them`,
   check: (world) => traitValueChanges(world)
     .filter(({ stat, trait, delta }) => delta < 0 && statStartValue(stat) <= traitFloor(stat, trait))
     .map(({ stat, trait, delta }) => {
       const items = statAndTrait(stat, trait, world);
       return finding(
         statTraitDeltaClamped,
-        `${quote(items[1].name)} lowers ${quote(items[0].name)} by ${Math.abs(delta)}, but it already starts at its floor of ${traitFloor(stat, trait)} — the clamp swallows the whole change`,
+        `${quote(items[1].name)} lowers ${quote(items[0].name)} by ${Math.abs(delta)}, but ${quote(items[0].name)} starts at its floor of ${traitFloor(stat, trait)}, so the clamp cancels the whole change`,
         items,
       );
     }),
@@ -1591,7 +1640,7 @@ const scriptOverridesTrait: Rule = {
   severity: 'warning',
   section: 'stats',
   advanced: true,
-  summary: (count) => `${count} trait stat changes target stats whose code recomputes them from scratch, which erases the change`,
+  summary: (count) => `${count} trait stat changes target stats whose scripts recompute them, which overwrites the change`,
   // Judged per box, because a stat can read itself in one box and recompute from scratch in the other, and
   // only a box that recomputes erases the change. Reported per trait change, so the count stays a count of
   // changes: the message names every box at fault rather than raising the same change twice.
@@ -1603,8 +1652,8 @@ const scriptOverridesTrait: Rule = {
     return [finding(
       scriptOverridesTrait,
       `${quote(items[1].name)} ${delta < 0 ? 'lowers' : 'raises'} ${quote(items[0].name)} by ${Math.abs(delta)}, `
-      + `but that stat’s ${boxes} code ${guilty.length > 1 ? 'recompute' : 'recomputes'} its value `
-      + 'without reading it — the change is gone by the next run',
+      + `but that stat’s ${boxes} ${guilty.length > 1 ? 'scripts recompute' : 'script recomputes'} its value `
+      + 'without reading it, so the next run overwrites the change',
       items,
     )];
   }),
@@ -1615,7 +1664,7 @@ const statAiLockFrozen: Rule = {
   severity: 'info',
   section: 'stats',
   advanced: true,
-  summary: (count) => `${count} stats are locked against the AI with nothing else able to move them`,
+  summary: (count) => `${count} stats block AI changes, and nothing else changes them`,
   check: (world) => {
     const movedByTrait = new Set((world.traits ?? []).flatMap((trait) =>
       (trait.statChanges ?? []).filter((change) => change.type === 'starting').map((change) => change.statId),
@@ -1627,7 +1676,7 @@ const statAiLockFrozen: Rule = {
         const item = namedItem(stat.id, stat.name, world);
         return finding(
           statAiLockFrozen,
-          `${quote(item.name)} is locked against the AI in both directions and has no code, regen or trait change to move it — its value never changes during the game`,
+          `${quote(item.name)} blocks AI changes in both directions and has no script, Regen or trait change, so its value never changes during the game`,
           [item],
         );
       });
@@ -1640,7 +1689,7 @@ const locationParentOrphan: Rule = {
   id: 'location-parent-orphan',
   severity: 'error',
   section: 'locations',
-  summary: (count) => `${count} locations sit under a parent location that doesn’t exist`,
+  summary: (count) => `${count} locations have a parent location that doesn’t exist`,
   check: (world) => {
     const known = new Set((world.locations ?? []).map((l) => l.id));
     return (world.locations ?? [])
@@ -1649,7 +1698,7 @@ const locationParentOrphan: Rule = {
         const item = namedItem(location.id, location.name, world);
         return finding(
           locationParentOrphan,
-          `${quote(item.name)} sits under a parent location that doesn’t exist — the containment tree is silently broken`,
+          `${quote(item.name)} has a parent location that doesn’t exist`,
           [item],
         );
       });
@@ -1667,7 +1716,7 @@ const connectionEndpointOrphan: Rule = {
   id: 'connection-endpoint-orphan',
   severity: 'warning',
   section: 'locations',
-  summary: (count) => `${count} travel links point at locations that don’t exist`,
+  summary: (count) => `${count} travel links name locations that don’t exist`,
   check: (world) => {
     const byId = new Map((world.locations ?? []).map((l) => [l.id, l]));
     return (world.connections ?? []).flatMap((connection) => {
@@ -1679,8 +1728,8 @@ const connectionEndpointOrphan: Rule = {
       // The way in is the endpoint that still exists — the link itself has no row of its own to open.
       const item = survivor ? namedItem(survivor.id, survivor.name, world) : worldItem(world);
       const message = survivor
-        ? `A travel link ${from ? 'from' : 'to'} ${quote(item.name)} points at a location that doesn’t exist — it can never be traveled`
-        : 'A travel link runs between two locations that don’t exist';
+        ? `A travel link ${from ? 'from' : 'to'} ${quote(item.name)} names a location that doesn’t exist, so the player can never travel it`
+        : 'A travel link connects two locations that don’t exist';
       return [finding(connectionEndpointOrphan, message, [item])];
     });
   },
@@ -1718,7 +1767,7 @@ const aliasLowercaseNoTwin: Rule = {
   matching: true,
   advanced: true,
   summary: (count) =>
-    `${count} lowercase multi-word aliases have no capitalized twin — alias matching is case-sensitive, so they miss wherever the text capitalizes them`,
+    `${count} lowercase multi-word aliases have no capitalized copy. Alias matching is case-sensitive, so they miss wherever the text capitalizes them.`,
   check: (world) => (world.entities ?? []).flatMap((entity) => {
     const aliases = aliasesOf(entity, world);
     const name = describePlaceholders(entity.name ?? '', allPlaceholders(world));
@@ -1732,7 +1781,7 @@ const aliasLowercaseNoTwin: Rule = {
       .filter((alias) => !aliases.some((twin) => twin !== alias && twin.toLowerCase() === alias.toLowerCase()))
       .map((alias) => finding(
         aliasLowercaseNoTwin,
-        `Alias ${quote(alias)} is all lowercase with no capitalized twin — alias matching is case-sensitive, so ${quote(alias.charAt(0).toUpperCase() + alias.slice(1))} at a sentence start is never detected`,
+        `Alias ${quote(alias)} is all lowercase with no capitalized copy. Alias matching is case-sensitive, so ${quote(alias.charAt(0).toUpperCase() + alias.slice(1))} at a sentence start is never detected.`,
         [asItem(entity, world)],
       ));
   }),
@@ -1744,7 +1793,7 @@ const entityNameInWildcardPool: Rule = {
   section: 'entities',
   matching: true,
   advanced: true,
-  summary: (count) => `${count} entity names double as Wildcard values, so a roll can impersonate the entity`,
+  summary: (count) => `${count} entity names are also Wildcard values, so a roll can read as a mention of the entity`,
   check: (world) => (world.entities ?? []).flatMap((entity) => {
     const nameKey = matchKey(describePlaceholders(entity.name ?? '', allPlaceholders(world)));
     if (!nameKey) return [];
@@ -1754,7 +1803,7 @@ const entityNameInWildcardPool: Rule = {
         const item = asItem(entity, world);
         return finding(
           entityNameInWildcardPool,
-          `${quote(item.name)} is also a value of the Wildcard ${quote(ph.name)} — a roll that lands on it reads as a mention of the entity`,
+          `${quote(item.name)} is also a value of the Wildcard ${quote(ph.name)}, so a roll of that value reads as a mention of the entity`,
           [item, placeholderItem(ph.id, world, 'placeholders')],
         );
       });
@@ -1764,8 +1813,8 @@ const entityNameInWildcardPool: Rule = {
 // An authored summary is served wherever a prompt prefers one, so only the narrator's roster of who is
 // here is left with a bare name. Saying "only its name" for that entity would simply be untrue.
 const aiBlindTail = (entity: Entity): string => entity.aiSummary?.trim()
-  ? ' — the narrator’s roster of who is here carries only its name, while every other prompt serves the summary'
-  : ' — the prompt carries only its name';
+  ? '. The Narration Prompt’s list of entities here gets only its name, and every other prompt gets its AI summary.'
+  : ', so the AI gets only its name';
 
 /** The description-coverage rules, one per gap — split so each grouped row counts one kind of gap. They are
  *  mutually exclusive: an entity missing both descriptions is only the both-rule's finding. */
@@ -1848,13 +1897,13 @@ const entityLongDescriptionNoSummary: Rule = {
   section: 'entities',
   advanced: true,
   summary: (count) =>
-    `${count} items have a long AI description and no AI summary, so the whole text enters the prompt every time`,
+    `${count} items have a long AI description and no AI summary, so every prompt gets the whole description`,
   check: (world) => summaryOwners(world).flatMap((owner) => {
     const tokens = resolvedTokens(owner.text.aiDescription, world);
     if (owner.text.aiSummary?.trim() || tokens <= LONG_AI_DESCRIPTION_TOKENS) return [];
     return [finding(
       entityLongDescriptionNoSummary,
-      `${quote(owner.item.name)}’s AI description is ~${tokens} tokens with no AI summary — the whole text enters the prompt every time`,
+      `${quote(owner.item.name)}’s AI description is ~${tokens} tokens with no AI summary, so every prompt gets the whole description`,
       [owner.item],
     )];
   }),
@@ -1865,7 +1914,7 @@ const aiSummaryHidesDescription: Rule = {
   severity: 'info',
   section: 'entities',
   advanced: true,
-  summary: (count) => `${count} items’ AI summaries save almost nothing over the descriptions they hide`,
+  summary: (count) => `${count} items’ AI summaries save almost nothing over their AI descriptions`,
   // The summary against the description it replaces, not the description alone: a summary earns hiding the
   // full text by what it saves, so real savings clear a marginal ratio and tiny savings don't.
   check: (world) => summaryOwners(world).flatMap((owner) => {
@@ -1877,13 +1926,13 @@ const aiSummaryHidesDescription: Rule = {
     const savings = description - summary;
     if (savings >= SUMMARY_SAVINGS_FLOOR_TOKENS) return [];
     const trade = savings > 0
-      ? `this only saves ~${savings} tokens a turn`
+      ? `it only saves ~${savings} tokens a turn`
       : savings === 0
-        ? 'this saves nothing'
-        : `this costs ~${-savings} tokens more a turn`;
+        ? 'it saves nothing'
+        : `it costs ~${-savings} tokens more a turn`;
     return [finding(
       aiSummaryHidesDescription,
-      `${quote(owner.item.name)} has a ~${description}-token AI description and a ~${summary}-token AI summary — ${trade}`,
+      `${quote(owner.item.name)} has a ~${description}-token AI description and a ~${summary}-token AI summary, so ${trade}`,
       [owner.item],
     )];
   }),
@@ -1930,7 +1979,7 @@ const traitGroupDefaultsOverMax: Rule = {
     const allowed = max === 1 ? 'one active trait' : `${max} active traits`;
     return [finding(
       traitGroupDefaultsOverMax,
-      `${groupSubject(group, owner, world)} allows ${allowed} but marks ${listNames(defaultItems.map((i) => i.name))} as defaults — only ${max === 1 ? 'one' : max} can actually apply`,
+      `${groupSubject(group, owner, world)} allows ${allowed} but marks ${listNames(defaultItems.map((i) => i.name))} as defaults, so only ${max === 1 ? 'one' : max} can apply`,
       [groupItem, ...defaultItems],
     )];
   })),
@@ -2007,7 +2056,7 @@ const traitGroupDefaultsBelowMin: Rule = {
   summary: (count) => `${count} trait groups start with fewer picks than they need`,
   check: (world) => gateReportOf(world).picks.filter((p) => p.kind === 'defaults').map((p) => finding(
     traitGroupDefaultsBelowMin,
-    `${groupSubject(p.group, p.owner, world)} needs at least ${picksOf(p.min)} but a new game starts with ${p.count} — the defaults don’t meet the minimum`,
+    `${groupSubject(p.group, p.owner, world)} needs at least ${picksOf(p.min)} but a new game starts with ${p.count}, so the defaults don’t meet the minimum`,
     shortfallItems(p, world),
   )),
 };
@@ -2027,7 +2076,7 @@ const traitGroupTooSmall: Rule = {
         const item = namedItem(group.id, group.name, world);
         return finding(
           traitGroupTooSmall,
-          `${quote(item.name)} is an exclusive group with ${size === 0 ? 'no traits' : 'only one trait'} — a choice that isn’t a choice`,
+          `${quote(item.name)} is an exclusive group with ${size === 0 ? 'no traits' : 'only one trait'}, so the player has nothing to choose`,
           [item],
         );
       });
@@ -2266,7 +2315,7 @@ const gateReportOf = (world: RuleWorld): GateReport => {
       if (req.kind !== 'stat' || (gate.link && (!overridden || inOriginal(gate, req)))) return;
       const read = statsRead(gate, req);
       const stat = labelOf(read[0]?.name ?? req.name ?? '', world);
-      // An effect lands on the trait's owner, or on the global stat for a `target: 'global'` row.
+      // An effect applies to the trait's owner, or to the global stat for a `target: 'global'` row.
       const readers = readOwners(gate, req);
       const changes = effects.some((row) => row.statId === req.id && readers.includes(row.target === 'global' ? null : gate.owner.id));
       if (changes && !reported.has(req.id)) {
@@ -2450,13 +2499,13 @@ function stuckMessage(set: GateTrait[], world: RuleWorld): string {
   const ownerIds = new Set(set.map((t) => (t.ownerName === null ? null : t.ownerId)));
   const ownerLabel = ownerIds.size === 1 ? set[0].ownerName : null;
   if (ownerLabel === null) {
-    return `${onOwners(set, world)} can never unlock — no pick or persona can meet ${set.length === 1 ? 'its' : 'their'} requirements`;
+    return `${onOwners(set, world)} can never unlock, because no pick or persona meets ${set.length === 1 ? 'its' : 'their'} requirements`;
   }
   const verb = set.every((t) => t.link) ? 'links' : 'has';
   if (set.length === 1) {
     return `${name(ownerLabel)} ${verb} ${traits} but can never meet ${set[0].requirements}, so it never unlocks`;
   }
-  return `${name(ownerLabel)} ${verb} ${traits}, which can never unlock — nothing ${name(ownerLabel)} can hold meets their requirements`;
+  return `${name(ownerLabel)} ${verb} ${traits}, which can never unlock, because nothing ${name(ownerLabel)} can have meets their requirements`;
 }
 
 /** Each trait of a gate finding by name, with its owner when an entity owns it. */
@@ -2485,7 +2534,7 @@ const traitRequirementUnstable: Rule = {
   check: (world) => gateReportOf(world).unstable.map((set) => {
     return finding(
       traitRequirementUnstable,
-      `${onOwners(set, world)} can never settle — their requirements loop through a Not`,
+      `${onOwners(set, world)} can never settle, because their requirements loop through a Not`,
       gateItems(set, world),
     );
   }),
@@ -2539,7 +2588,7 @@ const traitRequirementGlobalSameOwner: Rule = {
     const item = heldItem(gate, world);
     return finding(
       traitRequirementGlobalSameOwner,
-      `${quote(item.name)} is a global trait and requires ${condition} from the same owner. Only entities have it, so the requirement never holds. Pick You or an entity as the owner`,
+      `${quote(item.name)} is a global trait and requires ${condition} from the same owner. Only entities have it, so the requirement never holds. Pick ${quote('You')} or an entity as the owner.`,
       [item],
     );
   }),
@@ -2556,7 +2605,7 @@ const traitGateReadsOwnStat: Rule = {
     const subject = subjectOf(gate, item, world);
     return finding(
       traitGateReadsOwnStat,
-      `${subject} requires ${quote(stat)} and changes ${quote(stat)} — its own effect can flip the requirement, so gate it on another stat`,
+      `${subject} requires ${quote(stat)} and changes ${quote(stat)}, so its own effect can turn the requirement off. Base the requirement on another stat.`,
       [item],
     );
   }),
@@ -2572,7 +2621,7 @@ const requirementPercentZeroSpan: Rule = {
     const subject = subjectOf(gate, item, world);
     return finding(
       requirementPercentZeroSpan,
-      `${subject} requires ${condition}, but ${quote(stat)} has the same min and max, so it always reads 0% — use a raw number or widen its range`,
+      `${subject} requires ${condition}, but ${quote(stat)} has the same min and max, so it always reads 0%. Use a raw number or widen its range.`,
       [item],
     );
   }),
@@ -2589,7 +2638,7 @@ const traitDefaultGated: Rule = {
       const subject = onOwner(quote(item.name), gate?.link ? quote(labelOf(gate.owner.name, world)) : null);
       return finding(
         traitDefaultGated,
-        `${subject} is marked default but starts unselected — no starting default or persona choice meets ${requirements}`,
+        `${subject} is a default but starts unselected, because no starting default or persona choice meets ${requirements}`,
         [item],
       );
     });
@@ -2745,7 +2794,7 @@ const entityImagesAllHideable: Rule = {
     const item = asItem(entity, world);
     return finding(
       entityImagesAllHideable,
-      `${quote(item.name)} can end up with no image — every image has a Visibility rule, and the rules cover neither a Condition and its opposite nor every pick of a required one-pick group`,
+      `${quote(item.name)} can end up with no image. Every image has a Visibility Rule, and the rules cover neither a Condition and its opposite nor every pick of a required one-pick group.`,
       [item],
     );
   }),
@@ -2760,7 +2809,7 @@ const imageRulePercentZeroSpan: Rule = {
     const item = asItem(entity, world);
     return finding(
       imageRulePercentZeroSpan,
-      `${quote(item.name)}, image ${position} requires ${condition}, but ${quote(stat)} has the same min and max, so it always reads 0% — use a raw number or widen its range`,
+      `${quote(item.name)}, image ${position} requires ${condition}, but ${quote(stat)} has the same min and max, so it always reads 0%. Use a raw number or widen its range.`,
       [item],
     );
   }),
@@ -2944,7 +2993,7 @@ const copyPinRemovedValue: Rule = {
       const valueText = (id: string) => labelOf(byId.get(copy.blueprintId)?.values.find((v) => v.id === id)?.text, world);
       return [...hits.values()].map(({ valueId, label, item }) => finding(
         copyPinRemovedValue,
-        `${quote(target.name)} removes ${quote(valueText(valueId))}, the value ${quote(label)} pins — the pin applies nothing`,
+        `${quote(target.name)} removes ${quote(valueText(valueId))}, the value ${quote(label)} pins, so the pin is ignored`,
         [target, item],
       ));
     });
@@ -2985,7 +3034,7 @@ const blueprintRefusedField: Rule = {
   severity: 'warning',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} items hold a blueprint chip or pin in a field that refuses it`,
+  summary: (count) => `${count} items hold a blueprint chip or pin in a field that doesn’t accept it`,
   // Every insert path refuses these, so a hit is one that got through, such as in a hand-edited file.
   check: (world) => {
     const blueprints = blueprintIds(world);
@@ -3046,7 +3095,7 @@ const copyMissing: Rule = {
       const entity = byId.get(entityId);
       if (!entity) return [];
       return [...needs].filter(([blueprintId]) => !copyOf(entity, blueprintId)).flatMap(([blueprintId, why]) => {
-        // An own-text need names a copy the entity holds, so it never lands here.
+        // An own-text need names a copy the entity holds, so it never reaches this branch.
         if (why.kind === 'own') return [];
         const source = why.kind === 'trait'
           ? ownerTraitItem(why.item, ownersOf(world).get(entityId), world)
@@ -3064,8 +3113,8 @@ const copyMissing: Rule = {
 
 // ── Placeholder pools ─────────────────────────────────────────────────────────────────────────────────────
 
-/** The values a roll can actually land on. Every value benched falls back to a uniform draw
- *  (`weightedPick`), so an all-zero weight map benches nothing. */
+/** The values a roll can draw. A map that zeroes every value falls back to a uniform draw
+ *  (`weightedPick`), so an all-zero weight map excludes nothing. */
 const drawableValues = (ph: Placeholder): PlaceholderValue[] => {
   const values = ph.values ?? [];
   const positive = values.filter((value) => placeholderWeight(ph, value) > 0);
@@ -3093,8 +3142,8 @@ const placeholderWeightUnknownValue: Rule = {
     return [finding(
       placeholderWeightUnknownValue,
       dead.length === 1
-        ? `${quote(item.name)} weights a value it no longer has — that weight applies to nothing`
-        : `${quote(item.name)} weights ${dead.length} values it no longer has — those weights apply to nothing`,
+        ? `${quote(item.name)} weights a value it doesn’t have, so that weight is ignored`
+        : `${quote(item.name)} weights ${dead.length} values it doesn’t have, so those weights are ignored`,
       [item],
     )];
   }),
@@ -3124,7 +3173,7 @@ const wildcardSingleValue: Rule = {
       const item = placeholderItem(ph.id, world);
       return finding(
         wildcardSingleValue,
-        `${quote(item.name)} benches every value but ${quote(drawableValues(ph)[0].text)} by weight, so every roll lands the same`,
+        `${quote(item.name)} weights every value but ${quote(drawableValues(ph)[0].text)} to zero, so every roll draws that value`,
         [item],
       );
     }),
@@ -3183,7 +3232,7 @@ const placeholderSlotMiss: Rule = {
   section: 'placeholders',
   advanced: true,
   summary: (count) =>
-    `${count} placed paths name a slot some variant doesn’t carry, so they resolve to nothing whenever it rolls`,
+    `${count} placed paths name a slot some variant doesn’t have, so they resolve to nothing whenever that variant rolls`,
   // Reported against the variant that came up short, not the chip that asked: one missing slot strands every
   // sentence pointing at it, and the repair is always in the placeholder, never in the text.
   check: (world) => {
@@ -3201,7 +3250,7 @@ const placeholderSlotMiss: Rule = {
       const item = placeholderItem(placeholderId, world);
       return finding(
         placeholderSlotMiss,
-        `${quote(item.name)} carries no ${quote(asked)}, so a placed ${quote(asked)} path routed through it resolves to nothing`,
+        `${quote(item.name)} has no ${quote(asked)}, so a placed ${quote(asked)} path through it resolves to nothing`,
         [item],
       );
     });
@@ -3215,7 +3264,7 @@ const placeholderDanglingReference: Rule = {
   severity: 'error',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} placeholder chips point at a placeholder that no longer exists`,
+  summary: (count) => `${count} placeholder chips name a placeholder that doesn’t exist`,
   check: (world) => {
     const known = new Set(allPlaceholders(world).map((p) => p.id));
     const gone = (id: string) => !known.has(id);
@@ -3228,7 +3277,7 @@ const placeholderDanglingReference: Rule = {
         .filter((token) => gone(token.id) || drilledIntoNothing(token))
         .map(() => finding(
           placeholderDanglingReference,
-          `A value of ${quote(item.name)} points at a placeholder that no longer exists`,
+          `A value of ${quote(item.name)} names a placeholder that doesn’t exist`,
           [item],
         ));
     });
@@ -3237,7 +3286,7 @@ const placeholderDanglingReference: Rule = {
       .filter(drilledIntoNothing)
       .map(() => finding(
         placeholderDanglingReference,
-        `${quote(owner.item.name)} drills into a placeholder that no longer exists`,
+        `${quote(owner.item.name)} has a path through a placeholder that doesn’t exist`,
         [owner.item],
       )));
     return [...inValues, ...inText];
@@ -3299,7 +3348,7 @@ const placeholderEmptyRecord: Rule = {
   severity: 'warning',
   section: 'placeholders',
   advanced: true,
-  // Both nouns can land here, so the count line names neither: an Object joins every value, and a Variable
+  // Both nouns can reach this branch, so the count line names neither: an Object joins every value, and a Variable
   // has the one. Each finding says which it is.
   summary: (count) => `${count} placeholders join their values into nothing, so a chip of one shows no text`,
   // Never a Wildcard: one of those showing nothing is one empty value in a pool, which is the author's business.
@@ -3318,8 +3367,8 @@ const placeholderEmptyRecord: Rule = {
         return [finding(
           placeholderEmptyRecord,
           placeholderKindNoun(ph) === 'Object'
-            ? `${quote(item.name)} is an Object whose values join into nothing — a chip of it shows no text at all`
-            : `${quote(item.name)} is a Variable whose one value reads as nothing — a chip of it shows no text at all`,
+            ? `${quote(item.name)} is an Object whose values join into empty text, so a chip of it shows no text`
+            : `${quote(item.name)} is a Variable whose one value is empty, so a chip of it shows no text`,
           [item],
         )];
       });
@@ -3331,7 +3380,7 @@ const placeholderDuplicateSlot: Rule = {
   severity: 'warning',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} placeholders carry two slots under one name, so a path naming it always takes the first`,
+  summary: (count) => `${count} placeholders have two slots with one name, so a path that names it always resolves to the first`,
   check: (world) => allPlaceholders(world).flatMap((ph) => {
     const names = placeholderChildren(ph, allPlaceholders(world)).map((child) => child.target.name);
     const repeated = [...new Set(names.filter((name, i) => names.indexOf(name) !== i))];
@@ -3339,7 +3388,7 @@ const placeholderDuplicateSlot: Rule = {
     const item = placeholderItem(ph.id, world);
     return [finding(
       placeholderDuplicateSlot,
-      `${quote(item.name)} carries ${listNames(repeated.map(quote))} more than once — a path naming it always takes the first, and the rest are unreachable`,
+      `${quote(item.name)} has ${listNames(repeated.map(quote))} more than once. A path that names one always resolves to the first.`,
       [item],
     )];
   }),
@@ -3392,7 +3441,7 @@ const placeholderSharedWeightUnknownValue: Rule = {
   severity: 'warning',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} shared rows weight values their original no longer carries`,
+  summary: (count) => `${count} shared rows weight values their original doesn’t have`,
   check: (world) => {
     const byId = placeholdersById(world);
     return allPlaceholders(world).flatMap((ph) => deadSharedWeights(ph, byId).map(({ original, dead }) => {
@@ -3402,8 +3451,8 @@ const placeholderSharedWeightUnknownValue: Rule = {
       return finding(
         placeholderSharedWeightUnknownValue,
         dead.length === 1
-          ? `${quote(item.name)} weights a value ${from} no longer carries — that weight applies to nothing`
-          : `${quote(item.name)} weights ${dead.length} values ${from} no longer carries — those weights apply to nothing`,
+          ? `${quote(item.name)} weights a value ${from} doesn’t have, so that weight is ignored`
+          : `${quote(item.name)} weights ${dead.length} values ${from} doesn’t have, so those weights are ignored`,
         [item],
       );
     }));
@@ -3462,7 +3511,7 @@ const placeholderOwnerOrphan: Rule = {
     const item = placeholderItem(ph.id, world);
     return finding(
       placeholderOwnerOrphan,
-      `${quote(item.name)} belongs to a placeholder that no longer exists, so it sits at the top level instead`,
+      `${quote(item.name)} belongs to a placeholder that doesn’t exist, so it shows at the top level`,
       [item],
     );
   }),
@@ -3476,13 +3525,13 @@ const placeholderOwnerDropped: Rule = {
   severity: 'warning',
   section: 'placeholders',
   advanced: true,
-  summary: (count) => `${count} owned placeholders are no longer held by the placeholder they belong to`,
+  summary: (count) => `${count} owned placeholders aren’t held by the placeholder they belong to`,
   check: (world) => staleOwners(world, 'dropped').map((ph) => {
     const item = placeholderItem(ph.id, world);
     const owner = quote(placeholderItem(ph.ownerId ?? '', world).name);
     return finding(
       placeholderOwnerDropped,
-      `${quote(item.name)} says it belongs to ${owner}, which no longer holds it — so it sits at the top level instead`,
+      `${quote(item.name)} belongs to ${owner}, which doesn’t hold it, so it shows at the top level`,
       [item],
     );
   }),
@@ -3497,7 +3546,7 @@ const dictionaryKeywordSubstring: Rule = {
   section: 'dictionary',
   matching: true,
   summary: (count) =>
-    `${count} dictionary keywords are substrings of another entry’s keyword with whole-word matching off, so text meant for one fires both`,
+    `${count} dictionary keywords are substrings of another entry’s keyword with ${quote('Whole Words')} off, so text meant for one activates both`,
   check: (world) => {
     const entries = allEntries(world);
     return entries.flatMap((entry) => {
@@ -3519,7 +3568,7 @@ const dictionaryKeywordSubstring: Rule = {
             const otherItem = entryItem(other, world);
             return [finding(
               dictionaryKeywordSubstring,
-              `${quote(item.name)}’s keyword ${quote(keyword)} is a substring of ${quote(hit)} on ${quote(otherItem.name)} — with whole-word matching off, text meant for one fires both`,
+              `${quote(item.name)}’s keyword ${quote(keyword)} is a substring of ${quote(hit)} on ${quote(otherItem.name)}, and ${quote('Whole Words')} is off, so text meant for one activates both`,
               [item, otherItem],
             )];
           });
@@ -3557,9 +3606,10 @@ const entryEnabledWrites = (code: string): EntryEnabledWrite[] => [...code.match
   return [{ book: book ? book.slice(1).find((group) => group !== undefined) ?? '' : null, entry: key.name }];
 });
 
-/** Every filled script's code and every Tool script handler's code. */
+/** Every filled script's code, every item script's code and every Tool script handler's code. */
 const allScriptCode = (world: RuleWorld): string[] => [
   ...ruleScripts(world).map(({ listed }) => listed.box.code),
+  ...(world.items ?? []).flatMap((item) => (item.scripts ?? []).map((script) => script.code)),
   ...(world.tools ?? []).flatMap((tool) => (tool.handler.kind === 'script' ? [tool.handler.code] : [])),
 ];
 
@@ -3581,7 +3631,7 @@ const dictionaryDisabled: Rule = {
         // The book is the broader diagnosis, so its entries' own toggles aren't repeated under it.
         return [finding(
           dictionaryDisabled,
-          `The book ${quote(item.name)} is disabled — none of its entries can fire`,
+          `The book ${quote(item.name)} is disabled, so none of its entries can activate`,
           [item],
         )];
       }
@@ -3595,7 +3645,7 @@ const dictionaryDisabled: Rule = {
         })
         .map((entry) => {
           const item = entryItem(entry, world);
-          return finding(dictionaryDisabled, `${quote(item.name)} is disabled and no script switches it on — it can’t fire`, [item]);
+          return finding(dictionaryDisabled, `${quote(item.name)} is disabled and no script turns it on, so it can’t activate`, [item]);
         });
     });
   },
@@ -3616,7 +3666,7 @@ const worldEmptySystemPrompt: Rule = {
   summary: () => 'The world’s system prompt is empty',
   check: (world) => world.worldOverview?.systemPrompt?.trim() ? [] : [finding(
     worldEmptySystemPrompt,
-    'The system prompt is empty — the AI is told nothing about how to run this world',
+    'The system prompt is empty, so the AI gets no instructions for this world',
     [worldItem(world)],
   )],
 };
@@ -3629,7 +3679,7 @@ const worldNoReadme: Rule = {
   // An introduction readme counts: the two share one show-on-enter toggle, so either one greets the player.
   check: (world) => world.worldOverview?.readme?.trim() || world.worldOverview?.introReadme?.trim() ? [] : [finding(
     worldNoReadme,
-    'The world has no readme — a player entering it gets no introduction',
+    'The world has no readme, so a player gets no introduction',
     [worldItem(world)],
   )],
 };
@@ -3640,12 +3690,13 @@ const worldNoReadme: Rule = {
 const embeddedImageSlots = (world: RuleWorld): Array<{ item: FindingItem; url: string; cap: ImageCap; overBudget: boolean }> =>
   worldImageItems(world).map((media) => ({ item: imageOwner(media, world), url: media.value, cap: media.budget, overBudget: media.overBudget }));
 
-/** The row an image's finding opens: its entity or location, the world for the thumbnail, else its Media card. */
+/** The row an image's finding opens: its entity, location or item, the world for the thumbnail, else its Media card. */
 const imageOwner = (media: MediaItem, world: RuleWorld): FindingItem => {
   const { kind, id, name } = media.parent;
   const entity = kind === 'entity' ? world.entities?.find((e) => e.id === id) : undefined;
   if (entity) return { ...asItem(entity, world), section: 'entities' };
   if (kind === 'location') return namedItem(id, name, world, 'locations');
+  if (kind === 'item') return namedItem(id, name, world, 'items');
   if (kind === 'world') return worldItem(world);
   return { id: media.id, name, section: 'media' };
 };
@@ -3654,12 +3705,12 @@ const worldOversizedImages: Rule = {
   id: 'world-oversized-images',
   severity: 'info',
   section: 'overview',
-  summary: (count) => `${count} embedded images are over their size budget — Optimize Images can shrink them`,
+  summary: (count) => `${count} embedded images are over their size budget. ${quote('Optimize Images')} can shrink them.`,
   check: (world) => embeddedImageSlots(world)
     .filter(({ overBudget }) => overBudget)
     .map(({ item, url, cap }) => finding(
       worldOversizedImages,
-      `${quote(item.name)}’s image is ${formatBytes(dataUrlBytes(url))}, over its ${formatBytes(cap.maxBytes)} budget — Optimize Images can shrink it`,
+      `${quote(item.name)}’s image is ${formatBytes(dataUrlBytes(url))}, over its ${formatBytes(cap.maxBytes)} budget. ${quote('Optimize Images')} can shrink it.`,
       [item],
     )),
 };
@@ -3680,7 +3731,7 @@ const imageNotWebp: Rule = {
     .map(({ item, url }) => finding(
       imageNotWebp,
       `${quote(item.name)}’s image is ${imageFormatLabel(dataUrlRealMime(url))}`
-      + ' — converting it to lossless WebP would shrink it with no quality loss',
+      + '. Lossless WebP makes it smaller with no quality loss.',
       [item],
     )),
 };
@@ -3701,7 +3752,7 @@ const imageMislabeled: Rule = {
     .map(({ item, url }) => finding(
       imageMislabeled,
       `${quote(item.name)}’s image is labeled ${imageFormatLabel(dataUrlMime(url))} but its bytes are `
-      + `${imageFormatLabel(sniffDataUrlMime(url))} — Fix corrects the label`,
+      + `${imageFormatLabel(sniffDataUrlMime(url))}. ${quote('Fix')} corrects the label.`,
       [item],
     )),
   // Format decisions everywhere already read the bytes, so the label is corrected, never trusted.
@@ -3710,22 +3761,18 @@ const imageMislabeled: Rule = {
     const nextThumb = thumb ? relabelDataUrl(thumb) : thumb;
     let out = nextThumb === thumb ? world
       : { ...world, worldOverview: { ...world.worldOverview, thumbnail: nextThumb } };
-    out = withSlice(out, 'entities', mapChanged(world.entities ?? [], (entity) => {
-      const images = entityImages(entity);
-      const next = mapChanged(images, (img) => {
-        const data = relabelDataUrl(img.data);
-        return data === img.data ? img : { ...img, data };
+    const relabelGalleries = <T extends { images?: GalleryImage[] }>(list: T[], imagesOf: (record: T) => GalleryImage[]): T[] =>
+      mapChanged(list, (record) => {
+        const images = imagesOf(record);
+        const next = mapChanged(images, (img) => {
+          const data = relabelDataUrl(img.data);
+          return data === img.data ? img : { ...img, data };
+        });
+        return next === images ? record : { ...record, images: next };
       });
-      return next === images ? entity : { ...entity, images: next };
-    }));
-    out = withSlice(out, 'locations', mapChanged(world.locations ?? [], (location) => {
-      const images = locationImages(location);
-      const next = mapChanged(images, (img) => {
-        const data = relabelDataUrl(img.data);
-        return data === img.data ? img : { ...img, data };
-      });
-      return next === images ? location : { ...location, images: next };
-    }));
+    out = withSlice(out, 'entities', relabelGalleries(world.entities ?? [], entityImages));
+    out = withSlice(out, 'locations', relabelGalleries(world.locations ?? [], locationImages));
+    out = withSlice(out, 'items', relabelGalleries(world.items ?? [], entityImages));
     return out;
   },
 };
@@ -3733,8 +3780,8 @@ const imageMislabeled: Rule = {
 /** Every rule the Bench runs, in catalog order. Display order comes from severity, not this list. */
 export const RULES: readonly Rule[] = [
   aliasLeadingArticle, entityMatchCollision, aliasSelfDuplicate,
-  entityLocationOrphan, linkConnectionBroken, traitToggleMissingStat, placeholderPinBroken,
-  chipUnknownPlaceholder, placeholderUnused, placeholderPinnedUnused, scriptUnknownStat, scriptUnknownBlueprintOwnerStat,
+  entityLocationOrphan, linkConnectionBroken, traitToggleMissingStat, itemBecomesMissingItem, placeholderPinBroken,
+  chipUnknownPlaceholder, placeholderUnused, placeholderPinnedUnused, scriptUnknownStat, scriptUnknownBlueprintOwnerStat, scriptUnknownBody,
   scriptBeforeReadsDelta, scriptTwoWriters,
   entrySecondaryWithoutPrimary, entryInert, entryRegexInvalid,
   noStartingLocation, legacyStartLocation, entityNowhere, entityNoCodeName, statDisabledForever,
@@ -3769,7 +3816,7 @@ export const SCRIPT_EXECUTION: RuleHead = {
   severity: 'error',
   section: 'stats',
   advanced: true,
-  summary: (count) => `${count} scripts fail when they actually run`,
+  summary: (count) => `${count} scripts fail when they run`,
 };
 
 /**
@@ -3818,7 +3865,7 @@ export const SOURCE_UNAVAILABLE: RuleHead = {
   id: 'source-unavailable',
   severity: 'warning',
   section: 'entities',
-  summary: (count) => `${count} linked copies’ sources could not be checked`,
+  summary: (count) => `Formamorph couldn’t check the sources of ${count} linked copies`,
 };
 
 /** Everything that can put a row in the Issues list — the live rules plus the on-demand checks. */

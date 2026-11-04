@@ -16,7 +16,8 @@ import {
 import { resolvePromptSampler, type PromptSampler, type PromptSamplerMap } from '@/lib/promptSamplers';
 import type { EndpointSampler, EndpointSamplerOverrides } from '@/lib/endpointSamplers';
 import { customMaxOutput, type PromptMaxOutputMap } from '@/lib/promptMaxOutput';
-import { responseFormat, type ResponseFormat, type ResponseSchema } from './responseSchema';
+import { PROMPT_TYPE_HEADER } from '@/lib/hostedAi/hostedUrls';
+import { responseFormat,type ResponseFormat, type ResponseSchema } from './responseSchema';
 
 /** Everything about the endpoint one call resolved to. The probe/cache state producing it stays outside. */
 export interface AiEndpointTarget {
@@ -32,6 +33,8 @@ export interface AiEndpointTarget {
   maxTokens: number | undefined;
   /** Send the desktop bundled engine's body shape (top_p/top_k/min_p, token-budget reasoning). */
   localEngine: boolean;
+  /** Formamorph AI: the stream sends the account token and the turn id. */
+  hosted?: boolean;
   /** Per-endpoint sampler switches and remembered values. The engine ignores these. */
   samplerOverrides: EndpointSamplerOverrides;
   /** The endpoint's Extra Parameters, as written; merged first into the body, under the app's fields (lib/extraParams). */
@@ -113,6 +116,8 @@ export interface AiRequestSpec<TMessage extends WireMessage = RequestMessage, TT
   answerCap?: number;
   /** The functions the body offers, present exactly when the body carries `tools`. The loop runs calls against these. */
   tools?: readonly TTool[];
+  /** Set when the call's schema accepts a reply that leaves out keys. */
+  sparseReply?: true;
   /** The effort literal this request carried, whichever field the dialect spelled it in. Absent where it
    *  carried none. Read by the observation, which asks what was in force rather than which key held it. */
   reasoningLevel?: ReasoningEffortField;
@@ -299,7 +304,8 @@ function bodyForTarget(snapshot: AiSettingsSnapshot, call: AiCall, target: AiEnd
 
   return {
     // The player's Extra Parameters go first, so every field the app sets for this call wins over them.
-    ...extraParamsOf(target.extraParams),
+    // Formamorph AI's request is the proxy's contract, so nothing the player wrote rides along.
+    ...(!target.hosted && extraParamsOf(target.extraParams)),
     model: target.model,
     messages: buildMessages(snapshot, call),
     ...(maxTokens !== undefined && { max_tokens: maxTokens }),
@@ -346,12 +352,15 @@ export function buildAiRequestSpec<TTool extends OfferedFunction = OfferedFuncti
   const reasoning = resolveReasoning(snapshot, call, target);
   return {
     url: target.url,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${target.apiToken}` },
+    headers: target.hosted
+      ? { 'Content-Type': 'application/json', [PROMPT_TYPE_HEADER]: call.requestType }
+      : { 'Content-Type': 'application/json', Authorization: `Bearer ${target.apiToken}` },
     body: bodyForTarget(snapshot, call, target),
     target,
     requestType: call.requestType,
     ...(reasoning.answerCap !== undefined && { answerCap: reasoning.answerCap }),
     ...(offeredTools(call, target) && { tools: call.tools }),
+    ...(call.responseSchema?.sparse && { sparseReply: true as const }),
     ...(reasoning.level !== null && { reasoningLevel: reasoning.level }),
     ...(reasoning.room && { thinkingRoom: reasoning.room }),
     ...(internalCapFor(snapshot, call) !== null

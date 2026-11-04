@@ -43,6 +43,7 @@ const FEEDBACK_REVIEWED_CONTEXTS = [
 const ALLOWED = [
   '@/services/AuthService',
   '@/services/AgeGateService',
+  '@/services/HostedStateService',
   '@/services/PatreonService',
   '@/services/PolicyService',
   '@/services/UserService',
@@ -52,7 +53,10 @@ const ALLOWED = [
   '@/components/PatreonSection',
   '@/components/RoleBadge',
   '@/components/SupporterBadge',
+  '@/components/SupportersWall',
   '@/lib/supporterFlair',
+  '@/lib/tierNames',
+  '@/lib/resetTime',
   '@/components/community/AgeGateDialog',
   '@/components/community/ProfileStats',
   '@/components/community/UserCreationsTab',
@@ -62,6 +66,7 @@ const ALLOWED = [
   '@/lib/apiBase',
   '@/lib/communityCaches',
   '@/lib/deletionCancellation',
+  '@/lib/hostedAi/unconfirmedCopy',
   '@/lib/refusalWatch',
   '@/lib/serverDate',
   '@/lib/useMountedRef',
@@ -191,7 +196,13 @@ describe('the site entry stays out of the game bundle', () => {
     // 67: `usernameRule`, the one username check the register page and `AuthService` share; a pure leaf.
     // 69: `refusalWatch` and the `fetchTarget` leaf it reads, so the rename page can watch for the rename refusal.
     // 70: `useRenameSubmit`, the rename flow the game dialog and the rename page share; it reads only the service and the rule.
-    expect(reachableFromSite().size).toBeLessThanOrEqual(70);
+    // 71: `HostedStateService`, the read-only hosted-state call the allowance section makes; it reads only the auth leaves.
+    // 72: `tierNames`, the one place a tier's name comes from; it reads only `apiBase` and `supporterFlair`.
+    // 73: `typography`, the text roles the age gate, creations list, Patreon section and delete-account dialog read; it reads only `utils`.
+    // 74: `resetTime`, the pure leaf that formats the local reset weekday and time for the allowance section.
+    // 75: `SupportersWall`, the wall the page and the game's Credits dialog share; it reads only leaves already listed.
+    // 76: `unconfirmedCopy`, the one sentence for an unconfirmed pledge, which the app and the allowance section share.
+    expect(reachableFromSite().size).toBeLessThanOrEqual(76);
   });
 
   it('reaches the gesture group helper through the slider and color picker, and nothing behind it', () => {
@@ -285,7 +296,9 @@ describe('the site entry stays out of the game bundle', () => {
     // 95: the listing chip's kind labels and icons (`catalogKinds` and the element icons it wears).
     // 101: the editors' @ and # suggestions (the plugin, its query rule, the shared suggestion list and its
     // wheel hook, the caret anchor).
-    expect(reachableFrom([FEEDBACK_PAGE]).size).toBeLessThanOrEqual(101);
+    // 102: `tierNames`, read by the Supporter badge on the profile cards.
+    // 103: `FeedbackPreview`, the comment boxes' Preview.
+    expect(reachableFrom([FEEDBACK_PAGE]).size).toBeLessThanOrEqual(103);
   });
 
   it('scans every shared component the lazy feedback route reaches', () => {

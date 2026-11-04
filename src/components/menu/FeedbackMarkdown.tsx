@@ -6,35 +6,28 @@ import { UserAvatar } from '@/components/UserAvatar';
 import { useUserProfile } from '@/contexts/userProfileStore';
 import { API_BASE_URL } from '@/lib/apiBase';
 import { KIND_ICONS, KIND_LABELS, kindHasThumbnail, kindOf } from '@/lib/catalogKinds';
-import { feedbackListingUrl, feedbackProfileUrl, feedbackThreadChipHref, type FeedbackLinkKind } from '@/lib/feedbackLinks';
+import { feedbackListingUrl, feedbackProfileUrl, feedbackThreadChipHref, type FeedbackLinkKind, type FeedbackLinkPlace } from '@/lib/feedbackLinks';
 import { serverAssetSrc } from '@/lib/serverAssets';
 import { statusStyle } from '@/lib/feedbackPresentation';
 import { remarkFeedbackLinks } from '@/lib/remarkFeedbackLinks';
 import { cn } from '@/lib/utils';
 import type { FeedbackLinkTarget, FeedbackType } from '@/types';
 
-/** Where feedback links go on this surface. */
-export interface FeedbackLinkPlace {
-  /** The boards this surface shows; a thread on any other renders unavailable. */
-  boards: readonly FeedbackType[];
-  /** The address a thread chip carries, for a new tab or a copied link. None means the thread opens only in place. */
-  threadHref: (number: number, type: FeedbackType) => string | undefined;
-  /** Opens a thread here. Without it a chip follows its address. */
-  openThread?: (number: number) => void;
-  /** The address a listing chip carries. */
-  listingHref: (listing: { kind: string; id: string }) => string;
-  /** Opens a listing here. Without it a chip follows its address. */
-  openListing?: (listing: { kind: string; id: string }) => void;
-  /** The address a user chip carries, for a new tab or a copied link. A click opens the profile through the surface's profile provider. */
-  profileHref: (username: string) => string;
-}
-
-export const FeedbackLinkContext = createContext<FeedbackLinkPlace>({
+/** The app's addresses: every board, each link on the website. */
+export const APP_FEEDBACK_LINK_PLACE: FeedbackLinkPlace = {
   boards: ['bug', 'suggestion', 'question'],
   threadHref: feedbackThreadChipHref,
   listingHref: feedbackListingUrl,
   profileHref: feedbackProfileUrl,
-});
+};
+
+export const FeedbackLinkContext = createContext<FeedbackLinkPlace>(APP_FEEDBACK_LINK_PLACE);
+
+const NEW_TAB = { target: '_blank', rel: 'noopener noreferrer' };
+
+/** An address on another host, or any address over a draft, opens in a new tab when it has no opener here. */
+const newTabAttrs = (href: string, hasOpener: boolean, staysOnPage?: boolean) =>
+  (href.startsWith('http') || staysOnPage) && !hasOpener ? NEW_TAB : {};
 
 /** What a chip renderer gets: its target, or none when the server sent none for that ref. */
 export interface FeedbackChipProps {
@@ -85,6 +78,7 @@ function ThreadChip({ linkRef, target }: FeedbackChipProps) {
   return (
     <a
       href={href}
+      {...newTabAttrs(href, !!openThread, place.staysOnPage)}
       className={CHIP_CLASS}
       onClick={openThread && ((event) => {
         if (!opensInPlace(event)) return;
@@ -119,8 +113,7 @@ function ListingChip({ target }: FeedbackChipProps) {
   return (
     <a
       href={href}
-      // An address on another host leaves this page, so it opens beside it.
-      {...(href.startsWith('http') && !openListing ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+      {...newTabAttrs(href, !!openListing, place.staysOnPage)}
       className={CHIP_CLASS}
       onClick={openListing && ((event) => {
         if (!opensInPlace(event)) return;
@@ -141,7 +134,7 @@ function ListingChip({ target }: FeedbackChipProps) {
 
 function UserChip({ target }: FeedbackChipProps) {
   const place = useContext(FeedbackLinkContext);
-  const { openProfile } = useUserProfile();
+  const { openProfile, profileLeavesPage } = useUserProfile();
 
   // The typed name is never drawn: a typo and a deleted account look the same.
   if (target?.kind !== 'user' || !target.available) {
@@ -153,12 +146,14 @@ function UserChip({ target }: FeedbackChipProps) {
     );
   }
 
+  const inNewTab = place.staysOnPage && profileLeavesPage;
   return (
     <a
       href={place.profileHref(target.username)}
+      {...(inNewTab ? NEW_TAB : {})}
       className={CHIP_CLASS}
       onClick={(event) => {
-        if (!opensInPlace(event)) return;
+        if (inNewTab || !opensInPlace(event)) return;
         event.preventDefault();
         openProfile(target.id, target.username);
       }}
@@ -181,25 +176,43 @@ const LINKS: RemarkPlugin = [remarkFeedbackLinks, { kinds: new Set(Object.keys(C
 // Streamdown's own anchor, so an ordinary link keeps the leave-site check.
 const DefaultAnchor = defaultComponents.a as ComponentType<ComponentPropsWithoutRef<'a'> & ExtraProps>;
 
+interface LinkTargets {
+  targets?: FeedbackLinkTarget[];
+  typedUntilResolved: boolean;
+}
+
+// A context, because the renderer redraws an unchanged block for its consumers but not for new `components`.
+const LinkTargetsContext = createContext<LinkTargets>({ typedUntilResolved: false });
+
+function LinkAnchor(props: ComponentPropsWithoutRef<'a'> & ExtraProps) {
+  const { targets, typedUntilResolved } = useContext(LinkTargetsContext);
+  const mark = String(props.node?.properties?.[LINK_MARK_PROPERTY] ?? '');
+  const separator = mark.indexOf(':');
+  const kind = mark.slice(0, separator) as FeedbackLinkKind;
+  const Chip = separator > 0 ? CHIPS[kind] : undefined;
+  if (!Chip) return <DefaultAnchor {...props} />;
+
+  const linkRef = mark.slice(separator + 1);
+  const target = targets?.find((t) => t.kind === kind && t.ref === linkRef);
+  if (!target && typedUntilResolved) return <>{props.children}</>;
+  return <Chip linkRef={linkRef} target={target} />;
+}
+
+const COMPONENTS: MarkdownComponents = { a: LinkAnchor };
+
 /**
  * A feedback body or comment, with each link of a kind in `CHIPS` drawn as a chip from `targets`, the links
- * the server resolved for this reader.
+ * the server resolved for this reader. `typedUntilResolved` leaves a link with no target as typed, for text
+ * the server has not seen yet.
  */
 export const FeedbackMarkdown = memo(function FeedbackMarkdown(
-  { text, targets }: { text: string; targets?: FeedbackLinkTarget[] },
+  { text, targets, typedUntilResolved = false }: { text: string; targets?: FeedbackLinkTarget[]; typedUntilResolved?: boolean },
 ) {
-  const components = useMemo<MarkdownComponents>(() => ({
-    a: (props: ComponentPropsWithoutRef<'a'> & ExtraProps) => {
-      const mark = String(props.node?.properties?.[LINK_MARK_PROPERTY] ?? '');
-      const separator = mark.indexOf(':');
-      const kind = mark.slice(0, separator) as FeedbackLinkKind;
-      const Chip = separator > 0 ? CHIPS[kind] : undefined;
-      if (!Chip) return <DefaultAnchor {...props} />;
+  const linkTargets = useMemo(() => ({ targets, typedUntilResolved }), [targets, typedUntilResolved]);
 
-      const linkRef = mark.slice(separator + 1);
-      return <Chip linkRef={linkRef} target={targets?.find((t) => t.kind === kind && t.ref === linkRef)} />;
-    },
-  }), [targets]);
-
-  return <MarkdownRenderer text={text} components={components} links={LINKS} />;
+  return (
+    <LinkTargetsContext.Provider value={linkTargets}>
+      <MarkdownRenderer text={text} components={COMPONENTS} links={LINKS} />
+    </LinkTargetsContext.Provider>
+  );
 });

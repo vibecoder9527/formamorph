@@ -1,10 +1,13 @@
 // Lists the file revisions that scripts/genBundledFingerprints.ts fingerprints.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
+import { parseBackdrop } from '@/lib/bodyLayout';
+import { shippedWorldText } from '@/lib/shippedWorld';
+import pins from './pinnedCommits.json';
 
 export const WORLDS_DIR = 'src/defaultworlds';
 /** The last commit before the ship-time Downscale. Builds up to it bundled the source files. */
-export const SHIPPED_SINCE = 'cd6fe508c480fa5921f48dd65befc892ac73fb4b';
+export const SHIPPED_SINCE = pins.shippedSince;
 
 /** One file revision: where it came from, and a reader for its bytes. `blob` is absent for the working tree. */
 export interface Revision {
@@ -83,4 +86,18 @@ export function worldRevisions(): { revisions: Revision[]; shippable: Revision[]
     ...working,
   ]);
   return { revisions, shippable };
+}
+
+/**
+ * The shipped text of a world revision. A Body from before Backdrop was required gets the default Backdrop first.
+ * The fingerprint skips text that short, so the fill never changes it.
+ *
+ * @param source - A world revision's text
+ */
+export async function shippedRevisionText(source: string): Promise<string> {
+  const world = JSON.parse(source) as { bodies?: Record<string, unknown>[] };
+  if (!world.bodies?.some((body) => !body.backdrop)) return shippedWorldText(source);
+  const bodies = world.bodies.map((body) => (body.backdrop ? body : { ...body, backdrop: parseBackdrop(undefined) }));
+  return shippedWorldText(`${JSON.stringify({ ...world, bodies }, null, 2)}
+`);
 }

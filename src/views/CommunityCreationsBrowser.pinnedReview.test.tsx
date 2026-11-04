@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import CommunityCreationsBrowser from './CommunityCreationsBrowser';
 import type { WorldRecord } from '@/components/WorldDetails';
@@ -11,8 +11,19 @@ vi.mock('@/services/AuthService', () => ({
   default: { token: 'test-token', getCurrentUser: () => null },
 }));
 
+const audit = vi.hoisted(() => ({
+  fetchLikersAudit: vi.fn(async () => ({
+    total: 0, rows: [], anonymous: 0, anonymousRows: [],
+    summary: { windowDays: 90, flagged: 0, total: 0, share: null, bursts: [], reasons: [] },
+  })),
+}));
+
 vi.mock('@/services/WorldStorageService', () => ({
-  default: { API_URL: 'https://example.test/api' },
+  default: {
+    API_URL: 'https://example.test/api',
+    fetchLikers: vi.fn(async () => ({ total: 0, rows: [], anonymous: 0 })),
+    ...audit,
+  },
 }));
 
 // The catalog list is the fixture; the real hook fetches and caches through IndexedDB.
@@ -82,7 +93,15 @@ const gridNames = (names: string[]) => {
     .map((el) => el.textContent);
 };
 
-const showPendingToggle = () => screen.queryByRole('button', { name: 'Show Pending' });
+/** A Moderation popover control of the given role, opening the popover first when it is closed. */
+const control = async (role: 'checkbox' | 'radio', name: string | RegExp) => {
+  if (!screen.queryByRole(role, { name })) fireEvent.click(await screen.findByRole('button', { name: /^Moderation/ }));
+  return screen.getByRole(role, { name });
+};
+/** The Pin Pending checkbox. */
+const option = (name: string | RegExp) => control('checkbox', name);
+/** A choice in the Show radio group. */
+const view = (name: string | RegExp) => control('radio', name);
 
 beforeEach(() => {
   // jsdom has no `matchMedia`; the browser reads it for the mobile layout switch.
@@ -141,7 +160,7 @@ describe('the pinned review group', () => {
     await screen.findByText('Live One');
 
     expect(pinnedGroup()).toBeNull();
-    expect(showPendingToggle()).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Moderation/ })).toBeNull();
     expect(gridNames(ALL)).toContain('New Two');
   });
 
@@ -166,9 +185,9 @@ describe('the pinned review group', () => {
     expect(namesIn(pinnedGroup()!, ['Update Four Draft'])).toEqual(['Update Four Draft']);
   });
 
-  it('does not match the pending name once Show Pending is off', async () => {
+  it('does not match the pending name once Pin Pending is off', async () => {
     renderBrowser();
-    fireEvent.click(await screen.findByRole('button', { name: 'Show Pending' }));
+    fireEvent.click(await option('Pin Pending'));
 
     fireEvent.change(screen.getByPlaceholderText(/^Search worlds/), { target: { value: 'four draft' } });
 
@@ -238,15 +257,15 @@ describe('the pinned review group', () => {
     renderBrowser();
     await screen.findByRole('region', { name: 'Awaiting Review' });
 
-    fireEvent.click(screen.getByRole('button', { name: /Quarantined/ }));
+    fireEvent.click(await view(/^Quarantined/));
 
     expect(pinnedGroup()).toBeNull();
     expect(gridNames(ALL)).toEqual(['Resubmitted Three']);
-    expect(showPendingToggle()).toBeNull();
+    expect(await option('Pin Pending')).toBeDisabled();
   });
 });
 
-describe('Show Pending', () => {
+describe('Pin Pending', () => {
   const ALL = ['Live One', 'New Two', 'Update Four', 'Mine Five'];
 
   beforeEach(() => {
@@ -261,7 +280,7 @@ describe('Show Pending', () => {
   it('is on by default', async () => {
     renderBrowser();
 
-    expect((await screen.findByRole('button', { name: 'Show Pending' })).getAttribute('aria-pressed')).toBe('true');
+    expect((await option('Pin Pending')).getAttribute('aria-checked')).toBe('true');
     expect(pinnedGroup()).not.toBeNull();
   });
 
@@ -269,7 +288,7 @@ describe('Show Pending', () => {
     catalog.items = [listing('live', 'Live One')];
     renderBrowser();
 
-    expect(await screen.findByRole('button', { name: 'Show Pending' })).toBeTruthy();
+    expect(await option('Pin Pending')).toBeTruthy();
     expect(pinnedGroup()).toBeNull();
   });
 
@@ -279,18 +298,18 @@ describe('Show Pending', () => {
       fresh('new', 'New Two', 3),
     ];
     renderBrowser();
-    fireEvent.click(await screen.findByRole('button', { name: 'Show Pending' }));
+    fireEvent.click(await option('Pin Pending'));
     fireEvent.click(screen.getByLabelText('Go to next page'));
     expect(pinnedGroup()).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show Pending' }));
+    fireEvent.click(await option('Pin Pending'));
 
     expect(pinnedGroup()).not.toBeNull();
   });
 
   it('off gives the player view: new listings hidden, updates and own listings in their slot', async () => {
     renderBrowser();
-    fireEvent.click(await screen.findByRole('button', { name: 'Show Pending' }));
+    fireEvent.click(await option('Pin Pending'));
 
     expect(pinnedGroup()).toBeNull();
     expect(gridNames(ALL)).toEqual(['Live One', 'Update Four', 'Mine Five']);
@@ -300,12 +319,151 @@ describe('Show Pending', () => {
 
   it('stays off across a remount', async () => {
     const first = renderBrowser();
-    fireEvent.click(await screen.findByRole('button', { name: 'Show Pending' }));
+    fireEvent.click(await option('Pin Pending'));
     first.unmount();
 
     renderBrowser();
 
-    expect((await screen.findByRole('button', { name: 'Show Pending' })).getAttribute('aria-pressed')).toBe('false');
+    expect((await option('Pin Pending')).getAttribute('aria-checked')).toBe('false');
     expect(pinnedGroup()).toBeNull();
+  });
+});
+
+describe('the Moderation button', () => {
+  beforeEach(() => {
+    catalog.items = [
+      listing('live', 'Live One'),
+      fresh('new', 'New Two', 3),
+      resubmitted('resub', 'Resubmitted Three', 5),
+    ];
+  });
+
+  const trigger = () => screen.queryByRole('button', { name: /^Moderation/ });
+
+  it('replaces the two toggles for staff', async () => {
+    renderBrowser();
+    await screen.findByRole('region', { name: 'Awaiting Review' });
+
+    expect(trigger()).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Pin Pending' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Quarantined/ })).toBeNull();
+  });
+
+  it('shows nothing to a player or a guest', async () => {
+    const view = renderBrowser(player);
+    await screen.findByText('Live One');
+    expect(trigger()).toBeNull();
+    view.unmount();
+
+    renderBrowser(null);
+    await screen.findByText('Live One');
+    expect(trigger()).toBeNull();
+  });
+
+  it('shows the Quarantined count', async () => {
+    renderBrowser();
+
+    expect(await view('Quarantined (1)')).toBeEnabled();
+  });
+
+  it('disables Quarantined at zero rather than hiding it', async () => {
+    catalog.items = [listing('live', 'Live One')];
+    renderBrowser();
+
+    expect(await view('Quarantined (0)')).toBeDisabled();
+  });
+
+  it('carries no badge in the default view', async () => {
+    renderBrowser();
+
+    expect(await screen.findByRole('button', { name: 'Moderation' })).toBeTruthy();
+  });
+
+  it('badges Pin Pending off and a view other than All Listings, one each', async () => {
+    renderBrowser();
+    fireEvent.click(await option('Pin Pending'));
+    expect(screen.getByRole('button', { name: 'Moderation, 1 changed' })).toBeTruthy();
+
+    fireEvent.click(await view(/^Quarantined/));
+    expect(screen.getByRole('button', { name: 'Moderation, 2 changed' })).toBeTruthy();
+
+    fireEvent.click(await view('All Listings'));
+    expect(screen.getByRole('button', { name: 'Moderation, 1 changed' })).toBeTruthy();
+  });
+
+  it('lists the Show group and keeps Pin Pending apart from it', async () => {
+    renderBrowser();
+
+    expect((await view('All Listings')).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radiogroup')).not.toContainElement(await option('Pin Pending'));
+    expect(screen.queryByRole('radio', { name: 'Pin Pending' })).toBeNull();
+  });
+});
+
+describe('Flagged Likes', () => {
+  const ALL = ['Live One', 'Marked Two', 'Marked Quarantined Three', 'Quarantined Four'];
+
+  beforeEach(() => {
+    audit.fetchLikersAudit.mockClear();
+    catalog.items = [
+      listing('live', 'Live One'),
+      listing('marked', 'Marked Two', { likes_marker: ['burst'] }),
+      listing('both', 'Marked Quarantined Three', {
+        likes_marker: ['burst', 'flagged_share'], quarantined_at: day(1), quarantine_expires_at: day(28),
+      }),
+      listing('quar', 'Quarantined Four', { quarantined_at: day(1), quarantine_expires_at: day(28) }),
+    ];
+  });
+
+  it('counts the marked listings and shows only them', async () => {
+    renderBrowser();
+
+    fireEvent.click(await view('Flagged Likes (2)'));
+
+    expect(gridNames(ALL).sort()).toEqual(['Marked Quarantined Three', 'Marked Two']);
+  });
+
+  it('swaps to Quarantined when it is picked, clearing Flagged Likes', async () => {
+    renderBrowser();
+    fireEvent.click(await view('Flagged Likes (2)'));
+    fireEvent.click(await view(/^Quarantined/));
+
+    expect(gridNames(ALL).sort()).toEqual(['Marked Quarantined Three', 'Quarantined Four']);
+    expect((await view('Flagged Likes (2)')).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('swaps back to Flagged Likes from Quarantined, and All Listings clears both', async () => {
+    renderBrowser();
+    fireEvent.click(await view(/^Quarantined/));
+    fireEvent.click(await view('Flagged Likes (2)'));
+    expect(gridNames(ALL).sort()).toEqual(['Marked Quarantined Three', 'Marked Two']);
+
+    fireEvent.click(await view('All Listings'));
+    expect(gridNames(ALL).sort()).toEqual([...ALL].sort());
+  });
+
+  it('is disabled at zero rather than hidden', async () => {
+    catalog.items = [listing('live', 'Live One')];
+    renderBrowser();
+
+    expect(await view('Flagged Likes (0)')).toBeDisabled();
+  });
+
+  it('shows no marker and no option to a player, whatever the row carries', async () => {
+    renderBrowser(player);
+    await screen.findByText('Marked Two');
+
+    expect(document.querySelector('[data-likes-marker]')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Moderation/ })).toBeNull();
+  });
+
+  it('names the reasons on the card and opens the audit for that listing when pressed', async () => {
+    renderBrowser();
+    await screen.findByText('Marked Two');
+
+    expect(document.querySelector('[data-likes-marker="burst flagged_share"]')?.textContent).toContain('Burst and Flagged share');
+    fireEvent.click(document.querySelector('[data-likes-marker="burst"]') as HTMLElement);
+
+    await waitFor(() => expect(audit.fetchLikersAudit).toHaveBeenCalledWith('marked'));
   });
 });

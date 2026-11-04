@@ -18,8 +18,12 @@ import AuthService from '@/services/AuthService';
 import type { DocSection } from '@/lib/docs/docsIndex';
 import type { SurfaceRoute } from '@/lib/surface/surfaceRoute';
 import { withReaderLinks } from '@/lib/docs/docsReader';
+import { openEntityFence } from '@/lib/formaquestion/entityBlock';
 import type { Guide } from '@/lib/formaquestion/guide';
 import { helpRevealSpec, helpRevealTiming } from '@/lib/formaquestion/helpReveal';
+import { isWorldSource, sourceKey, type AnswerSource, type WorldSource } from '@/lib/formaquestion/helpWorldSource';
+import { useHelpWorld, type WorldLean } from '@/lib/formaquestion/helpWorld';
+import { WORLD_KIND_NAMES } from '@/lib/formaquestion/worldIndex';
 import type { HelpSettings, HelpSettingsChange } from '@/lib/formaquestion/helpSettings';
 import { revealActive, revealAnimName, revealVars } from '@/lib/narrationRevealConfig';
 import { usePrefersReducedMotion } from '@/lib/usePrefersReducedMotion';
@@ -31,6 +35,7 @@ import { SectionRows } from './GuideParts';
 import { ScrollArrow } from './ScrollArrow';
 import { FOCUS_RING, readerComponents } from './readerLinks';
 import { CodeInsert } from './CodeInsert';
+import { entityCard, OpenEntityFence } from './EntityCard';
 import type { SnippetActions } from './CodeSnippet';
 import { targetAttribute } from '@/lib/surface/surfaceTargets';
 import { answerList, useAnswerFolds, type AnswerFolds, type Fold } from './useAnswerFolds';
@@ -133,17 +138,39 @@ function AskTheCommunity({ question }: { question: string }) {
   );
 }
 
+/** A world source under an answer: a link to its item for an editor answer while the open world opens items, else its name alone (Q17). */
+function WorldSourceName({ source, lean }: { source: WorldSource; lean?: WorldLean }) {
+  const registered = useHelpWorld();
+  const open = lean === 'editor' ? registered?.open : undefined;
+  if (!open) return <span className="inline-flex max-w-full items-center overflow-hidden rounded border bg-muted/40 px-1.5 py-0.5 text-meta text-foreground"><span className="min-w-0 truncate">{source.name}</span></span>;
+  return (
+    <Tip tip={`${WORLD_KIND_NAMES[source.worldKind]} › ${source.name}`} labelsChild={false}>
+      <button
+        type="button"
+        onClick={() => open(source)}
+        className={cn('inline-flex max-w-full items-center gap-1 overflow-hidden rounded border bg-muted/40 px-1.5 py-0.5 text-meta text-muted-foreground hover:bg-accent hover:text-accent-foreground', FOCUS_RING)}
+      >
+        <span className="min-w-0 shrink truncate">{WORLD_KIND_NAMES[source.worldKind]}</span>
+        <ChevronRight aria-hidden className="h-3 w-3 shrink-0" />
+        <span className="min-w-0 shrink truncate text-foreground">{source.name}</span>
+      </button>
+    </Tip>
+  );
+}
+
 /** The source links of an answer, wrapped. */
-function SourceLinks({ guide, sections, onOpen }: { guide: Guide; sections: readonly DocSection[]; onOpen: (id: string) => void }) {
+function SourceLinks({ guide, sources, lean, onOpen }: { guide: Guide; sources: readonly AnswerSource[]; lean?: WorldLean; onOpen: (id: string) => void }) {
   return (
     <div className="flex flex-wrap gap-1">
-      {sections.map((section) => <SourceLink key={section.id} guide={guide} section={section} onOpen={onOpen} />)}
+      {sources.map((source) => (isWorldSource(source)
+        ? <WorldSourceName key={sourceKey(source)} source={source} lean={lean} />
+        : <SourceLink key={source.id} guide={guide} section={source} onOpen={onOpen} />))}
     </div>
   );
 }
 
 /** The answer's sources, or a flagged answer's nearest sections, in a popover from a button (Q22). A link closes it. */
-function SourcesPopover({ guide, label, sections, onOpen }: { guide: Guide; label: string; sections: readonly DocSection[]; onOpen: (id: string) => void }) {
+function SourcesPopover({ guide, label, sources, lean, onOpen }: { guide: Guide; label: string; sources: readonly AnswerSource[]; lean?: WorldLean; onOpen: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -151,12 +178,12 @@ function SourcesPopover({ guide, label, sections, onOpen }: { guide: Guide; labe
         {/* As the Thinking toggle beside it; the chevron turns toward the popover above while it is open. */}
         <button type="button" className={cn('flex w-fit items-center gap-1 rounded text-meta text-muted-foreground', FOCUS_RING)}>
           <ChevronRight aria-hidden className={cn('h-3 w-3 shrink-0 transition-transform motion-reduce:transition-none', open && '-rotate-90')} />
-          {`${label} (${sections.length})`}
+          {`${label} (${sources.length})`}
         </button>
       </PopoverTrigger>
       {/* Inline, so it stays in the window's layer above every dialog. */}
       <PopoverContent portal={false} side="top" align="start" aria-label={label} className="pointer-events-auto w-80 p-2">
-        <SourceLinks guide={guide} sections={sections} onOpen={(id) => { setOpen(false); onOpen(id); }} />
+        <SourceLinks guide={guide} sources={sources} lean={lean} onOpen={(id) => { setOpen(false); onOpen(id); }} />
       </PopoverContent>
     </Popover>
   );
@@ -183,7 +210,7 @@ export function AnswerToggles({ guide, exchange, folds, who, onOpen, onGo }: {
           onToggle={folds.thinking.toggle}
         />
       )}
-      {listed.length > 0 && <SourcesPopover guide={guide} label={listLabel} sections={listed} onOpen={onOpen} />}
+      {listed.length > 0 && <SourcesPopover guide={guide} label={listLabel} sources={listed} lean={exchange.lean} onOpen={onOpen} />}
       {listed.length > 0 && route && <TakeMeThere onClick={() => onGo(route)} />}
       {asksCommunity(exchange) && <AskTheCommunity question={exchange.question} />}
     </>
@@ -214,12 +241,13 @@ export function AnswerBody({ guide, exchange, settings, onOpen, onGo, folds, tog
   const { listed, listLabel } = answerList(exchange);
   const sourced = listed.length > 0;
   const fold = folds.sources;
-  const components = useMemo(() => readerComponents(onOpen, insertAction), [onOpen]);
+  const components = useMemo(() => readerComponents(onOpen, insertAction, entityCard), [onOpen]);
   const reduceMotion = usePrefersReducedMotion();
   const spec = useMemo(() => helpRevealSpec(settings.reveal, reduceMotion), [settings.reveal, reduceMotion]);
   const timing = useMemo(() => helpRevealTiming(settings.reveal), [settings.reveal]);
   // A docs link that the model copies from a section opens that section here.
   const text = useMemo(() => withReaderLinks(answer, '', guide.resolve), [answer, guide]);
+  const openFence = status === 'writing' ? openEntityFence(answer) : null;
   const searched = status === 'no-ai' || status === 'failed';
   const route = answerRoute(exchange);
   const matches = useMemo(
@@ -232,14 +260,16 @@ export function AnswerBody({ guide, exchange, settings, onOpen, onGo, folds, tog
       {flagged && answer && <GeneralKnowledgeNotice />}
       {answer && (
         <div data-reveal className="[&_:first-child]:mt-0" style={revealVars(spec) as CSSProperties}>
-          <MarkdownRenderer
-            text={text}
-            animate={status === 'writing' && revealActive(spec)}
-            animation={revealAnimName(spec)}
-            easing={settings.reveal.easing}
-            timing={timing}
-            components={components}
-          />
+          <OpenEntityFence.Provider value={openFence}>
+            <MarkdownRenderer
+              text={text}
+              animate={status === 'writing' && revealActive(spec)}
+              animation={revealAnimName(spec)}
+              easing={settings.reveal.easing}
+              timing={timing}
+              components={components}
+            />
+          </OpenEntityFence.Provider>
         </div>
       )}
       {/* The conversation is a log, which announces its own new text. */}
@@ -259,7 +289,7 @@ export function AnswerBody({ guide, exchange, settings, onOpen, onGo, folds, tog
             {sourced && route && <TakeMeThere onClick={() => onGo(route)} />}
             {asksCommunity(exchange) && <AskTheCommunity question={question} />}
           </div>
-          {sourced && fold.open && <SourceLinks guide={guide} sections={listed} onOpen={onOpen} />}
+          {sourced && fold.open && <SourceLinks guide={guide} sources={listed} lean={exchange.lean} onOpen={onOpen} />}
         </div>
       )}
     </div>

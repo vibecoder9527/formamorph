@@ -22,11 +22,19 @@ type Phase =
   | { kind: 'started' }
   | { kind: 'failed'; error: string };
 
+const raisers = new Set<(required: ClientUpdateRequired) => void>();
+
+/** Raises the update offer from anywhere, as a refused request does. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function requestClientUpdate(required: ClientUpdateRequired): void {
+  raisers.forEach((raise) => raise(required));
+}
+
 /** The sentence naming what was refused, in the two shapes a reply can leave it. */
 function requirement({ feature, minVersion }: ClientUpdateRequired): string {
   const what = feature || 'This part of Formamorph';
   const needs = minVersion ? `Formamorph ${minVersion} or newer` : 'a newer version of Formamorph';
-  return `${what} needs ${needs}. You are running ${APP_VERSION}.`;
+  return `${what} needs ${needs}. You're running ${APP_VERSION}.`;
 }
 
 interface UpdateRequiredDialogProps {
@@ -107,6 +115,10 @@ export function UpdateRequiredGate() {
   }, []);
 
   useEffect(() => watchClientVersion(AuthService.API_URL, raise), [raise]);
+  useEffect(() => {
+    raisers.add(raise);
+    return () => { raisers.delete(raise); };
+  }, [raise]);
 
   // DEV: `#dev?modal=updateRequired` raises the dialog on a canned refusal, because the real one needs a
   // server route whose minimum is above this build.

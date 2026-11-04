@@ -1,6 +1,7 @@
 # Spec: Inventory
 
-Status: ready-for-agent
+Status: done
+Status note: Closed 2026-10-29. Tickets 01–15; last landing fe698b8d4. Review: spec text corrected; gaps became tickets 12–15, and one more fix landed as d33efc7e1. Gates green on 2026-10-29.
 Spec session: inventory — spec
 
 ## Problem Statement
@@ -100,7 +101,7 @@ Settled with the user on 2026-10-19 and 2026-10-28. The design discussion ruled 
 | Q74 | (ticket 01) 01 defines the effect, timing, duration and placement types in full, so 04, 05 and 06 add only editors and runtime. Durations are Permanent or a story-clock length stored in the clock's own elapsed unit |
 | Q75 | (ticket 01) The value unit's stat picker lists Global Stats and the Persona's stats, per Q32's "a global or player stat" |
 | Q76 | (ticket 01) Setting charges turns Stackable off and disables it. Clearing charges leaves Stackable off for the author to turn back on |
-| Q77 | (ticket 01) Slot Size shows only when a slot is picked, from 1 to that slot's capacity |
+| Q77 | (ticket 01) Slot Size shows only when a slot is picked, from 1 to that slot's capacity. **Superseded:** Slot Size retires (body-layouts-and-slot-rules Q35) |
 | Q78 | (ticket 01) Deleting a slot that items use asks for confirmation with the count, then clears those items' slot |
 | Q79 | (ticket 01) The Items tab shows in Simple and Advanced. AI Summary and item Placeholders are Advanced only, as on entities |
 | Q80 | (ticket 01) Item editor tabs: Profile, Descriptions, Properties, Placeholders. 04, 05 and 11 add Effects, Requirements and Scripts |
@@ -149,6 +150,34 @@ Settled with the user on 2026-10-19 and 2026-10-28. The design discussion ruled 
 | Q123 | (ticket 05) One inventory settle (effects, grants, requirement re-check, trait gates, to a fixed point) runs wherever item effects settle today and in the turn commit after stat-pass deltas and stat code. 05 owns the turn-commit wiring |
 | Q124 | (ticket 05) The settle cap is 10 passes. Auto-unequip never re-equips, so a true cycle cannot form; the test drives a chain longer than an injected small cap |
 | Q125 | (ticket 05) Grant switches log like code switches with a source, "(by Cursed Ring)" or "(by An item)"; Hidden traits log nothing. When a Trait Switches scripts fire on grant changes. Auto-unequip and refused equips log their reason |
+| Q126 | (ticket 06) A permanent After Consumed row applies on every dose. Q64's refresh covers timed rows only |
+| Q127 | (ticket 06) The refresh key is owner, item and effect row. A second dose restarts each timed row's end time without reapplying its value. A different item's row runs separately |
+| Q128 | (ticket 06) Permanent After Consumed value moves once with no record; permanent min, max and regen rebase the stat as On First Obtain does; permanent trait rows join the permanent grant record (Q121). Timed min, max and regen derive while running |
+| Q129 | (ticket 06) Use shows on owned rows only. A consume on an Item Copy lying at a location is skipped with a diagnostic. Using an equipped Consumable copy consumes it and reverses its While Equipped effects |
+| Q130 | (ticket 06) 06 adds only the consume operation; the set-charges write is ticket 11's |
+| Q131 | (ticket 06) A timed effect ends when the story clock reaches its end time, checked in the turn settle after the clock advances. A panel Use between turns starts the timer at the current time. Timed effects live in the item effect ledger |
+| Q132 | (ticket 06) A running timed effect whose item or owner no longer exists drops on load with its value reversed, in the existing orphan log line |
+| Q133 | (ticket 06) The timed-effect section is a new visual pattern: 06 adds it to the design-system reference and gets the user's approval before adopting it. Turning Consumable off keeps After Consumed rows stored but hidden |
+| Q134 | (ticket 11) Location events fire too, with `owner` empty (Q67). A drop fires When Lost for the owner, then When Gained at the location; a pickup fires the reverse. An equipped Item Copy fires When Unequipped first |
+| Q135 | (ticket 11) Reveal and set charges fire no timing. Equipping one from a stack fires only When Equipped. A swap-out and an automatic unequip fire When Unequipped. A stack merge fires nothing extra |
+| Q136 | (ticket 11) Consuming the last dose fires When Consumed only, not When Lost |
+| Q137 | (ticket 11) One event per operation, not per unit; the event carries the quantity moved |
+| Q138 | (ticket 11) Script reads: `items["Name"]` with its copies; owners and the location list their copies. Writes are verbs on the item and copy entries. Owner naming follows the existing script surface |
+| Q139 | (ticket 11) Script inventory writes skip the presence check; Q62 governs Give, the pass and narration only |
+| Q140 | (ticket 11) Turn-script writes commit through the module in run order and fire depth 1. Past depth 3 the write still applies; only its timing does not fire, with a diagnostic |
+| Q141 | (ticket 09) Q53 is one line in the built-in stat prompts, schema and text, sent only when the Inventory pass is due. It names the present items that have stat effects, not the turn's changes; the parallel batch rules those out. Probe: cloud potion double-add 11/12 → 0/12, runtime-item change kept 12/12; Cydonia unchanged (3/3 both) |
+| Q142 | (ticket 09) The stored turn keeps the pass's parsed operations (`inventoryOps`, additive save shape). The stats-only re-roll restores pre-turn Item Copies and replays them before the stat asks |
+| Q143 | (ticket 14) The pass schema gains a required `description` string, empty except on a gain that creates a runtime item; the text format gains a sixth field |
+| Q148 | (ticket 14, user) Replaces Q143: a description field in the pass broke hidden-item reveals on cloud (28/28 → 19/36). The pass stays unchanged; a `describeItem` Background Pass Queue kind describes runtime items that have none, in one sentence, with fixed prompt text and a sampler pin |
+| Q149 | (ticket 15) The Q141 stat line names visible items with stat effect rows (any timing) held by present owners or lying here; it leaves out hidden copies and copies elsewhere. A floor potion picked up and drunk in one turn gets its dose from the game |
+| Q144 | (ticket 14) The first description given wins: a later gain fills an absent description and never overwrites one |
+| Q145 | (ticket 14) The chip shows a runtime item with a description as `Name: description` on its own carried or lying-here line, like an equipped line |
+| Q146 | (ticket 14) The panel row's second line shows the description, trimmed to 200 characters at parse time |
+| Q147 | (ticket 13) The re-roll replays the pass at the location the live pass used (`inventoryLocationId`; a later code move can change the turn's `locationId`), not where the player stands now: a Go taken after the turn must not move the replay. The stored turn keeps the owners the live pass validated against and its location (`inventoryOwners`, `inventoryLocationId`, beside `inventoryOps`, additive save shape), and every re-roll replays against them |
+| Q150 | (play test, 2026-10-29, user; amends Q20 and Q62) Give lists the In Scene entities first, then a divider, then everyone else at the location. In Scene reads the chip scene's source: recent participants, minus authored entities who are not here |
+| Q151 | (play test, user; narrows Q62) The Inventory pass and the narration block keep location presence. Only Give's order follows Q150, so the story can still bring a bystander in |
+| Q152 | (play test, user) What lies at the location shows in its own card, titled with the location's name, below the player's card. A location is not an owner (Q69) |
+| Q153 | (play test, user; extends Q17) Each item lying here has **Pick Up**, a transfer to `you` through the one validator, with a count for a stack. Bound (Q58) blocks letting go only, so a Bound Item Copy can be picked up |
 
 ## User Stories
 
@@ -292,7 +321,7 @@ Settled with the user on 2026-10-19 and 2026-10-28. The design discussion ruled 
 ### Runtime shape (save)
 
 - **Item Copy**: an id, the item id (or a runtime item id), a location as a tagged union (`you` / `entity` / `location`; `you` resolves to the played Persona, Q54), a quantity, an equipped slot and an equip order, a visibility **enum** (`visible` / `hidden`), and an open **per-copy state** field. Charges live in per-copy state in this effort.
-- **Runtime item**: a name and a short description, created by the pass, Stackable and Consumable, no slot, no effects (Q56).
+- **Runtime item**: a name created by the pass and a short description the `describeItem` background pass adds (Q148), Stackable and Consumable, no slot, no effects (Q56).
 - **Applied-effect ledger**: what each While Equipped or While Owned value effect actually moved, following the `appliedTraitValues` pattern. Bound facets are derived, not ledgered (Q51).
 - **Timed effects**: per owner, with the story-clock end time. They expire in the turn commit after the clock advances.
 - **First Obtain record**: which owners already got each item's On First Obtain effects.
@@ -318,7 +347,9 @@ Settled with the user on 2026-10-19 and 2026-10-28. The design discussion ruled 
 
 ### Stat pass change
 
-- The stat pass prompt gains a line listing the turn's item effects as already applied (Q53). It ships with probe numbers.
+- The stat pass prompt gains a line naming the present items whose stat effects the game applies (Q53, Q141). It ships with probe numbers.
+- **Probe numbers (ticket 09), `inventory-pass-probe.cli.ts`.** The line names the present items with stat effects, only while the pass is due. Vigor gain, no line → line: cloud (12 per arm) potion double-add 11/12 → 0/12 (an earlier batch 12/12 → 0/12); runtime honey cake 11/12 → 12/12, not suppressed. Cydonia (3 per arm, seeded) potion 3/3 → 3/3 and honey cake 3/3 → 3/3: the line does nothing there, and the same line at the end of the user message also stays 3/3. A stronger wording ("…so that change gets 0") stayed 3/3 on Cydonia and suppressed the honey cake on cloud (0/12), so it was reverted.
+- **Pass accuracy (ticket 09).** Nine Sedge Landing cases, two of them no-change guards; right = every row of the named items ends as expected and nothing else moved. Shipped prompt: cloud (12 per arm) schema 73/84 changes and 24/24 guard, text 84/84 and 24/24; Cydonia (3 per arm) schema 18/21 and 6/6, text 14/21 and 6/6. Most schema misses are one ambiguous case: Odette hands her hook over and lays it down, and schema replies equip it again (cloud 1/12, Cydonia 0/3). Before the schema reply rider ("an empty operations list when no item changed"), the cloud schema guard was 0/24. In the shipped prompt's batch, the cloud stat line held: potion 12/12 → 0/12, honey cake 2/12 → 10/12 (the control drifted low that batch).
 
 ### Narration context
 
@@ -341,7 +372,7 @@ Settled with the user on 2026-10-19 and 2026-10-28. The design discussion ruled 
 
 - An **Inventory** game panel tab: slots with their equipped items, carried items, a **Here** section for visible location items, and timed effects with time left.
 - Buttons: Equip, Unequip, Use (Consumable or charges), Drop and Give (present entities only). Each calls the Inventory module with the source `panel` and applies at once. All buttons are off while a turn runs (Q61). Bound Item Copies show Drop and Give as unavailable.
-- The stat panel names an item as the source of a change, except for hidden Item Copies (Q63).
+- A turn log line names the item as the source of a stat change, except for hidden Item Copies (Q63, Q106).
 - The entity panel shows that entity's equipped items.
 - A World Editor Items list and editor, reusing the entity field editors after a light generalization, and a slot list editor in world settings. Placements appear on the location, on each entity and on the persona.
 - Every new screen and modal gets a dev-route entry.

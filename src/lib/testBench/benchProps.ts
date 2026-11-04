@@ -29,7 +29,7 @@ export interface SourceCheckProps {
   missing: MissingSource[];
   /** Ask the server about every source again. Also what Retry Check runs. */
   onCheckSources: () => void;
-  /** Repair one copy. Replace opens the library picker; the other two land at once. */
+  /** Repair one copy. Replace opens the library picker; the other two apply at once. */
   onRepair: (copyId: string, action: RepairAction) => void;
 }
 
@@ -52,11 +52,11 @@ export interface IssuesProps {
   /** The running check's prompts, which its choice rows answer. Null while no check runs. */
   codePrompts: ScriptPromptStore | null;
   /** The rule whose repair is running, when one is. Only the async image conversion can be — a pure fix
-   *  lands within the click — and the row it belongs to shows the work rather than looking unresponsive. */
+   *  applies within the click — and the row it belongs to shows the work rather than looking unresponsive. */
   fixingRuleId: string | null;
-  /** The world's publish size in bytes, null until the first measure lands. */
+  /** The world's publish size in bytes, null until the first measure finishes. */
   publishBytes: number | null;
-  /** The first rule pass hasn't landed yet, so an empty list means nothing. */
+  /** The first rule pass hasn't finished yet, so an empty list means nothing. */
   checking: boolean;
   onOpenItem: OpenFindingItem;
   onDismissRule: (ruleId: string) => void;
@@ -68,14 +68,16 @@ export interface IssuesProps {
   sources: SourceCheckProps;
 }
 
-/** The Bench-level `Testing as [PC] · at [location]` selection, resolved against the world. */
+/** The Bench-level `Testing as [Persona] · at [location]` selection, resolved against the world. */
 export interface LensBarProps {
   lens: BenchLens;
-  pcOptions: LensOption[];
+  personaOptions: LensOption[];
+  /** What the None row reads as. Null when the world does not offer it. */
+  noneLabel: string | null;
   locationOptions: LensOption[];
-  /** The stats the lens PC switches away from the world's defaults. */
+  /** The stats the lens switches away from the world's defaults. */
   statOverrides: StatOverride[];
-  onPcChange: (traitId: string | null) => void;
+  onPersonaChange: (personaId: string | null) => void;
   onLocationChange: (locationId: string | null) => void;
 }
 
@@ -103,8 +105,6 @@ export interface OpeningProps {
   onReroll: () => void;
   /** Show the fresh game at another member of the start pool. */
   onStartChange: (startLocationId: string) => void;
-  /** Show the fresh game as another world persona, or as None with null. */
-  onPersonaChange: (personaId: string | null) => void;
   /** Show another row of the opening pool, by its key. */
   onOpeningChange: (openingKey: string) => void;
 }

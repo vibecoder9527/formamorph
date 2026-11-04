@@ -7,7 +7,7 @@ import { planToolImport } from '@/lib/tools/toolPack';
 import { isRecord, parseTool } from '@/lib/tools/toolValidation';
 import type { Tool, ToolEnabledMap } from '@/types';
 import { DOCS_LOOKUP } from './docsLookup';
-import { HELP_PROMPT_KEYS, type HelpPromptTexts, type HelpRequestKey } from './helpPrompt';
+import { readHelpPromptTexts, type HelpPromptTexts, type HelpRequestKey } from './helpPrompt';
 import {
   DEFAULT_HELP_PRESET_ID, DEFAULT_HELP_PRESET_NAME, defaultHelpPreset, HELP_REPETITION_PENALTY_RANGE, HELP_TEMPERATURE_RANGE, mapHelpOptions, type HelpPreset, type HelpPresetOptions, type HelpRequestOptions,
 } from './helpPresets';
@@ -40,10 +40,12 @@ export interface HelpPresetFile {
   tools: HelpPresetFileTool[];
   /** Keyed by the function name the model sees. */
   functions: Record<string, HelpPresetFileFunction>;
+  /** The Read the World switch. A file without it reads as on. */
+  readWorld: boolean;
 }
 
 /** Every top-level key of the file. */
-export const HELP_PRESET_FILE_FIELDS: readonly (keyof HelpPresetFile)[] = ['formamorphHelpPreset', 'appVersion', 'name', 'prompts', 'options', 'tools', 'functions'];
+export const HELP_PRESET_FILE_FIELDS: readonly (keyof HelpPresetFile)[] = ['formamorphHelpPreset', 'appVersion', 'name', 'prompts', 'options', 'tools', 'functions', 'readWorld'];
 
 type SwitchKey = { [K in keyof HelpSettings]: HelpSettings[K] extends boolean ? K : never }[keyof HelpSettings];
 type LimitKey = { [K in keyof HelpSettings]: HelpSettings[K] extends number ? K : never }[keyof HelpSettings];
@@ -61,19 +63,22 @@ const blockOf = ({ temperature, repetitionPenalty, maxTokens }: HelpRequestOptio
 /** The blocks with their fields only. */
 const blocksOf = (options: HelpPresetOptions): HelpPresetOptions => mapHelpOptions((key) => blockOf(options[key]));
 
+/** The texts with their fields only. */
+const promptsOf = ({ answer, pick, intent, create, lookup, code, worldEditor, worldGame }: HelpPromptTexts): HelpPromptTexts => ({ answer, pick, intent, create, lookup, code, worldEditor, worldGame });
+
 /** The file of the preset `presetId`, the Default preset from the code of this build; null for an id no preset holds. */
 export function buildHelpPresetFile(settings: HelpSettings, presetId: string, appVersion: string): HelpPresetFile | null {
   const preset = presetId === DEFAULT_HELP_PRESET_ID ? defaultHelpPreset() : settings.presets.presets.find((p) => p.id === presetId);
   if (!preset) return null;
-  const { answer, pick, lookup, code } = preset.prompts;
   return {
     formamorphHelpPreset: HELP_PRESET_FILE_VERSION,
     appVersion,
     name: preset.name,
-    prompts: { answer, pick, lookup, code },
+    prompts: promptsOf(preset.prompts),
     options: blocksOf(preset.options),
     tools: settings.tools.map((tool) => ({ tool: structuredClone(tool), enabled: settings.toolSwitches[tool.id] === true })),
     functions: Object.fromEntries(FUNCTION_FIELDS.map((fn) => [fn.name, { enabled: settings[fn.enabled], maxCalls: settings[fn.maxCalls] }])),
+    readWorld: settings.readWorld,
   };
 }
 
@@ -95,9 +100,13 @@ function recordAt(parent: Record<string, unknown>, key: string, field = key): Re
   return value;
 }
 
+/** The option blocks a file may lack: each reads as the Default preset's. */
+const OPTIONAL_BLOCKS: readonly HelpRequestKey[] = ['intent', 'create'];
+
 /** The option block of `key`, else a refusal that names the block or its bad field. */
 function parseBlock(options: Record<string, unknown>, key: HelpRequestKey): HelpRequestOptions {
   const field = `options.${key}`;
+  if (options[key] === undefined && OPTIONAL_BLOCKS.includes(key)) return blockOf(defaultHelpPreset().options[key]);
   const block = recordAt(options, key, field);
   if (!isNumberIn(block.temperature, HELP_TEMPERATURE_RANGE)) throw refusal(`${field}.temperature`);
   if (!isNumberIn(block.repetitionPenalty, HELP_REPETITION_PENALTY_RANGE)) throw refusal(`${field}.repetitionPenalty`);
@@ -109,7 +118,7 @@ function readTools(raw: unknown): HelpPresetFileTool[] {
   if (!Array.isArray(raw)) throw refusal('tools');
   return raw.map((entry, index) => {
     if (!isRecord(entry)) throw refusal(`tools.${index}`);
-    const result = parseTool(entry.tool);
+    const result = parseTool(entry.tool, { help: true });
     if ('error' in result) throw new Error(`That preset file has a Tool that can’t be read: ${isRecord(entry.tool) && isText(entry.tool.name) ? `"${entry.tool.name}"` : `tools.${index}`}, ${result.error}.`);
     if (typeof entry.enabled !== 'boolean') throw refusal(`tools.${index}.enabled`);
     return { tool: result.tool, enabled: entry.enabled };
@@ -130,11 +139,8 @@ export function parseHelpPresetFile(json: string): HelpPresetFile {
   if (!isText(parsed.appVersion)) throw refusal('appVersion');
   if (!isText(parsed.name) || parsed.name.trim() === '') throw refusal('name');
 
-  const prompts = recordAt(parsed, 'prompts');
-  const [answer, pick, lookup, code] = HELP_PROMPT_KEYS.map((key) => {
-    if (!isText(prompts[key])) throw refusal(`prompts.${key}`);
-    return prompts[key];
-  });
+  const prompts = readHelpPromptTexts(recordAt(parsed, 'prompts'));
+  if ('bad' in prompts) throw refusal(`prompts.${prompts.bad}`);
 
   const fileOptions = recordAt(parsed, 'options');
   const options = mapHelpOptions((key) => parseBlock(fileOptions, key));
@@ -150,14 +156,18 @@ export function parseHelpPresetFile(json: string): HelpPresetFile {
     return [fn.name, { enabled: entry.enabled, maxCalls: entry.maxCalls }];
   }));
 
+  const readWorld = parsed.readWorld === undefined ? true : parsed.readWorld;
+  if (typeof readWorld !== 'boolean') throw refusal('readWorld');
+
   return {
     formamorphHelpPreset: version,
     appVersion: parsed.appVersion,
     name: parsed.name,
-    prompts: { answer, pick, lookup, code },
+    prompts: prompts.texts,
     options,
     tools,
     functions,
+    readWorld,
   };
 }
 
@@ -203,6 +213,7 @@ export function importHelpPresetFile(settings: HelpSettings, file: HelpPresetFil
   return {
     change: {
       ...functionChange,
+      readWorld: file.readWorld,
       presets: { activeId: preset.id, presets: [...store.presets, preset] },
       tools: [...settings.tools, ...added],
       toolSwitches: { ...settings.toolSwitches, ...switches },

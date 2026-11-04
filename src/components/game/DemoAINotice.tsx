@@ -1,15 +1,18 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { badgeVariants } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Meta } from '@/components/ui/typography';
 import { Tooltip, TooltipPopup, TooltipPortal, TooltipPositioner, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { openRoadScene } from '@/components/road/roadSceneStore';
+import { useDemoAIOfferAvailable } from '@/components/road/useDemoAIOffer';
 import { useSettings } from '@/contexts/SettingsContext';
 import { deviceCanRunDesktopApp } from '@/lib/desktopAppOffer';
 import { openDocsFromClick } from '@/lib/formaquestion/docsOpener';
 import { wikiPageUrl } from '@/lib/helpTopics';
-import { isDemoAISeen, markDemoAISeen } from './demoAISeen';
+import { markDemoAISeen } from './demoAISeen';
 
 const SITE_URL = 'https://formamorph.ai';
 
@@ -18,22 +21,10 @@ export interface DemoAINoticeHandle {
   open(): void;
 }
 
-interface DemoAINoticeProps {
-  /** The entry order released the Demo AI dialog for this entry. */
-  entry: boolean;
-  /** The entry turn is over: the dialog closed, or it had nothing to show. */
-  onEntryDone?: () => void;
-}
-
-/** The Demo AI dialog and its seen-key. */
-export const DemoAINotice = forwardRef<DemoAINoticeHandle, DemoAINoticeProps>(function DemoAINotice(
-  { entry, onEntryDone },
-  ref,
-) {
-  const { narrationIsDemoAI, requestSettings } = useSettings();
+/** The Demo AI dialog, which the badge opens. */
+export const DemoAINotice = forwardRef<DemoAINoticeHandle>(function DemoAINotice(_, ref) {
+  const { requestSettings } = useSettings();
   const [open, setOpen] = useState(false);
-  const entryOpenRef = useRef(false);
-  const entryHandledRef = useRef(false);
   const connectRef = useRef<HTMLButtonElement>(null);
 
   const openDialog = useCallback(() => {
@@ -42,26 +33,10 @@ export const DemoAINotice = forwardRef<DemoAINoticeHandle, DemoAINoticeProps>(fu
   }, []);
   useImperativeHandle(ref, () => ({ open: openDialog }), [openDialog]);
 
-  useEffect(() => {
-    if (!entry || entryHandledRef.current) return;
-    entryHandledRef.current = true;
-    if (narrationIsDemoAI && !isDemoAISeen()) {
-      entryOpenRef.current = true;
-      openDialog();
-    } else {
-      onEntryDone?.();
-    }
-  }, [entry, narrationIsDemoAI, openDialog, onEntryDone]);
-
-  const close = () => {
-    setOpen(false);
-    if (entryOpenRef.current) {
-      entryOpenRef.current = false;
-      onEntryDone?.();
-    }
-  };
+  const close = () => setOpen(false);
 
   const desktopOffer = deviceCanRunDesktopApp();
+  const offerAvailable = useDemoAIOfferAvailable();
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) close(); }}>
@@ -78,15 +53,14 @@ export const DemoAINotice = forwardRef<DemoAINoticeHandle, DemoAINoticeProps>(fu
         <ScrollArea data-testid="demo-ai-body" className="-mr-3 min-h-0 flex-1 pr-3">
           <div className="space-y-3 text-body">
             <DialogDescription className="text-body text-foreground">
-              Formamorph is using its free built-in AI. It&apos;s a small model, and it&apos;s here so you can try the
-              app with zero setup.
+              You&apos;re playing on Formamorph&apos;s free built-in AI. It&apos;s a small model, and it&apos;s here so you
+              can try the app with no setup.
             </DialogDescription>
             <p>
-              The AI writes everything you read. A stronger model gives you sharper narration, a better memory of
-              your story, and characters who stay in character. Nothing else in Formamorph changes the experience
-              as much.
+              The AI writes everything you read. A stronger model writes sharper narration, keeps each entity
+              consistent, and remembers more of your story. Nothing else in Formamorph changes your game as much.
             </p>
-            <p>If a world feels flat, try it on a stronger model before you judge it.</p>
+            <p>If a world seems dull, try it on a stronger model before you judge it.</p>
             <p>
               For the full experience, connect your own AI in <strong>Settings</strong>. Any OpenAI-compatible
               endpoint works, local or hosted.{' '}
@@ -108,6 +82,14 @@ export const DemoAINotice = forwardRef<DemoAINoticeHandle, DemoAINoticeProps>(fu
                 nothing extra to install. The model you can run depends on your hardware.
               </p>
             )}
+            {offerAvailable && (
+              <div className="flex items-center justify-between gap-3">
+                <p>Formamorph AI is a stronger AI with no setup. Your support on Patreon includes it and helps fund new updates.</p>
+                <Button variant="outline" size="sm" className="shrink-0" onClick={() => { close(); openRoadScene(); }}>
+                  See Levels
+                </Button>
+              </div>
+            )}
           </div>
         </ScrollArea>
         {/* Negative first: the shared footer puts the last action on the right, and on top below `sm`. */}
@@ -124,6 +106,16 @@ export const DemoAINotice = forwardRef<DemoAINoticeHandle, DemoAINoticeProps>(fu
     </Dialog>
   );
 });
+
+/** The short line a first game entry on the Demo AI shows in the narration area. */
+export function DemoAIEntryLine() {
+  // The right padding keeps the text clear of the badge and options in the frame's corner.
+  return (
+    <Meta as="p" role="status" data-testid="demo-ai-entry-line" className="mb-2 shrink-0 pr-28">
+      You&apos;re on the Demo AI, a small free model. Select its badge to learn more.
+    </Meta>
+  );
+}
 
 /** The Demo AI status badge. It shows while narration resolves to the Demo AI, and a click opens the dialog. */
 export function DemoAIBadge({ onOpen }: { onOpen: () => void }) {

@@ -2,6 +2,7 @@
 // the favicon, and the social-embed image. Writes straight into hosting/site/.
 //
 // Needs a dev server (`npm run dev -- --port 5180`). Gameplay loads a prepared save without AI calls.
+// The server must not have served the title card: that puts these shots in Vite's module graph, so writing one reloads the page.
 // Palette is the `data-theme` attribute; theme is an emulated `prefers-color-scheme`, so
 // every pair is pixel-aligned.
 //
@@ -10,7 +11,7 @@
 //   node scripts/captureSiteShots.mjs --only 02-game --verify-only --width 1600 --height 900
 //   node scripts/captureSiteShots.mjs --only 02-game --scene scripts/fixtures/site-game.json
 //
-// The avatar screen ships the alternate VRM, which is not the tracked default. The capture serves it
+// The avatar screen shows Aurelia (build-assets/alternate-avatar.vrm), not the tracked Aki. The capture serves it
 // by intercepting the fetch in a context of its own, so the tracked file is never touched: writing an
 // 18 MB file into public/ restarts Vite's watcher mid-run and kills the server under the capture.
 import { chromium } from '@playwright/test';
@@ -42,6 +43,27 @@ const only = arg('only', '').split(',').filter(Boolean);
 const wanted = new Set(only.length ? only : ALL);
 
 const AVATAR_ALT = 'build-assets/alternate-avatar.vrm';
+
+// The viewer sets no expression, so the served copy holds the relaxed smile as its face's resting morph. Three-vrm would zero a bound morph, so the preset goes.
+function smiling(glb) {
+  const length = glb.readUInt32LE(12);
+  const json = JSON.parse(glb.subarray(20, 20 + length).toString('utf8'));
+  const presets = json.extensions.VRMC_vrm.expressions.preset;
+  const { index } = presets.relaxed.morphTargetBinds[0];
+  const face = json.meshes[json.nodes.find((node) => node.name === 'Face').mesh];
+  face.weights = face.extras.targetNames.map((_, i) => (i === index ? 1 : 0));
+  delete presets.relaxed;
+  const text = Buffer.from(JSON.stringify(json), 'utf8');
+  const chunk = Buffer.concat([text, Buffer.alloc((4 - (text.length % 4)) % 4, 0x20)]);
+  const bin = glb.subarray(20 + length);
+  const head = Buffer.alloc(20);
+  head.write('glTF', 0, 'latin1');
+  head.writeUInt32LE(2, 4);
+  head.writeUInt32LE(20 + chunk.length + bin.length, 8);
+  head.writeUInt32LE(chunk.length, 12);
+  head.write('JSON', 16, 'latin1');
+  return Buffer.concat([head, chunk, bin]);
+}
 const SCENE = JSON.parse(readFileSync(arg('scene', 'scripts/fixtures/site-game.json'), 'utf8'));
 const VERIFY_ONLY = process.argv.includes('--verify-only');
 
@@ -156,6 +178,8 @@ try {
     }, null, { timeout: 180000 });
     await p.mouse.move(VIEWPORT.width / 2, 20);
     await p.waitForTimeout(4000); // the reveal finishes and the pill fades
+    await p.clickIfVisible('No Thanks'); // the Semantic Search offer covers the answer
+    await p.waitForTimeout(800);
     await sweep(p, '01-library');
     await p.close();
   }
@@ -204,7 +228,7 @@ try {
     // Its own context, because the seed happens once per IndexedDB: a page sharing the earlier
     // context would already hold the tracked avatar and never re-fetch.
     const avatarCtx = await newCtx();
-    const alt = readFileSync(AVATAR_ALT);
+    const alt = smiling(readFileSync(AVATAR_ALT));
     await avatarCtx.route('**/default-avatar.vrm', (route) =>
       route.fulfill({ body: alt, contentType: 'application/octet-stream' }));
     const p = await mk(avatarCtx);

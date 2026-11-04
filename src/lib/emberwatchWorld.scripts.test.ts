@@ -7,7 +7,7 @@ import raw from '@/defaultworlds/emberwatch.json?raw';
 import { migrateWorld } from './version';
 import { playStatWorld } from './statLinks';
 import { settleDefaults } from './traitGates';
-import { runStatCodeTurn, type StatCodeTurn } from './statCodeTurn';
+import { runItemScripts, runStatCodeTurn, type ApplyInventory, type StatCodeTurn } from './statCodeTurn';
 import { primeRolls, resolvePlaceholders, type PlaceholderPick } from './placeholders';
 import { bundledWorldHarness, valueOf, withValues, type StatValues } from '@/test/bundledWorldHarness';
 import { readWorldTools } from './tools/worldTools';
@@ -16,7 +16,8 @@ import { onCallRunner } from './tools/onCallRunner';
 import { clockReading } from './gameClock';
 import type { StatCodeTurnResult } from './statCodeTurn';
 import type { SandboxMemory } from './statCodeExecutor';
-import type { LoreToggles } from '@/types';
+import { applyInventoryOps } from './inventory';
+import type { Item, ItemCopy, ItemCopyWhere, LoreToggles } from '@/types';
 
 // The world as play reads it: each persona owns its copy of the Blueprint stats it links.
 const authored = migrateWorld(JSON.parse(raw));
@@ -154,5 +155,96 @@ describe('the offer_prayer World Tool', () => {
     expect(sameDay.reply).toContain('already answered');
     const nextDay = await pray('Chapel of the Ember', { memories: earlier, hours: DAY_TWO_HOURS });
     expect(nextDay.faith).toBe(60);
+  });
+});
+
+describe("Haldren's Crown scripts", () => {
+  const book = world.dictionaries.find((dictionary) => dictionary.name === 'Emberwatch')!;
+  const restored = book.entries.find((entry) => entry.name === 'The Crown Restored')!;
+  const items = world.items ?? [];
+  const itemNamed = (name: string) => items.find((item) => item.name === name)!;
+  const lower = itemNamed("Haldren's Crown, Lower Half");
+  const upper = itemNamed("Haldren's Crown, Upper Half");
+  const bier: ItemCopyWhere = { kind: 'location', id: locationNamed('The Bier Chamber').id };
+  const carried: ItemCopyWhere = { kind: 'you' };
+  const copyOf = (item: Item, where: ItemCopyWhere): ItemCopy =>
+    ({ id: `copy-${item.id}`, item: { kind: 'item', itemId: item.id }, where, quantity: 1, visibility: 'visible' });
+  // The crown scripts write no inventory, so no operation ever reaches this.
+  const applyNothing: ApplyInventory = (copies) => ({ copies: [...copies], diagnostics: [], events: [], itemUses: [] });
+
+  /** The lore writes after `arrived` lands at `where`, with the other half at `otherAt`. */
+  const crownWrites = async (arrived: Item, where: ItemCopyWhere, otherAt: ItemCopyWhere) => {
+    const other = arrived === lower ? upper : lower;
+    const copies = [copyOf(arrived, where), copyOf(other, otherAt)];
+    const base = turnAt('The Bier Chamber', {});
+    const out = await runItemScripts(
+      { ...base, state: { ...base.state, items, itemCopies: copies } },
+      [{ timing: 'gained', itemId: arrived.id, copyId: copies[0].id, where, quantity: 1 }],
+      { items, apply: applyNothing, itemNameOf: (item) => item.name },
+    );
+    return out.result?.loreWrites ?? [];
+  };
+  const switchedOn = [{ book: book.id, entry: restored.id, field: 'enabled', value: true }];
+
+  it('ships the entry off', () => {
+    expect(restored.enabled).toBe(false);
+  });
+
+  it('switches the entry on when either half joins the other on the bier', async () => {
+    expect(await crownWrites(lower, bier, bier)).toEqual(switchedOn);
+    expect(await crownWrites(upper, bier, bier)).toEqual(switchedOn);
+  });
+
+  it('leaves the entry off while the other half is still carried', async () => {
+    expect(await crownWrites(lower, bier, carried)).toEqual([]);
+  });
+
+  it('leaves the entry off when a half is picked up, even with both halves in hand', async () => {
+    expect(await crownWrites(upper, carried, carried)).toEqual([]);
+  });
+});
+
+describe('the Flask of Lamp Oil script', () => {
+  const items = world.items ?? [];
+  const itemNamed = (name: string) => items.find((item) => item.name === name)!;
+  const flask = itemNamed('Flask of Lamp Oil');
+  const lantern = itemNamed('Hooded Lantern');
+  const you: ItemCopyWhere = { kind: 'you' };
+  const wall: ItemCopyWhere = { kind: 'location', id: locationNamed('The Boundary Wall').id };
+  const lanternAt = (id: string, where: ItemCopyWhere, uses: number): ItemCopy =>
+    ({ id, item: { kind: 'item', itemId: lantern.id }, where, quantity: 1, visibility: 'visible', state: { uses } });
+  const apply: ApplyInventory = (copies, ops) =>
+    applyInventoryOps(copies, ops, { world: { items, slots: world.slots }, source: 'script', newId: () => 'new' });
+
+  const sword: ItemCopy = { id: 'sword', item: { kind: 'item', itemId: itemNamed('Steel Longsword').id }, where: you, quantity: 1, visibility: 'visible' };
+
+  /** The lanterns' uses left after the flask, used up at `usedAt` on `target`, runs its When Used script. */
+  const afterPour = async (usedAt: ItemCopyWhere, target?: ItemCopy) => {
+    const copies = [lanternAt('mine', you, 0), lanternAt('other', you, 0), lanternAt('spare', wall, 1), sword];
+    const was: ItemCopy = { id: 'flask', item: { kind: 'item', itemId: flask.id }, where: usedAt, quantity: 1, visibility: 'visible' };
+    const base = turnAt('The Boundary Wall', {});
+    const out = await runItemScripts(
+      { ...base, state: { ...base.state, items, itemCopies: copies } },
+      [{ timing: 'used', itemId: flask.id, copyId: 'flask', where: usedAt, quantity: 1, was, ...(target && { target }) }],
+      { items, apply, itemNameOf: (item) => item.name },
+    );
+    return Object.fromEntries(out.copies.filter((copy) => copy.item.kind === 'item' && copy.item.itemId === lantern.id)
+      .map((copy) => [copy.id, copy.state?.uses ?? lantern.uses]));
+  };
+
+  it("refills the owner's own lanterns to three nights and leaves the rest alone", async () => {
+    expect(await afterPour(you)).toEqual({ mine: 3, other: 3, spare: 1 });
+  });
+
+  it('refills nothing when the flask lies at a location', async () => {
+    expect(await afterPour(wall)).toEqual({ mine: 0, other: 0, spare: 1 });
+  });
+
+  it('refills only the lantern the oil was poured into', async () => {
+    expect(await afterPour(you, lanternAt('mine', you, 0))).toEqual({ mine: 3, other: 0, spare: 1 });
+  });
+
+  it('refills nothing when the oil was poured into something that is not a lantern', async () => {
+    expect(await afterPour(you, sword)).toEqual({ mine: 0, other: 0, spare: 1 });
   });
 });

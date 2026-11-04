@@ -463,8 +463,8 @@ The following are navigation references, not fixed implementation requirements:
 
 The current standalone demo has four walkthroughs: dependencies/add-ons, preserving local edits, shared author content, and a missing source. It also offers author/player free-play controls. It is an exploratory aid, not an approved specification of every transition.
 
-- [Standalone prototype on the original machine](C:/Users/benny/.codex/visualizations/2026/09/07/01a07d4f-021c-7bf1-94f5-3d4e5cab0754/linked-worlds-standalone.html)
-- [Editable conversation prototype on the original machine](C:/Users/benny/.codex/visualizations/2026/09/07/01a07d4f-021c-7bf1-94f5-3d4e5cab0754/linked-worlds-prototype.html)
+- [Standalone prototype on the original machine](C:/Users/user/.codex/visualizations/2026/09/07/01a07d4f-021c-7bf1-94f5-3d4e5cab0754/linked-worlds-standalone.html)
+- [Editable conversation prototype on the original machine](C:/Users/user/.codex/visualizations/2026/09/07/01a07d4f-021c-7bf1-94f5-3d4e5cab0754/linked-worlds-prototype.html)
 
 Those links are machine-local, not portable repository artifacts. The decisions and scenarios above stand on their own. Preserve a shareable prototype snapshot on a throwaway branch when design evaluation concludes; do not import the demo into application code.
 

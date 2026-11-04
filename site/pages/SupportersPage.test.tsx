@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { SupportersPage } from './SupportersPage';
 import { res, resetAccountPage } from '../test/support';
 
@@ -25,6 +25,20 @@ describe('SupportersPage', () => {
     expect(within(plus).getByRole('link', { name: 'Ada' })).toHaveAttribute('href', '/u/Ada');
     expect(within(base).getByRole('link', { name: 'Bo' })).toHaveAttribute('href', '/u/Bo');
     expect(within(plus).queryByText('Bo')).toBeNull();
+  });
+
+  it('lists the top tier first, with its name in the tier color', async () => {
+    wallIs([
+      row('1', 'Ada', 'supporter_plus'),
+      row('2', 'Bo', 'supporter'),
+      row('3', 'Cy', 'supporter_top'),
+    ]);
+    render(<SupportersPage />);
+
+    await screen.findByRole('region', { name: 'Supporter++' });
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+    expect(headings).toEqual(['Supporter++', 'Supporter+', 'Supporter']);
+    expect(screen.getByRole('link', { name: 'Cy' })).toHaveClass('text-supporter-top');
   });
 
   it('links a spaced name in its underscore form', async () => {
@@ -77,5 +91,41 @@ describe('SupportersPage', () => {
     render(<SupportersPage />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Server down');
+  });
+
+  it('reads the wall again on Try Again', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('offline'));
+    render(<SupportersPage />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the list of supporters.');
+
+    wallIs([row('1', 'Ada', 'supporter')]);
+    fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+
+    expect(screen.getByText('Loading supporters…')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Ada' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps its layout and its thank-you line', async () => {
+    wallIs([]);
+    render(<SupportersPage />);
+
+    await screen.findByText(/No supporters are listed yet/);
+    expect(screen.getByRole('heading', { level: 1, name: 'Supporters' })).toBeInTheDocument();
+    expect(screen.getByText(/Our Supporters help fund Formamorph's development/)).toBeInTheDocument();
+  });
+
+  it('leaves no unhandled error when the read fails after it unmounts', async () => {
+    let fail!: (error: Error) => void;
+    vi.mocked(fetch).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    const { unmount, container } = render(<SupportersPage />);
+
+    unmount();
+    // Vitest fails the run on an unhandled rejection.
+    await act(async () => { fail(new TypeError('offline')); await Promise.resolve(); });
+
+    expect(container).toBeEmptyDOMElement();
   });
 });

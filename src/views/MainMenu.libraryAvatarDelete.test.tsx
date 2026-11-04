@@ -25,11 +25,11 @@ const library = vi.hoisted(() => ({
 vi.mock('@/services/ModelStorageService', () => ({
   default: {
     initialize: vi.fn(async () => {}),
-    seedDefaultModel: vi.fn(async () => {}),
+    seedBundledAvatars: vi.fn(async () => {}),
     getModelMetadata: vi.fn(async () => library.models),
     ensureThumbnail: vi.fn(async () => null),
     getModelData: vi.fn(async () => null),
-    defaultAvatarHashes: vi.fn(async () => []),
+    bundledAvatarHashes: vi.fn(async () => []),
     deleteModel: vi.fn(async (id: string) => { library.models = library.models.filter((m) => m.id !== id); }),
   },
 }));

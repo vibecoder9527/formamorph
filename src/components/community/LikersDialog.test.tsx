@@ -6,7 +6,7 @@ import { LikersDialog } from './LikersDialog';
 import { UserProfileContext } from '@/contexts/userProfileStore';
 import WorldStorageService from '@/services/WorldStorageService';
 import type { WorldRecord } from '@/components/WorldDetails';
-import type { AnonymousLikeRow, LikerAuditRow, LikerRow } from '@/types';
+import type { AnonymousLikeRow, LikerAuditRow, LikerRow, LikesSummary } from '@/types';
 
 vi.mock('react-toastify', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
@@ -131,7 +131,7 @@ describe('reading who liked a listing', () => {
 
     show();
 
-    expect(await screen.findByText('Nobody has liked this yet.')).toBeTruthy();
+    expect(await screen.findByText('No likes yet.')).toBeTruthy();
   });
 
   it('shows the server’s wording when the list is refused', async () => {
@@ -208,7 +208,7 @@ describe('removing one like', () => {
     show({ onLikesChanged });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Remove the like by wren_hallow' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
 
     await waitFor(() => expect(removeLike).toHaveBeenCalledWith('w1', 'u1'));
     // The row leaves, the header total drops with it, and the parent gets the server's own count.
@@ -225,7 +225,7 @@ describe('removing one like', () => {
     show();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Remove the like by wren_hallow' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
 
     await waitFor(() => expect(toastTexts(vi.mocked(toast.error))).toContain('You cannot moderate themView Details →'));
     expect(screen.getByText('wren_hallow')).toBeTruthy();
@@ -450,7 +450,7 @@ describe('auditing the network record behind the likes', () => {
     await screen.findByText('ring_1');
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove the like by ring_1' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
 
     await waitFor(() => expect(removeLike).toHaveBeenCalledWith('w1', 'r1'));
     // The row leaves, the group counts itself again, and none of it costs another look at the record.
@@ -473,7 +473,7 @@ describe('auditing the network record behind the likes', () => {
     await screen.findByText('2 accounts share a network address');
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove the like by pair_1' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
 
     // One account cannot share an address with anybody, so the box it was in is no longer a finding.
     await waitFor(() => expect(screen.queryByText('2 accounts share a network address')).toBeNull());
@@ -509,7 +509,7 @@ describe('auditing the network record behind the likes', () => {
 
     show();
 
-    await screen.findByText('Nobody has liked this yet.');
+    await screen.findByText('No likes yet.');
     expect(screen.queryByRole('button', { name: /Audit/ })).toBeNull();
   });
 });
@@ -546,7 +546,7 @@ describe('the Anonymous Likes on a listing', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Audit the likes/ }));
 
   const confirm = async () =>
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
 
   /** The anonymous rows on screen, which carry no name to find them by. */
   const markEls = () => screen.queryAllByRole('listitem').filter((el) => el.dataset.anonymous === 'true');
@@ -576,7 +576,7 @@ describe('the Anonymous Likes on a listing', () => {
 
     // Four likes is not "nobody", even with no account behind any of them.
     expect(await screen.findByRole('button', { name: /Audit the likes/ })).toBeTruthy();
-    expect(screen.queryByText('Nobody has liked this yet.')).toBeNull();
+    expect(screen.queryByText('No likes yet.')).toBeNull();
   });
 
   it('draws anonymous likes inside the group their address put them in', async () => {
@@ -887,9 +887,130 @@ describe('what the audit summary counts, and what a race re-reads', () => {
     // Clearing them all is reachable without ever pressing Audit, so the quiet re-read on a race must
     // not file a look at the people in the list.
     fireEvent.click(await screen.findByRole('button', { name: 'Remove all Anonymous Likes' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
 
     await waitFor(() => expect(fetchLikers).toHaveBeenCalledTimes(2));
     expect(fetchAudit).not.toHaveBeenCalled();
+  });
+});
+
+describe('what the audit says about network kinds and Bursts', () => {
+  const anonRow = (over: Partial<AnonymousLikeRow> = {}): AnonymousLikeRow => ({
+    likedAt: '2026-08-30 12:00:00',
+    browserFamily: 'Chrome',
+    groupId: null,
+    linkedToAuthor: false,
+    addressKey: 'key-a',
+    networkKind: null,
+    ...over,
+  });
+
+  const summary = (over: Partial<LikesSummary> = {}): LikesSummary => ({
+    windowDays: 90, flagged: 0, total: 0, share: null, bursts: [], reasons: [], ...over,
+  });
+
+  const audit = (
+    rows: LikerAuditRow[], anonymousRows: AnonymousLikeRow[], sum: LikesSummary | null,
+  ) => {
+    vi.spyOn(WorldStorageService, 'fetchLikers')
+      .mockResolvedValue({ total: rows.length, rows, anonymous: anonymousRows.length });
+    return vi.spyOn(WorldStorageService, 'fetchLikersAudit').mockResolvedValue({
+      total: rows.length, rows, anonymous: anonymousRows.length, anonymousRows, summary: sum,
+    });
+  };
+
+  const auditRow = (over: Partial<LikerAuditRow> = {}): LikerAuditRow => ({
+    ...liker(), groupId: null, linkedToAuthor: false, networkKind: null, ...over,
+  });
+
+  const runAudit = async () =>
+    fireEvent.click(await screen.findByRole('button', { name: /Audit the likes/ }));
+
+  it('shows each kind on the account row or anonymous row that has one', async () => {
+    audit(
+      [auditRow({ id: 'u1', username: 'vpn_user', networkKind: 'vpn' })],
+      [anonRow({ networkKind: 'tor', addressKey: 'k1' }), anonRow({ networkKind: 'hosting', addressKey: 'k2' })],
+      summary({ flagged: 3, total: 3, share: 1 }),
+    );
+
+    show();
+    await runAudit();
+    await screen.findByText('vpn_user');
+
+    const kinds = Array.from(document.querySelectorAll('[data-network-kind]'))
+      .map((el) => el.getAttribute('data-network-kind'));
+    expect(kinds.sort()).toEqual(['hosting', 'tor', 'vpn']);
+    expect(screen.getByText('VPN')).toBeTruthy();
+    expect(screen.getByText('Hosting')).toBeTruthy();
+    expect(screen.getByText('Tor')).toBeTruthy();
+  });
+
+  it('leaves rows with no kind unchanged', async () => {
+    audit([auditRow()], [anonRow()], summary({ total: 2 }));
+
+    show();
+    await runAudit();
+    await screen.findByText('wren_hallow');
+
+    expect(document.querySelector('[data-network-kind]')).toBeNull();
+  });
+
+  it('shows the flagged count and share, and omits the line for an empty window', async () => {
+    audit([auditRow()], [], summary({ flagged: 12, total: 40, share: 0.3 }));
+
+    show();
+    await runAudit();
+
+    expect(await screen.findByText('12 of 40 likes flagged in the last 90 days (30%)')).toBeTruthy();
+  });
+
+  it('shows no summary line when the window holds no likes', async () => {
+    audit([auditRow()], [], summary());
+
+    show();
+    await runAudit();
+    await screen.findByText('wren_hallow');
+
+    expect(document.querySelector('[data-likes-summary]')).toBeNull();
+  });
+
+  it('lists each Burst with its size and names the reasons that fire', async () => {
+    audit([auditRow()], [], summary({
+      flagged: 6, total: 10, share: 0.6,
+      bursts: [{ startedAt: '2026-08-30 12:00:00', size: 9 }, { startedAt: '2026-08-31 08:30:00', size: 8 }],
+      reasons: ['burst', 'flagged_share'],
+    }));
+
+    show();
+    await runAudit();
+
+    expect(await screen.findByText('Marked for: Burst and Flagged share')).toBeTruthy();
+    expect(screen.getByText(/ · 9 likers$/)).toBeTruthy();
+    expect(screen.getByText(/ · 8 likers$/)).toBeTruthy();
+  });
+
+  it('shows no Bursts section when nothing fired', async () => {
+    audit([auditRow()], [], summary({ flagged: 0, total: 5, share: 0 }));
+
+    show();
+    await runAudit();
+    await screen.findByText('wren_hallow');
+
+    expect(document.querySelector('[data-bursts]')).toBeNull();
+  });
+
+  it('runs the audit on open when asked to, and the slower plain list does not overwrite it', async () => {
+    const fetchAudit = audit([auditRow({ networkKind: 'vpn' })], [], summary({ flagged: 1, total: 1, share: 1 }));
+    vi.mocked(WorldStorageService.fetchLikers).mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ total: 1, rows: [liker({ username: 'plain_copy' })], anonymous: 0 }), 20)),
+    );
+
+    show({ auditOnOpen: true });
+
+    expect(await screen.findByText('VPN')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(fetchAudit).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('wren_hallow')).toBeTruthy();
+    expect(screen.queryByText('plain_copy')).toBeNull();
   });
 });

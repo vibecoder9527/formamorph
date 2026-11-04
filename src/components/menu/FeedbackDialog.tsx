@@ -13,11 +13,13 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PromptField from "@/components/prompt/PromptField";
+import { APP_FEEDBACK_LINK_PLACE, FeedbackLinkContext } from "@/components/menu/FeedbackMarkdown";
+import { FeedbackPreview } from "@/components/menu/FeedbackPreview";
 import { FeedbackSuggestPlugin } from "@/components/menu/FeedbackSuggestPlugin";
 import { plainVocabulary } from "@/lib/chipVocabulary";
 import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import { useMountedRef } from "@/lib/useMountedRef";
-import { FieldError } from "@/components/ui/typography";
+import { FieldError, Meta } from "@/components/ui/typography";
 import {
   clearFeedbackDraft, FEEDBACK_BODY_MAX, FEEDBACK_TITLE_MAX, hasDraftContent,
   loadFeedbackDraft, saveFeedbackDraft,
@@ -39,44 +41,44 @@ import type { BugDiagnostics, FeedbackCategory, FeedbackThread, FeedbackType } f
 /** What each branch asks for, in its own words. */
 const COPY: Record<FeedbackType, {
   description: string;
-  /** Appended where a profile tab lists the reader's threads. */
-  profileNote: string;
+  /** Appended where the Feedback window lists the reader's threads. */
+  followNote: string;
   titlePlaceholder: string;
   bodyLabel: string;
   bodyPlaceholder: string;
   submit: string;
   sent: string;
-  sentProfileNote: string;
+  sentFollowNote: string;
 }> = {
   bug: {
-    description: 'Filed against your account, so we can ask follow-up questions.',
-    profileNote: ' You’ll find replies under Bugs in your profile.',
+    description: 'Filed under your account, so staff can ask you follow-up questions.',
+    followNote: ' Replies show on the “Bugs” tab in Feedback.',
     titlePlaceholder: 'What went wrong, in a line',
     bodyLabel: 'What Happened',
     bodyPlaceholder: 'What you did, what you expected, what happened instead',
     submit: 'Send Report',
     sent: 'Report filed',
-    sentProfileNote: ' — you can follow it under Bugs in your profile',
+    sentFollowNote: '. Follow it on the “Bugs” tab in Feedback.',
   },
   suggestion: {
-    description: 'Everyone can read and vote on suggestions, so it’s worth checking whether yours is already there.',
-    profileNote: ' Replies land under Suggestions in your profile.',
+    description: 'Everyone can read and vote on suggestions. Check whether yours is already there.',
+    followNote: ' Replies show on the “Suggestions” tab in Feedback.',
     titlePlaceholder: 'What you’d like, in a line',
     bodyLabel: 'What You Have in Mind',
     bodyPlaceholder: 'What it would do, and what it would let you do that you can’t today',
     submit: 'Send Suggestion',
     sent: 'Suggestion filed',
-    sentProfileNote: ' — you can follow it under Suggestions in your profile',
+    sentFollowNote: '. Follow it on the “Suggestions” tab in Feedback.',
   },
   question: {
     description: 'Everyone can read, answer and vote on questions. Similar questions show as you type a title.',
-    profileNote: ' You can follow replies under Questions in your profile.',
+    followNote: ' Replies show on the “Questions” tab in Feedback.',
     titlePlaceholder: 'What you want to know, in a line',
     bodyLabel: 'What You Tried',
     bodyPlaceholder: 'Where you got stuck, and what you tried already',
     submit: 'Post Question',
     sent: 'Question posted',
-    sentProfileNote: ' — you can follow it under Questions in your profile',
+    sentFollowNote: '. Follow it on the “Questions” tab in Feedback.',
   },
 };
 
@@ -92,6 +94,8 @@ interface FeedbackDialogProps {
   /** Filled-in fields. Over an unsent draft the dialog asks first; a fill it takes becomes the draft. */
   initialTitle?: string;
   initialBody?: string;
+  /** A thread number to open on instead of the form. Back then closes the dialog. */
+  initialThread?: number;
   /** The control focus goes back to on close, for an opener that a dialog makes inert as it opens. */
   returnFocus?: HTMLElement | null;
   /** Reports each result to the reader. */
@@ -130,14 +134,14 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics: BugDiagnostics }) {
 }
 
 /**
- * File a bug report, a suggestion or a question. Opened from the menu footer, from in-game, and from either feedback
- * tab in the profile dialog.
+ * File a bug report, a suggestion or a question. Opened from the Feedback window's tabs, from in-game, and from
+ * the app's feedback host.
  *
  * One dialog with a tab rather than two: the forms differ by a dropdown's contents and whether anything
  * about the machine goes with it, which is not two dialogs' worth of difference.
  */
 export function FeedbackDialog({
-  open, onOpenChange, initialType: requestedType = 'bug', onFiled, onOpenThread, initialTitle, initialBody, returnFocus, notify,
+  open, onOpenChange, initialType: requestedType = 'bug', onFiled, onOpenThread, initialTitle, initialBody, initialThread, returnFocus, notify,
   capabilities = APP_FEEDBACK_CAPABILITIES,
 }: FeedbackDialogProps) {
   const { fileTypes } = capabilities;
@@ -196,7 +200,7 @@ export function FeedbackDialog({
     setIsSending(false);
     setSendError(null);
     setFieldNote(null);
-    setOpenThreadId(null);
+    setOpenThreadId(initialThread === undefined ? null : String(initialThread));
     filedRef.current = false;
     setDiagnostics(collectDiagnostics());
   });
@@ -249,11 +253,11 @@ export function FeedbackDialog({
       // show through the dialog's fade-out — and the mirror is muted so it can't write the sent text back.
       filedRef.current = true;
       clearFeedbackDraft();
-      notify(capabilities.profileThreads ? copy.sent + copy.sentProfileNote : copy.sent, 'success');
+      notify(capabilities.followThreads ? copy.sent + copy.sentFollowNote : copy.sent, 'success');
       onFiled?.(filed);
       onOpenChange(false);
     } catch (error) {
-      const failure = 'Failed to send this';
+      const failure = 'Failed to send';
       // Inline surfaces say it once, in the form; a 401 goes to `notify` alone, which owns the session.
       const unauthorized = error instanceof DetailedError && error.status === 401;
       const inline = capabilities.inlineNotes && !unauthorized;
@@ -282,7 +286,7 @@ export function FeedbackDialog({
             <MessageSquarePlus className="h-4 w-4" /> Send Feedback
           </DialogTitle>
           <DialogDescription>
-            {capabilities.profileThreads ? copy.description + copy.profileNote : copy.description}
+            {capabilities.followThreads ? copy.description + copy.followNote : copy.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -293,7 +297,7 @@ export function FeedbackDialog({
               isAdmin={isStaff(AuthService.getCurrentUser())}
               notify={notify}
               capabilities={capabilities}
-              onBack={() => setOpenThreadId(null)}
+              onBack={() => (initialThread === undefined ? setOpenThreadId(null) : onOpenChange(false))}
               onChanged={() => setSimilarRefresh((n) => n + 1)}
             />
           )}
@@ -301,9 +305,9 @@ export function FeedbackDialog({
           {/* Hidden, not unmounted, under an open thread: Back returns to the same draft and caret. */}
           <div className="space-y-4" hidden={openThreadId !== null}>
             {restored && (
-              <p className="rounded-md border bg-muted/40 px-3 py-2 text-meta text-muted-foreground">
-                Picked up where you left off — this was still unsent. Discard it below to start fresh.
-              </p>
+              <Meta as="p" className="rounded-md border bg-muted/40 px-3 py-2">
+                This is your unsent draft. Select <strong>Discard Draft</strong> to start over.
+              </Meta>
             )}
 
             <Tabs value={type} onValueChange={(value) => switchType(value as FeedbackType)}>
@@ -358,19 +362,22 @@ export function FeedbackDialog({
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
                 <span className="text-label font-medium">{copy.bodyLabel}</span>
-                <span className="text-meta text-muted-foreground">{body.length} / {FEEDBACK_BODY_MAX}</span>
+                <Meta>{body.length} / {FEEDBACK_BODY_MAX}</Meta>
               </div>
-              <PromptField
-                value={body}
-                onChange={(next) => setBody(next.slice(0, FEEDBACK_BODY_MAX))}
-                vocabulary={plainVocab}
-                markdown
-                ariaLabel={copy.bodyLabel}
-                placeholder={copy.bodyPlaceholder}
-                className="h-[260px]"
-              >
-                <FeedbackSuggestPlugin threadTypes={capabilities.threadSearchTypes} />
-              </PromptField>
+              <FeedbackLinkContext.Provider value={capabilities.linkPlace ?? APP_FEEDBACK_LINK_PLACE}>
+                <PromptField
+                  value={body}
+                  onChange={(next) => setBody(next.slice(0, FEEDBACK_BODY_MAX))}
+                  vocabulary={plainVocab}
+                  markdown
+                  markdownPreview={FeedbackPreview}
+                  ariaLabel={copy.bodyLabel}
+                  placeholder={copy.bodyPlaceholder}
+                  className="h-[260px]"
+                >
+                  <FeedbackSuggestPlugin threadTypes={capabilities.threadSearchTypes} />
+                </PromptField>
+              </FeedbackLinkContext.Provider>
               {fieldNote?.field === 'body' && <FieldError role="alert">{fieldNote.text}</FieldError>}
             </div>
 
@@ -378,13 +385,13 @@ export function FeedbackDialog({
                 on, so there is nothing to disclose because nothing is collected. */}
             {type === 'bug' && <DiagnosticsPanel diagnostics={diagnostics} />}
 
-            {sendError && <p role="alert" className="text-label text-destructive">{sendError}</p>}
+            {sendError && <FieldError role="alert">{sendError}</FieldError>}
 
             {!fileTypes.includes('bug') && (
-              <p className="text-meta text-muted-foreground">
+              <Meta as="p">
                 To report a bug, <a href="/play/" className="underline underline-offset-2 hover:text-foreground">open the app</a>.
                 Bug reports include details about your device.
-              </p>
+              </Meta>
             )}
           </div>
         </ScrollArea>

@@ -1,6 +1,7 @@
 import { randomUUID } from '@/lib/uuid';
 import type { AIRequestType, RequestMessage, Tool, ToolEnabledMap } from '@/types';
 import type { AiRequestRecord } from '@/lib/aiContext/requestRecord';
+import { requestStatsOf, type AiRequestStats } from '@/lib/aiContext/requestStats';
 import { stripReasoning } from '@/lib/aiResponse';
 import { trimToLastSentence } from '@/lib/outputLength';
 import { toDebugEndpoint } from '@/lib/promptEndpoints';
@@ -11,7 +12,10 @@ import type { ToolSnapshot } from '@/lib/tools/toolSnapshot';
 import { recordParityRequest, recordParityResponse } from '@/lib/turnPipeline/parityRecorder';
 import type { ReasoningEffortField } from '@/lib/reasoningEffort';
 import { buildAiRequestSpec, type AiEndpointTarget, type AiSettingsSnapshot } from './aiRequestSpec';
-import { ABORTED_FINISH_REASON, LENGTH_FINISH_REASON } from './aiStream';
+import { hostedSession as appHostedSession, type HostedSession } from '@/lib/hostedAi/hostedSession';
+import { hostedStateSends } from '@/lib/hostedAi/refusals';
+import type { HostedTurn } from '@/lib/hostedAi/hostedTurn';
+import { ABORTED_FINISH_REASON, AiStreamError, LENGTH_FINISH_REASON } from './aiStream';
 import { asTextMessage } from './imageParts';
 import { rejectedEndpointOverride, type RejectedEndpointOverride } from './rejectedOverride';
 import { SchemaRefused, schemaRejected, withTextFallback, type ResponseSchema } from './responseSchema';
@@ -66,6 +70,10 @@ export interface TransportContext {
   noteSchemaRejected: (target: SchemaRefused['target']) => void;
   /** The AI Stream's fetch. Tests pass a fake; production leaves the global. */
   fetchImpl?: typeof fetch;
+  /** The Formamorph AI turn this request belongs to, which shows one hosted message however many calls fail. */
+  hostedTurn?: HostedTurn;
+  /** Tests pass their own; the app uses its one session. */
+  hostedSession?: HostedSession;
 }
 
 /** A structured rejection of an endpoint override the request carried. */
@@ -101,13 +109,29 @@ export type TransportEvent =
     type: 'responseCaptured';
     id: string;
     attachTo: string | null;
-    response: Pick<AiRequestRecord, 'response' | 'reasoning' | 'toolRounds' | 'statDiagnostics'>;
+    response: Pick<AiRequestRecord, 'response' | 'reasoning' | 'toolRounds' | 'statDiagnostics' | 'stats'>;
   }
   | { type: 'failure'; failure: TransportFailure }
   /** `text` is the final reply; `raw` is the reply as streamed. */
   | { type: 'done'; text: string; raw: string; reasoningText: string; finishReason: string | null };
 
 export type TransportSink = (event: TransportEvent) => void;
+
+/**
+ * Whether a failure reaches the player. A hosted refusal shows once per turn; a silent request shows a
+ * blocking state's message only once per state, so a background pass that keeps failing says so once.
+ */
+function failureShown(error: unknown, silent: boolean, context: TransportContext): boolean {
+  const hosted = error instanceof AiStreamError ? error.hosted : undefined;
+  if (!hosted) return !silent;
+  const state = hosted.presetState;
+  const session = context.hostedSession ?? appHostedSession;
+  const turnMessage = () => context.hostedTurn?.claimMessage() ?? true;
+  if (silent) return state !== null && !hostedStateSends(state) && session.claimAnnouncement(state) && turnMessage();
+  const shown = turnMessage();
+  if (shown && state !== null) session.markAnnounced(state);
+  return shown;
+}
 
 /** Sends `request` and answers its final text, retrying once without the schema when the endpoint refuses it.
  *  A stopped request answers empty text. */
@@ -157,9 +181,13 @@ async function sendOnce(request: TransportRequest, context: TransportContext, si
     let content = '';
     let reasoningText = '';
     let finishReason: string | null = null;
+    let stats: AiRequestStats | undefined;
     let opened = false;
     const toolRounds: AiToolRound[] = [];
-    const events = streamAiToolLoop(spec, { signal, execute: executeTool, captureRounds: context.showSilentRequests, fetchImpl: context.fetchImpl });
+    const events = streamAiToolLoop(spec, {
+      signal, execute: executeTool, captureRounds: context.showSilentRequests, fetchImpl: context.fetchImpl,
+      hostedTurn: context.hostedTurn, hostedSession: context.hostedSession,
+    });
     for await (const event of events) {
       if (event.type === 'debug') {
         if (event.debug.kind === 'response') { opened = true; sink({ type: 'opened' }); }
@@ -182,6 +210,7 @@ async function sendOnce(request: TransportRequest, context: TransportContext, si
         content = event.result.content;
         reasoningText = event.result.reasoningText;
         finishReason = event.result.finishReason;
+        stats = requestStatsOf(event.result);
         break;
       }
       if (event.type === 'reasoning') { reasoningText = event.text; emit({ type: 'reasoning', text: reasoningText }); }
@@ -209,6 +238,7 @@ async function sendOnce(request: TransportRequest, context: TransportContext, si
         response: raw,
         ...(reasoningText.trim() ? { reasoning: reasoningText } : {}),
         ...(toolRounds.length ? { toolRounds } : {}),
+        stats,
         statDiagnostics: statRequest ? readStatResponse(text, statRequest).diagnostics : undefined,
       },
     });
@@ -222,7 +252,7 @@ async function sendOnce(request: TransportRequest, context: TransportContext, si
     const override = rejectedEndpointOverride(error, spec);
     // A persisted settings change explains itself even on a silent request.
     if (override) sink({ type: 'failure', failure: { kind: 'rejectedOverride', error, override, endpointId: spec.target.endpointId, presetName: target.presetName } });
-    else if (!silent) sink({ type: 'failure', failure: { kind: 'request', error } });
+    else if (failureShown(error, silent, context)) sink({ type: 'failure', failure: { kind: 'request', error } });
     throw error;
   }
 }

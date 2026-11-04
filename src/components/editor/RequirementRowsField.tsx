@@ -9,9 +9,10 @@ import {
 import PlaceholderText from '@/components/prompt/PlaceholderText';
 import { StatConditionControls } from '@/components/editor/StatConditionControls';
 import { TimeConditionControls } from '@/components/editor/TimeConditionControls';
+import { ItemConditionControls } from '@/components/editor/ItemConditionControls';
 import { labelPlaceholders } from '@/lib/placementLetters';
 import {
-  requirementOwnerKey, requirementOwnerOf, flipped, sameRequirement, statTail, withRequirementOwner,
+  requirementOwnerKey, requirementOwnerOf, flipped, itemChecks, sameRequirement, statTail, withRequirementOwner,
   type ConditionState, type RequirementOwnerOption, type RequirementOption, type RequirementOptions, type RowState,
 } from '@/lib/traitGates';
 import { soleOwnerRequirement } from '@/lib/requirementOwners';
@@ -19,6 +20,7 @@ import { joinAnd } from '@/lib/requirementSummary';
 import type { RequirementStatSection } from '@/lib/requirementStatOptions';
 import { cn } from '@/lib/utils';
 import type { Placeholder, TraitRequirement, TraitRequirementRow } from '@/types';
+import { Hint, Meta } from '@/components/ui/typography';
 
 /** The picker's one time row: a time Condition starts on night alone. */
 const TIME_OPTION: RequirementOption = { requirement: { kind: 'time', dayparts: ['night'] }, label: 'Time of Day', breadcrumb: [], owners: [] };
@@ -46,7 +48,7 @@ type AddTarget = number | 'new';
  * the targets an author can add, `statSections` the stats by owner, and `textOf` the rule text of one Condition.
  */
 export function RequirementRowsField({
-  rows, states, options, statSections = [], textOf, placeholders, offWorld = false, onChange, onOpen, opens = () => true, label = 'Requires', labelAside, hostName,
+  rows, states, options, statSections = [], textOf, placeholders, offWorld = false, onChange, onOpen, opens = () => true, label = 'Requires', labelAside, hint, hostName,
 }: {
   rows: TraitRequirementRow[];
   states: readonly RowState[];
@@ -61,6 +63,8 @@ export function RequirementRowsField({
   /** The field's name, for a host whose rows are not a trait's requirement. */
   label?: string;
   labelAside?: ReactNode;
+  /** Help line between the label and the rows. */
+  hint?: ReactNode;
   /** Who a Condition with no owner reads, as the owner page names it. Absent, the same owner as the host. */
   hostName?: string;
 }) {
@@ -120,7 +124,7 @@ export function RequirementRowsField({
   const targets = (heading: string, list: RequirementOption[]): BreadcrumbPickerSection<RequirementOption> => ({
     heading,
     rows: list.map((option) => ({
-      // One stat can sit under several owners.
+      // One stat can belong to several owners.
       key: `${option.requirement.kind}:${option.requirement.id}${option.requirement.kind === 'stat' ? `:${requirementOwnerKey(requirementOwnerOf(option.requirement))}` : ''}${option.requirement.kind === 'item' ? `:${option.requirement.status}` : ''}`,
       value: option,
       name: option.label,
@@ -202,17 +206,21 @@ export function RequirementRowsField({
     const stat = requirement.kind === 'stat' ? requirement : null;
     const tail = stat ? ` ${statTail(stat)}` : '';
     const statName = targetText.endsWith(tail) ? targetText.slice(0, targetText.length - tail.length) : targetText;
+    // An item chip shows the item's name, with its State and identity checks in their controls.
+    const item = requirement.kind === 'item' && !unresolved ? requirement : null;
+    const itemTail = item ? itemChecks(item) : '';
+    const itemName = itemTail && targetText.endsWith(itemTail) ? targetText.slice(0, targetText.length - itemTail.length) : targetText;
     // A time chip is its daypart toggles; the complement is the other dayparts, so it has no Not.
     const time = requirement.kind === 'time' ? requirement : null;
     return (
       <span
-        role={stat || time ? 'group' : undefined}
-        aria-label={stat || time ? ruleLabel : undefined}
+        role={stat || time || item ? 'group' : undefined}
+        aria-label={stat || time || item ? ruleLabel : undefined}
         data-unresolved={unresolved || undefined}
         data-not={requirement.not || undefined}
         className={cn(
           'inline-flex max-w-full items-center gap-0.5 rounded-full border bg-secondary py-0.5 pl-2.5 pr-1 text-label',
-          (stat || time) && 'flex-wrap gap-y-1',
+          (stat || time || item) && 'flex-wrap gap-y-1',
           time && 'flex-nowrap rounded-2xl',
           requirement.not && 'border-dashed',
           unresolved && 'border-destructive text-destructive',
@@ -229,6 +237,13 @@ export function RequirementRowsField({
                 accepts={edit.accepts}
                 onChange={edit.replace}
               />
+            </span>
+          </>
+        ) : item ? (
+          <>
+            <span className="min-w-0 truncate">{mark}<PlaceholderText text={itemName} placeholders={placeholders} /></span>
+            <span className="ml-1.5 inline-flex items-center gap-1.5 text-foreground">
+              <ItemConditionControls requirement={item} accepts={edit.accepts} onChange={edit.replace} />
             </span>
           </>
         ) : unresolved || requirement.kind === 'item' || !opens(requirement) ? (
@@ -283,6 +298,7 @@ export function RequirementRowsField({
   return (
     <div className="space-y-2" role="group" aria-labelledby={labelId}>
       <div className="flex items-center gap-2"><Label id={labelId}>{label}</Label>{labelAside}</div>
+      {hint && <Hint>{hint}</Hint>}
       {rows.length > 0 && (
         <div>
           {rows.map((row, i) => {
@@ -290,11 +306,11 @@ export function RequirementRowsField({
             return (
               // Rows have no ids; an index key remounts nothing that holds state.
               <div key={i}>
-                {i > 0 && <div className="py-1 text-center text-meta text-muted-foreground">or</div>}
+                {i > 0 && <Meta as="div" className="py-1 text-center">or</Meta>}
                 <div data-requirement-row="" className="flex flex-wrap items-center gap-1.5 rounded-md border bg-background p-1.5">
                   {row.all.map((requirement, j) => (
                     <span key={`${requirement.kind}:${requirement.id}:${requirementOwnerKey(requirementOwnerOf(requirement))}:${j}`} className="inline-flex max-w-full items-center gap-1.5">
-                      {j > 0 && <span className="text-meta text-muted-foreground">and</span>}
+                      {j > 0 && <Meta>and</Meta>}
                       {chip(requirement, states[i]?.conditions[j], {
                         remove: () => removeCondition(i, j),
                         replace: (next) => replaceCondition(i, j, next),

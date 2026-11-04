@@ -55,6 +55,12 @@ export const NO_PICK = 'No section of the list answers the question.';
 export const isPickRequest = (init: RequestInit): boolean =>
   (JSON.parse(init.body as string) as { messages: { content: unknown }[] }).messages[0].content === HELP_PICK_SYSTEM_PROMPT;
 
+const INTENT_SYSTEM_PROMPT = renderHelpPrompt(DEFAULT_HELP_PROMPTS.intent);
+
+/** Whether a request is the Intent Classifier request of a help question, on the Default prompt. */
+export const isIntentRequest = (init: RequestInit): boolean =>
+  (JSON.parse(init.body as string) as { messages: { content: unknown }[] }).messages[0].content === INTENT_SYSTEM_PROMPT;
+
 /**
  * The endpoint of a help question, for `fetchImpl`: the pick request gets `picked` as the model's reply, and
  * every other request goes to `answers`. A test of the answer request reads `answers` alone.
@@ -87,5 +93,5 @@ export const emptyCodeWorld = (): StatCodeWorld => ({
   stats: [], traits: [], traitGroups: [], entities: [], entityGroups: [], placeholders: [], placeholderGroups: [], dictionaries: [],
 });
 
-/** An open world: `snapshot` for the Tools, `authored` for the code test. */
-export const openWorld = (snapshot: ToolSnapshotSource = emptyToolSnapshot, authored: StatCodeWorldSource = emptyCodeWorld): OpenWorld => ({ snapshot, authored });
+/** An open world: `snapshot` for the Tools, `authored` for the code test. It sends no world block. */
+export const openWorld = (snapshot: ToolSnapshotSource = emptyToolSnapshot, authored: StatCodeWorldSource = emptyCodeWorld): OpenWorld => ({ lean: 'game', snapshot, authored });

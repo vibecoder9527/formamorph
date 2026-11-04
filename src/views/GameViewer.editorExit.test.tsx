@@ -1,7 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderGameViewer } from '@/test/gameViewer';
-import { markDemoAISeen } from '@/components/game/demoAISeen';
 import WorldStorageService from '@/services/WorldStorageService';
 import { WORLD_CHANGE_CHANNEL } from '@/lib/worldChangeSignal';
 import { watchStackedAlerts } from '@/test/stackedDialogs';
@@ -24,8 +23,6 @@ const WORLD = {
   stats: [], locations: [{ id: 'harbor', name: 'Harbor', isStarting: true }], entities: [], traits: [], statUpdates: [],
 } as unknown as World;
 
-// A returning player has met the Demo AI notice; its first-entry dialog would cover the editor.
-beforeEach(() => { markDemoAISeen(); });
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
@@ -77,7 +74,7 @@ const storedName = async () => ((await WorldStorageService.getWorldData(WORLD.id
 const FULL_COUNT = `Brinewell${'x'.repeat(300)}`;
 
 describe('the in-play prompt copy', () => {
-  it('says Exit drops only the changes since the last save once an autosave wrote the world', async () => {
+  it('says Exit discards only the changes since the last save once an autosave wrote the world', async () => {
     renderGameViewer(WORLD);
     const editor = await editName('Brinewell');
     await saveByHand(editor);
@@ -87,7 +84,7 @@ describe('the in-play prompt copy', () => {
     await waitFor(() => expect(within(editor).getByRole('button', { name: 'Save' })).toBeEnabled());
 
     fireEvent.click(within(editor).getByRole('button', { name: 'Close' }));
-    expect(await screen.findByText(/“Exit Without Saving” drops only the changes since the last save/)).toBeInTheDocument();
+    expect(await screen.findByText(/“Exit Without Saving” discards only the changes since the last save/)).toBeInTheDocument();
   });
 
   it('keeps the plain copy on a world no autosave wrote, with Autosave on', async () => {
@@ -95,7 +92,7 @@ describe('the in-play prompt copy', () => {
     const editor = await editName('Brinewell');
 
     fireEvent.click(within(editor).getByRole('button', { name: 'Close' }));
-    expect(await screen.findByText(/exit without saving, or keep editing/)).toBeInTheDocument();
+    expect(await screen.findByText(/“Exit Without Saving” discards them\./)).toBeInTheDocument();
   });
 
   it('keeps the plain copy while Autosave is off', async () => {
@@ -104,7 +101,7 @@ describe('the in-play prompt copy', () => {
     const editor = await editName('Brinewell');
 
     fireEvent.click(within(editor).getByRole('button', { name: 'Close' }));
-    expect(await screen.findByText(/exit without saving, or keep editing/)).toBeInTheDocument();
+    expect(await screen.findByText(/“Exit Without Saving” discards them\./)).toBeInTheDocument();
     expect(screen.queryByText(/since the last save/)).toBeNull();
   });
 });

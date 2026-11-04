@@ -1,16 +1,24 @@
 import { forwardRef, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
-import { ArrowDownToLine, Gift, Lock, Shirt, Undo2 } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Gift, Shirt, Sparkles, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CompactSelectionRow } from '@/components/ui/compact-selection-row';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tip } from '@/components/ui/tooltip';
-import { byEquipOrder, slotCapacity, slotSizeOf, wholeCount } from '@/lib/items';
-import { THUMB_FRAME, THUMB_INTRINSIC, thumbFit } from '@/lib/thumbAspect';
-import { cn } from '@/lib/utils';
-import type { InventoryOp } from '@/lib/inventory';
-import type { Item, ItemCopy, ItemCopyWhere, Slot } from '@/types';
+import { Meta } from '@/components/ui/typography';
+import { useDevRoute } from '@/lib/devRouter';
+import { formatTimeLeft } from '@/lib/gameClock';
+import type { BodySlot } from '@/lib/bodies';
+import { fillBoxes } from '@/lib/bodyLayout';
+import { copyWorthFacts, type BalanceRow } from '@/lib/currency';
+import { copyItemIcon } from '@/lib/itemIcons';
+import { byEquipOrder, copyFace, copyFacts, copyState, itemUsable, occupiedSlots, ruleGaps, usesLeft, usesLine, wholeCount } from '@/lib/items';
+import type { InventoryOp, TimedEffectView } from '@/lib/inventory';
+import type { Body, Currency, Item, ItemCopy, ItemCopyWhere, RuntimeItem, Slot } from '@/types';
+import { ItemModal } from '../modals/ItemModal';
+import { EquippedSection } from './EquippedSection';
+import { BOUND_TIP, ItemRow } from './ItemRow';
 import { PanelOwnerCard, PanelSubheader } from './PanelOwnerCard';
 
 export interface InventoryTabProps {
@@ -21,17 +29,36 @@ export interface InventoryTabProps {
   /** The Item Copies lying at the player's location. Hidden ones are filtered out here. */
   lying: readonly ItemCopy[];
   items: readonly Item[];
-  slots: readonly Slot[];
-  /** The entities Give can pick (Q20). */
+  /** What the items are priced in. Absent ⇒ none. */
+  currencies?: readonly Currency[];
+  /** The played Persona's money, one row per tracked Currency. Absent ⇒ none. */
+  balances?: readonly BalanceRow[];
+  /** The runtime items the Inventory pass made. Absent ⇒ none. */
+  runtimeItems?: readonly RuntimeItem[];
+  /** The played Persona's Body in force. Absent = no Body. */
+  body?: Body;
+  /** The played Persona's Body slots, in entry order. Empty = no Body. */
+  slots: readonly BodySlot[];
+  /** Every slot of the world, so an item's icon never changes with the Body. */
+  worldSlots: readonly Slot[];
+  /** The In Scene entities Give can pick, each under its label (Q59). */
   present: readonly { id: string; name: string }[];
   locationId: string | null | undefined;
+  /** The current location's name for the Here card's header. Null or absent reads Here. */
+  locationName?: string | null;
   /** Off while a turn runs (Q61) and on a past page. */
   disabled: boolean;
   resolveText: (text: string) => string;
   /** The image an Item Copy shows now, through its item's rules (Q113). Absent = no thumbnails. */
   imageOf?: (copy: ItemCopy) => string | undefined;
+  /** The After Use effects running on the played Persona (Q40). */
+  timed?: readonly TimedEffectView[];
   onOps: (ops: InventoryOp[]) => void;
+  /** The selected entity's card, between the player's and the location's. */
+  entityCard?: ReactNode;
 }
+
+const YOU: ItemCopyWhere = { kind: 'you' };
 
 /** One small labeled icon button on an item row. */
 const ItemRowButton = forwardRef<HTMLButtonElement, ComponentProps<typeof Button> & { label: string; icon: typeof Shirt }>(
@@ -62,7 +89,7 @@ function CountField({ max, text, onChange }: { max: number; text: string; onChan
         onChange={(e) => onChange(e.target.value)}
       />
       <Button variant="outline" size="xs" onClick={() => onChange(String(max))} aria-pressed={countOf(text, max) === max}>All</Button>
-      <span className="text-meta text-muted-foreground">of {max}</span>
+      <Meta>of {max}</Meta>
     </div>
   );
 }
@@ -79,29 +106,30 @@ function useCountPopover(disabled: boolean) {
   return { open, onOpenChange, close: () => setOpen(false), text, setText };
 }
 
-/** Drop: at once for one Item Copy, through a count for a stack. */
-function DropButton({ copy, name, disabled, onDrop }: {
-  copy: ItemCopy; name: string; disabled: boolean; onDrop: (quantity: number) => void;
+/** Drop or Pick Up: at once for one Item Copy, through a count for a stack. */
+function MoveButton({ verb, icon, copy, name, disabled, onMove }: {
+  verb: 'Drop' | 'Pick Up'; icon: typeof Shirt; copy: ItemCopy; name: string; disabled: boolean; onMove: (quantity: number) => void;
 }) {
   const { open, onOpenChange, close, text, setText } = useCountPopover(disabled);
-  if (copy.quantity === 1) return <ItemRowButton label={`Drop ${name}`} icon={ArrowDownToLine} disabled={disabled} onClick={() => onDrop(1)} />;
+  const label = `${verb} ${name}`;
+  if (copy.quantity === 1) return <ItemRowButton label={label} icon={icon} disabled={disabled} onClick={() => onMove(1)} />;
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <ItemRowButton label={`Drop ${name}`} icon={ArrowDownToLine} disabled={disabled} />
+        <ItemRowButton label={label} icon={icon} disabled={disabled} />
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64 space-y-3 p-3">
-        <p className="text-label font-medium">Drop {name}</p>
+        <p className="text-label font-medium">{label}</p>
         <CountField max={copy.quantity} text={text} onChange={setText} />
         <div className="flex justify-end">
-          <Button size="xs" onClick={() => { onDrop(countOf(text, copy.quantity)); close(); }}>Drop</Button>
+          <Button size="xs" onClick={() => { onMove(countOf(text, copy.quantity)); close(); }}>{verb}</Button>
         </div>
       </PopoverContent>
     </Popover>
   );
 }
 
-/** Give: pick a present entity, and a count for a stack. */
+/** Give: pick an In Scene entity by its label, and a count for a stack. */
 function GiveButton({ copy, name, present, disabled, onGive }: {
   copy: ItemCopy; name: string; present: InventoryTabProps['present']; disabled: boolean;
   onGive: (entityId: string, quantity: number) => void;
@@ -116,7 +144,7 @@ function GiveButton({ copy, name, present, disabled, onGive }: {
         <p className="text-label font-medium">Give {name}</p>
         {copy.quantity > 1 && <CountField max={copy.quantity} text={text} onChange={setText} />}
         {present.length === 0 ? (
-          <p role="status" className="text-meta text-muted-foreground">Nobody is here.</p>
+          <Meta as="p" role="status">No entities are in the scene.</Meta>
         ) : (
           <div role="list" aria-label="Give to">
             {present.map((entity) => (
@@ -131,93 +159,158 @@ function GiveButton({ copy, name, present, disabled, onGive }: {
   );
 }
 
-const lineFor = (copy: ItemCopy, item: Item | undefined): string | null => {
-  const charges = copy.state?.charges;
-  return charges !== undefined && item?.charges !== undefined ? `${charges} of ${item.charges} charges` : null;
-};
+/** Use, for an item with Uses, After Use effects or a When Used script, or a runtime item (Q20, Q56). Off at
+ *  zero uses. */
+function UseButton({ copy, item, name, disabled, onOps }: {
+  copy: ItemCopy; item: Item | undefined; name: string; disabled: boolean; onOps: InventoryTabProps['onOps'];
+}) {
+  if (copy.item.kind === 'item' && (!item || !itemUsable(item))) return null;
+  const spent = usesLeft(copy, item) === 0;
+  return (
+    <ItemRowButton
+      label={spent ? `Use ${name}: no uses left` : `Use ${name}`} icon={Sparkles} disabled={disabled || spent}
+      onClick={() => onOps([{ kind: 'use', copyId: copy.id }])}
+    />
+  );
+}
 
-/** The game panel's Inventory tab: the played Persona's slots with their equipped items, then carried items. */
+/** Equip: at once with no choice of slot, through a list of the slots when Either of leaves two or more (Q37). */
+function EquipButton({ copy, item, name, slots, disabled, resolveText, onOps }: {
+  copy: ItemCopy; item: Item | undefined; name: string; slots: readonly BodySlot[]; disabled: boolean;
+  resolveText: (text: string) => string; onOps: InventoryTabProps['onOps'];
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+  const rule = item?.slotRule;
+  if (copy.equipped || !rule || ruleGaps(rule, (slotId) => slots.some((s) => s.slot.id === slotId)).length) return null;
+  const choices = rule.mode === 'either' ? rule.slotIds.flatMap((slotId) => slots.filter((s) => s.slot.id === slotId)) : [];
+  const label = `Equip ${name}`;
+  if (choices.length < 2) {
+    return <ItemRowButton label={label} icon={Shirt} disabled={disabled} onClick={() => onOps([{ kind: 'equip', copyId: copy.id }])} />;
+  }
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <ItemRowButton label={label} icon={Shirt} disabled={disabled} />
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 space-y-2 p-3">
+        <p className="text-label font-medium">{label}</p>
+        <div role="list" aria-label="Equip in">
+          {choices.map(({ slot }) => (
+            <CompactSelectionRow key={slot.id} onClick={() => { onOps([{ kind: 'equip', copyId: copy.id, slotId: slot.id }]); setOpen(false); }}>
+              {resolveText(slot.name)}
+            </CompactSelectionRow>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** The game panel's Inventory tab: the played Persona's figure with their equipped items, then carried items,
+ *  then a card for what lies at the location. */
 export function InventoryTab({
-  ownerName, copies, lying, items, slots, present, locationId, disabled, resolveText, imageOf, onOps,
+  ownerName, copies, lying, items, currencies = [], balances = [], runtimeItems = [], body, slots, worldSlots, present, locationId, locationName, disabled, resolveText, imageOf, timed = [], onOps, entityCard,
 }: InventoryTabProps) {
   const byId = new Map(items.map((item) => [item.id, item]));
+  const runtimeById = new Map(runtimeItems.map((item) => [item.id, item]));
   // Hidden Item Copies never show in the panel (story 79).
   const shown = copies.filter((c) => c.visibility === 'visible');
   const itemOf = (copy: ItemCopy) => (copy.item.kind === 'item' ? byId.get(copy.item.itemId) : undefined);
-  const nameOf = (copy: ItemCopy) => resolveText(itemOf(copy)?.name ?? '') || 'Unknown Item';
-  const equipped = shown.filter((c) => c.equipped).sort(byEquipOrder);
-  const carried = shown.filter((c) => !c.equipped);
+  // An unidentified copy goes by its unidentified face (Q17).
+  const nameOf = (copy: ItemCopy) => {
+    const item = itemOf(copy);
+    return (copy.item.kind === 'runtime'
+      ? runtimeById.get(copy.item.runtimeItemId)?.name : resolveText(item ? copyFace(item, copy).name : '')) || 'Unknown Item';
+  };
+  const shownIconOf = (copy: ItemCopy) => {
+    return copyItemIcon(copy, itemOf(copy), { name: nameOf(copy), slots: worldSlots, readText: resolveText, image: imageOf?.(copy) });
+  };
+  const occupies = (c: ItemCopy, slotId: string) => occupiedSlots(c, itemOf(c)).includes(slotId);
+  const equipped = shown.filter((c) => slots.some((s) => occupies(c, s.slot.id))).sort(byEquipOrder);
+  // An entry whose slot is gone draws nothing.
+  const entries = body?.entries.filter((e) => e.boxes.length > 0 && slots.some((s) => s.slot.id === e.slotId)) ?? [];
+  const inBoxes = fillBoxes(entries, (slotId) => equipped.filter((c) => occupies(c, slotId)));
+  const boxed = new Set([...inBoxes.values()].map((c) => c.id));
+  // A copy with no box to draw in shows as carried, so it never hides (Q35).
+  const carried = shown.filter((c) => !boxed.has(c.id));
   const lyingHere = lying.filter((c) => c.visibility === 'visible');
   const here: ItemCopyWhere | null = locationId ? { kind: 'location', id: locationId } : null;
-
-  const row = (copy: ItemCopy, actions: ReactNode) => {
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const devRoute = useDevRoute();
+  const firstShown = shown[0]?.id;
+  useEffect(() => {
+    if (import.meta.env.DEV && devRoute?.modal === 'item' && firstShown) setViewingId(firstShown);
+  }, [devRoute?.modal, firstShown]);
+  // A copy that left the panel closes its popup.
+  const viewing = [...shown, ...lyingHere].find((c) => c.id === viewingId);
+  const descriptionOf = (copy: ItemCopy) => {
     const item = itemOf(copy);
-    const name = nameOf(copy);
-    const line = lineFor(copy, item);
-    const image = imageOf?.(copy);
+    return (copy.item.kind === 'runtime'
+      ? runtimeById.get(copy.item.runtimeItemId)?.description : resolveText(item ? copyFace(item, copy).description ?? '' : '')) ?? '';
+  };
+  const factsOf = (copy: ItemCopy) => {
+    const item = itemOf(copy);
+    return [...copyFacts(copy, item), ...copyWorthFacts(copy, item, currencies, resolveText, items), ...(item?.bound ? [BOUND_TIP] : [])];
+  };
+
+  /** `slotLine` replaces the row's second line. */
+  const row = (copy: ItemCopy, actions: ReactNode, { slotLine, wrapName }: { slotLine?: string; wrapName?: boolean } = {}) => {
+    const item = itemOf(copy);
     return (
-      <li key={copy.id} className="flex min-h-9 items-center gap-2 rounded-md px-2 py-1 hover:bg-secondary/60">
-        {image && (
-          <img
-            src={image} alt="" {...THUMB_INTRINSIC.portrait}
-            className={cn('w-6 shrink-0 rounded', THUMB_FRAME.portrait, thumbFit('portrait'))}
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1.5 text-label">
-            <span className="truncate">{name}</span>
-            {copy.quantity > 1 && <span className="shrink-0 text-meta text-muted-foreground">×{copy.quantity}</span>}
-            {item?.bound && (
-              <Tip tip="Bound: you can't drop or give it">
-                <span role="img" aria-label="Bound" className="shrink-0">
-                  <Lock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                </span>
-              </Tip>
-            )}
-          </p>
-          {line && <p className="text-meta text-muted-foreground">{line}</p>}
-        </div>
-        {actions}
-      </li>
+      <ItemRow
+        key={copy.id}
+        name={nameOf(copy)}
+        shown={shownIconOf(copy)}
+        state={copyState(copy)}
+        quantity={copy.quantity}
+        bound={item?.bound}
+        line={slotLine ?? (copy.item.kind === 'runtime' ? runtimeById.get(copy.item.runtimeItemId)?.description : usesLine(copy, item))}
+        wrapName={wrapName}
+        onOpen={() => setViewingId(copy.id)}
+        actions={actions}
+      />
     );
   };
+
+  const slotNameOf = (slotId: string) => resolveText(slots.find((s) => s.slot.id === slotId)?.slot.name ?? '');
+  const equippedActions = (copy: ItemCopy) => (
+    <div className="flex shrink-0 items-center">
+      <UseButton copy={copy} item={itemOf(copy)} name={nameOf(copy)} disabled={disabled} onOps={onOps} />
+      <ItemRowButton
+        label={`Unequip ${nameOf(copy)}`} icon={Undo2} disabled={disabled}
+        onClick={() => onOps([{ kind: 'unequip', copyId: copy.id }])}
+      />
+    </div>
+  );
 
   return (
     <ScrollArea className="h-[calc(100%-1rem)]">
       <PanelOwnerCard
         role="region" aria-label={`${ownerName ?? 'Your'} inventory`} name={ownerName ?? 'You'} entity you={ownerName !== null}
       >
-        {slots.length > 0 && (
+        {body && entries.length > 0 && (
+          <EquippedSection
+            body={{ ...body, entries }}
+            boxes={inBoxes}
+            listed={equipped.filter((c) => boxed.has(c.id))}
+            slotName={slotNameOf}
+            nameOf={nameOf}
+            shownIconOf={shownIconOf}
+            listRow={(copy) => row(copy, equippedActions(copy), { slotLine: occupiedSlots(copy, itemOf(copy)).map(slotNameOf).filter(Boolean).join(', ') })}
+            popoverRow={(copy) => row(copy, equippedActions(copy), { wrapName: true })}
+          />
+        )}
+        {balances.length > 0 && (
           <>
-            <PanelSubheader>Equipped</PanelSubheader>
-            <ul className="space-y-0.5">
-              {slots.map((slot) => {
-                const inSlot = equipped.filter((c) => c.equipped?.slotId === slot.id);
-                // The count shows visible items only: a hidden equipped one takes capacity unseen (Q112).
-                const used = equipped.filter((c) => c.equipped?.slotId === slot.id)
-                  .reduce((sum, c) => sum + slotSizeOf(itemOf(c)), 0);
-                const capacity = slotCapacity(slot);
-                return (
-                  <li key={slot.id} className="flex gap-2 rounded-md bg-background/40 px-1 py-0.5" aria-label={slot.name}>
-                    <div className="w-16 shrink-0 py-1.5 pl-1">
-                      <p className="truncate text-meta font-medium text-muted-foreground">{resolveText(slot.name)}</p>
-                      {capacity > 1 && <p className="text-meta text-muted-foreground">{used} of {capacity}</p>}
-                    </div>
-                    {inSlot.length === 0 ? (
-                      <p className="flex-1 py-1.5 text-label text-muted-foreground">Empty</p>
-                    ) : (
-                      <ul className="min-w-0 flex-1">
-                        {inSlot.map((copy) => row(copy, (
-                          <ItemRowButton
-                            label={`Unequip ${nameOf(copy)}`} icon={Undo2} disabled={disabled}
-                            onClick={() => onOps([{ kind: 'unequip', copyId: copy.id }])}
-                          />
-                        )))}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
+            <PanelSubheader>Money</PanelSubheader>
+            <ul aria-label="Money">
+              {balances.map((balance) => (
+                <li key={balance.currencyId} className="flex min-h-9 items-center gap-2 rounded-md px-2 py-1">
+                  <p className="min-w-0 flex-1 truncate text-label">{resolveText(balance.name)}</p>
+                  <Meta className="shrink-0">{resolveText(balance.amount)}</Meta>
+                </li>
+              ))}
             </ul>
           </>
         )}
@@ -230,15 +323,16 @@ export function InventoryTab({
               const item = itemOf(copy);
               const name = nameOf(copy);
               const bound = !!item?.bound;
-              const equippable = !!item?.slotId && slots.some((s) => s.id === item.slotId);
               return row(copy, (
                 <div className="flex shrink-0 items-center">
-                  {equippable && (
+                  <UseButton copy={copy} item={item} name={name} disabled={disabled} onOps={onOps} />
+                  {copy.equipped && (
                     <ItemRowButton
-                      label={`Equip ${name}`} icon={Shirt} disabled={disabled}
-                      onClick={() => onOps([{ kind: 'equip', copyId: copy.id }])}
+                      label={`Unequip ${name}`} icon={Undo2} disabled={disabled}
+                      onClick={() => onOps([{ kind: 'unequip', copyId: copy.id }])}
                     />
                   )}
+                  <EquipButton copy={copy} item={item} name={name} slots={slots} disabled={disabled} resolveText={resolveText} onOps={onOps} />
                   {bound ? (
                     <>
                       <ItemRowButton label={`Drop ${name}: Bound`} icon={ArrowDownToLine} disabled />
@@ -246,9 +340,9 @@ export function InventoryTab({
                     </>
                   ) : (
                     <>
-                      <DropButton
-                        copy={copy} name={name} disabled={disabled || !here}
-                        onDrop={(quantity) => here && onOps([{ kind: 'transfer', copyId: copy.id, to: here, quantity }])}
+                      <MoveButton
+                        verb="Drop" icon={ArrowDownToLine} copy={copy} name={name} disabled={disabled || !here}
+                        onMove={(quantity) => here && onOps([{ kind: 'transfer', copyId: copy.id, to: here, quantity }])}
                       />
                       <GiveButton
                         copy={copy} name={name} present={present} disabled={disabled}
@@ -261,13 +355,51 @@ export function InventoryTab({
             })}
           </ul>
         )}
-        <PanelSubheader>Here</PanelSubheader>
+        {timed.length > 0 && (
+          <>
+            <PanelSubheader>Effects</PanelSubheader>
+            <ul aria-label="Effects">
+              {timed.map((view) => (
+                <li key={view.key} className="flex min-h-9 items-center gap-2 rounded-md px-2 py-1">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-label">{view.itemName === null ? 'An item' : resolveText(view.itemName)}</p>
+                    <Meta as="p">{resolveText(view.effect)}</Meta>
+                  </div>
+                  <Meta className="shrink-0">{formatTimeLeft(view.hoursLeft)} left</Meta>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </PanelOwnerCard>
+      {entityCard}
+      {/* A location is not an owner (Q69), so what lies here gets its own card. */}
+      <PanelOwnerCard role="region" aria-label="Here" name={locationName || 'Here'} className="mt-2">
         {lyingHere.length === 0 ? (
           <p role="status" className="px-2 py-2 text-label text-muted-foreground">Nothing lies here.</p>
         ) : (
-          <ul aria-label="Here">{lyingHere.map((copy) => row(copy, null))}</ul>
+          <ul aria-label="Lying here">
+            {lyingHere.map((copy) => row(copy, (
+              <MoveButton
+                verb="Pick Up" icon={ArrowUpFromLine} copy={copy} name={nameOf(copy)} disabled={disabled}
+                onMove={(quantity) => onOps([{ kind: 'transfer', copyId: copy.id, to: YOU, quantity }])}
+              />
+            )))}
+          </ul>
         )}
       </PanelOwnerCard>
+      {viewing && (
+        <ItemModal
+          id={viewing.id}
+          name={nameOf(viewing)}
+          icon={shownIconOf(viewing)}
+          image={imageOf?.(viewing)}
+          description={descriptionOf(viewing)}
+          facts={factsOf(viewing)}
+          isOpen
+          onOpenChange={(open) => { if (!open) setViewingId(null); }}
+        />
+      )}
     </ScrollArea>
   );
 }

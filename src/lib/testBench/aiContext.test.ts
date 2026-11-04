@@ -85,7 +85,7 @@ const world = (over: Partial<AiContextWorld> = {}): AiContextWorld => ({
   ...over,
 });
 
-const at = (locationId: string | null, pcTraitId: string | null = null): LensState => ({ pcTraitId, locationId });
+const at = (locationId: string | null, pickedTraitId: string | null = null): LensState => ({ personaId: null, pickedTraitId, locationId });
 const context = (state: LensState, over: Partial<AiContextWorld> = {}) => {
   const w = world(over);
   return buildAiContext(w, buildLens({ ...w, traitGroups: w.traitGroups ?? [] }, state));
@@ -406,7 +406,7 @@ describe('an entity’s own scope', () => {
   const you: Entity = { id: 'e-you', name: 'You', customPersona: true };
   const scoped = (over: Partial<AiContextWorld> = {}) => context(at('loc-harbor', 't-sedge'), { entities: [...entities, wren, you], ...over });
 
-  it('reads a description’s owned chip and Character Name as play does', () => {
+  it('reads a description’s owned chip and Entity Name as play does', () => {
     expect(block(scoped(), 'entities').text).toContain('Wren has gray eyes.');
   });
 
@@ -423,7 +423,7 @@ describe('an entity’s own scope', () => {
     expect(block(scoped(), 'entities').text).toContain('Eyes go amber at dusk.');
   });
 
-  it('names the entity in its Character Name with the chips in its name read in its scope', () => {
+  it('names the entity in its Entity Name with the chips in its name read in its scope', () => {
     const titled = { ...wren, name: `Wren the ${EYES}-Eyed` };
     expect(block(scoped({ entities: [...entities, titled, you] }), 'entities').text).toContain('Wren the gray-Eyed has gray eyes.');
   });
@@ -460,5 +460,44 @@ describe('an entity’s own scope', () => {
   it('lets the lens location’s pin win over the entity’s trait, as play lays them', () => {
     const harbor = locations.map((l) => (l.id === 'loc-harbor' ? { ...l, placeholderPins: [{ placeholderId: 'w-eyes', value: 'green' }] } : l));
     expect(block(scoped({ locations: harbor }), 'entities').text).toContain('Wren has green eyes.');
+  });
+});
+
+describe('under a lens persona', () => {
+  const wren: Entity = {
+    id: 'e-wren', name: 'Wren', persona: true, locations: ['loc-harbor'], aiDescription: 'A tide reader.',
+    traits: [{ id: 't-wary', name: 'Wary', isDefault: true, aiDescription: 'Trusts no one.', statChanges: [] }],
+  } as Entity;
+  const newcomer: Entity = { id: 'cp', name: 'Newcomer', customPersona: true, aiDescription: 'Just arrived.' } as Entity;
+  const cast = () => [...entities, wren, newcomer];
+  const here = (data: ReturnType<typeof context>) => roster(data, 'here').entities.map((e) => e.name);
+
+  it('reads the persona in the Persona block, not the Custom Persona entity', () => {
+    const as = context({ personaId: 'e-wren', locationId: 'loc-harbor' }, { entities: cast() });
+    expect(block(as, 'persona').text).toContain('A tide reader.');
+    expect(block(as, 'persona').text).not.toContain('Just arrived.');
+    const none = context(at('loc-harbor'), { entities: cast() });
+    expect(block(none, 'persona').text).toContain('Just arrived.');
+    expect(block(none, 'persona').text).not.toContain('A tide reader.');
+  });
+
+  it('keeps the played persona off the roster at its own location', () => {
+    const as = context({ personaId: 'e-wren', locationId: 'loc-harbor' }, { entities: cast() });
+    expect(here(as)).not.toContain('Wren');
+    expect(block(as, 'entities').text).not.toContain('A tide reader.');
+  });
+
+  it('keeps the played persona off the wider rosters', () => {
+    const inLoft = { ...wren, locations: ['loc-loft'] };
+    const scoped = (state: LensState) => context(state, { entities: [...entities, inLoft] });
+    const names = (data: ReturnType<typeof context>) => roster(data, 'sublocations').entities.map((e) => e.name);
+    expect(names(scoped(at('loc-harbor')))).toContain('Wren');
+    expect(names(scoped({ personaId: 'e-wren', locationId: 'loc-harbor' }))).not.toContain('Wren');
+  });
+
+  it('keeps the rest of the cast around the persona', () => {
+    const as = context({ personaId: 'e-wren', locationId: 'loc-harbor' }, { entities: cast() });
+    const baseline = context(at('loc-harbor'));
+    expect(here(as)).toEqual(here(baseline));
   });
 });

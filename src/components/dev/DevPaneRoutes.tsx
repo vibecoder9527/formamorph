@@ -1,6 +1,8 @@
 /** DEV only: mounts each `DEV_PANE_MODALS` pane on canned props; closing one clears the route. */
 import { useEffect, useRef, type ReactNode } from 'react';
 import { ChangelogEntryDialog } from '@/components/community/ChangelogEntryDialog';
+import { RemoteWorldDetailsModal } from '@/components/community/RemoteWorldDetailsModal';
+import { BodyLayoutReference } from '@/components/design-system/BodyLayoutReference';
 import { PendingUpdateSection } from '@/components/community/PendingUpdateSection';
 import PlaceholderSectionList from '@/components/editor/PlaceholderSectionList';
 import { FontTuneDialog } from '@/components/FontTuneDialog';
@@ -20,7 +22,7 @@ import { RootCrashScreen } from '@/components/RootCrashScreen';
 import { RevealAnimationDialog } from '@/components/RevealAnimationDemo';
 import { devContestSamples } from '@/lib/devEventSample';
 import { DEV_LIVE_THUMBNAIL, devApprovedChangelog, devPendingUpdate } from '@/lib/dev/devReviewStub';
-import { devChangelogDraft, devFeedbackThread, devPickerRows, devPresetShareJson } from '@/lib/devPaneSamples';
+import { devChangelogDraft, devFeedbackThread, devListingSample, devPickerRows, devPresetShareJson } from '@/lib/devPaneSamples';
 import { useDevRoute } from '@/lib/devRouter';
 import { IMAGE_CAPS } from '@/lib/imageSlots';
 import { APP_VERSION } from '@/lib/version';
@@ -63,6 +65,25 @@ export default function DevPaneRoutes() {
       return <FeedbackDialog open onOpenChange={clearRouteOnClose} initialType={type} initialTitle={title} initialBody={body} notify={toastFeedbackNotify} />;
     }
     case 'feedbackEdit': return <FeedbackEditDialog open onOpenChange={clearRouteOnClose} thread={devFeedbackThread()} mayEditProse mayRefile onSaved={ignore} notify={toastFeedbackNotify} threadSearchTypes={null} />;
+    // Pair with `fixture=feedback`, so Preview resolves its chips from the stub.
+    case 'listingComment': {
+      const { world, currentUser } = devListingSample();
+      return (
+        <RemoteWorldDetailsModal
+          open
+          onOpenChange={clearRouteOnClose}
+          world={world}
+          collapsed={false}
+          onToggleCollapsed={ignore}
+          isAuthenticated
+          openImageViewer={ignore}
+          downloadStateForWorld={() => 'none'}
+          downloadProgress={{}}
+          onContextualDownload={ignore}
+          currentUser={currentUser}
+        />
+      );
+    }
     case 'feedbackThread': {
       const staff = route.tab === 'staff';
       return (
@@ -77,6 +98,11 @@ export default function DevPaneRoutes() {
       );
     }
     case 'changelogEntry': return <ChangelogEntryDialog open onOpenChange={clearRouteOnClose} entry={devChangelogDraft()} onSubmit={ignore} />;
+    case 'bodyLayout': return (
+      <ScrollArea className="fixed inset-0 z-50 bg-background">
+        <div className="p-4"><BodyLayoutReference /></div>
+      </ScrollArea>
+    );
     case 'fontTune': return <FontTuneDialog font="system" open onOpenChange={clearRouteOnClose} />;
     case 'revealDemo': return <RevealAnimationDialog open onOpenChange={clearRouteOnClose} kind="narration" />;
     case 'presetImport': return (

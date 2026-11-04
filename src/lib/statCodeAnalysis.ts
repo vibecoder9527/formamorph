@@ -16,7 +16,7 @@ import { rewrittenKey } from '@/lib/statCodeRename';
 import { findSlotRanges, parseTemplateSlots } from '@/lib/statCodeTemplates';
 import type { Placeholder } from '@/types';
 import {
-  isMethodEntry, nearestName, readOnlyEntries, surfaceHasGlobal, surfaceKnownNames, type CodeSurface, type SurfaceEntry,
+  isDroppedMethod, nearestName, readOnlyEntries, surfaceHasGlobal, surfaceKnownNames, type CodeSurface, type SurfaceEntry,
 } from '@/lib/codeSurface';
 import type { SandboxDictionaryEntry } from '@/lib/statCodeExecutor';
 import {
@@ -223,7 +223,7 @@ const OWNER_STATS_EXPRESSION = new RegExp(`^${OWNER_STATS_MAP}$`);
 /** One entry of any stat map, the key literal or computed: every key reads a stat, if only a blank one. The
  *  map is `stats`, or an owner's `stats`. */
 const STAT_ENTRY_EXPRESSION = new RegExp(`^(?:stats|${OWNER_STATS_MAP})(\\??\\.[A-Za-z_$][\\w$]*|\\??\\.?\\[[^[\\]]*\\])$`);
-/** One stat picked out of `Object.values(<stat map>)`, the call's arguments captured. `filter` hands back
+/** One stat picked out of `Object.values(<stat map>)`, the call's arguments captured. `filter` returns
  *  another array, so it stays quiet. */
 const ITERATED_STAT_EXPRESSION = new RegExp(
   `^Object\\.values\\(\\s*(?:stats|${OWNER_STATS_MAP})\\s*\\)(?:\\.(?:find|at|pop|shift)(?<args>\\(.*\\))|\\[[^[\\]]*\\])$`,
@@ -438,10 +438,10 @@ function mapKeyEntries(map: CodeValue, options: AnalysisOptions, dotted: boolean
       const book = books.findLast((each) => each.name === map.dictionary);
       const entries = book ? book.entries : [];
       return entries && [...new Set(entries.map((entry) => entry.name))]
-        .filter((name) => !dotted || isIdentifier(name))
+        .filter((name) => hasEntityKey(name) && (!dotted || isIdentifier(name)))
         .map((name) => ({ name, detail: 'entry', info: `The “${name}” entry in the “${map.dictionary}” dictionary` }));
     }
-    case 'locationMap': return options.locations ? [...new Set(options.locations)].filter((name) => !dotted || isIdentifier(name))
+    case 'locationMap': return options.locations ? [...new Set(options.locations)].filter((name) => hasEntityKey(name) && (!dotted || isIdentifier(name)))
       .map((name) => ({ name, detail: 'location', info: `The “${name}” location in this world` })) : null;
     default: return undefined;
   }
@@ -465,7 +465,7 @@ function bracketKeys(map: CodeValue, options: AnalysisOptions, rules: StatRules)
 
 /**
  * What a path reaches, as the members to offer after its dot. An owner node lists its placeholders; a
- * placeholder lists its own members, then the placeholders it holds. One trailing segment nothing answers
+ * placeholder lists its own members, then the placeholders it holds. One trailing segment that resolves to nothing
  * reads as an entry being named, so a half-typed name still offers the members it will have.
  */
 function placeholderMembersAt(
@@ -529,7 +529,7 @@ function surfaceMembersOf(value: CodeValue, options: SurfaceAnalysisOptions, rul
   const members = membersOf(value, options, rules);
   const { surface } = options;
   const builtin = value.is === 'listed' && surface.builtins.some((entry) => entry.name === value.path.split('.')[0]);
-  return members && surface.readOnly && !builtin ? readOnlyEntries(members.filter((entry) => !isMethodEntry(entry))) : members;
+  return members && surface.readOnly && !builtin ? readOnlyEntries(members.filter((entry) => !isDroppedMethod(entry))) : members;
 }
 
 /** Whether a map entry's key is missing from the names its map holds. False where those names are not given. */
@@ -735,7 +735,7 @@ function checkEntryName(
     const display = winner(names.lastIndexOf(name));
     const reads = display === name ? 'the last one authored' : `“${display}”, the last one authored`;
     const rule = noun === 'stat'
-      ? `A stat that is on wins the name over a switched-off one. Otherwise this reads ${reads}.`
+      ? `A stat that’s on shadows a switched-off one. Otherwise this reads ${reads}.`
       : `This reads ${reads}.`;
     return { from, to, severity: 'warning', message: `${count} ${PLURAL[noun]} are named “${name}”. ${rule}` };
   }
@@ -786,8 +786,8 @@ function checkSharedKey(map: PlaceholderPathMap, { name, from, to }: EntryRef): 
 }
 
 /**
- * What is wrong with a path: a name several world rows share, a segment no entry answers, or a child whose
- * name loses to a member every entry has. Each complaint lands on the segment that carries it.
+ * What is wrong with a path: a name several world rows share, a segment that resolves to no entry, or a child whose
+ * name loses to a member every entry has. Each complaint marks the segment that carries it.
  */
 function checkPlaceholderPath(refs: readonly EntryRef[], placeholders: CodePlaceholders): CodeDiagnostic[] {
   const map = pathMapOf(placeholders);
@@ -817,14 +817,14 @@ function checkPlaceholderPath(refs: readonly EntryRef[], placeholders: CodePlace
   return out;
 }
 
-/** The warning for a child whose name loses to a member every placeholder entry has. */
+/** The warning for a child that a member of every placeholder entry shadows. */
 const shadowedChild = (ref: EntryRef, parent: PlaceholderPathNode): CodeDiagnostic => ({
   from: ref.from, to: ref.to, severity: 'warning',
-  message: `Every placeholder has a ${ref.name} member, so this reads the member. `
-    + `The placeholder named “${ref.name}” under “${placeholderPathLabel(parent.path)}” is not reachable from code.`,
+  message: `Every placeholder has a ${ref.name} member, which shadows the placeholder named “${ref.name}” `
+    + `under “${placeholderPathLabel(parent.path)}”. Code can’t read that placeholder.`,
 });
 
-/** What is wrong with a path through an owner's `placeholders`: a key no placeholder answers, or a child that
+/** What is wrong with a path through an owner's `placeholders`: a key that resolves to no placeholder, or a child that
  *  loses to a member. A warning, since a library owner can carry it. */
 function checkOwnedPlaceholderPath(
   chain: PlaceholderChain, placeholders: CodePlaceholders, options: AnalysisOptions, rules: StatRules,
@@ -969,6 +969,14 @@ function checkTurnMutatingCall(call: SyntaxNode, code: string, surface: CodeSurf
   const method = callee?.name === 'MemberExpression' ? callee.getChild('PropertyName') : null;
   const member = method && MUTATING_METHODS.has(code.slice(method.from, method.to)) ? callee?.firstChild : null;
   return member?.name === 'MemberExpression' ? readOnlyMember(member, code, surface, 'turn') : null;
+}
+
+/** What is wrong with a `currencies.Name.pay(...)` call on a read-only surface: the run stops on it. */
+function checkReadOnlyPay(call: SyntaxNode, code: string, surface: CodeSurface): CodeDiagnostic | null {
+  const callee = call.firstChild;
+  const method = callee?.name === 'MemberExpression' ? callee.getChild('PropertyName') : null;
+  if (!surface.readOnly || !method || code.slice(method.from, method.to) !== 'pay' || memberRoot(callee!, code) !== 'currencies') return null;
+  return { from: method.from, to: method.to, severity: 'error', message: `“pay” isn’t available in ${surface.label}.` };
 }
 
 
@@ -1320,15 +1328,15 @@ export function codeDiagnostics(code: string, options: SurfaceAnalysisOptions): 
     const { from, to } = cursor;
     if (cursor.type.isError) {
       sawSyntaxError = true;
-      // A slot stands where an expression, an operator or a whole clause will be, so a template is only
-      // valid JavaScript once filled. The parser's complaint can land anywhere after the slot rather than
+      // A slot holds the place of an expression, an operator or a whole clause, so a template is only
+      // valid JavaScript once filled. The parser's complaint can mark any point after the slot rather than
       // inside it, which makes position-based skipping useless — a template gets no syntax check at all.
       if (ranges.length > 0) continue;
       // Error nodes are usually empty — they mark where the parser gave up, so widen to a character the
       // author can actually see underlined.
       const end = to > from ? to : Math.min(code.length, from + 1);
       const start = end > from ? from : Math.max(0, from - 1);
-      diagnostics.push({ from: start, to: end, severity: 'error', message: 'Syntax error — the code can’t be read as JavaScript.' });
+      diagnostics.push({ from: start, to: end, severity: 'error', message: 'Syntax error. The code isn’t valid JavaScript.' });
       continue;
     }
     if (cursor.type.name === 'ReturnStatement') { sawReturn = true; continue; }
@@ -1387,6 +1395,8 @@ export function codeDiagnostics(code: string, options: SurfaceAnalysisOptions): 
     }
     const mutation = cursor.type.name === 'CallExpression' && readOnlyInScope.has('turn') ? checkTurnMutatingCall(cursor.node, code, surface) : null;
     if (mutation && !overlapsAny(mutation.from, mutation.to, ranges)) diagnostics.push(mutation);
+    const pay = cursor.type.name === 'CallExpression' && !declared.has('currencies') ? checkReadOnlyPay(cursor.node, code, surface) : null;
+    if (pay) diagnostics.push(pay);
     if (cursor.type.name === 'CallExpression' && isPlaceholderWriteCall(cursor.node, code, chainRootInScope)) {
       sawPlaceholderWrite = true;
     }

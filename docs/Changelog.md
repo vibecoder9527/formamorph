@@ -2,7 +2,7 @@
 
 All notable changes to Formamorph. This fork's first line is **2.0.0** — a full TypeScript rebuild of the upstream JavaScript app ([FieryLionite's Formamorph](https://fierylion.itch.io/formamorph), ~v1.2) — with feature parity as the baseline plus new features on top.
 
-> ✅ **3.0.0 – 3.5.1 are released** (collapsed below). Releases 2.0.0 – 2.19.x are in [Changelog-v2](Changelog-v2). New work lands under **🚧 In Progress** — an unnumbered section, so changes accumulate without pinning a version. When a batch earns a release its section is marked **Released** and collapsed, and a fresh In Progress opens. `package.json` reads **3.5.1** — the latest released version.
+> ✅ **3.0.0 – 3.6.0 are released** (collapsed below). Releases 2.0.0 – 2.19.x are in [Changelog-v2](Changelog-v2). New work lands under **🚧 In Progress** — an unnumbered section, so changes accumulate without pinning a version. When a batch earns a release its section is marked **Released** and collapsed, and a fresh In Progress opens. `package.json` reads **3.6.0** — the latest released version.
 
 Each release groups changes as **Major** / **Minor**, then **Added** / **Removed** / **Fixed**, and within those by audience: 👤 user-facing · 🛠️ developer tooling · ⚙️ backend. Where two or more changes touch the same feature, they sit together under that feature's name.
 
@@ -10,7 +10,12 @@ Each release groups changes as **Major** / **Minor**, then **Added** / **Removed
 
 ## 🚧 In Progress
 
-_Unreleased — new work accumulates here until it earns a version bump. The next batch will pin its own version; `package.json` reads **3.5.1** (just released below)._
+_Unreleased — new work accumulates here until it earns a version bump. The next batch will pin its own version; `package.json` reads **3.6.0** (just released below)._
+
+---
+
+<details>
+<summary><strong>✅ 3.6.0 — Released 2026-11-03</strong> — Items, Inventory and Bodies — Currencies you can spend — strangers you meet in the scene — the Formamorph AI endpoint for Supporters — Formaquestion answers about your world (click to expand)</summary>
 
 ### Major Changes
 
@@ -18,12 +23,25 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 
 - **👤 User-facing**
   - **Inventory:**
-    - **The World Editor has an Items tab for the objects of your world.** Each item has images, descriptions, placeholders, a value, Stackable, Consumable, Charges, Bound and an equipment slot. Set the world's slots on the Overview tab.
-    - **Worlds can now place starting items on the player, on entities and at locations.** Set them under Persona Items on the Overview tab, or on an entity's or location's Items tab. A new game starts with them; saved games never gain them.
-    - **The narrator now knows what you and the people near you carry, through a new Inventory prompt chip.** It sends equipped items with their AI Summary, carried items by name, and the items lying here, with hidden ones marked. Built-in presets hold it; add it to your own from the chip bar.
-    - **The game's right panel has an Inventory tab to equip, unequip, drop and give your items.** Changes apply at once and are off while a turn runs. Drop and Give on a stack ask how many. Side panel tabs show icons alone when their labels don't fit.
-    - **Items can now change their owner's stats, through effect rows on the item's new Effects tab.** Each row raises or lowers a value, minimum, maximum or regen While Equipped, While Owned or On First Obtain. Ending an effect gives back exactly what it gave, and the log names the item.
-    - **Items can now grant traits, and an item's Requirements tab sets what its owner needs to equip it.** A granted trait comes from the owner's own list and leaves the owner's own picks alone. An item unequips on its own once its requirement stops holding; its own bonus never counts.
+    - **The World Editor has an Items tab for the objects of your world.** Each item has images, descriptions, placeholders, a value, Stackable, Uses, When Empty, Bound and an equipment slot. Equipment Settings, at the top of the Items list, holds the world's slots.
+    - **The player and each entity have a Body setting their equipment slots, with a figure you lay out.** Traits and scripts can change a Body; items it has no slot for stay carried. In Equipment Settings, pick Humanoid, Quadruped, Plain or your own picture, then drag a box for each slot.
+    - **Worlds can place starting items on the player, on entities and at locations.** Set them under Persona Items in Equipment Settings, or on an entity's or location's Items tab. Check Equipped to start an item worn. Saved games never gain them.
+    - **The game's right panel has an Inventory tab to equip, unequip, drop and give your items.** Changes apply at once and are off while a turn runs. Drop and Give on a stack ask how many.
+    - **Selecting an item in the Inventory tab or an entity's Equipped list opens a popup with its image and description.**
+    - **The narrator knows what you and the people near you carry, through the Inventory prompt chip.** It sends equipped items with their AI Summary, carried items by name, and the items lying here, with hidden ones marked. Built-in presets hold it; add it to your own from the chip bar.
+    - **Items can change their owner's stats, grant traits and set what their owner needs to equip them.** Effect rows on the Effects tab raise or lower a value, minimum, maximum or regen. Ending an effect gives back exactly what it gave. An item unequips on its own once its requirement stops holding.
+    - **Items can be used from the Inventory tab, and each item sets what remains when its uses run out.** An empty item stays, vanishes or becomes another, like a potion leaving a bottle. After Use effects last a set story time or for good. The story can also use one item on another.
+    - **Items can run scripts when an Item Copy is gained, lost, equipped, unequipped or used.** Scripts read who owns what through `items` and can give, take, move, equip, use, reveal and recharge items.
+    - **Items have a State word, such as sealed or lit, shown beside the name in the Inventory tab.** The story and scripts change it, so opening a letter or lighting a lantern keeps the item. Copies with different States never stack.
+    - **Items can be unidentified, showing the player only an Unidentified Name and Description until the story reveals them.** The narrator sees both faces. Effects apply as usual. Scripts read both faces and can reveal.
+    - **Optimize Images now shrinks item images, and the Test Bench flags oversized ones.** One undo reverts them with the rest of the run.
+  - **Currencies:**
+    - **World authors can define Currencies on the Items tab and price each item in one.** A Currency is a stat, items or a name only. A new item takes the first Currency, and the item popup shows its worth.
+    - **Bribes, fees and bounties in the story move your money when the turn ends.** The game makes exact change, and a payment you can't afford changes nothing.
+  - **Supporters can play on the new Formamorph AI endpoint preset with no key or setup.** Select it next to the Demo AI in Settings. Your Patreon support sets the context window.
+  - **Scripts now run one by one, and each script reads what the scripts above it wrote.** Two scripts that each take 5 Health now take 10, so worlds with stacking writes play differently. To check a world, read the rows on the Test Bench's **Issues** tab in Advanced mode.
+- **🛠️ Developer tooling**
+  - **World files now list Bodies, and each entity equips into the slots of its own Body.** A slot is a name only; each Body entry gives it a capacity. An entity picks a Body, the first one, or None. See World Format.
 
 ### Minor Changes
 
@@ -31,10 +49,190 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 
 - **👤 User-facing**
   - **Inventory:**
+    - **The Inventory tab lists items lying at your location, and the story can reveal hidden items.** They show in a card named for the location. Hidden items stay out of every panel. Entity dialogs list what the entity wears.
+    - **The Inventory tab can pick up the items lying at your location.** Pick Up works on Bound items too, and on a stack it asks how many.
+    - **The Inventory tab draws what you wear on a figure, above Carried.** An item that takes two slots shows in both boxes. Select a filled box for Use and Unequip, or an empty one for its slot's name.
+    - **After each turn, the story updates your inventory: items picked up, given, used, equipped or found.** Names the world lacks become plain usable items. The stat changes never count an item's own effect twice. An item you carry stays one item when the story mentions it again, and an item someone hands you leaves their inventory.
+    - **Items the story makes up now get a short description, shown in the Inventory tab and sent to the narrator.** An item keeps the first description it gets. The description tells what the item is and how it looks, not where it lies.
     - **Requirement Rows can require an item.** Traits and image rules can check that an owner has an item, owned or equipped, with Not.
-    - **The Inventory tab lists items lying at your location, and the story can reveal hidden items.** Hidden items stay out of every panel. Entity dialogs list what the entity wears.
+    - **Requirement Rows can require an item's State word and whether it is identified.** Both combine with Not. A lantern can grant Darkvision only while it is "lit".
+    - **Emberwatch now has 35 items: starting gear for each hero, cold iron, remedies, grave goods and the broken crown.** Search the keep and the barrow for hidden finds, some unidentified. Lay both crown halves on the king's bier to end the Wight. The heroes and cast start wearing their gear.
+  - **Formaquestion:**
+    - **Formaquestion Settings gain a Read the World switch and two world rules prompts.** The switch is on by default. Custom presets can edit the **Editor World** and **Game World** prompts. Older preset files still import.
+    - **In the World Editor, Formaquestion answers about your open world as well as the guide.** It reads your unsaved edits. Each world source under an answer opens its item in the editor.
+    - **In game, Formaquestion answers about the story so far and the characters, places, items and lore you have met.** It never reads AI descriptions, diaries, hidden stats or the entries of characters you haven't met. Sources show as plain names.
+    - **In game, Formaquestion Tools and the code test see only what you have met.** They read player descriptions and visible stats, never AI descriptions, diaries, hidden stats or unmet characters and places.
+    - **With an AI Language set, Formaquestion keeps names from your world as the world writes them.** This works even after you clear the world rules prompts.
+    - **Formaquestion's new Sort Questions setting sends small talk, how-tos, code and world questions only what each needs.** It's off by default; turn it on in Formaquestion Settings → General, and pick a small model under Sorting Endpoint.
+    - **Formaquestion Tools now choose which kinds of question get them.** Pick the kinds in Sorted As; new Tools go to How-to, Code and Your world.
+    - **In the World Editor, Formaquestion can draft entities as cards, and Add puts one in your open world.** Turn on **Creation** in Formaquestion Settings → **General**, then ask for an entity. Placeholders in the draft arrive as chips. Undo removes it.
+    - **With Sort Questions and Creation on, Formaquestion drafts entities from your world's names, description and two sample entities.** Off the World Editor, your mascot tells you to ask there. Pick a **Creating Endpoint** and edit the **Creating** prompt in Formaquestion Settings.
+  - **Supporter Flair:**
+    - **Supporter Flair now covers a third Patreon tier.** The new tier gets its own badge and ring color in the app, and lists first on the Supporters page.
+    - **Supporter badges, the Supporters page and the account page show each tier's Patreon name.** A tier with no known name shows Member.
+  - **Formamorph AI:**
+    - **Formamorph AI shows your allowance, warns you twice, and offers one click back when it runs out.** Settings shows the percent used, about how many turns are left and the reset time. A new Supporter device switches to it once.
+    - **The Formamorph AI section on your formamorph.ai account page shows your allowance.** It shows your Patreon support, percent used, about how many turns are left and the reset time.
+    - **Your Formamorph AI allowance resets every week, and Formamorph shows the reset in your local time.** Settings and your formamorph.ai account page name the weekday and time. One notice appears at the highest warning level each week.
+    - **The ring beside Formamorph AI in AI settings shows where this week's use went.** Seven groups appear by percent, and any single prompt with a large share is named under its group.
+    - **A ring beside Send shows how much of this week's Formamorph AI allowance you've used.** Select it for the percent used, about how many turns are left, the reset time and where your use went. A **?** in its header explains how the allowance works.
+    - **Formamorph AI shows Reachable and Recheck in Settings, like other endpoints.** Checking it spends none of your allowance.
+    - **On mobile, the action field now fills the row while you type.** Help and the allowance ring hide until you leave the field. Send stays in place.
+    - **Formamorph AI tells you when Patreon can't confirm your pledge.** The status, ring and account page say so, and service returns on its own.
+    - **Formamorph AI starts again on its own when your allowance resets or a pause ends.** An open app checks at the reset time, and a send that a block refuses checks first.
+    - **Scene images, diaries and character descriptions on Formamorph AI start a new turn when a turn's time runs out.** Background requests pause when you've used this week's allowance, and the allowance display says so.
+    - **Formamorph AI has the same sampler sliders and Max Output as other endpoints in Settings.** They start on the model's recommended values. Max Output goes up to the server's limit, and Reset to Defaults brings the starting values back.
+    - **When a Formamorph AI call fails before any reply text, the server tries it once more.** You don't have to send the action again.
+  - **Main Menu:**
+    - **The Main Menu's library tabs show every label when they fit, and fold to icons when they don't.** With less room only the selected tab keeps its label, then icons alone show. A highlight slides to each new pick. Hover an icon to see its name.
+    - **The Main Menu top bar folds library tabs first, then action buttons, then event badges, when space runs out.** Nothing overlaps or shrinks out of view. Event badges fold into one chip with a count, which lists them.
+  - **Scene Presence:**
+    - **World Editor entities have a Stranger Name and a Stranger Description, in Advanced mode.** The player sees them in place of the Name and the Player-Facing Description until they meet the entity.
+    - **The narrator calls a stranger by its Stranger Name until you meet it.** You meet it when the narration uses its Name. The narrator doesn't use the stranger's first name before then.
+    - **The Entities tab lists every entity at your location, and shows a stranger under the name you know.** **In Scene** lists those who took part in the last 3 turns, and **Also Here** lists the rest. Select a stranger to see that name, its image and its stranger description.
+    - **Give lists only the entities in the scene, and shows a stranger under the name you know.** A stranger with no name to show isn't listed.
+    - **The stat picker and the Traits tab list only the entities in the scene.** A stranger shows under the name you know, in its stats and traits too.
+    - **The Stats, Traits and Inventory tabs now show the entity you select in the Entities tab.** Each has the same picker, for **In Scene** entities. Traits shows that entity's traits, and Inventory lists what it visibly wears.
+    - **The Map and the Help window show only the entities you've met.** An entity with no Stranger Name shows from the start. An entity at several locations shows at each one.
+    - **Scripts can read whether the player has met an entity, and can make the player meet it.** Read `entities.<Entity>.met`, or call `entities.<Entity>.meet()`. `met` never turns false.
+    - **The Test Bench's opening preview and the AI Context show a stranger under its Stranger Name.** The true name stays beside it, as in the first turn of play.
+  - **Items:**
+    - **Items in the World Editor can equip into either of several slots, or all of them.** A dagger fits either hand, and a greatsword takes both. In the Inventory tab, Equip lets you pick the slot.
+    - **Scripts can name a slot when they equip, and a starting item can name its slot.** Call `copy.equip("Off Hand")`. An item that takes both hands reads under each hand in `body`. In a placement, pick a slot for an Equipped item that fits several.
+    - **When the story puts an item in a certain slot, your Inventory shows it equipped in that slot.** The AI sees every slot an item fits, such as either hand for a dagger or both for a greatsword.
+  - **Body Layouts:**
+    - **A Custom Image Backdrop has an Opacity slider.** Fade a bright image in the Body Layout editor and on the Inventory figure. It starts at 100%.
+    - **Item icons show on the Inventory figure, Inventory rows, the entity popup's Equipped list and the item popup.** Each icon comes from the item's name, then its slot. Item images show in the item popup.
+    - **The Inventory panel lists equipped items beside the figure, each with a one-click Unequip button.** Each row shows the item's icon, name and slots. Select a row to open the item's details. A figure wider than tall sits above the list.
+    - **An item's Icon field in the World Editor picks what the Inventory tab shows for it.** Auto gives an icon from the name. Search the grid for a specific icon, or pick None to show the item's image.
+  - **Currencies:**
+    - **World authors can back a Currency with items, such as Copper, Silver and Gold.** An item priced in it has one Value field per Currency item, and players read "1 Gold, 5 Copper".
+    - **The Inventory tab lists your money, and the AI reads each item's worth and how much money each entity has.** Items and stats both show. Hidden and unidentified items don't count.
+    - **Deleting a Currency's stat, one of its items or the Currency updates everything that used it.** A confirm names the Currency or the item count, and item prices stay.
+    - **Scripts can read what an entity holds in a Currency and pay with it.** `currencies.Gold.balance(persona)` and `pay` follow the game's rules: exact change, and a refusal the script can read.
+    - **Players can type a purchase or sale, and the money and the item move together when the turn ends.** A price the story states counts. Without one, the item costs its Value. A trade the buyer can't afford moves nothing.
+    - **Emberwatch now pays in Copper, Silver and Gold coins, and its Gold stat is gone.** Each hero starts with a purse to spend at the keep's shops. Rogues and Halflings start with extra coins. A script's `give` or `pay` to a Custom Persona reaches a library persona.
+  - **Credits:**
+    - **The Main Menu footer now has a Credits line that opens a Credits window.** It names Jake James, FieryLionite, the item icon artists and, on desktop, llama.cpp.
+    - **The Credits window has a Supporters tab that lists the game's Patreon supporters.** It shows once you've accepted the adult content warning. Select a name to open that profile.
+    - **The Credits window has a Licenses tab that lists the license text of everything the game ships with.** Select an entry to read it, or type in Filter by Name. It works offline.
+  - **Text to Speech:**
+    - **American Text to Speech voices now pronounce fantasy words such as wyvern and place names such as Emberwatch correctly.** They also read numbers and abbreviations aloud.
+    - **British Text to Speech voices now pronounce fantasy words such as wyvern and place names such as Emberwatch correctly.** They keep their British pronunciation.
+    - **American Text to Speech voices now say words such as read, lead, and wound to fit their sentence.** "She read it" and "I will read it" now sound different.
+  - **First-Time Flow:**
+    - **A new player can start Emberwatch with one click after the intro.** Play Emberwatch skips the Enter World steps. Browse Worlds leaves you on the main menu.
+    - **After five turns on the Demo AI, a card under the story offers a look at the Formamorph AI levels.** See Levels opens a full-screen scene and Not Now closes the card for good. The Demo AI dialog's See Levels opens the scene after that.
+    - **The Levels scene shows real replies from the Demo AI and Formamorph AI to the same moment in Emberwatch.**
+    - **Set up your AI offers Formamorph AI first on desktop GPUs with 8 GB of memory or less.** See Levels opens the levels scene. The local model download stays below the card.
+    - **Support on Patreon in the Levels scene opens a checklist that takes you to Formamorph AI.** It covers sign-in, your pledge, linking Patreon and switching. Each step shows when it's done, and Finish Later keeps your progress.
+    - **Formamorph AI in AI settings shows Morphie and the three levels when you can't use it yet.** A fire changes with the level you pick. See Levels opens the scene, and Support on Patreon opens the checklist.
+    - **Every Formamorph AI offer leads with sharper narration and no setup.** The levels screen says higher levels add more turns each week, then more room for large worlds. It also says your pledge helps fund updates.
+  - **Listing Comment Links:**
+    - **Listing comments in Community Creations show `@name`, `#123` and pasted listing links as chips.** Old comments show them too, and a new or edited comment shows them at once. On the website, author and commenter names now open their profile pages.
+    - **Typing @ or # in a listing comment lists matching players and threads.** Pick one to insert `@name` or `#12`. It works when you write a comment and when you edit one.
+    - **Clicking a thread link in a listing comment opens that thread in the Feedback window.** Bug threads open too. **Back** closes the window and returns you to the listing.
+    - **Preview in listing and feedback comment boxes shows `@name`, `#123` and pasted listing links as chips.** Check a link before you post. If the lookup fails, **Preview** shows your text as written.
+  - **Tabs in editors and game side panels show every label, then only the selected tab's, then icons as room shrinks.** Each strip folds by its own width, not the window's, so no label gets cut off. Hover an icon to see its name.
+  - **AI Context now shows how fast each AI request ran, how long it took, and whether it reached Max Output.** Each request also shows its prompt name and the samplers it sent, with icons in place of repeated labels. Hover a value to see its full name.
+  - **The game's Send and Stop buttons are now narrower on larger screens, leaving more room to type.**
+  - **The entity popup shows the picture beside the text on large screens.** The text scrolls on its own, so long descriptions and Equipped have more room. Smaller screens keep the picture above the text.
+  - **New installs now start with Aurelia as the bundled Avatar.** If you already play, your current Avatars stay in your library.
+  - **The Avatar library now includes Praline on the desktop, web and Android builds.** If you already play, she joins your library and your default stays the same. Sugarscape now shows a Player Avatar dropdown when you start a new game.
+  - **A build with no bundled Avatar shows an empty state in the Avatar library and Avatar Customization.** Each has an Import Avatar button for a .vrm file, and you can finish customizing with no Avatar.
+  - **Your first game on the Demo AI opens straight into the story, with a short line instead of a dialog.** The Demo AI badge still opens the longer explanation.
 - **🛠️ Developer tooling**
-  - **`inventory-chip-probe.cli.ts` scores the narration Inventory chip against the prompt without it.** It checks carried items named, AI Summary use, hidden-item leaks, reveals on search, and a panel change with and without an event line.
+  - **Inventory:**
+    - **`inventory-pass-probe.cli.ts` scores the Inventory pass and the stat request's item line.** It checks seven item operations and two no-change guards in both reply modes, and a potion double-add beside a runtime item.
+    - **`inventory-regain-probe.cli.ts` scores the Inventory pass on items the player already carries.** It replays five real duplicate turns, checks retouch cases and two take-another guards, and scores runtime item descriptions for place words.
+    - **`inventory-chip-probe.cli.ts` scores the narration Inventory chip against the prompt without it.** It checks carried items named, AI Summary use, hidden-item leaks, reveals on search, and a panel change with and without an event line.
+    - **`inventory-leak-probe.cli.ts` scores how often the narrator names an unidentified item's true name.** It runs five scenes against a control that holds only the unidentified face, and reports name and nature rates per arm.
+    - **A new inventory slots probe measures whether the Inventory prompt equips only into an owner's slots.** It runs the prompt before slots, with slots, and with the equip clause, each in the same batch.
+  - **A narration probe measures how often an unmet stranger's true name reaches the prose with Thinking Mode Off.** `narration-stranger-probe.mjs` scores name leaks and label use per case, and a guard case where the stranger gives their name.
+  - **Trailer:**
+    - **The trailer stacks its cards: a five-card build stack, the turn with its stats, the entity with its chat.** Each card lands on the last and holds 2 s or its caption's reading time. A title card introduces the community; the traits title card is gone. The wide cut runs 83 s and the tall cut 67 s.
+    - **The trailer render fails any text that leaves the frame's 4% margin, by shot and frame.** It measures headlines, caption pills, the typed panel and the end card on every frame. The captions it caught, like the chat caption below the frame, now sit inside.
+  - **`world-question-probe.cli.ts` scores Formaquestion's world answers on the bundled worlds, editor and game apart.** Game cases ask on hand-written saves. It scores grounded facts, leaks of unmet or hidden text, and opinion phrasing, against a Read the World off arm and a full-world arm.
+  - **`affectedTests`, `changedLint` and `buildGate` accept `@<file>` in place of a git base.** The file lists the paths to check, so a shared checkout can gate one session's files without a peer's edits.
+  - **Tests and builds now run on Vitest 5 and Vite 8, and affected-test gates finish about a quarter faster.** Building from source now needs Node 24 or 22.12+.
+  - **`npm run test:ledger` writes one record per test, with its time, coverage, failure history and a stale check.** Raw output stays untracked in the git folder, so every worktree reads the same ledger.
+  - **Eight source-scanning tests are now ESLint rules.** They leave the always-run test list, so every gate runs fewer tests, and a reintroduced problem fails lint on the file that holds it.
+  - **Kept-protection check for moved and deleted tests.** `scripts/keptProtection.mjs` compares ledger coverage and Stryker kills before and after a change, and exits 1 on any loss.
+  - **`npm run title-card` captures the title card and YouTube banner with Aki, Aurelia and Praline.** The title card page takes `avatar=praline`.
+
+#### ➖ Removed
+
+- **🛠️ Developer tooling**
+  - **Text to Speech no longer bundles the GPL phoneme engine, and a build check now fails if it returns.** Builds carry our own dictionary and model. The Licenses tab lists CMUdict, the pronunciation model, and the adapted Kokoro client code.
+  - **Removed the hidden Load World file input from the World Editor.** No button opened it, so the input and its handler never ran.
+
+#### 🔧 Fixed
+
+- **👤 User-facing**
+  - **Test Bench:**
+    - **Testing As now picks a persona instead of a trait.** It starts on the persona a new game would, and it replaces the Persona pick on the Opening tab. Picking a persona moves **at** to its start until you pick a location yourself.
+    - **The tabs now have icons and a sliding highlight.** When the panel is narrow, they fold down to the selected tab's label, then to icons.
+  - **Community Creations:**
+    - **Mascot cards in Community Creations now use tall art beside the text, like Avatars and entities.** The listing details show the tall art too.
+    - **Avatars with added license restrictions can't be published.** A model that limits sexual, violent, political, hateful, credited or commercial use is refused, and the Model Library lists each reason.
+  - **The Scripts tab now lists scripts where they run.** A Blueprint script is one row that runs for all its owners together. Timings follow the order of a turn.
+  - **Entities set to Moves Between Its Locations now walk between those locations and come along with you into them.** Before, they stayed where the new game placed them.
+  - **The Entities tab now highlights the selected entity, and its rows work from the keyboard.** The first click selects any entity you've met, even one with no art, and the next opens its details.
+  - **A world with a stat-pass Tool now sends one stat request per turn, not two.** The stat tracker may list only the stats that moved. Before, that reply was thrown away and asked for again, which could drop a real change.
+  - **The Entities tab now clears when you move to a new place, and keeps your followers.** The last room's people no longer stay listed until the next narration.
+  - **Closing the World Editor while the Test Bench is still checking a large world no longer freezes Formamorph.** The check stops when the editor closes.
+  - **A damaged WebP image no longer freezes Formamorph during Optimize Images.**
+  - **Formaquestion's replies no longer stop short or come back empty after your mascot changes her face.** Some models, such as the default cloud model, started thinking again after the face change and ran out of room for the reply. AI Context still lists the face change, struck through, since the model no longer sees it.
+  - **Text to Speech now reads a world's written first page, not "Hello World" or text from your last game.**
+  - **Loading, exporting or deleting a save, and loading the Text to Speech model, now show an error when they fail.** View Details shows the cause.
+  - **Help text across Formamorph now says what each control does, in plain words.** The rewrite covers Settings, the World Editor, the game screen, Community, Formaquestion and the help topics. Scene Images points at the turn's More menu, Face Fix lists SD2, and confirm buttons name their action.
+  - **The update dialog no longer says "You're up to date" while an update downloads.** It names the version, keeps the new-version notes marker, and offers Close instead of Check for updates.
+  - **Reset All My Changes in the Memories dialog no longer deletes the memories you wrote.** It clears your edits, deletions and pins only.
+  - **Dragging a tile onto another tile now gives the new Group its own name.** A drop names it *New Group*, then *New Group 2*, and so on. Rename also refuses a name another Group has, and a red line says why.
+  - **On a Mac, Download now returns the version number to Update Available once the .dmg opens in your browser.** The update dialog says the download opened in your browser, with no stuck progress bar.
+  - **Prompt presets and Mascots downloaded from formamorph.ai now import into the app.** A preset saves as a `.preset.json` share file, and a Mascot saves as its card image.
+  - **Optimize Images now keeps the Map Background images it re-encoded.** Before, only the thumbnail came back, and one undo now reverts the map with the rest.
+  - **Importing an entity card keeps each opening set to Self.** Before, every Self opening came back as an Others opening.
+  - **The World Editor's Search World now finds text on the Items, Scripts and Tools tabs.** A match opens its item, script or Tool, and Replace works there too. Replace skips a Tool name another Tool uses, and the notice says why. Simple mode leaves out item scripts.
+  - **The entity Avatar dropdown now shows in Simple mode.** You can assign an Avatar you upload in the Media tab without switching to Advanced mode.
+  - **The World Editor marks Others openings that can never draw with a Never Draws badge and no draw chance.** This covers the Custom Persona and Persona-Only entities. Other rows' chances, the Openings checkbox and its hint no longer count them. The entity's Openings tab says only Self openings draw.
+  - **The 🔗 marker on a World Editor row now reads Link pending save until you save the world.** Before, only the footer button showed it, and the row always read Linked.
+  - **Two scripts that run in the same moment no longer draw the same random numbers.** Every script run now gets its own `Math.random` seed, not only Tools.
+  - **Scripts now skip dictionary entries that have no name, and entities or places whose name is only spaces.** Before, all unnamed entries shared one blank name, so a script reached only one of them. A name of only spaces now counts as blank.
+  - **The Test Bench Opening tab no longer shows the "at" location pick.** Opening starts at its own Starting Location pick, so the unused pick is gone.
+  - **A world whose only choice is its Custom Persona opens Enter World instead of skipping it.** You can type your **Name** and **Description** before the game starts.
+  - **World tiles on the Main Menu now appear faster each time it opens.** The bundled worlds load only when one is new or has changed.
+  - **A failed publish or a too-short password now shows the reason the server gives.** Before, both showed a generic "Failed" line. Several reasons show together on one line.
+  - **A failed autosave now says why, and a full disk now reports the failed save.** The message says when the storage is full. Other failures show their cause under View Details.
+  - **A failed world, dictionary, entity, save or player avatar import now names the file and says why.** With several failed files the count stays, and **View Details** lists each one. Declining a duplicate avatar is no longer a failure.
+  - **An Avatar's Generated thumbnail now has a white background.** Before, the background was see-through. A thumbnail generated earlier keeps its old look.
+  - **An Avatar's Generated thumbnail now shows a close-up of the head.** Tall ears and hats no longer pull the view back to the waist. A thumbnail generated earlier keeps its old view.
+  - **Skin color now looks the same on Body and Face.** Body no longer comes out paler than Face for the same skin color, on models with dark areas in the Body texture.
+  - **Avatar color pickers now open on the color the model shows.** Before, some models opened the picker on a brighter color, and touching it changed their look.
+  - **Avatar color pickers now keep the model's shadow colors on skin and clothing.** Before, any picked color flattened those shadows. Colors you already saved now show them too.
+  - **A World Tool that switches a trait now runs once, and that trait's When a Trait Switches scripts run.** Before, the Tool's script ran twice, so its stat changes counted twice, and an On Call Tool skipped those scripts.
+  - **A persona you play no longer runs its scripts before the other characters.** Scripts now run in the order the Scripts tab lists them, whoever plays.
+- **🛠️ Developer tooling**
+  - **CI tests run through the logged runner, and every timeout rerun leaves a record.** A timeout beside an unhandled error stays red, and pinned commits live in one list that CI fetches.
+  - **The third-party notices file now lists what every build ships, and a build fails when it is out of date.** `npm run gen-notices` rewrites the package list. The account site ships the file and links it from its footer.
+  - **The affected-test gate now runs a path trigger's tests when a matching file is deleted or renamed away.** Six files that tests read by path also gained triggers: the llama-server asset list, three avatars, the site config and the notices map.
+
+</details>
+
+---
+
+<details>
+<summary><strong>✅ 3.5.2 — Released 2026-10-29</strong> — The built-in engine on Linux — a world library that keeps your worlds when one can't be read (click to expand)</summary>
+
+### Minor Changes
+
+#### 🔧 Fixed
+
+- **👤 User-facing**
+  - **The built-in engine starts and finds your graphics card in the Linux desktop app.** Before, it failed with error 127 because its libraries were missing from the download.
+  - **The world library no longer goes empty when the browser can't read one world.** Your other worlds show, and a launch never replaces an edited default world it can't read.
+
+</details>
 
 ---
 

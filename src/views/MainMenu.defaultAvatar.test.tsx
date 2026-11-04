@@ -22,11 +22,11 @@ const models = vi.hoisted((): ModelMetadata[] => [
 vi.mock('@/services/ModelStorageService', () => ({
   default: {
     initialize: vi.fn(async () => {}),
-    seedDefaultModel: vi.fn(async () => {}),
+    seedBundledAvatars: vi.fn(async () => {}),
     getModelMetadata: vi.fn(async () => models),
     ensureThumbnail: vi.fn(async () => null),
     getModelData: vi.fn(async () => null),
-    defaultAvatarHashes: vi.fn(async () => []),
+    bundledAvatarHashes: vi.fn(async () => []),
   },
 }));
 

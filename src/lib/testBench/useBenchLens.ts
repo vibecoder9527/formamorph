@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  buildLens, EMPTY_LENS, lensLocationOptions, lensPcOptions,
-  seedLens, type BenchLens, type LensOption, type LensState, type LensWorld,
+  buildLens, EMPTY_LENS, lensLocationOptions, lensNoneLabel, lensPersonaOptions,
+  lensWithPersona, seedLens, type BenchLens, type LensOption, type LensState, type LensWorld,
 } from './lens';
 import { readLensState, writeLensState } from './lensStore';
 
 export interface BenchLensHandle {
   lens: BenchLens;
-  pcOptions: LensOption[];
+  personaOptions: LensOption[];
+  /** What the None row reads as. Null when the world does not offer it. */
+  noneLabel: string | null;
   locationOptions: LensOption[];
-  setPc: (traitId: string | null) => void;
+  setPersona: (personaId: string | null) => void;
   setLocation: (locationId: string | null) => void;
 }
 
 /**
  * The Bench's lens: seeded when the Bench opens, then the author's own until they change it. Seeding reads
  * the session's stored selection first and the editor's current location only where that has nothing to say,
- * so re-opening the Bench lands where the author left it rather than wherever the editor happens to be.
+ * so re-opening the Bench opens where the author left it rather than wherever the editor happens to be.
  *
  * The editor's selection is read at the moment of opening and not after — moving the list selection with the
  * Bench open would otherwise re-aim the lens under an author who is mid-test.
@@ -49,9 +51,10 @@ export function useBenchLens(
 
   return {
     lens,
-    pcOptions: useMemo(() => lensPcOptions(world), [world]),
+    personaOptions: useMemo(() => lensPersonaOptions(world), [world]),
+    noneLabel: useMemo(() => lensNoneLabel(world), [world]),
     locationOptions: useMemo(() => lensLocationOptions(world), [world]),
-    setPc: useCallback((pcTraitId: string | null) => apply({ ...state, pcTraitId }), [apply, state]),
-    setLocation: useCallback((locationId: string | null) => apply({ ...state, locationId }), [apply, state]),
+    setPersona: useCallback((personaId: string | null) => apply(lensWithPersona(world, state, personaId)), [apply, state, world]),
+    setLocation: useCallback((locationId: string | null) => apply({ ...state, locationId, locationChosen: true }), [apply, state]),
   };
 }

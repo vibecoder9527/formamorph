@@ -46,7 +46,7 @@ describe('buildImagePrompt request', () => {
     const spy = stubStream(sseReply('Silver_Hair'));
     await expect(buildImagePrompt({ description: 'd', kind: 'character' }, { snapshot: textSnapshot() })).resolves.toBe('silver hair');
     vi.unstubAllGlobals();
-    expect(sentBody(spy)).toMatchObject({ max_tokens: 200, temperature: 0.3 });
+    expect(sentBody(spy)).toMatchObject({ max_tokens: 2048, temperature: 0.3 });
   });
 
   it('returns the model syntax untouched with cleanTags off', async () => {

@@ -65,7 +65,7 @@ export async function buildImagePrompt(
     systemPrompt: composeSystem(opts.tagPrompt || DEFAULT_TAG_PROMPT, subject.kind),
     messages: [{ role: 'user', content: `Description:\n${subject.description}` }],
     requestType: 'imageTags',
-    maxTokensOverride: 200,
+    maxTokensOverride: 2048,
   }, { signal: opts.signal });
   return normalizeBooruTags(content, opts.cleanTags);
 }

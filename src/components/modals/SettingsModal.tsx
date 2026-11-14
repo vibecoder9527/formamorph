@@ -4,10 +4,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useTheme } from '../theme-provider';
 import LlmSetupGuide from '@/components/modals/LlmSetupGuide';
-import { endpointTabForRoute, endpointTabsFor, settingsTabsFor, type SettingsTabId } from '@/components/modals/settingsTabs';
+import { endpointTabForRoute, endpointTabsFor, settingsTabGroupsFor, settingsTabsFor, type SettingsTabId } from '@/components/modals/settingsTabs';
 import { SETTINGS_DIALOG_SIZE } from '@/components/modals/settingsDialogSize';
 import { SurfaceTab } from '@/components/ui/surface';
 import { findTargetRow, targetAttribute, type TargetAttribute } from '@/lib/surface/surfaceTargets';
+import { BackupRestoreButtons, type BackupStart } from '@/components/menu/BackupRestoreDialog';
 import { useLanding } from '@/lib/surface/useLanding';
 import { ToolsTab } from '@/components/modals/ToolsTab';
 import { EMPTY_TOOLS_VIEW, TOOL_EDIT_TABS, type ToolsView } from '@/components/modals/toolsView';
@@ -31,6 +32,8 @@ import { DisplaySettingsSection } from './DisplaySettingsSection';
 import { OutputSettingsSection } from './OutputSettingsSection';
 import type { SettingsSource } from './settingsSource';
 import { useEmbeddingDownload } from './useEmbeddingDownload';
+import { SectionTabs } from '@/components/SectionTabs';
+import { useSectionTabsRoot } from '@/components/useSectionTabsRoot';
 import { ModeSelect } from '@/components/ui/mode-select';
 import { ExportPresetDialog, ImportPresetDialog } from '@/components/modals/PresetShareDialogs';
 import { usePresetPublish } from '@/components/modals/usePresetPublish';
@@ -47,7 +50,7 @@ import { revealEditorChip, cancelEditorReveals } from '@/lib/editorFieldFocus';
 import type { AnatomyViewMode } from '@/components/game/RequestAnatomyView';
 import { RequestAnatomyPanel } from './RequestAnatomyPanel';
 import { Settings } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, dialogTitleRow } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { PanelShell } from "@/components/PanelShell";
 import { useMorphFullscreen } from "@/lib/useMorphFullscreen";
@@ -74,6 +77,7 @@ import { imageReachabilityTarget } from '@/lib/imageGen/probe';
 import { TextEndpointEditor } from './TextEndpointEditor';
 import { activePresetEditor, presetEditor, type PresetEditorView } from './textEndpointEditorModel';
 import { FORMAMORPH_AI_PRESET_ID } from '@/lib/textEndpointPresets';
+import { dailySendAvailable } from '@/lib/activeInstalls';
 import { HOSTED_PRESET_STATES, type HostedPresetState } from '@/lib/hostedAi/refusals';
 import type { HostedState } from '@/lib/hostedAi/hostedState';
 import { showExhaustedNotice, showWarningNotice } from './hostedNotices';
@@ -90,6 +94,7 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { toast } from 'react-toastify';
 import { toastError } from '@/lib/linkToast';
 import WorldStorageService from '@/services/WorldStorageService';
+import EntityStorageService from '@/services/EntityStorageService';
 import { cachedImageBytes, clearCachedImages } from '@/lib/remoteImageCache';
 import { formatBytes } from '@/lib/imageOptim';
 import { DEFAULT_WORLDS, readDeletedDefaultWorlds, clearDeletedDefaultWorlds } from '@/lib/defaultWorlds';
@@ -228,13 +233,15 @@ const MODE_SELECT_TARGETS: Record<string, TargetAttribute> & { data: TargetAttri
   data: targetAttribute('settings.data', 'settings-mode'),
 };
 
-export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, initialTab, initialEndpointTab, initialPromptTab, initialPromptSurface, initialPromptField, initialTarget, requestKey: landingKey, onWorldsRestored, onStartAuthoringTour, forcedMode }: {
+export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, initialTab, initialEndpointTab, initialPromptTab, initialPromptSurface, initialPromptField, initialTarget, requestKey: landingKey, onWorldsRestored, onStartAuthoringTour, onOpenBackup, forcedMode }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   /** Called after Restore Default Worlds re-seeds, so a world list on screen can refresh. */
   onWorldsRestored?: () => void;
   /** Starts the Authoring Tour on a new world. Only the main menu supplies it, so a running game hides the row. */
   onStartAuthoringTour?: () => void;
+  /** Opens Backup & Restore. Only the main menu supplies it, because a restore reloads the app and drops a running game. */
+  onOpenBackup?: (start: BackupStart) => void;
   /** Live variable values for the prompt-editor Preview tab. Supplied only in game; absent → no Preview. */
   previewValues?: TokenValues;
   /** The open world as a Tool Snapshot, for Try It. Supplied only in game; absent, Try It uses the sample world. */
@@ -306,6 +313,8 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestKey]);
   const visibleTabs = useMemo(() => settingsTabsFor(advanced), [advanced]);
+  const visibleTabGroups = useMemo(() => settingsTabGroupsFor(advanced), [advanced]);
+  const sectionTabs = useSectionTabsRoot();
   const { active: tutorial, nav: tutorialNav, dismiss } = useTutorial('settings', { active: isOpen });
   const dismissTutorial = useCallback(() => { if (tutorial) dismiss(tutorial.id); }, [tutorial, dismiss]);
   const [activeTab, setActiveTab] = useState<string>(initialTab ?? visibleTabs[0].value);
@@ -347,7 +356,8 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
   const restoreDefaultWorlds = async () => {
     clearDeletedDefaultWorlds();
     try {
-      const { failed, errors } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS, bundledWorlds);
+      const libraryHasEntity = await EntityStorageService.hasEntities();
+      const { failed, errors } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS, bundledWorlds, { libraryHasEntity });
       if (failed.length) {
         toastError(
           new AggregateError(errors, 'Default worlds failed to restore'),
@@ -438,12 +448,18 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     setRecapUserPrompt,
     oocDirectivePrompt,
     setOocDirectivePrompt,
+    actionListPrompt,
+    setActionListPrompt,
     choicesUserPrompt,
     setChoicesUserPrompt,
     statUpdatesUserPrompt,
     setStatUpdatesUserPrompt,
     locationChangeUserPrompt,
     setLocationChangeUserPrompt,
+    narratedMovePrompt,
+    setNarratedMovePrompt,
+    narratedMoveUserPrompt,
+    setNarratedMoveUserPrompt,
     entityLocationPrompt,
     setEntityLocationPrompt,
     entityLocationUserPrompt,
@@ -512,6 +528,8 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     setEditorAutoSave,
     editorAutoSaveIdleSeconds,
     setEditorAutoSaveIdleSeconds,
+    dailySendEnabled,
+    setDailySendEnabled,
     characterDiaries,
     describeCharacters,
     genTemperature,
@@ -755,6 +773,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     choices: { label: PROMPT_LABELS.choices, value: choicesPrompt, def: styledDefaults.choicesPrompt, set: setChoicesPrompt, variables: PROMPT_KIND_VARIABLES.choices },
     statupdates: { label: PROMPT_LABELS.statupdates, value: statUpdatesPrompt, def: styledDefaults.statUpdatesPrompt, set: setStatUpdatesPrompt, variables: PROMPT_KIND_VARIABLES.statupdates },
     location: { label: PROMPT_LABELS.location, value: locationChangePromptText, def: styledDefaults.locationChangePromptText, set: setLocationChangePromptText, variables: PROMPT_KIND_VARIABLES.location },
+    narratedmove: { label: PROMPT_LABELS.narratedmove, value: narratedMovePrompt, def: styledDefaults.narratedMovePrompt, set: setNarratedMovePrompt, variables: PROMPT_KIND_VARIABLES.narratedmove },
     entitylocation: { label: PROMPT_LABELS.entitylocation, value: entityLocationPrompt, def: styledDefaults.entityLocationPrompt, set: setEntityLocationPrompt, variables: PROMPT_KIND_VARIABLES.entitylocation },
     summary: { label: PROMPT_LABELS.summary, value: summaryPrompt, def: styledDefaults.summaryPrompt, set: setSummaryPrompt, variables: PROMPT_KIND_VARIABLES.summary },
     milestone: { label: PROMPT_LABELS.milestone, value: milestoneSelectPrompt, def: styledDefaults.milestoneSelectPrompt, set: setMilestoneSelectPrompt, variables: PROMPT_KIND_VARIABLES.milestone },
@@ -847,6 +866,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     choices: { value: choicesUserPrompt, set: setChoicesUserPrompt, def: styledDefaults.choicesUserPrompt, variables: PROMPT_KIND_USER_VARIABLES.choices ?? NO_VARIABLES },
     statupdates: { value: statUpdatesUserPrompt, set: setStatUpdatesUserPrompt, def: styledDefaults.statUpdatesUserPrompt, variables: PROMPT_KIND_USER_VARIABLES.statupdates ?? NO_VARIABLES },
     location: { value: locationChangeUserPrompt, set: setLocationChangeUserPrompt, def: styledDefaults.locationChangeUserPrompt, variables: PROMPT_KIND_USER_VARIABLES.location ?? NO_VARIABLES },
+    narratedmove: { value: narratedMoveUserPrompt, set: setNarratedMoveUserPrompt, def: styledDefaults.narratedMoveUserPrompt, variables: PROMPT_KIND_USER_VARIABLES.narratedmove ?? NO_VARIABLES },
     entitylocation: { value: entityLocationUserPrompt, set: setEntityLocationUserPrompt, def: styledDefaults.entityLocationUserPrompt, variables: PROMPT_KIND_USER_VARIABLES.entitylocation ?? NO_VARIABLES },
     summary: { value: summaryUserPrompt, set: setSummaryUserPrompt, def: styledDefaults.summaryUserPrompt, variables: PROMPT_KIND_USER_VARIABLES.summary ?? NO_VARIABLES },
     milestone: { value: milestoneSelectUserPrompt, set: setMilestoneSelectUserPrompt, def: styledDefaults.milestoneSelectUserPrompt, variables: PROMPT_KIND_USER_VARIABLES.milestone ?? NO_VARIABLES },
@@ -866,10 +886,10 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
   const nowAvailable = recapAvailable;
   // The recall line rides only while Scene Recall is on — same hide-with-the-feature rule as the recap.
   const recallAvailable = activePromptTab === 'narration' && memoryDigests && semanticMemory && semanticRehydration;
-  // The direction rider fires only on [bracket] turns with thinking off (same guard as the User template).
-  const directionAvailable = activePromptTab === 'narration' && thinkingMode === 'off';
+  // The direction rider and the Since Last Turn lines ride only with thinking off (same guard as the User template).
+  const thinkingOffMessages = activePromptTab === 'narration' && thinkingMode === 'off';
   // The Messages view stacks whichever of the conditional narration lines are live.
-  const messagesAvailable = recapAvailable || nowAvailable || recallAvailable || directionAvailable;
+  const messagesAvailable = recapAvailable || nowAvailable || recallAvailable || thinkingOffMessages;
   const showingMessages = promptView === 'messages' && messagesAvailable;
   // The stacked fields the Messages view renders — one per live line, each with its own reset.
   const messageFields = [
@@ -888,9 +908,14 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
       value: rehydrateUserPrompt, set: setRehydrateUserPrompt, def: styledDefaults.rehydrateUserPrompt,
       variables: undefined, vocabulary: NO_VARIABLES_VOCABULARY,
     }] : []),
-    ...(directionAvailable ? [{
+    ...(thinkingOffMessages ? [{
       key: 'direction', ...SETTINGS_COPY.directionMessage,
       value: oocDirectivePrompt, set: setOocDirectivePrompt, def: styledDefaults.oocDirectivePrompt,
+      variables: undefined, vocabulary: NO_VARIABLES_VOCABULARY,
+    }] : []),
+    ...(thinkingOffMessages ? [{
+      key: 'action-list', ...SETTINGS_COPY.actionListMessage,
+      value: actionListPrompt, set: setActionListPrompt, def: styledDefaults.actionListPrompt,
       variables: undefined, vocabulary: NO_VARIABLES_VOCABULARY,
     }] : []),
   ];
@@ -924,6 +949,8 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     turn: {
       locationChange: locationChangePromptText || '',
       locationChangeUser: locationChangeUserPrompt,
+      narratedMove: narratedMovePrompt,
+      narratedMoveUser: narratedMoveUserPrompt,
       entityLocation: entityLocationPrompt,
       entityLocationUser: entityLocationUserPrompt,
       thinking: thinkingPrompt,
@@ -933,6 +960,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
       storyboard: storyboardPrompt,
       narrationUser: narrationUserPrompt,
       oocDirective: oocDirectivePrompt,
+      actionList: actionListPrompt,
       // The hub draws a mid-story turn, so the opening cue is along for the shape only.
       openingCue: OPENING_SCENE_CUE,
       discoverEntity: discoverEntityPrompt,
@@ -958,8 +986,8 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
     },
   }), [
     systemPrompt, recapUserPrompt, nowLinePrompt, rehydrateUserPrompt,
-    locationChangePromptText, locationChangeUserPrompt, entityLocationPrompt, entityLocationUserPrompt, thinkingPrompt, directorPrompt, directorUserPrompt,
-    characterPrompt, storyboardPrompt, narrationUserPrompt, oocDirectivePrompt,
+    locationChangePromptText, locationChangeUserPrompt, narratedMovePrompt, narratedMoveUserPrompt, entityLocationPrompt, entityLocationUserPrompt, thinkingPrompt, directorPrompt, directorUserPrompt,
+    characterPrompt, storyboardPrompt, narrationUserPrompt, oocDirectivePrompt, actionListPrompt,
     choicesPrompt, choicesUserPrompt, statUpdatesPrompt, statUpdatesUserPrompt, statTextPrompts,
     summaryPrompt, summaryUserPrompt, timePassedPrompt, timePassedUserPrompt,
     openingTimePrompt, openingTimeUserPrompt, diaryPrompt, sceneTagsPrompt, sceneTagsUserPrompt,
@@ -1121,8 +1149,7 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
         className={SETTINGS_DIALOG_SIZE}
       >
         <DialogHeader className="flex-shrink-0">
-          {/* The close cross is absolutely placed over this row, so the select is kept clear of it. */}
-          <div className="flex items-center justify-between gap-4 pr-8">
+          <div className={cn(dialogTitleRow, 'justify-between gap-4')}>
             <DialogTitle className="flex items-center gap-2"><Settings className="h-4 w-4" /> Settings</DialogTitle>
             <TutorialPopover entry={tutorial} nav={tutorialNav}>
               <ModeSelect
@@ -1139,26 +1166,8 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
             </TutorialPopover>
           </div>
         </DialogHeader>
-        <Tabs surfaceTabs="settings" value={activeTab} onValueChange={setActiveTab} className="w-full flex flex-col flex-1 min-h-0">
-          {/* The tab labels don't fit narrow mobile, so below sm the tab strip becomes a dropdown of the
-              active tab; sm+ keeps the full row. Both drive the same activeTab state. */}
-          <Select value={activeTab} onValueChange={setActiveTab}>
-            <SelectTrigger className="w-full flex-shrink-0 sm:hidden">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {visibleTabs.map((t) => (
-                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <TabsList
-            className={cn('hidden w-full flex-shrink-0 sm:grid', advanced ? 'grid-cols-6' : 'grid-cols-4')}
-          >
-            {visibleTabs.map((t) => (
-              <TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>
-            ))}
-          </TabsList>
+        <Tabs {...sectionTabs.rootProps} surfaceTabs="settings" value={activeTab} onValueChange={setActiveTab} className="w-full flex flex-col flex-1 min-h-0">
+          <SectionTabs isMobile={sectionTabs.isMobile} groups={visibleTabGroups} value={activeTab} label="Settings Sections" bodyId="settings-sections" />
 
           <TabsContent value="display" className="px-2 flex-1 min-h-0 data-[state=active]:flex flex-col">
             <ScrollArea landingRoom className="flex-1 min-h-0">
@@ -1829,6 +1838,23 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                 </TabsContent>
               )}
 
+              {locationChangeEnabled && (
+                <TabsContent value="narratedmove" className="mt-4 flex-1 min-h-0 data-[state=active]:flex flex-col gap-1">
+                  <PromptField
+                    value={showingUser ? narratedMoveUserPrompt : narratedMovePrompt}
+                    onChange={showingUser ? setNarratedMoveUserPrompt : setNarratedMovePrompt}
+                    variables={showingUser ? (PROMPT_KIND_USER_VARIABLES.narratedmove ?? []) : PROMPT_KIND_VARIABLES.narratedmove}
+                    previewValues={effectivePreviewValues}
+                    sampleData={usingSampleValues}
+                    readOnlyReason={readOnlyReason}
+                    onRequestEdit={duplicatePreset}
+                    fullscreen={promptsFullscreen}
+                    onRequestFullscreen={promptsMorph.toggle}
+                    readOnly={activePresetIsBuiltIn}
+                  />
+                </TabsContent>
+              )}
+
               {locationChangeEnabled && entityMovement && (
                 <TabsContent value="entitylocation" className="mt-4 flex-1 min-h-0 data-[state=active]:flex flex-col gap-1">
                   <PromptField
@@ -2115,6 +2141,14 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
           <TabsContent value="data" className="px-2 flex-1 min-h-0 data-[state=active]:flex flex-col">
             <ScrollArea landingRoom className="flex-1 min-h-0">
             <div className="grid gap-6 py-4">
+              {onOpenBackup && (
+              <Section title="Backup">
+              <Row {...rowCopy('backupRestore')}>
+                <BackupRestoreButtons onStart={onOpenBackup} backUpLabel={SETTINGS_BUTTONS.backUp} restoreLabel={SETTINGS_BUTTONS.restoreBackup} />
+              </Row>
+              </Section>
+              )}
+
               <Section title="Saves">
               <CheckRow
                 htmlFor="autosaveEnabled"
@@ -2228,6 +2262,17 @@ export const SettingsModal = ({ isOpen, onOpenChange, previewValues, toolWorld, 
                   </Hint>
                 </div>
               </Row>
+              </Section>
+              )}
+
+              {dailySendAvailable() && (
+              <Section title="Privacy">
+              <CheckRow
+                htmlFor="dailySendEnabled"
+                checked={dailySendEnabled}
+                onChange={setDailySendEnabled}
+                {...rowCopy('dailySendEnabled')}
+              />
               </Section>
               )}
             </div>

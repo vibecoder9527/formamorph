@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { Entity, GameLocation } from '@/types';
+import { PLAYER_START, type Entity, type EntityStart, type GameLocation } from '@/types';
+import { startWithRow } from '@/test/entityKindFixture';
+import { namedPlacesOf } from './entityPlaces';
 import {
   computePresence, connectedPlaces, introducedIds, strangersInPlay, sceneAfterMove, startsMet, strangerAliasesFromCast, withMet,
   type PresenceInput, type SceneTurn,
 } from './presence';
 import { readNarration } from './turnPipeline/narrationReading';
+import { oneRoutine } from '@/test/routines';
 
 // The keep holds the hall, the smithy and the gate yard; the harbor connects to the gate yard by map.
 const LOCATIONS: Pick<GameLocation, 'id' | 'parentId'>[] = [
@@ -31,6 +34,7 @@ const presence = (over: Partial<PresenceInput> = {}) => computePresence({
   entities: [mara, bram],
   runtime: [],
   positions: {},
+  generics: {},
   followers: [],
   locationId: 'hall',
   locations: LOCATIONS,
@@ -149,6 +153,42 @@ describe('start-met', () => {
     expect(startsMet({ ...sylvie, knownIn: ['smithy'] }, persona, LOCATIONS)).toBe(false);
   });
 
+  describe('a persona with a kind reads its Starts only', () => {
+    const start = startWithRow;
+    const played = (starts: EntityStart[]): Entity =>
+      // An unreleased world still stores every Start and row place as its list (Q5).
+      ({ id: 'me', name: 'Wren', kind: 'unique', routines: oneRoutine(starts), locations: namedPlacesOf({ id: 'me', kind: 'unique', routines: oneRoutine(starts) }) });
+    const places = LOCATIONS.map((l) => ({ ...l, isStarting: l.id === 'harbor' }));
+
+    it('does not meet through a place only a routine row names', () => {
+      const patrol = played([start('s1', 'cellar', 'smithy')]);
+      expect(patrol.locations).toContain('smithy');
+      expect(startsMet({ ...sylvie, knownIn: ['smithy'] }, patrol, places)).toBe(false);
+    });
+
+    it('meets through a Start place and through its parent', () => {
+      const patrol = played([start('s1', 'cellar', 'smithy')]);
+      expect(startsMet({ ...sylvie, knownIn: ['cellar'] }, patrol, places)).toBe(true);
+      expect(startsMet({ ...sylvie, knownIn: ['hall'] }, patrol, places)).toBe(true);
+    });
+
+    it("meets through a world starting location for a Start at Player's Starting Location", () => {
+      const follower = played([start('s1', PLAYER_START)]);
+      expect(startsMet({ ...sylvie, knownIn: ['harbor'] }, follower, places)).toBe(true);
+      expect(startsMet({ ...sylvie, knownIn: ['smithy'] }, follower, places)).toBe(false);
+    });
+
+    it("meets through any location for a Start at Player's Starting Location when none is flagged", () => {
+      const follower = played([start('s1', PLAYER_START)]);
+      expect(startsMet({ ...sylvie, knownIn: ['smithy'] }, follower, LOCATIONS)).toBe(true);
+    });
+
+    it('keeps the own locations of a persona with no kind', () => {
+      const kindless: Entity = { id: 'me', name: 'Wren', locations: ['cellar', 'smithy'] };
+      expect(startsMet({ ...sylvie, knownIn: ['smithy'] }, kindless, places)).toBe(true);
+    });
+  });
+
   it('meets nobody through Nearby or Nowhere', () => {
     expect(startsMet(sylvie, persona, LOCATIONS)).toBe(false);
     expect(startsMet({ ...sylvie, knownIn: 'nowhere' }, persona, LOCATIONS)).toBe(false);
@@ -213,8 +253,59 @@ describe('the named sets', () => {
     expect(ids(p.inScene)).toEqual(['tilly']);
   });
 
+  it('lists a Generic entity once where two of its Generic Entity Instances stand, and not where its Generic Entity Instances are gone', () => {
+    const rooks: Entity = {
+      id: 'rooks', name: 'Rooks', kind: 'generic', locations: ['hall', 'smithy'],
+      routines: oneRoutine([{ id: 'a', place: 'hall', weight: 1, schedule: [] }, { id: 'b', place: 'smithy', weight: 1, schedule: [] }]),
+    };
+    const both = { rooks: { a: { position: 'hall', lastRun: 0 }, b: { position: 'hall', lastRun: 0 } } };
+    expect(ids(presence({ entities: [mara, rooks], generics: both }).lookAround)).toEqual(['mara', 'rooks']);
+    expect(ids(presence({ entities: [mara, rooks], generics: both, locationId: 'smithy' }).lookAround)).toEqual([]);
+  });
+
   it('holds met people wherever they are in Met', () => {
     expect(ids(presence({ locationId: 'harbor' }).met)).toEqual(['mara', 'bram']);
+  });
+});
+
+describe('a stranger with only a Stranger Description', () => {
+  const ivo: Entity = { id: 'ivo', name: 'Ivo the Bold', strangerDescription: 'A broad man in a dented helm.', locations: ['hall'] };
+
+  it('starts unmet, unless a relationship or a Known In pick meets it', () => {
+    expect(startsMet(ivo, persona, LOCATIONS)).toBe(false);
+    expect(startsMet({ ...ivo, relationships: [{ targetId: 'me', label: 'brother' }] }, persona, LOCATIONS)).toBe(true);
+    expect(startsMet({ ...ivo, knownIn: ['keep'] }, persona, LOCATIONS)).toBe(true);
+    expect(startsMet({ ...ivo, strangerDescription: '  ' }, persona, LOCATIONS)).toBe(true);
+  });
+
+  it('shows its real Name in the scene and Look Around, and stays on the known list', () => {
+    const p = presence({ entities: [ivo], turns: [turn(['Ivo the Bold'], 'hall')] });
+    expect(p.byId.get('ivo')).toMatchObject({ met: false, known: true, label: 'Ivo the Bold' });
+    expect(ids(p.inScene)).toEqual(['ivo']);
+    expect(ids(p.lookAround)).toEqual(['ivo']);
+    expect(ids(p.met)).toEqual([]);
+    expect(ids(presence({ entities: [ivo], locationId: 'harbor' }).known)).toEqual(['ivo']);
+  });
+
+  it('never takes a story alias', () => {
+    const none = {};
+    expect(strangerAliasesFromCast(none, [{ name: 'Ivo the Bold', alias: 'the helmed man' }], [ivo], () => false)).toBe(none);
+  });
+
+  it('is met when the narration names it while it is here', () => {
+    const met = withMet([], introducedIds('"Ivo, sit," Mara says.', [mara, ivo], ['mara', 'ivo']));
+    expect(presence({ entities: [mara, ivo], met }).byId.get('ivo')?.met).toBe(true);
+  });
+
+  it('gives the prompts nothing new', () => {
+    const { labels, reveal } = strangersInPlay([ivo], () => false, {});
+    expect(labels).toEqual({});
+    expect(reveal('Ivo the Bold')).toBeUndefined();
+  });
+
+  it('leaves a Stranger Name stranger off the known list', () => {
+    const sylvie: Entity = { id: 'sylvie', name: 'Sylvie', strangerName: 'a hooded woman', strangerDescription: 'Hooded.', locations: ['hall'] };
+    expect(presence({ entities: [sylvie] }).byId.get('sylvie')).toMatchObject({ met: false, known: false, label: 'a hooded woman' });
   });
 });
 

@@ -110,7 +110,7 @@ Each field you change on a link becomes an override. The rest of the link keeps 
 - **Reset** sits at the end of an overridden field's label row. It returns that field to the original.
 - **Reset to Blueprint** sits in the footer below every tab. It returns every override on the link. On a trait in a linked group, it returns that trait's overrides. It is disabled while nothing is overridden.
 - **Blueprint changed** shows beside a field's **Reset** when the original changed that field after you set your override. Your value may be stale. Edit the field again, or reset it, and the marker clears. It shows on the tab that holds the field, never in the tree.
-- **Edit Blueprint** in the footer selects the original. Edit there to change every owner. It shows in the World Editor's **Traits** tab, not in an entity's **Traits** tab.
+- **Edit Blueprint** in the footer selects the original. Edit there to change every owner. It shows in the World Editor's **Traits** and **Stats** tabs, not in an entity's own tabs.
 
 A linked group's shape always follows the original. To add, remove or move a trait for one owner only, use **Detach**.
 
@@ -154,15 +154,13 @@ A link can override its **Placeholder Pins** list. Albus's link can pin *silvere
 
 A pin that names a value the copy removed pins nothing.
 
+A [Blueprint stat's](World-Editor-Stats#pins-on-a-descriptor) band pins a blueprint the same way. Two mares link a *Pregnancy* stat, and its *Late* band pins *Term* to *late*. Each mare's copy of *Term* follows her own *Pregnancy* value. A Blueprint stat's band never pins a world placeholder.
+
 ### Whose pins apply where
 
-| Text | Pins that apply |
-|---|---|
-| World text: locations, the world prompt, narration | The world's pins, then the global and persona trait pins |
-| The player's persona | The same as world text |
-| An entity's own text | The world's pins, then the global and persona trait pins, then the entity's own trait pins on top |
+Every text reads the same pins: the world's, the persona's and each entity's. See [Pins](World-Editor-Placeholders#pins) for which pin wins.
 
-An entity's own trait pins never reach another owner's text. Albus's class never changes the player's description.
+A pin by blueprint lands on its owner's own copy, so it changes only the text that reads that copy. Albus's class never changes the player's description.
 
 ## Example: RPG Classes
 <!-- keywords: class system, dnd, job system, spells per class, worked sample, walkthrough, fantasy roles, step by step build, emberwatch -->

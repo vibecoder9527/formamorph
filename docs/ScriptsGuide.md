@@ -55,7 +55,7 @@ The formulas are seven templates:
 - **Weighted Blend**
 - **Inverse of Another Stat**
 - **Threshold Flag**
-- **Daypart Modifier**
+- **Time of Day Modifier**
 - **Bound From Another Stat**
 - **Bonus From Persona Trait**
 - **Penalty From Entity Trait**
@@ -193,7 +193,7 @@ In your own template, `{{name:param(number)=amount}}` is a parameter input:
 - A slot with no `=amount` part names the new Parameter after the slot.
 
 ## How to Insert a World Script Template
-<!-- keywords: world script template, world script example, starter world script code, opening location, advance time while a trait is on, leave when a stat runs out, placeholder by daypart, memory when a trait turns on, diary line when a trait turns on, entity stat follows a global stat, location input -->
+<!-- keywords: world script template, world script example, starter world script code, opening location, advance time while a trait is on, leave when a stat runs out, placeholder by time of day, placeholder by daypart, memory when a trait turns on, diary line when a trait turns on, entity stat follows a global stat, location input -->
 <!-- route: worldEditor.scripts -->
 
 1. Open the world's **Scripts** tab. Add a world script, or open one.
@@ -203,11 +203,13 @@ In your own template, `{{name:param(number)=amount}}` is a parameter input:
 
 A world script has no stat or trait of its own. Its templates never read `self` and never return a value.
 
+**Opening Location** moves the player at game start. It does not change **Player's Starting Location**: an entity that begins there without **Follows the Player** stays at the location the player started at in **New Game**.
+
 | Timing | Built-in templates in its menu |
 |---|---|
-| ⏮️ **Before the AI** | **Advance Time While a Trait Is On**, **Placeholder by Daypart**, **Entity Stat Follows a Global Stat** |
+| ⏮️ **Before the AI** | **Advance Time While a Trait Is On**, **Placeholder by Time of Day**, **Entity Stat Follows a Global Stat** |
 | ⏭️ **After the AI** | **Advance Time While a Trait Is On**, **Leave When a Stat Runs Out**, **Entity Stat Follows a Global Stat** |
-| 🎬 **At Game Start** | **Opening Location**, **Placeholder by Daypart** |
+| 🎬 **At Game Start** | **Opening Location**, **Placeholder by Time of Day** |
 | 🔀 **When a Trait Switches** | **Memory When a Trait Turns On**, **Diary Line When a Trait Turns On** |
 | 💬 **During AI Output** | **Replace a Word** |
 
@@ -479,10 +481,12 @@ The sketch matches the exact name only. The drone world has the full **lock_targ
 
 **Test Code** runs one box with no player traits:
 
-- It cannot preview a long turn or a different daypart.
+- It cannot preview a long turn or a different time of day.
 - After the AI runs as a one-hour turn on day one.
 - Every other timing runs as the opening turn, where `clock.deltaHours` and `clock.elapsedHours` are both `0`.
 - It shows a trait switch and never applies it to the world.
+- It places entities as a new game does at the first starting location. With no location marked as a start, it uses the first location. A Unique entity is at the location of its first start. An entity that begins at **Player's Starting Location** is at that location.
+- A location's card in a code box lists the same entities in its **Present** row.
 
 ### A Note on Accumulating Stats
 

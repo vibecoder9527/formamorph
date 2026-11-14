@@ -105,22 +105,90 @@ Any world inhabitant the narrator can reference — person, creature, plant, or 
 _Avoid_: character (too narrow)
 
 **Stranger**:
-An entity the player has not met. Only an entity with a Stranger Name can be one. The player sees it under the latest alias the story gave it, else its Stranger Name, and never its true name. When both are blank it has no label and no player surface shows it. User copy says "stranger" and "the name you know"; "label" stays internal.
+An entity the player has not met. Only an entity with a Stranger Name or a Stranger Description can be one. One with a Stranger Name hides its true name: the player sees it under the latest alias the story gave it, else its Stranger Name. When the alias and the Stranger Name are both blank it has no label and no player surface shows it, except the map, where it is an unknown "?" entry. One with only a Stranger Description shows its true name everywhere; only its description and the view that opens differ until met. User copy says "stranger" and "the name you know"; "label" stays internal.
 _Avoid_: unknown entity, hidden entity
 
 **Met**:
 Whether the player knows who an entity is. An entity starts met in any of these cases:
-- It has no Stranger Name.
+- It has neither a Stranger Name nor a Stranger Description.
 - It has a relationship with the played persona, on either side.
 - One of its Known In picks is one of the persona's Locations or contains one. Nearby and Nowhere pick nothing.
 - It is a runtime character.
 
-Otherwise the player meets it when the story names it while it is here. A name inside dialogue counts. A met entity stays met. The Met set lists every met entity, wherever it is. It feeds the map and the Help window.
+Otherwise the player meets it when the story names it while it is here. A name inside dialogue counts. A met entity stays met. The Met set lists every met entity, wherever it is. The Help window lists every entity whose name the player knows: the Met set plus each unmet entity with no Stranger Name. The map follows On Map.
 _Avoid_: known, discovered, revealed
+
+**On Map**:
+How the player's map shows an entity: Always (the default), Once Met, When Nearby, or Never. A met entity, or one with no Stranger Name, shows under its true name. An unmet stranger shows under its stranger label in the player's place and Nearby places, and as an unknown "?" elsewhere or when it has no label. Once Met keeps an unmet entity off the map. When Nearby keeps the entity off places outside that reach, met or not. Never keeps it off the map always.
+_Avoid_: map visibility, map presence, hidden on map
 
 **In Scene**:
 The entities here that took part in the story in one of the last 3 turns. An entity takes part when the prose shows it or the planner casts it. A name inside dialogue does not count. When the player moves, only followers keep the turns from before the move. An entity that leaves the player's place is out of scene at once. The In Scene set feeds the stat picker, the Traits tab and Give.
 _Avoid_: present, visible, participants
+
+**Generic (entity kind)**:
+An entity met in several places at once: a herd, a swarm, an enemy type, one Mimic in each dungeon. Every Start runs at the same time as its own Generic Entity Instance, each on its own Schedule, but it is one entity with one set of stats, inventory and memory. Two Generic Entity Instances in one place count once. It is never pulled and never follows.
+_Avoid_: Group (entity kind), Everywhere Listed
+
+**Unique (entity kind)**:
+An entity that is one body in one place. One of its Starts is rolled per playthrough, and its Schedule moves it through the day. Not the Unique mode of a placeholder chip.
+_Avoid_: Individual, One, random presence
+
+**Routine**:
+One way an entity with a kind lives: a name, a Requires gate, its own Traversable and its own Starts. An entity holds an ordered list of them, and in play the first whose gate holds applies. An entity with one Routine and no gate behaves as one set of Starts. Also the name of the editor's Routine view, which edits them.
+_Avoid_: behavior, mode, schedule set
+
+**Start**:
+One beginning of an entity: a place plus a Schedule, in one Routine. At new game a Unique entity rolls one Start by weight for every Routine and keeps each roll for the whole save; when another Routine applies, it swaps to that Routine's roll and never rolls again. A Generic entity runs every Start of the applying Routine. A Start with an empty Schedule stays at its place.
+_Avoid_: spawn, presence
+
+**Generic Entity Instance**:
+One standing body of a Generic entity: one per Start, at one place at a time. It is not a separate entity.
+_Avoid_: presence (that is every place an entity can be), Instance, Generic Instance
+
+**Position**:
+Where an entity stands now in the running game. A Unique entity has one; a Generic entity has one per Generic Entity Instance. An entity with a kind and no Position stands nowhere.
+_Avoid_: location (of an entity), current place
+
+**Sample Placement**:
+Where authoring places each entity at the start of the story, from the first Routine whose gate holds there: a Unique entity from its first Start, a Generic entity from all of them. Previews, the Test Bench and Test Code read it, so they show one stable cast.
+_Avoid_: opening cast, preview position
+
+**Presence**:
+Every place an entity can be under any of its Routines, each with its reasons and the Routine each comes from: it begins there, a Schedule row names it, or Traversable lists it. Player's Starting Location counts as each starting location. A row place with no path from its Start is left out.
+_Avoid_: reach, membership, locations (of an entity with a kind)
+
+**Start places**:
+The places an entity can begin: the place of each of its Starts, with Player's Starting Location counted as each starting location.
+_Avoid_: spawn points
+
+**Schedule**:
+A Start's daily routine: rows of a time and an action (Stay, Wander, Patrol or Away). A timed row beats the All-day row for its hours; in hours no row covers, the character stays at its Start's place.
+_Avoid_: movement
+
+**Stay**:
+A Schedule action: the character is at one place for the row's hours.
+_Avoid_: Stays Put
+
+**Wander**:
+A Schedule action: the character moves among weighted places, idling a fixed time at each before a new pick.
+_Avoid_: Moves Between, roam
+
+**Patrol**:
+A Schedule action: the character walks a list of stops in order, idling at each, then loops to the first.
+_Avoid_: route, circuit
+
+**Away**:
+A Schedule action with no place: for the row's hours the character has no Position, so it is in no scene, not here, not nearby and not on the map. It still exists: its stats, regen, traits and scripts run, and contexts that need no place, such as the entities known here, keep it. A follow already running continues, led anywhere its Start connects to; narration can't call it over and it won't start following. An entity whose Routines all fail is Away all day. To take an entity out of the world instead, use the Enabled gate.
+_Avoid_: offstage (a stranded entity, which also leaves the known-entity lists), hidden, gone
+
+**Strict**:
+A Schedule row flag: during the row the character can't be called over by narration and won't start following the player. A follow already running continues.
+_Avoid_: locked, busy
+
+**Traversable**:
+The places a Unique entity may go beyond its Schedule, or Anywhere, set per Routine. Pulls and follows reach only its current row's places plus the applying Routine's list. An empty list means Schedule places only.
+_Avoid_: range, Can Follow
 
 **Look Around**:
 Everyone here the player would see if they looked around: In Scene first, then the quiet ones, each under their label. It feeds the Entities tab.
@@ -133,6 +201,14 @@ _Avoid_: object, thing, entity (for an item)
 **Item Copy**:
 One item in play, kept in the save. It has an Owner or lies at a location, a quantity, an equipped state, a visibility, its uses left, its State and whether it is unidentified. Always written in full.
 _Avoid_: copy (that is a placeholder Copy), instance
+
+**Action List**:
+The player's panel actions since the last turn, newest last, shown in a tray above the action box. Its shown entries go to the narrator with the next action; the list then closes. Only the newest entry can be undone.
+_Avoid_: action queue, pending actions, history
+
+**Listed Action**:
+One entry in the Action List: a panel action's facts, a hidden flag, a count of back-to-back repeats, and the game state from just before each repeat. Undo restores that state. An action that exactly reverses the newest entry undoes it instead of adding one.
+_Avoid_: action log entry, pending action
 
 **Use**:
 The one action on an Item Copy: drink, read, blow, spend. It runs the item's After Use effects and When Used scripts, then spends one of the copy's Uses when the item has them. An item can be used when it has Uses, After Use effects or a When Used script. A runtime item's use removes one.
@@ -197,7 +273,13 @@ Where one capacity unit of a Body entry sits on the Backdrop, stored as fraction
 The first Body in the world's list. Every owner without a pick uses it: an entity with no pick, a library character and a character the AI introduces. A world with no Bodies has no Default, so no owner has slots.
 
 **Body in force**:
-The Body an owner equips into right now, from the one resolver every slot reader uses. The latest-on active trait Body row wins, then a script's base Body, then the authored pick. An entity reads its own pick. The played Persona reads a world persona's own pick, or the Custom Persona entity's under None or a library persona. A pick whose Body is gone reads as the Default.
+The Body an owner equips into right now, from the one resolver every slot reader uses. The latest-on active trait row wins, for Body rows as for Slider Pins and Color Pins, then a script's base Body, then the authored pick. An entity reads its own pick. The played Persona reads a world persona's own pick, or the Custom Persona entity's under None or a library persona. A pick whose Body is gone reads as the Default.
+
+**Slider Pin**:
+A trait row that holds one Avatar slider at its Set To value while the trait is active, in place of the player's own value. Bound stats add on top. When two active traits pin one slider, the latest-on wins. A world trait pins the played Persona's Avatar, as does a played entity's own trait; any other entity's trait pins its own model. The editor labels the rows Body Sliders.
+
+**Color Pin**:
+A trait row that sets one Avatar color (skin, eye or hair) while the trait is active, in place of the player's own. Bound stats blend on from it in OKLab, in stat-tree order. When two active traits set one channel, the latest-on wins. Avatars only; a non-VRM model keeps its colors. The editor labels the rows Colors.
 
 **Persona**:
 The entity that fills the player slot for a playthrough. It comes from the player's library or from the world's entities that carry the Persona mark. A save names one, or an explicit None.
@@ -231,7 +313,7 @@ A VRM 3D model — in the local Model Library, held in a world's Avatar store, c
 _Avoid_: model (in copy), VRM (the file format, not the thing)
 
 **User's Default**:
-The Avatar choice that shows the player's default Avatar: the library Avatar marked Default, or the bundled one when none is marked. Device-local, never exported.
+The Avatar choice that shows the player's default Avatar: the library Avatar marked Default, then the first available library Avatar, then none. Device-local, never exported.
 _Avoid_: default avatar (as the choice's name)
 
 **Default Avatar**:
@@ -297,6 +379,14 @@ _Avoid_: license check (the act), open license, free
 The rendered frame of a location that contains child locations on the Locations Canvas. Containment is shown by the frame itself, never by lines.
 _Avoid_: box, container
 
+**Nearby**:
+The distance of a link whose far end the narrator hears about: entities there reach context and can be called over. Every implicit link is Nearby, and so is a Connection with no distance. Nearby reach is one link from the player's place, in either direction, never chained.
+_Avoid_: close, adjacent, reachable (the `<LOCATION|reachable>` chip is the tree only)
+
+**Far**:
+The distance of a Connection whose far end the narrator never hears about: no context, no pulls. Travel and following are unchanged. Stored on the Connection for the pair, both legs.
+_Avoid_: distant, blocked, remote
+
 **Implicit Navigation**:
 The travel a location gets for free from containment — its parent, children, and siblings — without any authored Connection.
 _Avoid_: tree edges, default connections
@@ -320,6 +410,10 @@ _Avoid_: merge, migrate, transfer
 **Liker**:
 The account behind one Like, as the staff list shows it — with how old the account was at the moment it liked.
 _Avoid_: fan, voter
+
+**Hidden Gem**:
+A world the server picks for its likes in the last 60 days, set against few downloads in that window. Up to three at a time, rotated every 12 hours. The app shows them in slots 3, 6 and 9 of page 1 on the Worlds tab, in the plain browse view only.
+_Avoid_: featured, spotlight, trending
 
 **Listing Changelog**:
 The author-maintained update history on a published listing (any kind) — a date-sorted list of Changelog Entries, newest first. Listing metadata, not world content: it never travels with downloads or exports, and editing it never marks the listing as updated.
@@ -464,8 +558,24 @@ The value a playthrough draws for a Wildcard, made once at Enter World and kept 
 _Avoid_: random value, draw (the act only), selection
 
 **Pin**:
-A source holding a Placeholder at one fixed value while the source is active: a trait that is on, the current location, the stat band a stat sits in, or a Placeholder value that is the effective value of its Placeholder. A Pin masks the Roll underneath and never replaces it, so the Roll returns when the source goes off. A stat band outranks a location, a location a trait, a trait a value Pin.
+A source holding a Placeholder at one fixed value while the source is active: a trait that is on, the current location, the stat band a stat sits in, the current value of a World Option, or a Placeholder value that is the effective value of its Placeholder. A Pin masks the Roll underneath and never replaces it, so the Roll returns when the source goes off. A Code Pin outranks a stat band, a stat band a location, a location a trait, a trait a World Option, a World Option a value Pin. An entity's own stat bands and traits are Pins in every text, for any persona, and hold while it is out of the scene. Inside one kind a global source wins, then the played persona's, then the entity later in the entity list. A Blueprint stat's band pins each Owner's own Copy.
 _Avoid_: override, lock, fixed value
+
+**World Option**:
+A player-facing setup switch on the world, authored on the Options tab: a choice of named values, a boolean, or a whole number between a min and a max. The player sets the shown ones at new game; a hidden one serves as script and gate state. It acts only through Pins (a choice value's or a boolean state's) and gates, never through AI text. A playthrough keeps one value per Option; a missing or no-longer-valid value reads the Option's default.
+_Avoid_: setting (the app's own), preference, toggle trait
+
+**Enabled** (entity):
+An entity's gate: Requirement Rows that keep it in play while any row holds; with no rows it is always on. A Condition with no owner reads the entity itself. Off, the entity is hidden from the player and the AI and inert: its stats, regen, traits, scripts and routine pause and resume where they paused. Every gate is read in one pass against committed state, an off entity's own state frozen. The played persona is always on.
+_Avoid_: active, visible, spawned, present (that is presence)
+
+**Enabled** (location):
+A location's gate: Requirement Rows that keep it in the world while any row holds; with no rows it is always on. A Condition with no owner reads the played persona. Off, the location is absent with its whole subtree, and connections through it break. The player's place and its subtree stay while they stand there. An on entity whose every place is off is **stranded**: in no scene and out of the AI's reach, its stats and scripts still running.
+_Avoid_: closed, hidden, locked (that is the Lock gate)
+
+**Locked** (location):
+A location whose Lock gate fails, or one inside such a location. The Lock gate is Requirement Rows (`unlockedWhen`) that let the player travel in while any row holds; with no rows it never locks. A Condition with no owner reads the played persona. Locked, it stays on and visible to the player and the AI, but the travel gate refuses every player move into it: the List, the Map, the Move-to chip, the router's walk and the start pick. A script's `location.move` ignores it. A player already inside moves freely within it. The player reads its Locked text, else the nearest lock's line with hidden Options left out.
+_Avoid_: closed, disabled, off (that is Enabled)
 
 **Placeholder Set**:
 The read side of a list of Placeholders, bound once to whichever list a text is read against: a world's, or the list an off-world entity or dictionary carries. It answers what a text describes at design time and, given a playthrough's Rolls, what it resolves to.
@@ -572,7 +682,7 @@ One alternative in a Requirement. A row holds when every Condition in it holds (
 _Avoid_: clause, branch, group (a group is a trait group)
 
 **Condition**:
-One check in a Requirement Row: a trait, any trait in a group, a persona the player plays as, a stat, or an item, with an optional owner, or the time of day. A Condition can carry the Not flag, and then it holds while its target is off. Not is a flag on a Condition, not a separate item. A Time Condition has no Not.
+One check in a Requirement Row: a trait, any trait in a group, a persona the player plays as, a stat, or an item, with an optional owner, or the time of day, or a World Option. A Condition can carry the Not flag, and then it holds while its target is off. Not is a flag on a Condition, not a separate item. A Time Condition has no Not.
 _Avoid_: exclusion, negation, rule, requirement (a Requirement is the whole gate)
 
 **Stat Condition**:
@@ -586,6 +696,10 @@ _Avoid_: item gate, inventory check
 **Time Condition**:
 A Condition that holds while the story clock's daypart is one of a set: night, dawn, morning, midday, afternoon, evening. Dayparts split the day by fraction, as the narration's do. It has no owner and no Not, and it never tests the day number or an hour. The game reads it once per turn commit, after the turn's time passes. Outside play it reads the opening hour, which is morning. Traits and image Visibility rules share it.
 _Avoid_: time gate, schedule, hour condition
+
+**World Option Condition**:
+A Condition on a World Option. On a choice it holds while the Option holds one value; on an On or Off it holds while the Option is on; Not flips either. On a number it compares with the six stat operators and has no Not. It has no owner. In play it reads the playthrough's value; at Enter World, the player's pick; in Test Bench, the author's pick; elsewhere outside play, the default. Player lines leave out a Condition on a hidden World Option. Traits and image Visibility rules share it.
+_Avoid_: option gate, setting condition
 
 **Visibility rule**:
 Requirement Rows on one gallery image. In play the image shows while any row holds, and an image with no rows always shows. The primary is the first visible image in author order. Outside play slot 0 shows and rules are ignored. The summary reads "Shown while …". The trait side of the same rows is a Requirement.

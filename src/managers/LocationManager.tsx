@@ -4,25 +4,24 @@ import { useRenameField } from '@/lib/useCodeRename';
 import { statCodeName } from '@/lib/statCodeNames';
 import { useGameData } from '@/contexts/GameDataContext';
 import { entitiesInTreeOrder } from '@/lib/entityGroupTree';
-import { entityIdsAt, setLocationRoster } from '@/lib/entityPresence';
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MultiSelect } from "@/components/ui/multi-select";
 import { PanelTabContent, PanelTabs } from '@/components/ui/panel-tabs';
 import AiGenerateButton from "@/components/AiGenerateButton";
 import PlaceholderField, { PlaceholderNameField } from "@/components/prompt/PlaceholderField";
 import { labelPlaceholders } from '@/lib/placementLetters';
 import { SoundUpload } from '../lib/UtilityComponents';
 import { LocationImageField } from './LocationImageField';
-import LocationConnections from './LocationConnections';
-import LocationEntitiesHere from './LocationEntitiesHere';
+import LocationConnections, { type ConnectionOpen } from './LocationConnections';
 import LocationKnownHere from './LocationKnownHere';
+import LocationEntitiesHere from './LocationEntitiesHere';
+import type { EntityPick } from './useEntityPick';
 import { LocationOpenings } from './OpeningsPanel';
 import { useEditorMode } from '@/lib/editorMode';
 import { HelpButton } from '@/components/HelpButton';
 import { HintInfo } from '@/components/SettingsRows';
-import { Hint } from '@/components/ui/typography';
 import { PlaceholderPinRows } from '@/components/editor/PlaceholderPinRows';
+import { LocationEnabledField, LocationLockField } from '@/components/editor/HostGateField';
 import PlacementsSection from './PlacementsSection';
 import { locationPanelTabsFor, locationTabForField, type LocationPanelTab } from '@/views/locationPanelTabs';
 import type { Entity, FocusFieldHint, GameLocation, PlaceholderPin } from '@/types';
@@ -47,11 +46,18 @@ export const STARTING_INFO = `**Starting Location** marks where a new game can b
 - With several, the player picks one, or the game picks at random
 - With none, any location can be the start`;
 
-const LocationManager = ({ location, tab, onTabChange, focusField }: {
+const LocationManager = ({ location, tab, onTabChange, focusField, connectionOpen, onConnectionOpened, onOpenEntityRoutine, entityPick }: {
   location: GameLocation;
   tab: LocationPanelTab;
   onTabChange: (tab: LocationPanelTab) => void;
   focusField?: FocusFieldHint | null;
+  /** A Connection row the Connections tab should open. */
+  connectionOpen?: ConnectionOpen | null;
+  onConnectionOpened?: () => void;
+  /** Opens an entity's Routine tab from its line in Entities Here. */
+  onOpenEntityRoutine?: (entityId: string) => void;
+  /** The World Editor's entity pick, which a selected Presence row is. */
+  entityPick?: EntityPick;
 }) => {
   const world = useGameData();
   const { updateLocation, entities, updateEntity, entityGroups, placeholders, placementLetters, placeholderOwners } = world;
@@ -68,9 +74,7 @@ const LocationManager = ({ location, tab, onTabChange, focusField }: {
   const pins = editingLocation?.placeholderPins ?? [];
   const setPins = (next: PlaceholderPin[]) => apply({ placeholderPins: next.length ? next : undefined });
 
-  // Membership is entity-owned, so location-first authoring reads the inversion and writes each changed
-  // entity's own list — the same edit, expressed from the other side.
-  const presentIds = entityIdsAt(location.id, entities);
+  // Membership is entity-owned, so location-first authoring writes each changed Generic entity's own Starts.
   const treeOrder = entitiesInTreeOrder(entityGroups, entities);
   const label = (name: string) => labelPlaceholders(name, placeholders, { letters: placementLetters, owners: placeholderOwners });
   const entityLabel = (e: Entity) => label(e.name);
@@ -78,14 +82,6 @@ const LocationManager = ({ location, tab, onTabChange, focusField }: {
     const found = world.locations.find((l) => l.id === id);
     return found ? label(found.name) : 'Unknown Location';
   };
-  const handleEntitiesChange = (ids: string[]) => {
-    const before = new Map(entities.map((e) => [e.id, e]));
-    // Only the entities whose membership actually moved are written through.
-    setLocationRoster(location.id, ids, entities).forEach((entity) => {
-      if (before.get(entity.id) !== entity) updateEntity(entity);
-    });
-  };
-
   // Before the reveal, which is a timer behind this render: the field it looks for has to be mounting by
   // then. A key no tab claims leaves the panel where the author put it.
   useEffect(() => {
@@ -181,19 +177,32 @@ const LocationManager = ({ location, tab, onTabChange, focusField }: {
       </PanelTabContent>
 
       <PanelTabContent value="presence">
-        <div className="space-y-2" {...fieldFrame('entities')}>
-          <Label>Entities</Label>
-          <MultiSelect
-            key={editingLocation.id}
-            options={treeOrder.map((e) => ({ label: entityLabel(e), value: e.id }))}
-            defaultValue={presentIds}
-            onValueChange={handleEntitiesChange}
-            placeholder="Select entities"
-          />
-        </div>
+        <LocationEnabledField
+          rows={editingLocation.enabledWhen ?? []}
+          onChange={(rows) => apply({ enabledWhen: rows.length ? rows : undefined })}
+        />
+        <LocationLockField
+          rows={editingLocation.unlockedWhen ?? []}
+          onChange={(rows) => apply({ unlockedWhen: rows.length ? rows : undefined })}
+        />
+        <PlaceholderField
+          label="Locked Text"
+          historyField="lockedText"
+          hint="Replaces what unlocks this location on the player’s List and Map while it’s locked. Leave it blank to show what unlocks it."
+          value={editingLocation.lockedText || ''}
+          onChange={(v) => handleChange('lockedText', v)}
+          placeholders={placeholders}
+        />
         <LocationEntitiesHere
-          entities={treeOrder.filter((e) => presentIds.includes(e.id))}
+          locationId={editingLocation.id}
+          entities={treeOrder}
+          locations={world.locations}
+          connections={world.connections}
           labelOf={entityLabel}
+          onOpenRoutine={onOpenEntityRoutine}
+          pick={entityPick?.shown ? entityPick.pick : null}
+          onPickChange={entityPick?.onPickChange}
+          onEditFullScreen={entityPick?.onEditFullScreen}
           onChange={updateEntity}
         />
         <LocationKnownHere
@@ -204,17 +213,15 @@ const LocationManager = ({ location, tab, onTabChange, focusField }: {
           locationLabel={locationLabel}
           onChange={updateEntity}
         />
-        <LocationConnections location={editingLocation}>
-          <div className="flex items-center gap-2" {...fieldFrame('nearbyUsesConnections')}>
-            <Checkbox
-              id={`location-nearby-${editingLocation.id}`}
-              checked={!!editingLocation.nearbyUsesConnections}
-              onCheckedChange={(checked) => apply({ nearbyUsesConnections: checked === true ? true : undefined })}
-            />
-            <Label htmlFor={`location-nearby-${editingLocation.id}`}>Nearby Through Connections</Label>
-          </div>
-          <Hint>Adds entities one Connection away to what the AI receives as nearby</Hint>
-        </LocationConnections>
+      </PanelTabContent>
+
+      <PanelTabContent value="connections">
+        <LocationConnections
+          location={editingLocation}
+          focusField={focusField}
+          openRequest={connectionOpen}
+          onOpened={onConnectionOpened}
+        />
       </PanelTabContent>
 
       <PanelTabContent value="items">

@@ -1,8 +1,11 @@
 import { useCallback } from 'react';
 import type {
-  Connection, Currency, Entity, EntityPositions, GameLocation, Item, ItemCopy, Placement, RuntimeItem, OwnedTraitStates, Placeholder, PlayerStat, Trait, TraitGroup,
+  Connection, Currency, Entity, EntityPositions, GameLocation, GenericStates, InventoryOwner, UniqueStates, Item, ItemCopy, Placement, RuntimeItem, OwnedTraitStates, Placeholder, PlayerStat, Trait, TraitGroup,
 } from '@/types';
-import { entitiesInPlay, entityIdsAt } from '../entityPresence';
+import { movementStates } from '../movementTag';
+import type { Course } from '../positionEngine';
+import type { Standings } from '../entityPresence';
+import { idsAt, positionsIn } from '../entityPlaces';
 import { entityNamed, scenePresentHere, type OwnedTraitsInForce, type StrangerLabels } from '../locationContext';
 import type { GateTree } from '../traitGates';
 import { activeOwnedTraitIds, borneByPlayer, inOwnerPlaces, withOwnerTrees, type OwnerTree } from '../ownedTraitsInPlay';
@@ -12,6 +15,8 @@ import { enabledOwnerStats, withTraitToggles, type OwnerStats } from '../statOwn
 import { resolveEntityTexts, resolveOwnedTraitTexts, type ResolveEntityText } from '../resolveWorldNames';
 import { ownerStatParts, type StatPlacement } from '../statContext';
 import type { ChipScene, ChipSceneTime, SceneEquipment } from './chipScene';
+import { sceneEntityChipValues } from './chipValues';
+import type { ValueLookup } from '../promptValues';
 
 /** A trait's own text under its own pins; an owned trait passes its owner. */
 export type ResolveTraitText = (trait: Trait, text: string, owner?: Entity | null) => string;
@@ -45,10 +50,14 @@ export interface LiveSceneSources {
   location: GameLocation | null;
   locations: GameLocation[];
   connections: Connection[];
+  /** The travel gate: whether the player at the first place may be moved into the second (Q3). */
+  canEnter?: (fromId: string | null | undefined, toId: string) => boolean;
   /** The authored cast. */
   entities: Entity[];
   /** The authored cast plus every runtime character this playthrough discovered. */
   allEntities: Entity[];
+  /** Where the cast stands now, runtime characters included. */
+  standings: Standings;
   /** Who the recent turns named as taking part. */
   participants: string[];
   notes: string;
@@ -69,6 +78,8 @@ export interface LiveSceneSources {
   strangerLabels?: StrangerLabels;
   /** What each owner's slots in force read. No slots when absent. */
   equipment?: SceneEquipment;
+  /** The Unique entities' routines, saved engine states and the story minute the Movement tags read. No tags when absent. */
+  movement?: { routines: readonly Course[]; uniques: Readonly<UniqueStates>; now: number };
 }
 
 /** The world under a running turn's code writes, which React has not rendered yet. Each absent field keeps
@@ -88,6 +99,14 @@ export interface SceneWrites {
   positions?: Readonly<EntityPositions>;
   /** Runtime characters the turn made before they reach the live cast. */
   addedEntities?: readonly Entity[];
+  /** The follow states the turn's moves left, over the live ones. */
+  uniques?: Readonly<UniqueStates>;
+  /** Where the turn's moves left each Generic entity's Generic Entity Instances, over the live ones. */
+  generics?: Readonly<GenericStates>;
+  /** The authored cast with names and Stranger Names under the box's pins, over the live entries by id. */
+  entities?: readonly Entity[];
+  /** The stranger labels read from `entities`. */
+  strangerLabels?: StrangerLabels;
 }
 
 /**
@@ -106,11 +125,18 @@ export function liveChipScene(
   const ownText = (entities: Entity[]) => resolveOwnedTraitTexts(
     resolveEntityTexts(withOwnerTrees(entities, sources.owners), resolveEntity), resolveTrait, resolveEntity,
   );
-  const placed = (entities: Entity[]) => (box?.positions ? entitiesInPlay(entities, box.positions) : entities);
-  const allEntities = ownText(placed(box?.addedEntities ? [...sources.allEntities, ...box.addedEntities] : sources.allEntities));
+  const placesOf = positionsIn({
+    positions: box?.positions ? { ...sources.standings.positions, ...box.positions } : sources.standings.positions,
+    generics: box?.generics ?? sources.standings.generics,
+  });
+  // The box's cast replaces the live entries by id; a runtime character keeps its own.
+  const boxCastById = box?.entities && new Map(box.entities.map((e) => [e.id, e]));
+  const underBox = (entities: Entity[]) => (boxCastById ? entities.map((e) => boxCastById.get(e.id) ?? e) : entities);
+  const allEntities = ownText(underBox(box?.addedEntities ? [...sources.allEntities, ...box.addedEntities] : sources.allEntities));
   const persona = sources.persona && { ...sources.persona, entity: ownText([sources.persona.entity])[0] };
   const loc = location ?? sources.location;
-  const presentIds = entityIdsAt(loc?.id, allEntities);
+  const travelGate = sources.canEnter;
+  const presentIds = idsAt(loc?.id, allEntities, placesOf);
   // Who has taken part lately, minus anyone the dialogue merely kept naming: an authored entity who lives
   // elsewhere is dropped, while ad-hoc and just-arrived characters stay (visitors reach `presentIds`
   // through the discovered-entity path). An ad-hoc name matches nobody and rides as a name.
@@ -147,6 +173,7 @@ export function liveChipScene(
     location: loc,
     locations: sources.locations,
     connections: sources.connections,
+    ...(travelGate && { canEnter: (id: string) => travelGate(loc?.id, id) }),
     entities: allEntities,
     presentIds,
     inSceneIds,
@@ -163,10 +190,31 @@ export function liveChipScene(
     currencies: sources.currencies,
     placements: sources.placements,
     equipment: sources.equipment,
-    outerScopeEntities: ownText(placed(sources.entities)),
+    placesOf,
+    outerScopeEntities: ownText(underBox(sources.entities)),
     inSceneNames,
-    strangerLabels: sources.strangerLabels,
+    strangerLabels: box?.strangerLabels ?? sources.strangerLabels,
+    ...(sources.movement && {
+      movement: movementStates(sources.movement.routines, box?.uniques ?? sources.movement.uniques, sources.movement.now),
+    }),
   };
+}
+
+/** The entity chips of `scene` with only `sceneEntities` on the roster at `location`, where the scene places them. */
+export const sceneRosterValues = (scene: ChipScene, location: GameLocation | null, sceneEntities: readonly Entity[]): ValueLookup =>
+  sceneEntityChipValues(scene, idsAt(location?.id, sceneEntities, scene.placesOf));
+
+/** The owners at `location` in the Inventory pass (Q62): the scene's entities there, at their Position in `standings`
+ *  when given, without the played ones, then `discovered`. */
+export function inventoryOwnersIn(
+  scene: ChipScene, location: GameLocation | null, discovered: readonly InventoryOwner[], standings?: Standings,
+): InventoryOwner[] {
+  const played = new Set([scene.persona?.entity.id, ...(scene.playedEntities ?? []).map((e) => e.id)]);
+  const here = new Set(standings ? idsAt(location?.id, scene.entities, positionsIn(standings)) : scene.presentIds);
+  return [
+    ...scene.entities.filter((e) => here.has(e.id) && !played.has(e.id)).map((e) => ({ id: e.id, name: e.name })),
+    ...discovered,
+  ];
 }
 
 /** Each entity's owned traits in force: its picks on, and the ones an item grant holds. */
@@ -176,16 +224,16 @@ const inForceByOwner = (states: OwnedTraitStates | undefined): OwnedTraitsInForc
 export function useLiveChipScene(sources: LiveSceneSources): (location?: GameLocation | null, box?: SceneWrites | null) => ChipScene {
   const {
     overview, stats, statPlacement, traits, traitGroups, ownedTraits, global, owners, entityStats, playedEntities, resolve, resolveTrait, resolveEntity, persona,
-    location, locations, connections, entities, allEntities, participants, notes, time, placeholders, items, itemCopies, runtimeItems, currencies, placements, strangerLabels, equipment,
+    location, locations, connections, canEnter, entities, allEntities, standings, participants, notes, time, placeholders, items, itemCopies, runtimeItems, currencies, placements, strangerLabels, equipment, movement,
   } = sources;
   return useCallback(
     (at?: GameLocation | null, box?: SceneWrites | null) => liveChipScene({
       overview, stats, statPlacement, traits, traitGroups, ownedTraits, global, owners, entityStats, playedEntities, resolve, resolveTrait, resolveEntity, persona,
-      location, locations, connections, entities, allEntities, participants, notes, time, placeholders, items, itemCopies, runtimeItems, currencies, placements, strangerLabels, equipment,
+      location, locations, connections, canEnter, entities, allEntities, standings, participants, notes, time, placeholders, items, itemCopies, runtimeItems, currencies, placements, strangerLabels, equipment, movement,
     }, at, box),
     [
       overview, stats, statPlacement, traits, traitGroups, ownedTraits, global, owners, entityStats, playedEntities, resolve, resolveTrait, resolveEntity, persona,
-      location, locations, connections, entities, allEntities, participants, notes, time, placeholders, items, itemCopies, runtimeItems, currencies, placements, strangerLabels, equipment,
+      location, locations, connections, canEnter, entities, allEntities, standings, participants, notes, time, placeholders, items, itemCopies, runtimeItems, currencies, placements, strangerLabels, equipment, movement,
     ],
   );
 }

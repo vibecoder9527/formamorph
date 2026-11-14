@@ -4,12 +4,21 @@
  * or replaying turns. Loaded via dynamic `import()` so each fixture is a separate chunk fetched only when
  * `loadDevFixture` runs (DEV-gated), never in the production bundle. See `devRouter.ts` / [[formamorph-dev-router]].
  */
-import type { Body, Currency, Entity, EntityStatValues, GameLocation, Item, Placement, Slot, World, SaveObject } from '@/types';
+import type { Body, Currency, WorldOption, Entity, EntityStatValues, GameLocation, Item, Placement, ScheduleRow, Slot, Traversable, Trait, World, SaveObject } from '@/types';
+import { withMembership } from './entityPlaces';
 import { DEFAULT_AVATAR_URL } from './defaultAvatar';
+import { DEFAULT_WORLDS, seedWorldData, type DefaultWorldSeed } from './defaultWorlds';
+import { firstRoutine } from '@/lib/entityKind';
+
+/** `bundled-<world id>` boots a new game in that bundled world. */
+const BUNDLED_PREFIX = 'bundled-';
 
 /** The names the router can boot. Kept in lockstep with `loadDevFixture` by `devRouter.test.ts`. */
-export const DEV_FIXTURES = ['whiteRoom', 'thousandTurns', 'writtenOpening', 'pickedOpening', 'entityStats', 'entityMorphs', 'entityAvatars', 'entityPresence', 'entityFollowers', 'mapBackground', 'items'] as const;
-export type DevFixtureName = (typeof DEV_FIXTURES)[number];
+export const DEV_FIXTURES = [
+  'whiteRoom', 'thousandTurns', 'writtenOpening', 'pickedOpening', 'entityStats', 'entityMorphs', 'entityAvatars', 'avatarIcon',
+  'entityPresence', 'entityFollowers', 'mapStrangers', 'mapBackground', 'items', 'options', 'lockedPlaces',
+  ...DEFAULT_WORLDS.map((w) => `${BUNDLED_PREFIX}${w.id}`),
+];
 
 // Real-sized images for the long save, fetched from the dev server.
 const THOUSAND_TURN_IMAGES = ['/thumbnails/1.jpg', '/thumbnails/2.jpg', '/thumbnails/3.jpg', '/thumbnails/4.jpg'];
@@ -23,6 +32,18 @@ export interface DevFixture {
   /** Library entities the player picked at Enter World, for a new game. */
   picked?: Entity[];
 }
+
+const DEV_OPTIONS: WorldOption[] = [
+  {
+    id: 'dev-opt-length', name: 'Reply Length', type: 'choice', shownToPlayer: true, midGame: true, default: 'dev-len-medium',
+    playerDescription: 'How much the narrator writes each turn',
+    values: [{ id: 'dev-len-short', name: 'Short' }, { id: 'dev-len-medium', name: 'Medium' }, { id: 'dev-len-long', name: 'Long' }],
+  },
+  { id: 'dev-opt-gore', name: 'Graphic Violence', type: 'boolean', shownToPlayer: true, midGame: true, default: false },
+  { id: 'dev-opt-pace', name: 'Pacing', type: 'number', shownToPlayer: true, midGame: true, min: 1, max: 5, default: 3 },
+  { id: 'dev-opt-setup', name: 'Starting Season', type: 'boolean', shownToPlayer: true, midGame: false, default: true },
+  { id: 'dev-opt-secret', name: 'Secret Flag', type: 'boolean', shownToPlayer: false, midGame: true, default: false },
+];
 
 const portrait = (fill: string) =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="240" height="288"><rect width="240" height="288" fill="${fill}"/></svg>`)}`;
@@ -161,14 +182,14 @@ const DEV_PLACEMENTS = ([
 const DEV_ITEM_CAST: Entity[] = [
   // `devStat` lists only the fields play reads, hence the cast.
   { id: 'dev-you', name: 'You', customPersona: true, stats: [devStat('Vigor', 10)] } as Entity,
-  { id: 'dev-courier', name: 'Courier', locations: [WHITE_ROOM_ID] },
-  { id: 'dev-archivist', name: 'Archivist', locations: [WHITE_ROOM_ID] },
-  { id: 'dev-sentry', name: 'Sentry', locations: ['dev-corridor'] },
+  withMembership<Entity>({ id: 'dev-courier', name: 'Courier' }, [WHITE_ROOM_ID]),
+  withMembership<Entity>({ id: 'dev-archivist', name: 'Archivist' }, [WHITE_ROOM_ID]),
+  withMembership<Entity>({ id: 'dev-sentry', name: 'Sentry' }, ['dev-corridor']),
 ];
 
 /** The `entityMorphs` fixture's entity: the bundled avatar as an entity model, its Bulk stat bound to a face
  *  shape key, since the avatar's face meshes are the ones that carry shape keys. */
-const MORPH_STAT = devStat('Bulk', 100, { morphBindings: ['Fcl_ALL_Surprised'] });
+const MORPH_STAT = devStat('Bulk', 100, { morphBindings: [{ name: 'Fcl_ALL_Surprised' }] });
 const MORPH_ENTITY = {
   id: 'dev-golem', name: 'Golem',
   model: { name: 'default-avatar.vrm', type: 'model/gltf-binary', data: DEFAULT_AVATAR_URL },
@@ -179,30 +200,44 @@ const morphValues = (value: number) => ({ [MORPH_ENTITY.id]: [{ ...MORPH_STAT, v
 const DEV_VRM_STORE = {
   'dev-avatar': { name: 'Default', file: { name: 'default-avatar.vrm', type: 'model/vrm', data: DEFAULT_AVATAR_URL } },
 };
-const AVATAR_PERSONA: Entity = { id: 'dev-wren', name: 'Wren', locations: [], persona: true, vrmPick: { kind: 'default' } };
+const AVATAR_PERSONA: Entity = { id: 'dev-wren', name: 'Wren', persona: true, vrmPick: { kind: 'default' } };
+
+/** A Unique entity with one Start per place in `places`, each running `schedule`. */
+const unique = (entity: Omit<Entity, 'kind' | 'routines'>, places: string[], schedule: ScheduleRow[] = [], traversable?: Traversable): Entity => ({
+  ...entity, kind: 'unique',
+  routines: [firstRoutine(places.map((place, i) => ({ id: `start-${i + 1}`, place, weight: 1, schedule })), traversable)],
+});
+
+/** A Generic entity with one Start per place, no rows. */
+const generic = (entity: Omit<Entity, 'kind' | 'routines'>, places: string[]): Entity => ({
+  ...entity, kind: 'generic',
+  routines: [firstRoutine(places.map((place, i) => ({ id: `start-${i + 1}`, place, weight: 1, schedule: [] })))],
+});
 
 /** The `entityPresence` fixture's cast, all but the last two at the White Room. */
 const ENTITY_PRESENCE_CAST: Entity[] = [
-  { id: 'dev-warden', name: 'Warden', locations: [WHITE_ROOM_ID, 'dev-corridor'], presence: 'random', movement: 'stays' },
-  { id: 'dev-moths', name: 'Lantern Moths', locations: [WHITE_ROOM_ID, 'dev-alcove'], movement: 'follow' },
+  unique({ id: 'dev-warden', name: 'Warden' }, [WHITE_ROOM_ID, 'dev-corridor']),
+  generic({ id: 'dev-moths', name: 'Lantern Moths' }, [WHITE_ROOM_ID, 'dev-alcove']),
   // Relationships rows for the entity panel's Profile tab: one long label, one blank.
-  {
-    id: 'dev-archivist', name: 'Archivist', locations: [WHITE_ROOM_ID],
+  unique({
+    id: 'dev-archivist', name: 'Archivist',
     // The one stranger here: the Entities tab lists it by this label.
     strangerName: 'a stooped scholar', strangerDescription: 'Ink-stained fingers and a satchel of scrolls.',
     relationships: [['dev-warden', 'mentor and former employer'], ['dev-queen', '']].map(([targetId, label]) => ({ targetId, label })),
-  },
-  { id: 'dev-tamsin', name: 'Tamsin', locations: [WHITE_ROOM_ID], persona: true },
-  { id: 'dev-self', name: 'Visitor', locations: [WHITE_ROOM_ID], customPersona: true },
-  // Off the White Room: the canvas's range warning (no path back from the Corridor) and a pick on a group.
-  // It is also the White Room's own Known Here pick.
-  { id: 'dev-sentry', name: 'Sentry', locations: ['dev-corridor', 'dev-alcove'], presence: 'random', movement: 'between', knownIn: [WHITE_ROOM_ID] },
+  }, [WHITE_ROOM_ID]),
+  unique({ id: 'dev-tamsin', name: 'Tamsin', persona: true }, [WHITE_ROOM_ID]),
+  withMembership<Entity>({ id: 'dev-self', name: 'Visitor', customPersona: true }, [WHITE_ROOM_ID]),
+  // Off the White Room, wandering between the Corridor and the Alcove. It is also the White Room's own Known Here pick.
+  unique({ id: 'dev-sentry', name: 'Sentry', knownIn: [WHITE_ROOM_ID] }, ['dev-corridor', 'dev-alcove'], [{
+    id: 'row-1', time: 'allDay',
+    action: { kind: 'wander', places: [{ place: 'dev-corridor', weight: 1 }, { place: 'dev-alcove', weight: 1 }], idle: 240 },
+  }]),
   // A Known Here row inherited from the Keep, which holds the White Room.
-  { id: 'dev-queen', name: 'Queen', locations: ['dev-keep'], knownIn: ['dev-keep'] },
+  unique({ id: 'dev-queen', name: 'Queen', knownIn: ['dev-keep'] }, ['dev-keep']),
 ];
 /** The `entityFollowers` fixture's follower. */
-const ENTITY_FOLLOWER: Entity = { id: 'dev-scout', name: 'Scout', locations: [WHITE_ROOM_ID], movement: 'follow' };
-const DEV_KEEP: GameLocation = { id: 'dev-keep', name: 'The Keep', nearbyUsesConnections: true };
+const ENTITY_FOLLOWER: Entity = unique({ id: 'dev-scout', name: 'Scout' }, [WHITE_ROOM_ID], [], 'anywhere');
+const DEV_KEEP: GameLocation = { id: 'dev-keep', name: 'The Keep' };
 
 /** A hand-drawn-looking map for the `mapBackground` fixture: land, water and a road, labeled by fill. */
 const mapArt = (land: string, label: string) =>
@@ -273,7 +308,7 @@ export async function loadDevFixture(name: string): Promise<DevFixture | null> {
           bodies: devBodies(),
           items: devItems(base.stats[0]?.id),
           currencies: devCurrencies(base.stats[0]?.id),
-          entities: [...base.entities, ...ENTITY_STATS_CAST.map((e) => (here.has(e.id) ? { ...e, locations: [WHITE_ROOM_ID] } : e))],
+          entities: [...base.entities, ...ENTITY_STATS_CAST.map((e) => (here.has(e.id) ? withMembership(e, [WHITE_ROOM_ID]) : e))],
         },
         save: {
           ...saved,
@@ -349,13 +384,74 @@ export async function loadDevFixture(name: string): Promise<DevFixture | null> {
         saveName: 'DEV: Entity Avatars',
       };
     }
+    case 'avatarIcon': {
+      // The white room played as Wren with an Avatar, holding three traits: slider and color pins, a color pin, and none.
+      // The Resolve stat binds a slider and a color.
+      const [world, save] = await Promise.all([
+        import('./devFixtures/whiteRoomWorld.json'),
+        import('./devFixtures/whiteRoomSave.json'),
+      ]);
+      const base = world.default as unknown as World;
+      const saved = save.default as unknown as SaveObject;
+      const trait = (id: string, name: string, extra: Partial<Trait>): Trait => ({ id, name, statChanges: [], playerToggle: true, ...extra });
+      const traits = [
+        trait('dev-elf', 'Elf', { morphPins: [{ name: 'Ear Shape', value: 1 }, { name: 'Belly', value: 0.3 }], colorPins: [{ channel: 'skin', color: '#d9c7a0' }] }),
+        trait('dev-pale', 'Pale', { colorPins: [{ channel: 'hair', color: '#eeeeee' }] }),
+        trait('dev-plain', 'Plain', {}),
+      ];
+      return {
+        world: {
+          ...base,
+          worldOverview: { ...base.worldOverview, vrmStore: DEV_VRM_STORE },
+          entities: [...base.entities, AVATAR_PERSONA],
+          traits,
+          stats: base.stats.map((s) => (s.name === 'Resolve' ? { ...s, morphBindings: [{ name: 'Belly', by: 1 }], colorBindings: [{ channel: 'eye', color: '#ff0000' }] } : s)),
+        },
+        save: { ...saved, persona: { source: 'world', entityId: AVATAR_PERSONA.id } },
+        saveName: 'DEV: Avatar Icon',
+      };
+    }
     case 'entityPresence': {
-      // The white room with a cast for every Entities Here row: One with a Movement, a two-place entity
-      // that can follow, a one-place entity, a world persona and the Custom Persona; then two Known Here rows,
-      // with the White Room nested in the Keep.
+      // The white room with a cast of every placement: a Unique entity with two Starts, a Generic entity, one-place
+      // Unique entities, a world persona and the Custom Persona; then two Known Here rows, with the White Room nested
+      // in the Keep.
       const world = (await import('./devFixtures/whiteRoomWorld.json')).default as unknown as World;
       const locations = world.locations.map((l) => (l.id === WHITE_ROOM_ID ? { ...l, parentId: DEV_KEEP.id } : l));
       return { world: { ...world, locations: [DEV_KEEP, ...locations], entities: [...world.entities, ...ENTITY_PRESENCE_CAST] } };
+    }
+    case 'options': {
+      // The white room (8 turns) with World Options: three the player changes mid-game, one set at new game only, and a hidden flag.
+      const [world, save] = await Promise.all([
+        import('./devFixtures/whiteRoomWorld.json'),
+        import('./devFixtures/whiteRoomSave.json'),
+      ]);
+      return {
+        world: { ...(world.default as unknown as World), options: DEV_OPTIONS },
+        save: save.default as unknown as SaveObject,
+        saveName: 'DEV: World Options',
+      };
+    }
+    case 'lockedPlaces': {
+      // A new game in the White Room with three locks: the Corridor behind Locked text, the Alcove on a shown
+      // Option, and the Vent inside it on a hidden one, which reads "Locked".
+      const world = (await import('./devFixtures/whiteRoomWorld.json')).default as unknown as World;
+      const unlockedBy = (id: string) => [{ all: [{ kind: 'option' as const, id }] }];
+      const locks: Record<string, Partial<GameLocation>> = {
+        [WHITE_ROOM_ID]: { isStarting: true },
+        'dev-corridor': { unlockedWhen: unlockedBy('dev-opt-alcove'), lockedText: 'The hatch is sealed from the other side.' },
+        'dev-alcove': { unlockedWhen: unlockedBy('dev-opt-alcove') },
+        'dev-vent': { unlockedWhen: unlockedBy('dev-opt-vent') },
+      };
+      return {
+        world: {
+          ...world,
+          options: [
+            { id: 'dev-opt-alcove', name: 'Alcove Open', type: 'boolean', shownToPlayer: true, midGame: false, default: false },
+            { id: 'dev-opt-vent', name: 'Vent Cleared', type: 'boolean', shownToPlayer: false, midGame: false, default: false },
+          ],
+          locations: world.locations.map((l) => ({ ...l, ...locks[l.id] })),
+        },
+      };
     }
     case 'items': {
       // The white room with three items and two slots: a stacked single-use tonic, a bound three-use wand in Hand, and
@@ -392,11 +488,28 @@ export async function loadDevFixture(name: string): Promise<DevFixture | null> {
               { name: 'Warden', alias: 'a figure by the door', revealed: false },
             ],
             entityPositions: { [ENTITY_FOLLOWER.id]: WHITE_ROOM_ID, 'dev-warden': WHITE_ROOM_ID, 'dev-sentry': 'dev-corridor' },
-            entityFollowers: [ENTITY_FOLLOWER.id],
+            uniqueStates: { [ENTITY_FOLLOWER.id]: { startId: 'start-1', lastRun: 0, follow: { mode: 'following' } } },
             metEntities: [ENTITY_FOLLOWER.id, 'dev-archivist', 'dev-sentry'],
           },
         },
         saveName: 'DEV: Entity Followers',
+      };
+    }
+    case 'mapStrangers': {
+      // The `entityFollowers` save with the Archivist unmet (its label shows in the player's place), a Warden
+      // met by true name, and Moss beside a stranger in the Vent Crawl, two places from the player (an unknown).
+      const base = await loadDevFixture('entityFollowers');
+      if (!base) return null;
+      const save = base.save as SaveObject;
+      const lurker = unique({ id: 'dev-lurker', name: 'Lurker', strangerName: 'a lurking shape' }, ['dev-vent']);
+      const moss = unique({ id: 'dev-moss', name: 'Moss' }, ['dev-vent']);
+      return {
+        world: { ...base.world, entities: [...base.world.entities, lurker, moss] },
+        save: {
+          ...save,
+          currentState: { ...save.currentState, metEntities: [ENTITY_FOLLOWER.id, 'dev-sentry', 'dev-warden'] },
+        },
+        saveName: 'DEV: Map Strangers',
       };
     }
     case 'mapBackground': {
@@ -455,6 +568,26 @@ export async function loadDevFixture(name: string): Promise<DevFixture | null> {
       };
     }
     default:
-      return null;
+      return name.startsWith(BUNDLED_PREFIX) ? loadBundledFixture(name.slice(BUNDLED_PREFIX.length)) : null;
   }
+}
+
+/** A new game in a bundled world, opening on its first Opening Narration so page one is authored text. */
+async function loadBundledFixture(id: string): Promise<DevFixture | null> {
+  const seed = DEFAULT_WORLDS.find((w) => w.id === id);
+  if (!seed) return null;
+  // Lazy: each world is its own chunk, fetched only when this fixture boots.
+  const files = import.meta.glob<Record<string, unknown>>('../defaultworlds/*.json', { import: 'default' });
+  const load = files[`../defaultworlds/${id}.json`];
+  if (!load) return null;
+  return bundledFixture(await load(), seed);
+}
+
+/** The fixture for one parsed bundled file: its seeded world, cut to its first Opening Narration when it has one. */
+export function bundledFixture(raw: Record<string, unknown>, seed: DefaultWorldSeed): DevFixture {
+  const world = seedWorldData(raw, seed);
+  const opening = world.worldOverview.openings?.find((o) => o.kind === 'narration');
+  return {
+    world: opening ? { ...world, worldOverview: { ...world.worldOverview, openings: [opening] } } : world,
+  };
 }

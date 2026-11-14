@@ -25,8 +25,8 @@ import { newScript, noFocus, scriptRow } from "@/lib/scriptRows";
 import { statPanelHome, type ScriptBoxWorld } from "@/lib/scriptBoxHome";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { PlaceholderNameField } from "@/components/prompt/PlaceholderField";
-import { useBodyMorphSources, useOwnerMorphSources, type MorphOwner } from "@/lib/useBodyMorphNames";
-import { boundMorphNamesExcluding, buildMorphGroups } from "@/lib/bodyMorphs";
+import type { MorphOwner } from "@/lib/useRowModels";
+import { useSliderPicker } from "@/lib/useSliderPicker";
 import { clamp } from "@/lib/utils";
 import { useEditorMode } from '@/lib/editorMode';
 import { StatDescriptorsSection, type DescriptorFieldValue } from './StatDescriptorsSection';
@@ -36,11 +36,17 @@ import { labelPlaceholders } from "@/lib/placementLetters";
 import { targetAttribute } from "@/lib/surface/surfaceTargets";
 import { useLanding } from "@/lib/surface/useLanding";
 import { useCodeUseReveal } from "@/lib/codeUseReveal";
-import type { FocusFieldHint, RegenUnit, ScriptTiming, Stat, StatDescriptor, StatLinkFields, StatType, ThresholdUnit } from "@/types";
+import type { ColorBinding, FocusFieldHint, MorphBinding, RegenUnit, ScriptTiming, Stat, StatDescriptor, StatLinkFields, StatType, ThresholdUnit } from "@/types";
 import { REGEN_UNIT_LABELS, REGEN_UNITS, regenPer, regenPerHour, regenUnitOf } from "@/lib/regenUnits";
 import { FieldReset, LabelRow } from '@/components/editor/BlueprintReset';
 import { WorldInput } from '@/components/editor/WorldField';
+import { SliderNumberRow } from '@/components/editor/SliderNumberRow';
+import { ColorRowsField } from '@/components/editor/ColorRowsField';
 import { fieldFrame } from '@/lib/historyField';
+import { Button } from '@/components/ui/button';
+import { AppearancePreviewDialog } from '@/components/editor/AppearancePreviewDialog';
+import { DetailFooterLead } from '@/components/ui/detail-footer';
+import { statLookRows, statRowsFromLook } from '@/lib/appearancePreview';
 
 export const AVAILABILITY_INFO = `**Enabled** keeps the stat active. Uncheck it and the stat stays inactive until a trait enables it. An inactive stat isn't shown to the player or sent to the AI, and its Regen and scripts don't run.
 
@@ -52,7 +58,7 @@ export interface StatEditorStore {
   updateStat: (stat: Stat) => void;
   /** The id of the entity that owns these stats: `owner` in their code. */
   ownerId: string;
-  /** The owner whose model the Body Sliders picker lists. Absent = the world's player models. */
+  /** The owner whose model the Sliders picker lists. Absent = the world's player models. */
   morphOwner?: MorphOwner;
   /** What the script boxes read with no world loaded, as in the library: the entity and its links' stats. */
   offWorld?: ScriptBoxWorld;
@@ -78,6 +84,16 @@ const normalizeStat = (stat: EditingStat): EditingStat => ({
   ...(stat ?? {}),
   type: stat?.type || "number",
 });
+
+/** The Preview button's hint on a stat whose Max is not above its Min. */
+export const FLAT_RANGE_PREVIEW_HINT = "Set a Max above Min to preview";
+
+const NO_BINDINGS: readonly MorphBinding[] = [];
+const NO_COLOR_BINDINGS: readonly ColorBinding[] = [];
+
+/** `binding` with Change By `by`; the default of 1, or none, is stored as absent. */
+const withChangeBy = ({ name }: MorphBinding, by: number | undefined): MorphBinding =>
+  (by === undefined || by === 1 ? { name } : { name, by });
 
 /**
  * Right-panel editor for one stat: its fields split across Details, Descriptors and Code.
@@ -112,23 +128,25 @@ const StatManager = ({ stat, tab, onTabChange, focusField, store, link }: {
   const writeStat = useCallback((next: EditingStat) => updateStat(next as Stat), [updateStat]);
   const { draft: editingStat, apply } = useEditingDraft<EditingStat>(stat, writeStat, normalizeStat);
 
-  // Body sliders available to this stat: the owner's model's shape keys, or for a world stat every model's
-  // (grouped by model), minus those already owned by another stat (each slider binds to a single stat).
-  // Loaded lazily when the picker opens.
-  const worldMorphs = useBodyMorphSources();
-  const ownerMorphs = useOwnerMorphSources(store?.morphOwner);
-  const { sources: morphSources, loading: morphsLoading, load: loadMorphs } = store?.morphOwner ? ownerMorphs : worldMorphs;
-  // The owner's model offers nothing to bind; a binding already on the stat stays removable.
-  let ownerMorphsEmpty: string | undefined;
-  if (store?.morphOwner && !morphSources.length) {
-    ownerMorphsEmpty = store.morphOwner.model?.data
-      ? "This entity's 3D model has no body sliders"
-      : "This entity has no 3D model. Add one to bind its body sliders.";
-  }
-  const morphGroups = useMemo(() => {
-    const taken = boundMorphNamesExcluding(stats, stat.id);
-    return buildMorphGroups(morphSources, taken);
-  }, [morphSources, stats, stat.id]);
+  const bindings = editingStat.morphBindings ?? NO_BINDINGS;
+  const colorBindings = editingStat.colorBindings ?? NO_COLOR_BINDINGS;
+  // The model the bindings play on is read only while the stat has any, or once Colors opens to seed a row.
+  const [colorsOpened, setColorsOpened] = useState(false);
+  useEffect(() => { setColorsOpened(false); }, [stat.id]);
+  const sliders = useSliderPicker(store?.morphOwner, bindings.length > 0 || colorBindings.length > 0 || colorsOpened);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  useEffect(() => { setPreviewOpen(false); }, [stat.id]);
+  // The Preview opens the first Avatar the row plays on.
+  const previewAvatar = sliders.avatars[0];
+  const statRange = { min: editingStat.min ?? 0, max: editingStat.max ?? 100 };
+  // Play never moves the Avatar for a stat with no span, so the Preview has no look to show.
+  const flatRange = statRange.max <= statRange.min;
+  const previewHint = sliders.noModelHint ?? sliders.noAvatarHint ?? (flatRange ? FLAT_RANGE_PREVIEW_HINT : undefined);
+  // A picked slider keeps its Change By; a new one starts at the default.
+  const pickSliders = (names: string[]) =>
+    handleChange("morphBindings", names.map((name) => bindings.find((b) => b.name === name) ?? { name }));
+  const setChangeBy = (name: string, by: number | undefined) =>
+    handleChange("morphBindings", bindings.map((b) => (b.name === name ? withChangeBy(b, by) : b)));
 
   // Code reaches a stat by its code name, so the rename offer compares the two names the way code reads them.
   const nameRename = useRenameField({
@@ -264,9 +282,10 @@ const StatManager = ({ stat, tab, onTabChange, focusField, store, link }: {
   // they only differ in the range fields and how the value is displayed.
   const isNumeric = statType === "number" || isPercentage;
 
-  // A stat with no numeric value has nothing for code to calculate, so it takes no Code tab rather than an
-  // empty one. The shared list stays whole: it is what the dev-router ledger is guarded against.
-  const tabs = statPanelTabsFor(advanced).filter((t) => t.value !== 'code' || isNumeric);
+  // A stat with no numeric value has nothing for code to calculate or sliders to move, so it takes no Scripts
+  // or Appearance tab rather than an empty one. The shared list stays whole: the dev-router ledger is
+  // guarded against it.
+  const tabs = statPanelTabsFor(advanced).filter((t) => isNumeric || (t.value !== 'code' && t.value !== 'appearance'));
 
   // `regen` stays per hour; the unit only sets the span the number reads in. Picking a unit keeps the number
   // shown, so typing 2 then picking Day means 2 per day.
@@ -411,20 +430,6 @@ const StatManager = ({ stat, tab, onTabChange, focusField, store, link }: {
               </>
             )}
           </div>
-          <div className="space-y-2" {...fieldFrame('morphBindings')}>
-            {fieldLabel('morphBindings', 'Body Sliders')}
-            <Hint>Binds body sliders to this stat. Its value between Min and Max sets each slider&apos;s position.</Hint>
-            <MultiSelect
-              key={stat.id}
-              options={morphGroups}
-              defaultValue={editingStat.morphBindings ?? []}
-              onValueChange={(v) => handleChange("morphBindings", v)}
-              onOpenChange={(open) => { if (open) loadMorphs(); }}
-              placeholder="Select body sliders"
-              emptyIndicator={morphsLoading ? "Loading sliders…" : ownerMorphsEmpty}
-              maxCount={6}
-            />
-          </div>
         </div>
       )}
       {advanced && (
@@ -511,6 +516,69 @@ const StatManager = ({ stat, tab, onTabChange, focusField, store, link }: {
     </>
   );
 
+  // Numeric stats only: the sliders and colors move with the stat's value.
+  const appearance = (
+    <div className="flex flex-col gap-4">
+      <DetailFooterLead>
+        <Button size="sm" variant="outline" disabled={!previewAvatar || flatRange} onClick={() => setPreviewOpen(true)}>Preview</Button>
+      </DetailFooterLead>
+      {previewHint && <Hint>{previewHint}</Hint>}
+      {previewOpen && previewAvatar && !flatRange && (
+        <AppearancePreviewDialog
+          name={labelPlaceholders(editingStat.name ?? '', placeholders, { letters: placementLetters, owners: placeholderOwners })}
+          avatars={sliders.avatars}
+          rows={statLookRows(editingStat)}
+          stat={statRange}
+          onSave={(rows) => apply(statRowsFromLook(rows))}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
+      <div className="space-y-2" {...fieldFrame('morphBindings')}>
+        {fieldLabel('morphBindings', 'Sliders')}
+        <Hint>Moves each slider as the stat rises, by its Change By at Max</Hint>
+        <MultiSelect
+          key={stat.id}
+          options={sliders.groups}
+          defaultValue={bindings.map((b) => b.name)}
+          onValueChange={pickSliders}
+          onOpenChange={(open) => { if (open) sliders.load(); }}
+          placeholder="Select sliders"
+          emptyIndicator={sliders.loading ? "Loading sliders…" : sliders.emptyText}
+          maxCount={6}
+        />
+        {bindings.length > 0 && (
+          <div className="grid grid-cols-[minmax(0,1fr)_7rem] items-center gap-x-3 gap-y-2 pt-1">
+            <span />
+            <Label className="text-meta text-muted-foreground">Change By</Label>
+            {bindings.map((binding) => (
+              <SliderNumberRow
+                key={binding.name}
+                name={binding.name}
+                value={binding.by ?? 1}
+                field="Change By"
+                missing={sliders.keyOf(binding.name) === null}
+                onCommit={(by) => setChangeBy(binding.name, by)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <div {...fieldFrame('colorBindings')}>
+        <ColorRowsField
+          id={stat.id}
+          label={fieldLabel('colorBindings', 'Colors')}
+          hint={<Hint>Shifts each color toward its target as the stat nears Max</Hint>}
+          rows={colorBindings}
+          column="Target Color"
+          lacksChannel={sliders.lacksChannel}
+          seedColor={sliders.seedColor}
+          onOpen={() => setColorsOpened(true)}
+          onChange={(rows) => handleChange("colorBindings", rows.length ? rows : undefined)}
+        />
+      </div>
+    </div>
+  );
+
   /** The Resets for fields a tab holds without a label row of their own. */
   const tabResets = (fields: [keyof StatLinkFields, string][]) => {
     const shown = fields.filter(([field]) => link?.overridden.includes(field));
@@ -535,6 +603,8 @@ const StatManager = ({ stat, tab, onTabChange, focusField, store, link }: {
       onAddDescriptor={handleAddDescriptor}
       onRemoveDescriptor={handleRemoveDescriptor}
       onUnitChange={handleUnitChange}
+      ownerId={store?.ownerId}
+      linkId={link?.linkId}
     />
     </>
   );
@@ -563,7 +633,7 @@ const StatManager = ({ stat, tab, onTabChange, focusField, store, link }: {
     </div>
   );
 
-  const panels: Record<StatPanelTab, ReactNode> = { details, descriptors, code };
+  const panels: Record<StatPanelTab, ReactNode> = { details, appearance, descriptors, code };
   const header = link?.header;
 
 

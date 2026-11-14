@@ -51,6 +51,7 @@ Cards use `card` rather than inventing a second panel color. Destructive, succes
 | Slider plus current value | `ValueSlider` in [`SettingsRows.tsx`](../src/components/SettingsRows.tsx) |
 | Optional detail | `HintInfo` in [`SettingsRows.tsx`](../src/components/SettingsRows.tsx) |
 | Inputs and choices | `Input`, `Checkbox`, `Slider`, `Select`, and `ToggleGroup` in [`src/components/ui`](../src/components/ui) |
+| Color | `ColorPicker` in [`color-picker.tsx`](../src/components/ui/color-picker.tsx); see [Pattern: Color Picker](#pattern-color-picker) |
 | Display tab body | `DisplaySettingsSection` in [`DisplaySettingsSection.tsx`](../src/components/modals/DisplaySettingsSection.tsx) |
 | Output tab body | `OutputSettingsSection` in [`OutputSettingsSection.tsx`](../src/components/modals/OutputSettingsSection.tsx) |
 | What a section reads and writes | `SettingsSource` in [`settingsSource.ts`](../src/components/modals/settingsSource.ts) |
@@ -74,6 +75,16 @@ Open `#dev?modal=designSystem&tab=settings`.
 
 - Section, row, hint, and mode copy comes from the production components, so the reference and Settings cannot drift. Reuse does not certify that copy as fully ASD-STE100 compliant.
 - **Unverified:** the card descriptions, the Live Sample description, and the three status lines have terminology review only; vocabulary and grammar evidence is not recorded.
+
+## Pattern: Color Picker
+
+`ColorPicker` is the one color control. A swatch button shows the color and its hex code. It opens a square, a hue bar, and a hex field. The popover is modal, so it works inside a dialog.
+
+- 🎨 **Commit path.** A drag sends one change per frame and a final one on release. A typed hex sends one change. Each goes to the host as one change.
+- 💧 **Eyedropper.** A **Pick From Screen** button sits beside the hex field when the browser has the native `EyeDropper` interface. It is absent elsewhere, and nothing replaces it. One pick is one change. A canceled pick changes nothing and shows no error. The popover stays open through the pick.
+- 🔌 **No game dependency.** The picker takes optional `onPickStart` and `onPickEnd` callbacks. The Avatar viewers use them to hold the Avatar still while it is sampled.
+
+The **Control States** card in the showcase shows it. Open `#dev?modal=designSystem&tab=settings`. The eyedropper button shows there in a browser that has the interface.
 
 ## Pattern: Mode Select
 
@@ -432,7 +443,7 @@ Open `#dev?modal=designSystem&tab=search-field` for both heights in both themes.
 - Put Built-In and My Templates in a categorized sidebar at desktop widths. Use one template selector on mobile so the detail pane keeps useful width.
 - Draw each library row with `CompactSelectionRow` and its check mark off. The selected template takes the primary fill; a hovered one takes the neutral hover, so the two never share a color. The Settings Tools list uses the same row.
 - Keep the selected template's name and explanation above its parameter form. Use the template declaration as the source of fields and defaults.
-- Put required stat choices and numeric parameters in the same form. Pick a stat, trait, entity or placeholder with the [Breadcrumb Picker](#pattern-breadcrumb-picker). Keep a short fixed set, such as a daypart, in a Select. Show validation beside the affected field and connect it to the control's accessible description.
+- Put required stat choices and numeric parameters in the same form. Pick a stat, trait, entity or placeholder with the [Breadcrumb Picker](#pattern-breadcrumb-picker). Keep a short fixed set, such as a time of day, in a Select. Show validation beside the affected field and connect it to the control's accessible description.
 - Update the generated code preview as parameter values change. Keep the preview bounded and scrollable for long code.
 - Freeze the footer below the scrolling panes. Keep Duplicate or Edit and Delete beside Insert Code according to template ownership.
 - Disable Insert Code while any slot is missing or invalid. Ask for confirmation before replacing existing stat code.
@@ -483,6 +494,7 @@ New reference instructions name the visible “Open Code Templates” action and
 | Work area and fullscreen | [`LocationCanvas.tsx`](../src/managers/LocationCanvas.tsx): embedded view with zoom/fit controls; fullscreen adds the toolbar, search, and minimap. Drag, nesting, and the context menu's Auto Arrange work in the embedded view. |
 | Nested Groups | [`locationCanvas.ts`](../src/lib/locationCanvas.ts): measured frames around child locations, including nested Groups. Containment is the frame itself, never a line. |
 | Connection hierarchy | [`FloatingEdge.tsx`](../src/components/FloatingEdge.tsx) and [`canvasEdges.ts`](../src/lib/canvasEdges.ts): muted dashed arrows for implicit sibling travel; solid primary-colored arrows for authored Connections, one arrow per direction. An authored Connection replaces that pair's implicit navigation. |
+| Known In marks | [`canvasMarks.ts`](../src/lib/canvasMarks.ts), drawn by [`CanvasKey.tsx`](../src/managers/CanvasKey.tsx), in the Nearby view: the full mark is the entity-location tint with a ring, on a place the entity is known in; the lighter mark is a tinted dashed outline, on a place one Nearby link away. |
 | Floating tool groups | `CanvasToolbar` in the canvas: arrangement, alignment/distribution, grid/snap, Connection Style, then undo/redo, separated by hairlines. |
 | Search and reveal | `LocationSearch`: names plus ancestry, keyboard result selection, and viewport reveal of deeply nested locations. |
 | Zoom and orientation | [`CanvasControls.tsx`](../src/components/CanvasControls.tsx): zoom in, zoom out, and fit; the canvas supplies the fullscreen button. The fullscreen minimap also pans and navigates. |
@@ -654,7 +666,7 @@ New functional labels and error/status sentences follow the [Writing Guide](Writ
 
 **Purpose:** Pick one item from a list of world content, and show where each item lives.
 
-**When to use it:** Lists of world content (stats, traits, entities, placeholders) use the Breadcrumb Picker. A short fixed option set, such as a daypart, keeps Select.
+**When to use it:** Lists of world content (stats, traits, entities, placeholders) use the Breadcrumb Picker. A short fixed option set, such as a time of day, keeps Select.
 
 It differs from the Searchable Group Picker. That pattern is a Dialog for an unbounded destination list with create and rename. The Breadcrumb Picker is a popover form control.
 
@@ -760,6 +772,9 @@ Open `#dev?modal=designSystem&tab=icon-grid-picker`. The reference uses local st
 | Edit or order authored items | Use `SortableList`, `SortableRow`, and `EditorRow`; preserve selection, metadata, duplicate/delete controls, and the detail editor. |
 | Open settings for a whole list | Pin one `EditorRow` above the list, with no grip, no actions and a divider under it, through the List Editor adapter's `pinned` rows. It never drags, stays under any search, and shows when the list is empty. The Items tab's **Equipment Settings** uses it. |
 | Edit records that hold their own ordered rows | Use an expandable `EditorRow` (chevron, grip, name, meta summary, delete) with an attached bordered body below it. The body holds the record's fields and a nested `EditorRowList` that is its own drag boundary. Morphie's layers and the World Editor's Bodies use it. |
+| Show some owners inside their real nesting | Draw the listed owners as `EditorRow`s at their tree depth. A parent location or folder that holds no listed owner, but has one below it, shows as a dim context row: its icon and name at 60–70% opacity, no selection, no actions except its fold chevron. The Openings tab uses it. |
+| Switch a few fixed options on and edit one at a time | Use status rows in one bordered list: a checkbox, the name, and a status word (**Custom** when on, **Default** when off). Clicking the row selects it and shows its editor below the list, with an accent fill and a chevron on the selected row. The checkbox never changes the selection. The Overview's **Custom Prompts** tab uses it. |
+| List what can be edited and edit one at a time | Use selectable rows in one bordered list: the name, a muted reason line cut off at the row's end, and trailing icon actions. Clicking the row selects it and shows its editor below the list, with the accent fill and a medium-weight name. There is no chevron: the editor region under the list shows the selection. Clicking the row again closes it, and the arrow keys move between rows. A location's **Presence** tab uses it. |
 | Choose and manage saved progress | Use `SaveList`; preserve the save name, timestamp, game time, Auto state, ordering, load/select action, export, and delete. |
 
 Keep controls that change the collection outside its scrolling pane when they must remain reachable. The live Save/Load reference keeps Save Name and Save above the list; the World Editor reference keeps the selected item's editor beside or below the list. Do not nest a second vertical scroller merely to imitate a scrollbar.
@@ -832,6 +847,20 @@ The name after `allow` is one row of the table below. The text after the colon s
 | `migration-candidate` | New work only, never a backlog: a native pane that moves to `ScrollArea` once its behavior is checked |
 
 Remove the comment when the file holds no native scroller.
+
+## Standard: Dialog Title Line
+
+The title, its icon and the close button share one center line, 34px below the top of the dialog. The X icon's top and right gaps match the 24px content padding.
+
+| Header | Use |
+| --- | --- |
+| Title alone | [`DialogHeader`](../src/components/ui/dialog.tsx) and `DialogTitle` on a `p-6` dialog. Nothing else is needed. |
+| Title with controls beside it | `dialogTitleRow`. The title sets the line's height, and taller controls stay centered on it. |
+| Icon or small control inside the title | Use a 16px icon. A control in the title takes `dialogTitleControl`. |
+| Bordered bar on a `p-0` dialog | `dialogHeaderBar` on the header and `dialogHeaderBarTitle` on the title. |
+| Plain header on a `p-0` dialog | `px-6 pt-6` on the header. |
+
+`AlertDialogTitle` uses the same line metrics, so an alert's title sits at the same height. Full-screen shells and windows that draw their own bar keep their own close placement.
 
 ## Pattern: Paired Footer Actions
 
@@ -926,14 +955,17 @@ Each panel groups its fields by what kind of thing they are:
 | Stat | Details · Descriptors · Code | Descriptors, Code |
 | Trait | Details · Stats · Pins | Pins |
 | Dictionary entry | Details · Matching | Matching |
+| Overview (right column) | Details · Custom Prompts | Custom Prompts |
 
 The library entity editor lifts Traits and Placeholders onto its own top strip, so its Entity sub-strip shows Profile, Descriptions, and Openings.
 
-Two panels can lose their strip: Simple mode leaves the stat panel and the dictionary entry panel a single tab, which is no choice to offer, so each renders that body bare.
+Three panels can lose their strip: Simple mode leaves the stat panel, the dictionary entry panel and the Overview's right column a single tab, which is no choice to offer, so each renders that body bare.
+
+The Overview's Readme field holds its own plain tabs (Introduction, Gameplay). A tab inside a panel tab is a field's own control, not a second Panel Tab Strip. The Custom Prompts tab uses status rows instead (see [Lists With Controls or Metadata](#pattern-lists-with-controls-or-metadata)).
 
 The dictionary entry panel splits by cadence rather than height. The panel is not tall, but its matching rules are set once and then sit between the keywords and the value on every later visit. Details holds Name, Trigger Keywords, and Value; Matching holds the rules. Whole Words and Case-Sensitive stay on Details on purpose: they are the only two matching switches Simple mode shows, they modify the keywords they sit under, and keeping them there is what leaves Simple one tab.
 
-It is also the only one of the five with two hosts. The World Editor holds its tab in the editor's per-panel slot; the library's dictionary editor has no such slot and holds it in modal state for as long as the modal is open.
+It is also the only one of these panels with two hosts. The World Editor holds its tab in the editor's per-panel slot; the library's dictionary editor has no such slot and holds it in modal state for as long as the modal is open.
 
 A tab name may repeat across panels, and may match a tab on the editor's own strip. The strip's own name keeps them apart: the trait panel's Stats tab and the editor's Stats tab both read as "Stats", and only "Trait Fields" says which strip you are on.
 
@@ -1136,6 +1168,159 @@ The ring keeps its size at every width. The popover opens above the input, align
 | No usage figure (paused, locked, app-derived) | The track alone. The accessible name holds no percent. |
 | During a turn | The figure holds, and moves when the turn ends. |
 
+## Pattern: Here Mark
+
+**Approved by the user on 2026-11-11.** A 14px map-pin icon in the primary color marks the parts of an entity's routine that name the location whose Presence tab holds the editor. It sits on a Start button, before a routine row's sentence, and after a **Can Also Go** entry. The mark has the accessible name "Names <location>".
+
+The mark shows only inside that tab. The entity panel's Routine tab and the full-screen entity card show none.
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| The mark | `HereMark` in [`HereMark.tsx`](../src/components/HereMark.tsx) |
+| What names a location | [`hereMarks.ts`](../src/lib/hereMarks.ts) |
+| Isolated reference | [`HereMarkReference.tsx`](../src/components/design-system/HereMarkReference.tsx) |
+
+## Pattern: Usage Report
+
+**Approved by the user on 2026-11-05.** A staff report that reads top to bottom: a row of figure tiles, charts for change over time and rank, then the tables that hold the exact figures.
+
+**Density:** Compact. Tiles use the `text-display` figure with `Meta` lines. Sections use `SectionHeading`, not cards.
+
+**Color:** Every bar uses `bg-primary`, so it follows the selected theme. Never use the fixed `--chart-*` tokens here. They only change between light and dark.
+
+**Contrast:** `--primary` reads at 1.5 to 2:1 in the pale light themes. A chart never stands alone, so a table beside it holds the same figures.
+
+### Composition
+
+| Part | Treatment |
+| --- | --- |
+| Figure tile | Label, one large figure, and one line of context. Six across on a wide panel. |
+| Day chart | One column per day on a round axis, with a line at the top and at the midpoint. The readout above names the day under the pointer. A day with no value draws no column. Above 60 days, the columns touch. |
+| Second figure | A 2px `muted-foreground` tick across the column, named in a legend. One axis only. |
+| Ranked bars | Label, a 12px bar, and the figure. Rows sort longest first. |
+| Table | Figures align right and words align left. A wide table scrolls sideways inside its own frame. |
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| The report, its charts and tables | `UsagePanel` and `DayChart` in [`UsageTab.tsx`](../src/components/menu/UsageTab.tsx) |
+| Figure formats and CSV export | [`usageReport.ts`](../src/lib/usageReport.ts) |
+| Isolated reference | [`UsageReportReference.tsx`](../src/components/design-system/UsageReportReference.tsx) |
+
+### Responsive behavior
+
+Tiles drop to three columns, then two. Paired sections stack on mobile. Charts keep their height and narrow their columns.
+
+### State reference
+
+| State | Treatment |
+| --- | --- |
+| Column under the pointer | Full opacity, and the readout names its day. |
+| Other columns | 75% opacity. The latest day stays full while the pointer is away. |
+| Before the first answer | A `Skeleton` block. |
+| Report cannot be read | One `Meta` line, and an error toast. |
+| No rows in a section | One `Meta` line in place of the bars or table. |
+| A figure has no value | An em dash. A share under 1% reads `<1%`, never `0%`. |
+
+### Writing review
+
+Labels use title case. Times state their zone once, at the top of the report.
+
+## Pattern: Segmented Bar
+
+> 📝 **Proposal.** The look was settled with the user in the Storage Tab spec (rulings Q2 and Q11). The user has not yet approved it in the showcase. Production already uses it, so approval is the next step.
+
+One flat bar that shows the parts of one whole: what fills a disk, or what fills a free tier.
+
+| Part | Treatment |
+| --- | --- |
+| Track | 22px high, rounded ends, `muted`. Its full width is the scale. What the segments leave is empty track. |
+| Segment | One per part, with a 2px gap between segments. Largest first, then the remainder. |
+| Remainder | The part of the whole that no named part explains, in `muted-foreground` at 50%. |
+| Mark | A dashed vertical line with a small percent label above the bar. |
+| Legend | A grid under the bar: a small square swatch, the name, and the size of every segment. When a table under the bar has a row per segment, the table's first cell carries the swatch and the bar draws no legend. |
+
+**Color:** Each part has its own `--chart-*` hue, and keeps it when the order changes. This is the one exception to the Usage Report's `bg-primary` rule, and it applies only to a part-to-whole bar: steps of one hue cannot tell eight parts apart. With more parts than hues, the extra parts share one segment.
+
+**Over the scale:** When the parts pass the scale, the bar is full and the segments keep their shares.
+
+**Access:** The bar is hidden from assistive technology. The legend and a table nearby hold the figures.
+
+| Need | Component |
+| --- | --- |
+| The bar and its legend | `SegmentedBar` in [`segmented-bar.tsx`](../src/components/ui/segmented-bar.tsx) |
+| A disk's or the R2 buckets' segments | [`storageReport.ts`](../src/lib/storageReport.ts) |
+| Isolated reference | [`SegmentedBarReference.tsx`](../src/components/design-system/SegmentedBarReference.tsx) |
+
+## Pattern: Header Line
+
+**Purpose:** Line every Surface's top row up on one height, so the app reads as one header and nothing sits under the window buttons.
+
+**Rule:**
+
+- 📏 At `md` and wider, a Surface's top row centers on `y=28`, in a 56px line (`--header-line`). The World Editor bar may sit at `y=29`, because of its border.
+- 🪟 The Windows desktop app hides the title bar. Content reaches the top edge, and Windows draws its own minimize, maximize and close buttons over it, 56px tall.
+- ↔️ The room for those buttons is `--window-buttons-width`, added to the right end of the row. It's 0 on web, macOS and Linux, because only the desktop flag reads the overlay's `env()` values.
+- 🖱️ Empty parts of the line drag the window, including over a dialog's dimming layer. Controls take clicks, and a modal's hidden page never blocks the drag.
+- 🔔 Top-right toasts start below the line.
+- 🖼️ A full screen editor's top row and its corner button share the line. The row clears the button and the window buttons.
+- 🪟 On the desktop flag, a centered dialog never rises above the line, so its close button clears the window buttons. It keeps its size. A scrolling card or scene that reaches the top edge starts below the line.
+- 📱 Mobile keeps its own layout.
+
+### Production mapping
+
+| Piece | Where |
+|---|---|
+| The flag, the drag area and the symbol color | [`windowChrome.ts`](../src/lib/windowChrome.ts) |
+| The window options | [`windowChrome.cjs`](../electron/windowChrome.cjs) |
+| The tokens and the drag rules | [`index.css`](../src/index.css) |
+
+### In the game
+
+- 🪜 The left and center panels start at the top margin, at `y=16`. The right column starts below the line, and the buttons above it read as its header.
+- 📐 In the Windows desktop app, the right column is at least 312px wide (`--game-right-column-min`), so those buttons never reach the center panel.
+- 🖱️ Only the top margin and the strip above the right column drag the window, so panel text stays selectable.
+
+## Pattern: Window Corner
+
+**Purpose:** Keep the window buttons readable over any world art, and let them fade with the page behind a popup.
+
+**Rule:**
+
+- 🌅 **Corner gradient.** In game, a soft gradient in the theme's background color sits in the top-right corner. It's above the location art and behind the panels and buttons, and it has no hard edge.
+- 🧱 Other screens get no gradient, because each has a solid background under the corner.
+- 🌫️ **Dimming.** While a dimming layer reaches the window buttons, their symbols fade to white at 25%, in step with the page. They return to the theme color when the popup closes.
+- 🪟 A full-window dialog covers its own dimming layer, so the symbols keep full color over it. While a nested dialog closes, its parent's layer keeps them dim.
+- 🪟 Both apply only in the Windows desktop app. A dimming layer carries `data-dim-layer`; the dialog, alert dialog and drawer overlays already do.
+
+### Production mapping
+
+| Piece | Where |
+|---|---|
+| The dimming check and fade | [`windowChrome.ts`](../src/lib/windowChrome.ts) |
+| The gradient | `.window-corner-gradient` in [`index.css`](../src/index.css), placed by [`GameViewer.tsx`](../src/views/GameViewer.tsx) |
+| The live reference | [`WindowCornerReference.tsx`](../src/components/design-system/WindowCornerReference.tsx) |
+
+## Pattern: Two-Segment Button
+
+**Purpose:** Show two related actions as one control, while each still takes one click.
+
+**Rule:**
+
+- 💊 One round pill, 40px tall, with a thin line between the halves. Each half is its own button with its own tooltip.
+- 🧩 Use it for a pair a player reads together, such as **Save Game** and **Load Game**. An action with its own meaning gets its own round button.
+- 🚫 Don't use it to pick an option. A choice between states is a [segmented option](#pattern-aligned-settings-stack).
+
+### Production mapping
+
+| Piece | Where |
+|---|---|
+| The button | `TwoSegmentButton` in [`two-segment-button.tsx`](../src/components/ui/two-segment-button.tsx) |
+| The showcase | [`TwoSegmentButtonReference.tsx`](../src/components/design-system/TwoSegmentButtonReference.tsx) |
+
 ## Pattern: Surface App Bar
 
 **Purpose:** Put a surface's identity, its everyday tools and its whole-surface actions in one row above everything they act on.
@@ -1144,7 +1329,7 @@ The ring keeps its size at every width. The popover opens above the input, align
 
 - The bar spans the window above the surface's panels. Anything that belongs to the bar, such as the Authoring Tour bar, sits under it.
 - Left to right: back, the title, then the surface's subject; the search field; the mode; the surface actions; the primary action last.
-- The search field sits on the window's center line when space allows, and never overlaps the side columns. The bar splits into three equal columns, and the field is at most 26rem wide.
+- The search field sits on the window's center line when space allows, and never overlaps the side columns. The bar measures its end cell and keeps the side columns equal while the field has room. The field is at most 26rem wide and at least 10rem wide.
 - The end column always fits its controls. When it needs more than a third of the bar, the field narrows to a floor of 10rem and moves off center.
 - A plain line splits the mode from the actions after it.
 - The bar shows no save-state text beside Save. The Save face is the only save signal: it shows Save, Saving…, Saved or Failed.
@@ -1482,7 +1667,7 @@ Prompt and section labels reuse the production registry. The reference's title a
 
 ## Pattern: Owner Flyouts
 
-**Purpose:** Pick one entity from the world's entity groups without leaving the Traits tab.
+**Purpose:** Pick one entity from the world's entity groups, or one location from its location tree, without leaving the tab.
 
 This pattern differs from two others on purpose. Its entity list sits inside the **+** menu, unlike the Searchable Group Picker, because each level stays short. Its rows keep a check column in a held-state flyout, unlike Compact Selection Lists, so entity rows and group rows align.
 
@@ -1491,10 +1676,14 @@ This pattern differs from two others on purpose. Its entity list sits inside the
 - 👤 **Custom Persona icon.** The entity with the Custom Persona mark sits in its Entities-tab place and carries its own icon.
 - ✅ **Check column.** A flyout that shows held state starts every row with a check column, so group rows and entity rows align. A held entity reads checked and dimmed, and can't be picked.
 - 💬 **Refusal reason.** A held row carries a tip that says why it can't be picked: "Already links Trust", "Already owns Trust", "Already links Body, which holds Trust". A menu that doesn't list the entity starts the line with its name ("Bram already links Trust"). The row stays reachable by keyboard, and screen readers read the reason. A touch screen shows no tip.
+- 📍 **Location levels.** A location list follows the location tree the same way. A location with a pickable location below it opens its level, with a chevron. Every other row is a plain pick.
+- ➕ **Add to row.** When the location that opened a level can be picked too, the level starts with **Add to <name>**, a plus icon and a divider under it. Without it, a location with pickable children could never be picked.
+- 🚫 **Empty drill-in.** A menu row that opens a list with nothing to pick stays visible and disabled.
 - Rows use the menu's row size and padding. Long names wrap. The list scrolls inside the popover when it outgrows the space.
 
 | Instance | Where | After a pick |
 | --- | --- | --- |
+| **Location** / **Entity** | The Openings tab's **+** menu drills in, over the owners the tab doesn't list | The popover closes, and the owner is listed and selected with one blank opening |
 | **Add Trait to Entity** / **Add Group to Entity** | The Traits tab's **+** menu drills in | The popover closes and the new row is selected |
 | **Link To…** | Right-aligned at the top of a world trait's or group's Details, and beside a selected link's Linked-from line, in Advanced | The popover stays open and the row turns checked |
 
@@ -1506,6 +1695,8 @@ This pattern differs from two others on purpose. Its entity list sits inside the
 | Rows and levels | `ownerChoices` in [`ownerChoices.ts`](../src/lib/ownerChoices.ts) |
 | Menu row | `MENU_ROW` in [`menuRow.ts`](../src/components/menuRow.ts) |
 | Link button | `LinkToOwnerButton` in [`OwnerPicker.tsx`](../src/managers/OwnerPicker.tsx) |
+| Location levels, Add to row | `OpeningsAddMenu` in [`OpeningsAddMenu.tsx`](../src/managers/OpeningsAddMenu.tsx) |
+| Pickable locations and entities | `locationPicker`, `entityPickChoices` in [`openingsTab.ts`](../src/lib/openingsTab.ts) |
 | Refusal reasons and their text | `HeldReason` and `heldReasonText` in [`heldReasons.ts`](../src/lib/heldReasons.ts) |
 | **+** menu drill-in | `traitsMenu` in [`WorldEditor.tsx`](../src/views/WorldEditor.tsx) |
 | Isolated reference | [`OwnerFlyoutReference.tsx`](../src/components/design-system/OwnerFlyoutReference.tsx) |
@@ -1522,7 +1713,7 @@ The same levels work on desktop and on a phone. Nothing opens to the side, so a 
 
 - ↺ **Field Reset.** An overridden field ends its label row in a ghost **Reset** button with a rotate icon. A field that reads its blueprint live has no Reset. Each Reset's accessible name adds the field, such as "Reset Requires".
 - ⚠️ **Stale marker.** When the blueprint changed a field after the override was made, a warning-colored "Blueprint changed" line with a warning icon sits just left of that field's Reset. It shows on the details panel only, never in the tree.
-- 🧊 **Frozen footer.** Below every panel tab, **Reset to Blueprint** sits on the left and is unavailable while nothing is overridden. The host's own actions, such as **Link To…** and **Edit Blueprint**, sit on the right.
+- 🧊 **Frozen footer.** Below every panel tab, the host's actions sit on the right: **Edit Blueprint**, then **Reset to Blueprint**, which is unavailable while nothing is overridden. A link row has no **Link To…**. The open panel's own action, such as **Preview**, sits alone on the left.
 - Read-only fields keep their normal look, with editing off.
 
 ### Production mapping
@@ -1531,13 +1722,14 @@ The same levels work on desktop and on a phone. Nothing opens to the side, so a 
 | --- | --- |
 | Field Reset, stale marker, label row, footer | `FieldReset`, `LabelRow` and `BlueprintFooter` in [`BlueprintReset.tsx`](../src/components/editor/BlueprintReset.tsx) |
 | Trait link panel and footer | `LinkedTraitManager` and `LinkFooter` in [`TraitLinkPanel.tsx`](../src/managers/TraitLinkPanel.tsx) |
+| Footer row and its left slot | `DetailFooter`, `DetailFooterScope` and `DetailFooterLead` in [`detail-footer.tsx`](../src/components/ui/detail-footer.tsx) |
 
 ## Pattern: Travel Hint Pair
 
 **Purpose:** Edit a two-way Connection's two Travel Hints, one for each direction, or use one hint for both.
 
 - 📚 **Two stacked boxes.** Each box edits one direction and carries that direction in its label. A link copies the top box into the bottom box.
-- 🔗 **Vertical link toggle.** A ghost button sits to the right of both boxes and spans their full height. Its icon, turned upright, is a chain (`link`) when linked and a broken chain (`unlink`) when unlinked. Its tooltip names what a click does: **Link Travel Hints** or **Unlink Travel Hints**.
+- 🔗 **Vertical link toggle.** A ghost button sits to the right of both boxes. It spans from the top of the first box to the bottom of the second, so it never covers the first label. Its icon, turned upright, is a chain (`link`) when linked and a broken chain (`unlink`) when unlinked. Its tooltip names what a click does: **Link Travel Hints** or **Unlink Travel Hints**.
 - 🔒 **Linked.** The top box writes both directions. The bottom box is read-only, muted, and shows the top box's text. Screen readers hear that it copies the first Travel Hint.
 - ✏️ **Unlinked.** Both boxes are editable. Unlinking restores the text the bottom box had before the last link.
 - ➡️ **One-way.** One box and no toggle. Switching to two-way adds the second box, linked.
@@ -1555,11 +1747,89 @@ The link state is never saved. The pair opens linked when both hints are equal, 
 | --- | --- |
 | Boxes, toggle, link memory | `TravelHintPair` in [`TravelHintPair.tsx`](../src/components/editor/TravelHintPair.tsx) |
 | Link and unlink rewrites, opening state | `withLink`, `withUnlink` and `hintsLinked` in [`connectionEditing.ts`](../src/lib/connectionEditing.ts) |
-| Canvas inspector | `ConnectionInspector` in [`LocationCanvas.tsx`](../src/managers/LocationCanvas.tsx) |
+| Canvas inspector | `ConnectionInspector` in [`ConnectionInspector.tsx`](../src/managers/ConnectionInspector.tsx) |
 | Location panel | [`LocationConnections.tsx`](../src/managers/LocationConnections.tsx) |
 | Isolated reference | [`TravelHintPairReference.tsx`](../src/components/design-system/TravelHintPairReference.tsx) |
 
 Open `#dev?modal=designSystem&tab=travel-hints` for linked, unlinked, and one-way samples in local state. The **Locations** tab's quay-to-garden pair has different hints, so its arrow labels sit on their outer sides.
+
+## Pattern: Distance Mark
+
+**Purpose:** Show a Connection's distance, Nearby or Far, as a small picture and its word.
+
+- 📏 **Line, then word.** The mark has one fixed width. The shorter word gets the longer line, so marks line up in a list.
+- ➖ **Nearby** is a short straight line. Nearby always shows its mark; it is never blank.
+- 〰️ **Far** is a dotted sine wave with few humps, one every 8 px.
+- 🎨 **Current text color.** The mark has no color of its own. It follows the text around it, so it works in both themes and in a muted row.
+
+| Instance | Where |
+| --- | --- |
+| Distance choices | Both choices of the Connection widget's **Distance** control |
+
+## Pattern: Connection Widget
+
+**Purpose:** Edit one Connection's Travel, Distance and Travel Hints, the same way on every surface.
+
+- ↔️ **Travel.** A label, then a three-choice segmented control: both ways, one way out, one way in. No line under it.
+- 📐 **Distance.** A label with an **ⓘ**, then a two-choice segmented control of [distance marks](#pattern-distance-mark). It is as wide as the first two Travel choices, which sit right above its two choices; the third slot stays empty. The **ⓘ** holds the full explanation. No line under it.
+- 💬 **Travel Hints.** The [Travel Hint Pair](#pattern-travel-hint-pair), with no group label above it.
+- ↩️ **Re-clicking the active choice changes nothing.** A Connection always has a direction and a distance.
+
+The widget takes a Connection and hands back the rewritten record. Each surface supplies its own wording:
+
+| Surface | Travel choices | Hint box labels |
+| --- | --- | --- |
+| Location panel | An icon and a word: **Both Ways**, **To There**, **To Here** | **To** *partner*, **From** *partner* |
+| Canvas inspector | An icon only. The tooltip names both ends. | An arrow plus the destination name |
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| Distance mark | `DistanceMark` in [`DistanceMark.tsx`](../src/components/editor/DistanceMark.tsx) |
+| Travel, Distance and hints | `ConnectionFields` in [`ConnectionFields.tsx`](../src/components/editor/ConnectionFields.tsx) |
+| Isolated reference | [`ConnectionFieldsReference.tsx`](../src/components/design-system/ConnectionFieldsReference.tsx) |
+
+Open `#dev?modal=designSystem&tab=connection-widget` for both values of the mark, muted and in full color, and for the widget in local state.
+
+## Pattern: Routine Sentences
+
+**Purpose:** Edit an entity's daily routine as plain sentences, such as *Morning – Afternoon, stays at Smithy.*
+
+- 📝 **One row, one sentence.** Rows sort by time of day. Free hours sit between them as muted lines with a cup icon, or one *Busy all day.* line.
+- 🔗 **Tokens.** The time, the verb and the locations are dotted-underline buttons. Each opens a popover with its own editor: the time editor, the **Stay** / **Wander** / **Patrol** / **Away** toggle, or the location editor. An **Away** row has no location token.
+- 🔒 **Lock.** A lock button leads each sentence. Its tooltip says what the locked state does.
+- 🗑️ **Delete.** A ghost trash button ends each sentence, always visible so touch can reach it.
+- ⚠️ **Disconnected location.** The token gets a warning icon; the location list shows the name in the warning color with the same icon.
+
+### Day strip
+
+A 24-hour bar sits above the sentences, with time-of-day icons over it (full name in a tooltip).
+
+- 🎨 **Action colors.** Each row is a band in its action's token: `routine-stay`, `routine-wander`, `routine-patrol`, at 70% fill. An **Away** row has no place and no token of its own: its band is `muted-foreground` at 25%. A matching swatch leads its sentence. The tokens are set once per mode, never per palette.
+- 🧱 **Layers.** An All-day row sits under the timed rows at half strength. Free time is hatched; clicking it adds a Stay over exactly that time.
+- 🎯 **Selection.** Clicking a band or a sentence selects that row in both places: the band takes a primary inset ring, the sentence an accent fill. A press anywhere else, except an open row editor, clears it.
+- ↔️ **Handles.** Each timed band has a handle on both ends. A drag snaps to time-of-day edges or whole hours, by the row's format, and stops before another timed row. A label above the handle names its place (*From Morning*, *To 14:00*). The selected row's handles sit on top at a shared edge. Arrow keys move a focused handle one snap.
+
+### Location list
+
+Wander and Patrol share one list inside the locations popover: grip, an optional stop number, the location, the action's own field, then remove. Wander's field is a weight box and its percent; Patrol's is a wait (number plus **Minutes** / **Hours** / **Parts of the Day**). The grip reorders by drag or keyboard. **Add Location** opens a Breadcrumb Picker.
+
+### Time editor
+
+A swap button leads the row: **Use Hours** or **Use Time of Day**. Time of day uses two selects; hours use two time-only Date Time Fields. Choices another timed row holds are disabled, and a typed overlap is refused with a note.
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| Sentence, time editor, action toggle | `RoutineRow`, `RowTimeEditor` in [`RoutineRow.tsx`](../src/managers/routine/RoutineRow.tsx) |
+| Tokens, location list, wait field | `Token`, `RoutinePlaceList`, `IdleField` in [`RoutineFields.tsx`](../src/managers/routine/RoutineFields.tsx) |
+| Day strip and handles | `DayStrip` in [`DayStrip.tsx`](../src/managers/routine/DayStrip.tsx) |
+| The tab | `RoutineTab` in [`RoutineTab.tsx`](../src/managers/routine/RoutineTab.tsx) |
+| Isolated reference | [`RoutineSentenceReference.tsx`](../src/components/design-system/RoutineSentenceReference.tsx) |
+
+Open `#dev?modal=designSystem&tab=routine-sentences` for a Stay, a locked row, a Wander with a disconnected location and a Patrol under their day strip, in local state.
 
 ## Pattern: Formaquestion Window
 
@@ -1991,7 +2261,6 @@ Open `#dev?modal=designSystem&tab=panel-crash-card` for the card in both themes,
 - ↔️ **Two panes for a prompt chip.** The rows sit on the left at about 1.15 parts, and **What the AI Reads** sits on the right at 1 part. The dialog is `max-w-3xl`.
 - 📄 **One column for the rest.** Placeholder chips and Tool argument chips show the rows alone, in `max-w-md`.
 - 📏 **Rows.** The name sits in a fixed column, and the control fills the rest. A pick-one setting is a segmented control up to three options, and a dropdown from four. A pick-many setting is a group of inline checkboxes with labels, never pills.
-- 🔒 **Lock groups.** The last checked piece of a group, such as **Stat Detail**, stays checked and disabled.
 - 🌫️ **Moot rows.** A row that has no effect under the current picks is disabled, and its tooltip says why.
 - 💬 **Help.** An option's help is the tooltip of its segment or dropdown item. A checkbox's help is the tooltip of its label. A read-only control's help says why it is shut.
 - ➖ **Placement.** **Label**, **Header**, **Prepend** and **Append** sit below a rule.
@@ -2026,7 +2295,6 @@ Build a new chip setting as an axis in the registry. Do not draw a control in th
 | Editable | Every control live. |
 | Read-only | Every control disabled. The rows and the pane still show. |
 | Moot | The row is disabled. Its tooltip names the pick that made it moot. |
-| Locked | The last checked piece of a lock group is checked and disabled. |
 | Lit | The text the hovered or focused control produces has a `primary` tint. Other lines are at 40% opacity. |
 | Nothing to light | A control with no text, such as **Scope**, leaves the pane as it is. |
 | No chip rows | The dialog reads "No options for this variable." |
@@ -2254,12 +2522,12 @@ Open `#dev?modal=designSystem&tab=collapsing-segmented` for the library tabs in 
 
 ✅ Approved by the user on 2026-10-30.
 
-The top bar folds its parts together, in a fixed order, by whether its three cells fit side by side. No part folds by its own leftover room.
+The top bar folds its parts together, in a fixed order, by whether its three cells fit side by side. No part folds by its own leftover room. The room for the window buttons (see Header Line) counts against the bar's width.
 
 | Order | Part | Steps |
 |---|---|---|
 | 1 | Library tabs | Every label → selected label → icons |
-| 2 | Action buttons | A row → one menu button. The right menu joins that menu. |
+| 2 | Action buttons | A row, with direct **Load Game** and **Settings** at the right → one **More Actions** menu at the right that holds all of them |
 | 3 | Event badges | One chip per event → one chip with a count, which opens the chips in a list |
 
 - 🎯 **Center drifts first.** The action buttons sit at the bar's center while there is room. They slide toward the side with free space before anything folds.

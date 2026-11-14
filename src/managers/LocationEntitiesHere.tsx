@@ -1,73 +1,186 @@
+import { useMemo, useRef, type KeyboardEvent } from 'react';
+import { Route, Trash2, X } from 'lucide-react';
+import { DESTRUCTIVE_ROW_ACTION_HOVER } from '@/components/EditorRow';
+import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Hint } from '@/components/ui/typography';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { OptionSwitcher } from '@/components/SettingsRows';
-import { movementOptions, withMovement, withPresence, type MovementChoice } from '@/lib/entityPresence';
-import {
-  MOVEMENT_LABEL, movementHelpFor, PERSONA_IGNORED_HELP, PRESENCE_HELP, PRESENCE_OPTIONS,
-} from '@/lib/entityPresenceCopy';
+import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tip } from '@/components/ui/tooltip';
+import { Hint, Meta } from '@/components/ui/typography';
+import { SelectOptions } from '@/components/SelectOptions';
+import { isGeneric, isUnique } from '@/lib/entityKind';
 import { fieldFrame } from '@/lib/historyField';
-import PersonaPresenceHint from '@/managers/PersonaPresenceHint';
-import type { Entity } from '@/types';
+import { presenceLines } from '@/lib/locationPresenceReasons';
+import { beginsAt, canRemoveStartsAt, shownRoutine, withoutStartsAt, withRoutineStartAdded } from '@/lib/routineList';
+import { routineSelectionOf, showRoutineStart, showStartFor } from '@/lib/routineSelection';
+import { randomUUID } from '@/lib/uuid';
+import { cn } from '@/lib/utils';
+import { EntityPickBody, type PickState } from '@/managers/EntityPickCard';
+import type { Connection, Entity, GameLocation } from '@/types';
 
-/** One entity's Presence and Movement, as a row of the location's cast. */
-function EntityHereRow({ entity, label, onChange }: { entity: Entity; label: string; onChange: (next: Entity) => void }) {
-  if (entity.customPersona) {
-    return (
-      <div className="space-y-1 rounded-md border p-2">
-        <span className="block truncate font-medium">{label}</span>
-        <PersonaPresenceHint />
-      </div>
-    );
-  }
-  const listed = entity.locations?.length ?? 0;
-  const presence = entity.presence === 'random' ? 'random' : 'everywhere';
-  const movement: MovementChoice = entity.movement ?? 'free';
+const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+const ROW_KEYS: Record<string, (at: number, count: number) => number> = {
+  ArrowDown: (at, count) => Math.min(at + 1, count - 1),
+  ArrowUp: (at) => Math.max(at - 1, 0),
+  Home: () => 0,
+  End: (_, count) => count - 1,
+};
+
+/**
+ * The Entities Here list on a location's Presence tab: every entity that can be at this location, one row each
+ * with its reasons, and one editor region under the list for the selected entity. The selection is the World
+ * Editor's entity pick, so the canvas beside the panel draws it.
+ */
+export default function LocationEntitiesHere({ locationId, entities, locations, connections, labelOf, onOpenRoutine, pick, onPickChange, onEditFullScreen, onChange }: {
+  locationId: string;
+  /** The cast, in the order the tab lists it. */
+  entities: Entity[];
+  locations: GameLocation[];
+  connections: Connection[];
+  labelOf: (entity: Entity) => string;
+  onOpenRoutine?: (entityId: string) => void;
+  /** The pick a selected row holds. */
+  pick: PickState | null;
+  /** Without it the rows do not select. */
+  onPickChange?: (next: PickState | null) => void;
+  /** Opens the Locations Canvas in full screen with the pick kept. */
+  onEditFullScreen?: () => void;
+  onChange: (next: Entity) => void;
+}) {
+  const lines = useMemo(
+    () => presenceLines(locationId, entities, { locations, connections }),
+    [locationId, entities, locations, connections],
+  );
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const selected = pick ? lines.find((line) => line.entity.id === pick.entityId)?.entity : undefined;
+  const selectedAt = selected ? lines.findIndex((line) => line.entity === selected) : -1;
+
+  // Only a Generic entity that begins here has a remove button; the other rows keep its column so the icons line up.
+  const removable = (entity: Entity) => isGeneric(entity) && beginsAt(entity, locationId);
+  const anyRemovable = lines.some((line) => removable(line.entity));
+
+  // The cast with no row here, in the order given. The persona has no kind, so it is never listed.
+  const addable = useMemo(() => {
+    const listed = new Set(lines.map((line) => line.entity.id));
+    return entities.filter((e) => (isGeneric(e) || isUnique(e)) && !listed.has(e.id));
+  }, [lines, entities]);
+
+  const add = (id: string) => {
+    const entity = addable.find((e) => e.id === id);
+    if (!entity) return;
+    // The Start goes into the Routine on show, and the editor opens in Routine mode on it.
+    const startId = randomUUID();
+    onChange(withRoutineStartAdded(entity, shownRoutine(entity, routineSelectionOf(entity.id)).id, locationId, () => startId));
+    showRoutineStart(entity.id, startId);
+    onPickChange?.({ entityId: entity.id, mode: 'locations' });
+  };
+
+  const toggle = (entity: Entity) => {
+    if (selected !== entity) showStartFor(entity, locationId);
+    onPickChange?.(selected === entity ? null : { entityId: entity.id, mode: pick?.mode ?? 'locations' });
+  };
+
+  const moveFocus = (event: KeyboardEvent, at: number) => {
+    const to = ROW_KEYS[event.key]?.(at, lines.length);
+    if (to === undefined) return;
+    event.preventDefault();
+    rowRefs.current[to]?.focus();
+  };
+
   return (
-    <div className="space-y-2 rounded-md border p-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-        <div {...fieldFrame('entities', entity.id, 'movement')}>
-          <Select value={movement} onValueChange={(v) => onChange(withMovement(entity, v as MovementChoice))}>
-            <SelectTrigger className="w-60" aria-label={`Movement of ${label}`}><SelectValue /></SelectTrigger>
+    <div className="space-y-2" data-testid="entities-here">
+      <Label className="block">Entities Here</Label>
+      <Hint>Lists each entity that can be here, and why</Hint>
+      {lines.length === 0 && <Hint>No entity can be here</Hint>}
+      {lines.length > 0 && (
+        <ul aria-label="Entities Here" className="divide-y divide-border overflow-hidden rounded-md border border-border">
+          {lines.map(({ entity, reasons }, at) => {
+            const label = labelOf(entity);
+            const isSelected = entity === selected;
+            const reasonText = capitalized(reasons.join(', '));
+            return (
+              <li
+                key={entity.id}
+                data-testid="presence-row"
+                className={cn('flex items-center gap-1 pr-1', isSelected ? 'bg-accent' : 'hover:bg-accent/60')}
+              >
+                <button
+                  ref={(el) => { rowRefs.current[at] = el; }}
+                  type="button"
+                  aria-current={isSelected ? 'true' : undefined}
+                  aria-label={`${label}, ${reasonText}`}
+                  disabled={!onPickChange}
+                  tabIndex={at === Math.max(selectedAt, 0) ? 0 : -1}
+                  onClick={() => toggle(entity)}
+                  onKeyDown={(event) => moveFocus(event, at)}
+                  className={cn(
+                    'flex min-w-0 flex-1 items-baseline gap-2 py-2 pl-3 text-left outline-none disabled:cursor-default',
+                    'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                  )}
+                >
+                  <span className={cn('max-w-[60%] shrink-0 truncate text-label', isSelected && 'font-medium')}>{label}</span>
+                  <Meta className="min-w-0 flex-1 truncate">{reasonText}</Meta>
+                </button>
+                {onOpenRoutine && (
+                  <Tip tip={`Open ${label}’s Routine`}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label={`Open ${label}’s Routine`} onClick={() => onOpenRoutine(entity.id)}>
+                      <Route className="h-4 w-4" />
+                    </Button>
+                  </Tip>
+                )}
+                {!removable(entity) && anyRemovable && <span aria-hidden className="h-8 w-8 shrink-0" />}
+                {removable(entity) && (
+                  canRemoveStartsAt(entity, locationId)
+                    ? (
+                      <Tip tip={`Remove ${label} from this location`}>
+                        <Button variant="ghost" size="icon" className={cn('h-8 w-8 shrink-0', DESTRUCTIVE_ROW_ACTION_HOVER)} onClick={() => onChange(withoutStartsAt(entity, locationId))}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </Tip>
+                    )
+                    : (
+                      // A disabled button takes no pointer events, so the span carries the reason.
+                      <Tip tip={`${label} begins at no other location, so it stays here`}>
+                        <span tabIndex={0} className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                          <Button variant="ghost" size="icon" className="h-8 w-8" disabled aria-label={`Remove ${label} from this location`}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </span>
+                      </Tip>
+                    )
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {selected && onPickChange
+        ? (
+          <section aria-label={labelOf(selected)} data-testid="presence-editor" className="space-y-3 rounded-md border bg-card p-3">
+            <div className="flex items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-medium">{labelOf(selected)}</span>
+              <Tip tip="Close Entity">
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onPickChange(null)}>
+                  <X className="h-5 w-5" />
+                </Button>
+              </Tip>
+            </div>
+            <EntityPickBody entity={selected} picking={pick} onPickingChange={onPickChange} onChange={onChange} hereMark={locationId} onEditFullScreen={onEditFullScreen} />
+          </section>
+        )
+        : lines.length > 0 && onPickChange && <Hint>Select an entity to edit its Routine and Known In</Hint>}
+      {addable.length > 0 && (
+        <div {...fieldFrame('entities')}>
+          <Select value="" onValueChange={add}>
+            <SelectTrigger aria-label="Add an entity here">
+              <SelectValue placeholder="Add an entity here" />
+            </SelectTrigger>
             <SelectContent>
-              {movementOptions(entity).map((m) => <SelectItem key={m} value={m}>{MOVEMENT_LABEL[m]}</SelectItem>)}
+              <SelectOptions options={addable.map((e) => ({ value: e.id, label: labelOf(e) }))} />
             </SelectContent>
           </Select>
         </div>
-      </div>
-      <Hint>{movementHelpFor(entity)}</Hint>
-      {listed > 1 && (
-        <div className="space-y-1" {...fieldFrame('entities', entity.id, 'presence')}>
-          <OptionSwitcher
-            ariaLabel={`Presence of ${label}`}
-            value={presence}
-            onChange={(v) => onChange(withPresence(entity, v === 'random' ? 'random' : undefined))}
-            options={PRESENCE_OPTIONS}
-          />
-          <Hint>{PRESENCE_HELP[presence]}</Hint>
-        </div>
       )}
-      {entity.persona && <Hint>{PERSONA_IGNORED_HELP}</Hint>}
-    </div>
-  );
-}
-
-/** The Entities Here section of a location's Presence tab: each entity at this location, with its
- *  Presence and Movement. */
-export default function LocationEntitiesHere({ entities, labelOf, onChange }: {
-  /** The entities at this location, in the order the tab lists them. */
-  entities: Entity[];
-  labelOf: (entity: Entity) => string;
-  onChange: (next: Entity) => void;
-}) {
-  if (entities.length === 0) return null;
-  return (
-    <div className="space-y-2">
-      <Label>Entities Here</Label>
-      {entities.map((entity) => (
-        <EntityHereRow key={entity.id} entity={entity} label={labelOf(entity)} onChange={onChange} />
-      ))}
     </div>
   );
 }

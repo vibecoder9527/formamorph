@@ -70,6 +70,11 @@ export const LOCAL_GPU_DEVICE_AUTO = 'auto';
 // hatch for a machine Auto pins. Mirrors ENGINE_DEVICE_ALL in electron/engineDevice.cjs.
 export const LOCAL_GPU_DEVICE_ALL = 'all';
 export const DEFAULT_LOCAL_GPU_DEVICE = LOCAL_GPU_DEVICE_AUTO;
+// Which llama-server build the engine runs. Auto picks CUDA when it is installed and the machine passes
+// electron/engineBackend.cjs's rule; Vulkan and CUDA override it. Mirrors ENGINE_BACKENDS there.
+export type LocalEngineBackend = 'auto' | 'vulkan' | 'cuda';
+export const LOCAL_ENGINE_BACKENDS: readonly LocalEngineBackend[] = ['auto', 'vulkan', 'cuda'];
+export const DEFAULT_LOCAL_ENGINE_BACKEND: LocalEngineBackend = 'auto';
 // On by default: the engine picks an installed model and loads it as soon as anything routes to it, and a
 // finished download loads itself. Off leaves loading to the Load button, so VRAM is only spent on demand.
 export const DEFAULT_LOCAL_AUTO_LOAD = true;
@@ -140,6 +145,13 @@ export const DEFAULT_CANVAS_SNAP = true;
 export const DEFAULT_CANVAS_GRID_VISIBLE = true;
 // Straight lines are the plainest reading of the map, so curves and elbows are opted into.
 export const DEFAULT_CANVAS_CONNECTION_STYLE: ConnectionStyle = 'straight';
+
+// The game's side panels on desktop. Per-device layout preferences, so no VITE_DEFAULT_* override.
+// Both start docked, so a returning player sees the layout they know.
+export const DEFAULT_GAME_LEFT_COLLAPSED = false;
+export const DEFAULT_GAME_RIGHT_COLLAPSED = false;
+// The story keeps its reading width, centered, until the player picks Full Width.
+export const DEFAULT_GAME_STORY_WIDTH = 'reading' as const;
 
 // Snap to Others in the Body Layout editor. A per-user editor preference like the canvas ones above.
 export const DEFAULT_BODY_LAYOUT_SNAP = true;
@@ -258,6 +270,8 @@ export const DEFAULT_QUOTE_COLOR_DARK: string | null = null;
 export const DEFAULT_TOOLS_ENABLED = true;
 // The World Editor's Autosave. Off saves only on Save and Ctrl+S.
 export const DEFAULT_EDITOR_AUTO_SAVE = true;
+// The Daily Send that counts this install as active. Off sends nothing.
+export const DEFAULT_DAILY_SEND_ENABLED = true;
 // Seconds the World Editor waits after the last change before an autosave. The slider spans the min and max.
 export const DEFAULT_EDITOR_AUTO_SAVE_IDLE_S = 30;
 export const MIN_EDITOR_AUTO_SAVE_IDLE_S = 10;

@@ -65,6 +65,10 @@
     --supporter: 318 75% 30%;
     --supporter-plus: 268 70% 32%;
     --supporter-top: 40 95% 18%;
+    /* Routine actions: Stay, Wander, Patrol bands and swatches. One set per mode, never per palette. */
+    --routine-stay: 199 89% 48%;
+    --routine-wander: 160 84% 39%;
+    --routine-patrol: 38 92% 50%;
     /* Theme-independent dark scrim for overlays on imagery + modal backdrops (light text must stay readable). */
     --overlay: 0 0% 0%;
     --border: 214.3 31.8% 91.4%;
@@ -111,6 +115,9 @@
     --supporter: 318 75% 85%;
     --supporter-plus: 268 85% 87%;
     --supporter-top: 45 90% 78%;
+    --routine-stay: 198 93% 60%;
+    --routine-wander: 158 64% 52%;
+    --routine-patrol: 43 96% 56%;
     --overlay: 0 0% 0%;
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
@@ -506,6 +513,55 @@
   }
 }
 
+/* Every Surface's top row centers on this line, at `md` and wider. */
+:root {
+  --header-line: 56px;
+  --window-buttons-width: 0px;
+  --game-right-column-min: 0px;
+  /* Shows the boot bar in index.html; it stays hidden until these tokens exist. */
+  --fm-boot-display: flex;
+}
+/* A host page can define these `env()` values too, so only the flag reads them. */
+[data-window-overlay] {
+  --window-buttons-width: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  /* Keeps the header's buttons, beside the window buttons, above the right column. */
+  --game-right-column-min: 312px;
+}
+@media (min-width: 768px) {
+  .Toastify__toast-container--top-right {
+    top: calc(var(--header-line) + 0.5rem);
+  }
+}
+.window-drag-area {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--header-line);
+  z-index: -1;
+  pointer-events: none;
+  app-region: drag;
+}
+/* The raised panels' text stays selectable. */
+[data-window-overlay]:has([data-game-raised-panels]) .window-drag-area {
+  height: 1rem;
+}
+[data-window-overlay] .game-right-column-drag {
+  app-region: drag;
+}
+/* Keeps the window buttons readable over world art. Its parent sets where it shows. */
+.window-corner-gradient {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 120px;
+  pointer-events: none;
+  background: radial-gradient(ellipse farthest-side at top right, hsl(var(--background) / 0.92) 0%, hsl(var(--background) / 0.7) 45%, transparent 100%);
+}
+/* Controls only, because a dialog has a role too. A modal's `aria-hidden` page can't take a click anyway. */
+[data-window-overlay] :is([data-window-no-drag], [data-fq-drag], [data-fq-body], [data-fq-resize], [data-fq-mascot-resize], button, a, input, select, textarea, label, summary, canvas, video, [role='button'], [role='tab'], [role='menuitem'], [role='switch'], [role='combobox'], [role='checkbox'], [role='radio'], [role='slider'], [role='link'], [role='option'], [role='textbox'], [tabindex]:not([tabindex='-1']), [contenteditable='true']):not([aria-hidden='true'] *) {
+  app-region: no-drag;
+}
+
 /* The app's frame: exactly the area the user can see, measured rather than inferred from a viewport
    unit (see `viewportHeight.ts` for why units don't survive the keyboard and the Fullscreen API).
    Fixed, so it is unaffected by how tall the document or a fullscreened body happens to be, and
@@ -670,6 +726,58 @@ b {
 }
 @media (prefers-reduced-motion: reduce) {
   .place-chip-shine::after { animation: none; display: none; }
+}
+
+/* Hidden Gem chip: the gem glints and two sparkles twinkle beside it every 9s. */
+.gem-sparkle {
+  position: relative;
+  display: inline-flex;
+}
+.gem-sparkle > svg {
+  animation: gem-glint 9s ease-in-out 3s infinite;
+}
+.gem-sparkle::before,
+.gem-sparkle::after {
+  content: "";
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background: radial-gradient(circle, hsl(0 0% 100%) 0 20%, hsl(var(--primary)) 60%);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  transform: scale(0);
+  animation: gem-twinkle 9s ease-out 3s infinite;
+  pointer-events: none;
+}
+.gem-sparkle::before { top: -4px; right: -4px; }
+.gem-sparkle::after { bottom: -3px; left: -4px; width: 5px; height: 5px; animation-delay: 3.25s; }
+@keyframes gem-glint {
+  0%, 9%, 100% { transform: scale(1); filter: none; }
+  4% { transform: scale(1.18) rotate(-8deg); filter: brightness(1.5) drop-shadow(0 0 2px hsl(var(--primary))); }
+}
+@keyframes gem-twinkle {
+  0%, 10%, 100% { transform: scale(0) rotate(0deg); }
+  4% { transform: scale(1.2) rotate(45deg); }
+  7% { transform: scale(0.7) rotate(90deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gem-sparkle > svg { animation: none; }
+  .gem-sparkle::before, .gem-sparkle::after { animation: none; display: none; }
+}
+
+/* A game drawer opening out of its rail (`PanelDrawer`). */
+@keyframes drawer-open-left {
+  from { opacity: 0; transform: translateX(-0.75rem); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes drawer-open-right {
+  from { opacity: 0; transform: translateX(0.75rem); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* A game side's content arriving after a collapse or dock (`SideColumn`). */
+@keyframes side-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* Streamdown animates each word in a bare inline <span>; transforms (move/scale) need a transformable

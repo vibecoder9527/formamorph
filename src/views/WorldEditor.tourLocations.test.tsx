@@ -239,6 +239,16 @@ describe('Authoring Tour — add steps', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveTextContent('The Tidewell'));
   });
 
+  it('shows the Connection step on the Connections tab, and Use Example opens the new row', async () => {
+    const { ctx } = await resumeAt('location-connection');
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Connections', selected: true })).toBeInTheDocument());
+    expect(screen.queryByRole('button', { expanded: true, name: /^The Tidewell, / })).not.toBeInTheDocument();
+    fireEvent.click(noteButton('Use Example')!);
+    await waitFor(() => expect(ctx().connections).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'The Tidewell, Both Ways' })).toHaveAttribute('aria-expanded', 'true'));
+    expect(screen.getByLabelText('Travel Hint to The Tidewell')).toHaveTextContent('down the lane past the net sheds');
+  });
+
   it('makes the add step current again when its location is deleted', async () => {
     const { ctx } = await resumeAt('location-connection');
 
@@ -410,7 +420,7 @@ describe('In Game — Locations', () => {
     await waitFor(() => expect(ctx().connections).toHaveLength(1));
     const [tidewell, lantern] = ['The Tidewell', 'The Salt Lantern'].map((n) => ctx().locations.find((l) => l.name === n)!.id);
     // The step selects the second location, so the only direction control on screen runs from there.
-    const setDirection = async (name: 'Outgoing' | 'Incoming', from: string, to: string) => {
+    const setDirection = async (name: 'To There' | 'To Here', from: string, to: string) => {
       fireEvent.click(screen.getByRole('radio', { name }));
       await waitFor(() => expect(connectionLegs(ctx().connections[0]).map((l) => [l.from, l.to])).toEqual([[from, to]]));
     };
@@ -426,13 +436,13 @@ describe('In Game — Locations', () => {
       expect(marks(change)).toEqual(['down the lane past the net sheds']);
     };
 
-    // Two-Way: the first tour location.
+    // Both Ways: the first tour location.
     await expectStandsAt('The Tidewell', 'The Salt Lantern');
     // One-way, second → first: the second tour location, the only end with somewhere to go.
-    await setDirection('Outgoing', lantern, tidewell);
+    await setDirection('To There', lantern, tidewell);
     await expectStandsAt('The Salt Lantern', 'The Tidewell');
     // One-way, first → second: the first tour location again.
-    await setDirection('Incoming', tidewell, lantern);
+    await setDirection('To Here', tidewell, lantern);
     await expectStandsAt('The Tidewell', 'The Salt Lantern');
   });
 });

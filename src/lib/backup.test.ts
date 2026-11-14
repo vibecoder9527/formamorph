@@ -1,6 +1,7 @@
 // Must load before importing anything that opens IndexedDB.
 import 'fake-indexeddb/auto';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { refuseReads } from '@/test/idbRefusal';
 
 // The worker's own op, run in-process: jsdom and node have no Worker.
 vi.mock('@/lib/jsonFileWorkerUtils', async () => {
@@ -190,6 +191,8 @@ async function applyRecording(index: BackupIndex, overwrite = NO_OVERWRITE) {
 }
 
 describe('backup round trip (IndexedDB)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
   beforeEach(async () => {
     for (const [db, store] of STORES) await wipe(db, store);
   });
@@ -202,6 +205,16 @@ describe('backup round trip (IndexedDB)', () => {
     expect(items.worlds).toEqual([{ id: 'w1', label: 'Sedge Landing' }]);
     expect(items.entities).toEqual([{ id: 'e1', label: 'Mara' }]);
     expect(items.dictionaries).toEqual([]);
+  });
+
+  it('backs up the other worlds when one world file is lost', async () => {
+    await seed('worldsDB', 'worlds', [{ id: 'w1', name: 'Keep' }, { id: 'lost', name: 'Lost' }]);
+    const restore = refuseReads({ worlds: ['lost'] });
+
+    const bundle = await buildBackup({ worlds: new Set(['w1', 'lost']) });
+
+    restore();
+    expect(bundle.data.worlds.map((r) => r.id)).toEqual(['w1']);
   });
 
   it('exports only the selected ids', async () => {

@@ -11,6 +11,7 @@ import { resetTtsPlayback, setTtsPlayback } from '@/test/stubs/ttsPlayback';
 import { lastVrmViewerProps, resetVrmViewerStub } from '@/test/stubs/vrmViewer';
 
 import { phValues } from '@/test/placeholderValues';
+import ModelStorageService from '@/services/ModelStorageService';
 // three.js needs a WebGL context and the TTS engine a Web Audio graph; jsdom has neither.
 vi.mock('@/views/VRMViewer', () => import('@/test/stubs/vrmViewer'));
 vi.mock('@/lib/useTtsPlayback', () => import('@/test/stubs/ttsPlayback'));
@@ -32,6 +33,7 @@ vi.mock('@/components/prompt/TagChipField', () => ({
 afterEach(() => {
   resetTtsPlayback();
   resetVrmViewerStub();
+  vi.restoreAllMocks();
 });
 
 const TURNS = [
@@ -163,6 +165,9 @@ describe('MiddlePanel — the audio row', () => {
 
 describe('LeftPanel', () => {
   it('draws the player model for a world that has one', async () => {
+    // User's Default shows a library Avatar, so the player has one in the library.
+    vi.spyOn(ModelStorageService, 'getModelMetadata').mockResolvedValue([{ id: 'heron', name: 'Heron' }] as never);
+    vi.spyOn(ModelStorageService, 'getModelData').mockResolvedValue({ blob: new Blob() } as never);
     renderLeftPanel({}, {
       world: { worldOverview: { ...worldFixture().worldOverview, legacyVrmFallback: { kind: 'default' } } },
       seed: (gameplay) => gameplay.setCharacterData({
@@ -286,7 +291,7 @@ describe('LeftPanel', () => {
     const world = LOOK_WORLD([{ id: 'e1', name: 'Bram' }, { id: 'e2', name: 'Hesk' }]);
     renderLeftPanel({ entities: world.entities as never }, {
       world: world as never,
-      seed: (gameplay) => { stageYard(gameplay); gameplay.setEntityFollowers(['e1']); },
+      seed: (gameplay) => { stageYard(gameplay); gameplay.setUniqueStates({ e1: { startId: 's', lastRun: 0, follow: { mode: 'following' } } }); },
     });
 
     openEntitiesTab();
@@ -337,6 +342,35 @@ describe('LeftPanel', () => {
       expect(view.props.onEntityClick).not.toHaveBeenCalled();
       fireEvent.click(screen.getByText('Sylvie Thornwhistle'));
       expect(view.props.onEntityClick).toHaveBeenCalledWith('Sylvie Thornwhistle');
+    });
+  });
+
+  describe('a stranger with only a Stranger Description', () => {
+    const IVO = { id: 'e1', name: 'Ivo the Bold', strangerDescription: 'A broad man in a dented helm.' };
+    const WORLD = LOOK_WORLD([IVO, { id: 'e2', name: 'Bram' }]);
+
+    it('shows by its real Name and opens the stranger popup under it', () => {
+      const view = renderLeftPanel({ entities: WORLD.entities as never }, { world: WORLD as never, seed: stageYard });
+
+      openEntitiesTab();
+      expect(rowNames()).toEqual(['Ivo the Bold', 'Bram']);
+      fireEvent.click(screen.getByText('Ivo the Bold'));
+      expect(view.props.onStrangerClick).toHaveBeenCalledWith('e1', 'Ivo the Bold');
+      expect(view.props.onEntityClick).not.toHaveBeenCalled();
+    });
+
+    it('opens the full popup once met', () => {
+      const view = renderLeftPanel({ entities: WORLD.entities as never }, {
+        world: WORLD as never,
+        seed: (gameplay) => { stageYard(gameplay); gameplay.setMetEntities(['e1']); },
+      });
+
+      openEntitiesTab();
+      // The first click selects the row; the second opens the popup.
+      fireEvent.click(screen.getByText('Ivo the Bold'));
+      fireEvent.click(screen.getByText('Ivo the Bold'));
+      expect(view.props.onStrangerClick).not.toHaveBeenCalled();
+      expect(view.props.onEntityClick).toHaveBeenCalledWith('Ivo the Bold');
     });
   });
 
@@ -867,7 +901,7 @@ describe('RightPanel — the traits tab against an edited world', () => {
     expect(box).toBeEnabled();
 
     fireEvent.click(box);
-    expect(view.props.onToggleTrait).toHaveBeenCalledWith('t-brave', false, null);
+    expect(view.props.onToggleTrait).toHaveBeenCalledWith('t-brave', false, null, null);
   });
 
   it('offers no switch when the author has not marked it switchable', () => {
@@ -922,7 +956,7 @@ describe('RightPanel — acquirable traits in the traits tab', () => {
     const view = renderPanel();
     openDisabled();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Switch on Feral' }));
-    expect(view.props.onToggleTrait).toHaveBeenCalledWith('t-first', true, null);
+    expect(view.props.onToggleTrait).toHaveBeenCalledWith('t-first', true, null, null);
   });
 
   it('leaves a trait the author never marked switchable out of the panel entirely', () => {

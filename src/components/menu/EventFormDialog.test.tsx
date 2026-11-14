@@ -2,6 +2,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { toast } from 'react-toastify';
 import { toastTexts } from '@/test/toastText';
+import { pickCalendarDay } from '@/test/calendar';
 import { EventFormDialog } from './EventFormDialog';
 import EventService from '@/services/EventService';
 import { daysFrom, serverEvent } from '@/test/serverEvents';
@@ -39,33 +40,31 @@ const event = (over: Partial<ServerEvent> = {}): ServerEvent =>
 const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
 const type = (label: string, value: string) => fireEvent.change(field(label), { target: { value } });
 
+/** Open the themed Poster color picker and enter a hex, the way an organizer does. */
+const choosePosterColor = async (hex: string) => {
+  fireEvent.click(screen.getByRole('button', { name: 'Poster color' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Hex Color' }), { target: { value: hex } });
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Hex Color' })).toBeNull());
+};
+
 /**
  * The themed picker holds a day and an hour apart, so a window is set as the pair an admin sets: open
  * the calendar, page forward to the month, press the day, then type the hour.
  */
-const setMoment = (label: string, day: string, time: string) => {
-  fireEvent.click(screen.getByRole('button', { name: `${label} date` }));
-
-  const dayCell = () => screen.queryByRole('button', { name: new RegExp(day) });
-  // The calendar opens on whatever month it was already showing, so page toward the target either way.
-  const target = new Date(day.replace(/(\d+)(st|nd|rd|th)/, '$1')).getTime();
-  const shown = () => new Date(`${screen.getByRole('grid').getAttribute('aria-label')} 1`).getTime();
-
-  for (let paged = 0; paged < 36 && !dayCell(); paged++) {
-    fireEvent.click(screen.getByRole('button', { name: target > shown() ? /Next Month/i : /Previous Month/i }));
-  }
-
-  fireEvent.click(dayCell()!);
+const setMoment = async (label: string, day: string, time: string) => {
+  const opener = screen.getByRole('button', { name: `${label} date` });
+  await pickCalendarDay(opener, new RegExp(day), new Date(day.replace(/(\d+)(st|nd|rd|th)/, '$1')));
   fireEvent.change(field(`${label} time`), { target: { value: time } });
 };
 
 /** Fill everything a new event needs, so a test can then change the one thing it is about. */
-const fillValid = () => {
+const fillValid = async () => {
   type('Title', 'Autumn Hauntings Contest');
   type('Banner Text', 'Something stirs in the leaves.');
   type('Details', 'Enter by publishing a world with the switch on.');
-  setMoment('Starts', 'October 1st, 2026', '12:00');
-  setMoment('Ends', 'October 21st, 2026', '12:00');
+  await setMoment('Starts', 'October 1st, 2026', '12:00');
+  await setMoment('Ends', 'October 21st, 2026', '12:00');
 };
 
 beforeEach(() => {
@@ -108,7 +107,7 @@ describe('scheduling one', () => {
     const create = vi.spyOn(EventService, 'create').mockResolvedValue(event());
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     type('Rules', 'One entry per creator.');
     fireEvent.click(screen.getByRole('button', { name: /Create Event/ }));
 
@@ -127,7 +126,7 @@ describe('scheduling one', () => {
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
     fireEvent.mouseDown(screen.getByRole('tab', { name: /Announcement/ }));
-    fillValid();
+    await fillValid();
     fireEvent.click(screen.getByRole('button', { name: /Create Event/ }));
 
     await waitFor(() => expect(create).toHaveBeenCalled());
@@ -138,8 +137,8 @@ describe('scheduling one', () => {
     const create = vi.spyOn(EventService, 'create').mockResolvedValue(event());
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
-    setMoment('Ends', 'September 1st, 2026', '12:00');
+    await fillValid();
+    await setMoment('Ends', 'September 1st, 2026', '12:00');
     fireEvent.click(screen.getByRole('button', { name: /Create Event/ }));
 
     expect(create).not.toHaveBeenCalled();
@@ -161,7 +160,7 @@ describe('scheduling one', () => {
     const onOpenChange = vi.fn();
     render(<EventFormDialog open onOpenChange={onOpenChange} />);
 
-    fillValid();
+    await fillValid();
     fireEvent.click(screen.getByRole('button', { name: /Create Event/ }));
 
     await waitFor(() => expect(toastTexts(vi.mocked(toast.error))).toContain('That window overlaps the contest "Spring Tides"View Details →'));
@@ -196,8 +195,8 @@ describe('editing one', () => {
     render(<EventFormDialog open onOpenChange={() => {}} editing={scheduled} />);
 
     expect(screen.getByRole('button', { name: 'Starts date' })).not.toBeDisabled();
-    setMoment('Starts', 'November 1st, 2026', '12:00');
-    setMoment('Ends', 'November 21st, 2026', '12:00');
+    await setMoment('Starts', 'November 1st, 2026', '12:00');
+    await setMoment('Ends', 'November 21st, 2026', '12:00');
     fireEvent.click(screen.getByRole('button', { name: /Save Event/ }));
 
     await waitFor(() => expect(update).toHaveBeenCalled());
@@ -241,11 +240,18 @@ describe('the prose fields', () => {
 });
 
 describe('styling the poster', () => {
-  it('previews the band from what is in the form right now', () => {
+  it('offers the themed picker, not the native color input', () => {
+    render(<EventFormDialog open onOpenChange={() => {}} />);
+
+    expect(screen.getByRole('button', { name: 'Poster color' }).querySelector('[data-color-swatch]')).not.toBeNull();
+    expect(document.querySelector('input[type="color"]')).toBeNull();
+  });
+
+  it('previews the band from what is in the form right now', async () => {
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
     type('Title', 'Autumn Hauntings Contest');
-    fireEvent.change(field('Poster color'), { target: { value: '#7c3aed' } });
+    await choosePosterColor('#7c3aed');
 
     const preview = screen.getByTestId('poster-preview');
     expect(preview.textContent).toContain('Autumn Hauntings Contest');
@@ -257,8 +263,8 @@ describe('styling the poster', () => {
     const create = vi.spyOn(EventService, 'create').mockResolvedValue(event());
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
-    fireEvent.change(field('Poster color'), { target: { value: '#7C3AED' } });
+    await fillValid();
+    await choosePosterColor('#7C3AED');
     fireEvent.click(screen.getByRole('button', { name: /Create Event/ }));
 
     await waitFor(() => expect(create).toHaveBeenCalled());
@@ -269,7 +275,7 @@ describe('styling the poster', () => {
     const create = vi.spyOn(EventService, 'create').mockResolvedValue(event());
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     fireEvent.click(screen.getByRole('button', { name: /Create Event/ }));
 
     await waitFor(() => expect(create).toHaveBeenCalled());
@@ -280,8 +286,8 @@ describe('styling the poster', () => {
     const create = vi.spyOn(EventService, 'create').mockResolvedValue(event());
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
-    fireEvent.change(field('Poster color'), { target: { value: '#7c3aed' } });
+    await fillValid();
+    await choosePosterColor('#7c3aed');
     fireEvent.click(screen.getByRole('button', { name: 'Default Color' }));
     fireEvent.click(screen.getByRole('button', { name: /Create Event/ }));
 
@@ -290,9 +296,10 @@ describe('styling the poster', () => {
   });
 
   it('opens an edit on the styling the event already carries', () => {
+    // The picker's description is its hex value.
     render(<EventFormDialog open onOpenChange={() => {}} editing={event({ posterColor: '#1e3a8a' })} />);
 
-    expect(field('Poster color').value).toBe('#1e3a8a');
+    expect(screen.getByRole('button', { name: 'Poster color' })).toHaveAccessibleDescription('#1e3a8a');
   });
 
   it('leaves stored artwork alone on an edit that never touched it', async () => {
@@ -330,7 +337,7 @@ describe('styling the poster', () => {
     const create = vi.spyOn(EventService, 'create').mockResolvedValue(event());
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     const art = new File(['art-bytes'], 'band.png', { type: 'image/png' });
     fireEvent.change(field('Poster image'), { target: { files: [art] } });
 
@@ -355,8 +362,8 @@ describe('the band preview before a window is set', () => {
     const preview = screen.getByTestId('poster-preview');
     expect(preview.textContent).not.toContain('–');
 
-    setMoment('Starts', 'October 1st, 2026', '12:00');
-    setMoment('Ends', 'October 21st, 2026', '12:00');
+    await setMoment('Starts', 'October 1st, 2026', '12:00');
+    await setMoment('Ends', 'October 21st, 2026', '12:00');
 
     expect(screen.getByTestId('poster-preview').textContent).toContain('–');
   });
@@ -453,7 +460,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     await cancelPositioning();
 
@@ -474,7 +481,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     // Up 50 pixels against a picture drawn 400 tall: an eighth of it, so the focal point moves down.
     dragBy(0, -50);
@@ -491,7 +498,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     dragBy(0, -50);
     await cancelPositioning();
@@ -509,7 +516,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     dragBy(0, -9999);
     savePosition();
@@ -526,7 +533,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     fireEvent.wheel(surface(), { deltaY: -100 });
     savePosition();
@@ -542,7 +549,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     fireEvent.click(screen.getByLabelText('Zoom in'));
     fireEvent.click(screen.getByLabelText('Zoom in'));
@@ -577,7 +584,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     dragBy(0, -50);
     fireEvent.click(screen.getByRole('button', { name: /Reset/ }));
@@ -595,7 +602,7 @@ describe('framing the poster artwork', () => {
     stubBandSize();
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     dragBy(0, -50);
     savePosition();
@@ -697,7 +704,7 @@ describe('the framing guards', () => {
     });
     render(<EventFormDialog open onOpenChange={() => {}} />);
 
-    fillValid();
+    await fillValid();
     await uploadArt();
     dragBy(0, -50);
     savePosition();

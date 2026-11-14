@@ -4,6 +4,8 @@ import { OwnerFlyoutReference } from '@/components/design-system/OwnerFlyoutRefe
 import { BreadcrumbPickerReference } from '@/components/design-system/BreadcrumbPickerReference';
 import { ItemIconPickerReference } from '@/components/design-system/ItemIconPickerReference';
 import { TravelHintPairReference } from '@/components/design-system/TravelHintPairReference';
+import { ConnectionFieldsReference } from '@/components/design-system/ConnectionFieldsReference';
+import { RoutineSentenceReference } from '@/components/design-system/RoutineSentenceReference';
 import { FormaquestionReference } from '@/components/design-system/FormaquestionReference';
 import { FeedbackFilterRowReference } from '@/components/design-system/FeedbackFilterRowReference';
 import { SupporterFlairReference } from '@/components/design-system/SupporterFlairReference';
@@ -59,7 +61,12 @@ import { PanelTabStripReference } from '@/components/design-system/PanelTabStrip
 import { EntityPopupReference } from '@/components/design-system/EntityPopupReference';
 import { SectionsBarReference } from '@/components/design-system/SectionsBarReference';
 import { NavRailReference } from '@/components/design-system/NavRailReference';
+import { TwoSegmentButtonReference } from '@/components/design-system/TwoSegmentButtonReference';
+import { WindowCornerReference } from '@/components/design-system/WindowCornerReference';
 import { AllowanceRingReference } from '@/components/design-system/AllowanceRingReference';
+import { HereMarkReference } from '@/components/design-system/HereMarkReference';
+import { UsageReportReference } from '@/components/design-system/UsageReportReference';
+import { SegmentedBarReference } from '@/components/design-system/SegmentedBarReference';
 import { SurfaceAppBarReference } from '@/components/design-system/SurfaceAppBarReference';
 import { HistoryControlsReference } from '@/components/design-system/HistoryControlsReference';
 import { RichListReferences } from '@/components/design-system/RichListReferences';
@@ -374,10 +381,40 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     Component: NavRailReference,
   },
   {
+    id: 'two-segment-button',
+    label: 'Two-Segment Button',
+    description: 'Two related actions as one round pill',
+    Component: TwoSegmentButtonReference,
+  },
+  {
+    id: 'window-corner',
+    label: 'Window Corner',
+    description: 'The corner gradient and window button dimming',
+    Component: WindowCornerReference,
+  },
+  {
     id: 'allowance-ring',
     label: 'Allowance Ring',
     description: 'A filling ring beside Send, and its breakdown bars',
     Component: AllowanceRingReference,
+  },
+  {
+    id: 'here-mark',
+    label: 'Here Mark',
+    description: 'A pin on the routine parts that name this location',
+    Component: HereMarkReference,
+  },
+  {
+    id: 'usage-report',
+    label: 'Usage Report',
+    description: 'Section tabs, figure tiles, a day chart, ranked bars and their tables',
+    Component: UsageReportReference,
+  },
+  {
+    id: 'segmented-bar',
+    label: 'Segmented Bar',
+    description: 'Parts of one whole on a flat track, with marks and a legend',
+    Component: SegmentedBarReference,
   },
   {
     id: 'surface-app-bar',
@@ -438,6 +475,18 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     label: 'Travel Hints',
     description: 'Two Travel Hint boxes joined by a link toggle',
     Component: TravelHintPairReference,
+  },
+  {
+    id: 'connection-widget',
+    label: 'Connection Widget',
+    description: 'Travel, Distance and Travel Hints for one Connection, with the distance mark',
+    Component: ConnectionFieldsReference,
+  },
+  {
+    id: 'routine-sentences',
+    label: 'Routine Sentences',
+    description: 'A schedule read as sentences whose parts open their own editors',
+    Component: RoutineSentenceReference,
   },
   {
     id: 'formaquestion',

@@ -8,14 +8,15 @@ import { readLibraryDetails } from './contentAuthor';
 import { remintOpenings } from './openings';
 import { migrateEntityScriptText } from './scriptTextMigration';
 import { WrittenImportError } from './writtenImportError';
-import { APP_VERSION, WORLD_FILE_KIND, SAVE_FILE_KIND, conditionWithOwnerKey, globalRowTarget, migrateCarriedPlaceholders, migrateEntityStatFields, migrateEntityStatScripts } from './version';
+import { APP_VERSION, WORLD_FILE_KIND, SAVE_FILE_KIND, conditionWithOwnerKey, globalRowTarget, migrateCarriedPlaceholders, migrateEntityMorphBindings, migrateEntityStatFields, migrateEntityStatScripts } from './version';
 import { DICTIONARY_FILE_KIND } from './dictionaryFile';
 import type { WorldAssociation } from './compatibleWorlds';
 import { readComponentFileLinks, type ComponentFileLinks, type ComponentFileSource } from './componentFileLinks';
 import { chipTexts } from './linkedContent';
 import { carriedPlaceholders, sharedPlaceholdersUsed } from './placeholderHomes';
 import { portablePlaceholders } from './placeholderGroups';
-import type { Dictionary } from '@/types';
+import type { Dictionary, OnMap } from '@/types';
+import { storedOnMap } from './onMap';
 import { embedEntityCard, readEntityCard } from './entityCard';
 import { readTavernCard, readTavernJson } from './tavernCard';
 import { IMAGE_CAPS, bytesToDataUrl, dataUrlMime, measureDataUrl, optimizeImageDataUrl, optimizeToWebpDataUrl } from './imageOptim';
@@ -23,7 +24,7 @@ import { primaryImage } from './entityImages';
 import { fetchAsDataUrl, isRemoteImage } from './imageSource';
 import { morphCardImage } from './morphArtCanvas';
 import { portableOwnedStats, type OwnedStatFields } from './portableStats';
-import { portableImages, portableOwnedTraits, type TraitWorld } from './portableTraits';
+import { portableEnabledGate, portableImages, portableOwnedTraits, type TraitWorld } from './portableTraits';
 import { carriedBlueprints } from './blueprintTravel';
 import { notFlag } from './requirementRows';
 import { daypartSet, isDaypart } from './gameClock';
@@ -43,6 +44,8 @@ export interface EntityCardData {
   pronouns?: string;
   /** The Persona mark. A shared persona arrives as a persona. */
   persona?: boolean;
+  /** How the map shows the entity; absent = Always. */
+  onMap?: OnMap;
   type?: string;
   playerDescription?: string;
   aiDescription?: string;
@@ -56,6 +59,8 @@ export interface EntityCardData {
   extraImages?: GalleryImage[];
   /** The primary's Visibility rule, which has no other home since the primary travels as the card's pixels. */
   primaryImageRequires?: TraitRequirementRow[];
+  /** The entity's Enabled gate. */
+  enabledWhen?: TraitRequirementRow[];
   /** The entity's own placeholders, as they are (see lib/placeholders). A card with no
    *  `sharedPlaceholders` carries everything its chips use here, and reads it all as owned. */
   placeholders?: Placeholder[];
@@ -107,6 +112,7 @@ export function buildEntityCardData(
   const reworded = owned.flatMap((p) => Object.values(p.valueOverrides ?? {}).flatMap((o) => (o.text ? [o.text.value] : [])));
   const shared = portablePlaceholders(sharedPlaceholdersUsed([...chipTexts(entity), ...reworded], [...owned, ...blueprints], available));
   const [primary, ...extras] = portableImages(entity, world);
+  const enabledWhen = portableEnabledGate(entity, world);
   return {
     formamorphKind: ENTITY_FILE_KIND,
     version: APP_VERSION,
@@ -115,6 +121,7 @@ export function buildEntityCardData(
     ...(entity.aliases?.length ? { aliases: entity.aliases } : {}),
     ...(entity.pronouns ? { pronouns: entity.pronouns } : {}),
     ...(entity.persona ? { persona: true } : {}),
+    ...storedOnMap(entity.onMap),
     ...(entity.type ? { type: entity.type } : {}),
     ...(entity.playerDescription ? { playerDescription: entity.playerDescription } : {}),
     ...(entity.aiDescription ? { aiDescription: entity.aiDescription } : {}),
@@ -123,6 +130,7 @@ export function buildEntityCardData(
     ...(entity.imageTags ? { imageTags: entity.imageTags } : {}),
     ...(extras.length ? { extraImages: extras } : {}),
     ...(primary?.requires?.length ? { primaryImageRequires: primary.requires } : {}),
+    ...(enabledWhen ? { enabledWhen } : {}),
     ...(owned.length ? { placeholders: owned } : {}),
     ...(shared.length ? { sharedPlaceholders: shared } : {}),
     ...(blueprints.length ? { blueprints } : {}),
@@ -175,6 +183,7 @@ export function parseEntityCardData(raw: unknown, pixels?: Base64Data): Entity {
   const extras = Array.isArray(obj.extraImages) ? (obj.extraImages as unknown[]).flatMap(cardImage) : [];
   const primaryRows = Array.isArray(obj.primaryImageRequires) ? cardRows(obj.primaryImageRequires) : [];
   const images = pixels ? [{ data: pixels, ...(primaryRows.length ? { requires: primaryRows } : {}) }, ...extras] : extras;
+  const enabledWhen = Array.isArray(obj.enabledWhen) ? cardRows(obj.enabledWhen) : [];
   const openings = Array.isArray(obj.openings) ? (obj.openings as unknown[]).flatMap(cardOpening) : [];
   const weights = obj.openingWeights && typeof obj.openingWeights === 'object' && !Array.isArray(obj.openingWeights)
     ? Object.fromEntries(Object.entries(obj.openingWeights as Record<string, unknown>)
@@ -187,6 +196,7 @@ export function parseEntityCardData(raw: unknown, pixels?: Base64Data): Entity {
     ...(aliases.length ? { aliases } : {}),
     ...(typeof obj.pronouns === 'string' && obj.pronouns ? { pronouns: obj.pronouns } : {}),
     ...(obj.persona === true ? { persona: true } : {}),
+    ...storedOnMap(obj.onMap),
     ...(typeof obj.type === 'string' && obj.type ? { type: obj.type } : {}),
     ...(typeof obj.playerDescription === 'string' && obj.playerDescription ? { playerDescription: obj.playerDescription } : {}),
     ...(typeof obj.aiDescription === 'string' && obj.aiDescription ? { aiDescription: obj.aiDescription } : {}),
@@ -194,6 +204,7 @@ export function parseEntityCardData(raw: unknown, pixels?: Base64Data): Entity {
     ...(tags.length ? { tags } : {}),
     ...(typeof obj.imageTags === 'string' && obj.imageTags ? { imageTags: obj.imageTags } : {}),
     ...(images.length ? { images } : {}),
+    ...(enabledWhen.length ? { enabledWhen } : {}),
     // Carried placeholders ride along: the owned ones stay the entity's when it is added to a world, the shared
     // ones merge into the world's list (see `adoptEntityPlaceholders`).
     ...(Array.isArray(obj.placeholders) ? { placeholders: migrateCarriedPlaceholders(obj.placeholders) } : {}),
@@ -231,6 +242,15 @@ function cardRequirement(condition: unknown): TraitRequirement[] {
   if (!isRecord(raw) || typeof raw.id !== 'string') return [];
   const not = notFlag(raw.not);
   if (raw.kind === 'playingAs') return [{ kind: raw.kind, id: raw.id, ...nameOf(raw), ...not }];
+  if (raw.kind === 'option') {
+    const { operator, value, valueId } = raw;
+    const valueName = typeof raw.valueName === 'string' && raw.valueName ? { valueName: raw.valueName } : {};
+    if (operator !== undefined) {
+      return isStatComparison(operator) && typeof value === 'number' && Number.isFinite(value)
+        ? [{ kind: 'option', id: raw.id, ...nameOf(raw), operator, value }] : [];
+    }
+    return [{ kind: 'option', id: raw.id, ...nameOf(raw), ...(typeof valueId === 'string' && valueId ? { valueId, ...valueName } : {}), ...not }];
+  }
   if (raw.kind === 'stat') {
     const { operator, value, unit } = raw;
     if (!isStatComparison(operator) || typeof value !== 'number' || !Number.isFinite(value) || (unit !== 'raw' && unit !== 'percent')) return [];
@@ -392,7 +412,7 @@ function cardOwnedTraits(obj: Record<string, unknown>): Pick<Entity, 'traits' | 
  *  as an entity with none. */
 function cardOwnedStats(obj: Record<string, unknown>): OwnedStatFields {
   const { stats, statGroups, statLinks } = obj;
-  const { stats: s, statGroups: g, statLinks: l } = migrateEntityScriptText(migrateEntityStatScripts(migrateEntityStatFields({ stats, statGroups, statLinks }))) as OwnedStatFields;
+  const { stats: s, statGroups: g, statLinks: l } = migrateEntityScriptText(migrateEntityMorphBindings(migrateEntityStatScripts(migrateEntityStatFields({ stats, statGroups, statLinks })))) as OwnedStatFields;
   return { ...(s ? { stats: s } : {}), ...(g ? { statGroups: g } : {}), ...(l ? { statLinks: l } : {}) };
 }
 

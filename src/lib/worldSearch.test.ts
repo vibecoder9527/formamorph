@@ -7,6 +7,7 @@ import { collectSearchTargets, findMatches, refusesBlueprintInsert, replaceAll, 
 import type { SearchSources, SearchTarget } from '@/lib/worldSearch';
 import type { Connection, Dictionary, Entity, GameLocation, Item, Placeholder, Stat, Tool, Trait, WorldOverview } from '@/types';
 import { itemTabForField } from '@/views/itemPanelTabs';
+import { entityTabForField } from '@/views/entityPanelTabs';
 import { blankItem } from '@/lib/items';
 import { scriptEntryKey, type ScriptEdit } from '@/lib/worldScripts';
 
@@ -233,19 +234,18 @@ describe('collectSearchTargets', () => {
       { id: 'o2', text: 'The ferry bell rings twice.', kind: 'action' as const },
     ];
     const { src, writes } = sources({
-      worldOverview: overview({ openings, openingWeights: { o2: 3 }, openingsEnabled: false }),
+      worldOverview: overview({ openings, openingWeights: { o2: 3 } }),
     });
     const targets = collectSearchTargets(src);
     expect(targetFor(targets, openingFieldKey('o1')))
-      .toMatchObject({ value: 'You wake in the reed-beds.', fieldLabel: 'Opening 1', chipCapable: true });
+      .toMatchObject({ value: 'You wake in the reed-beds.', fieldLabel: 'Opening 1', chipCapable: true, tab: 'openings', itemId: 'world' });
     expect(targetFor(targets, openingFieldKey('o2'))).toMatchObject({ value: 'The ferry bell rings twice.' });
 
     targetFor(targets, openingFieldKey('o2')).write('The ferry bell rings once.');
-    // The switch and the weights are the author's; a replace edits one row's text and nothing else.
+    // The weights are the author's; a replace edits one row's text and nothing else.
     expect(writes).toEqual([['overview', expect.objectContaining({
       openings: [openings[0], { ...openings[1], text: 'The ferry bell rings once.' }],
       openingWeights: { o2: 3 },
-      openingsEnabled: false,
     })]]);
   });
 
@@ -253,7 +253,7 @@ describe('collectSearchTargets', () => {
     const openings = [{ id: 'o1', text: 'Mira waves from the jetty.', kind: 'narration' as const }];
     const { src, writes } = sources({ entities: [entity({ openings, openingWeights: { o1: 2 } })] });
     const target = targetFor(collectSearchTargets(src), openingFieldKey('o1'));
-    expect(target).toMatchObject({ itemId: 'e1', tab: 'entities', fieldLabel: 'Opening 1', chipCapable: true });
+    expect(target).toMatchObject({ itemId: 'entity:e1', tab: 'openings', fieldLabel: 'Opening 1', chipCapable: true });
 
     target.write('Mira waves from the pier.');
     expect(writes).toEqual([['entity', expect.objectContaining({
@@ -467,8 +467,8 @@ describe('Travel Hints', () => {
     const { src } = hinted({ id: 'c1', a: 'quay', b: 'garden', aToB: { hint: 'up the steps' }, bToA: { hint: 'down the steps' } });
     const hits = findMatches(collectSearchTargets(src), 'steps', LOOSE).map(({ target }) => target);
     expect(hits.map((t) => [t.itemId, t.fieldLabel, t.chipCapable, locationTabForField(t.fieldKey)])).toEqual([
-      ['quay', 'Travel Hint to Hill Garden', true, 'presence'],
-      ['garden', 'Travel Hint to Quay', true, 'presence'],
+      ['quay', 'Travel Hint to Hill Garden', true, 'connections'],
+      ['garden', 'Travel Hint to Quay', true, 'connections'],
     ]);
     hits[1].write('down the stair');
     expect(written).toEqual([{ id: 'c1', a: 'quay', b: 'garden', aToB: { hint: 'up the steps' }, bToA: { hint: 'down the stair' } }]);
@@ -480,6 +480,23 @@ describe('Travel Hints', () => {
     expect(matches.map((m) => m.target.itemId)).toEqual(['quay']);
     replaceAll(matches, () => 'ferry');
     expect(written.at(-1)).toMatchObject({ aToB: { hint: 'by the ferry' }, bToA: { hint: 'by the ferry' } });
+  });
+});
+
+describe('Entity Stranger fields', () => {
+  const STRANGER = { ...entity({ id: 'e1', name: 'Velka' }), strangerName: 'a veiled woman', strangerDescription: 'A grey cloak hides her face.' };
+  const hits = (query: string, advanced: boolean) =>
+    findMatches(collectSearchTargets({ ...sources({ entities: [STRANGER] }).src, advanced }), query, LOOSE)
+      .map(({ target }) => [target.fieldKey, entityTabForField(target.fieldKey)]);
+
+  it('opens Profile for a Stranger Name hit and Descriptions for a Stranger Description hit', () => {
+    expect(hits('veiled', true)).toEqual([['strangerName', 'profile']]);
+    expect(hits('grey cloak', true)).toEqual([['strangerDescription', 'descriptions']]);
+  });
+
+  it('drops both hits in Simple mode, which hides the fields', () => {
+    expect(hits('veiled', false)).toEqual([]);
+    expect(hits('grey cloak', false)).toEqual([]);
   });
 });
 
@@ -534,7 +551,7 @@ describe('Items, Scripts and Tools', () => {
       ['playerDescription', 'Player-Facing Description', true, 'descriptions'],
       ['aiDescription', 'AI-Facing Description', true, 'descriptions'],
       ['aiSummary', 'AI-Facing Summary', true, 'descriptions'],
-      ['unidentifiedName', 'Unidentified Name', true, 'descriptions'],
+      ['unidentifiedName', 'Unidentified Name', true, 'profile'],
       ['unidentifiedDescription', 'Unidentified Description', true, 'descriptions'],
       ['scripts[0].name', 'Script Name', false, 'scripts'],
       ['scripts[0].code', 'Script Code', false, 'scripts'],

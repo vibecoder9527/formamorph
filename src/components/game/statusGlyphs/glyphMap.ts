@@ -33,6 +33,7 @@ export const REQUEST_STATUS: Record<AIRequestType, RequestStatus> = {
   choices: { name: REQUEST_LABELS.choices, glyph: 'split' },
   statUpdates: { name: REQUEST_LABELS.statUpdates, glyph: 'chartColumnIncreasing' },
   locationChange: { name: REQUEST_LABELS.locationChange, glyph: 'mapPin' },
+  narratedMove: { name: REQUEST_LABELS.narratedMove, glyph: 'mapPin' },
   entityLocation: { name: REQUEST_LABELS.entityLocation, glyph: 'mapPin' },
   summary: { name: REQUEST_LABELS.summary, glyph: 'bookOpen' },
   milestoneSelect: { name: REQUEST_LABELS.milestoneSelect, glyph: 'bookOpen' },
@@ -63,6 +64,9 @@ export function requestStatus(type: AIRequestType | null | undefined): RequestSt
 export function requestLabel(status: RequestStatus): string {
   return `Generating ${status.name}…`;
 }
+
+/** A running turn held by a script's question to the player. */
+export const WAITING_FOR_ANSWER_STATUS: { label: string; glyph: StatusGlyphKey } = { label: 'Waiting for your answer…', glyph: 'hourglass' };
 
 /** Each background pass's label and glyph, in display precedence: the first running pass shows. */
 export const BACKGROUND_PASS_STATUS: Record<BackgroundPassKind, { label: string; glyph: StatusGlyphKey }> = {

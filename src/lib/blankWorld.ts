@@ -1,6 +1,7 @@
 import { randomUUID } from '@/lib/uuid';
 import { defaultDescriptorBands } from '@/lib/statDescriptors';
 import type { Entity, GameLocation, Stat, Trait, World } from '@/types';
+import { firstRoutine } from '@/lib/entityKind';
 
 /** The name New World gives a world. */
 export const NEW_WORLD_NAME = 'New World';
@@ -35,7 +36,7 @@ export const NEW_LOCATION_NAME = 'New Location';
 
 /** A location as the editor's Add button makes it. */
 export function newLocation(id: string, name = NEW_LOCATION_NAME): GameLocation {
-  return { id, name, playerDescription: '', aiDescription: '', aiSummary: '', nearbyUsesConnections: true };
+  return { id, name, playerDescription: '', aiDescription: '', aiSummary: '' };
 }
 
 /** How many entities and entity groups sit at the entity tree's root: the `order` a new root item takes. */
@@ -49,7 +50,10 @@ export const NEW_ENTITY_NAME = 'New Entity';
 
 /** An entity as the editor's Add button makes it, placed `order`th among the ungrouped entities. */
 export function newEntity(id: string, order: number, name = NEW_ENTITY_NAME): Entity {
-  return { id, name, playerDescription: '', aiDescription: '', aiSummary: '', type: '', groupId: null, order };
+  return {
+    id, name, playerDescription: '', aiDescription: '', aiSummary: '', type: '', groupId: null, order, kind: 'unique',
+    routines: [firstRoutine([], 'anywhere')],
+  };
 }
 
 /** How many traits and trait groups sit at the trait tree's root: the `order` a new root item takes. */

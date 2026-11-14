@@ -1,9 +1,27 @@
-import '@testing-library/jest-dom/vitest'; // augments Vitest's expect with DOM matchers
+import net from 'node:net';
 import { afterEach } from 'vitest';
-import { cleanup, configure } from '@testing-library/react';
+
+// Node-environment suites never render, so they skip loading these two.
+const testingLibrary = typeof window === 'undefined' ? undefined : await import('@testing-library/react');
+if (testingLibrary) await import('@testing-library/jest-dom/vitest'); // augments Vitest's expect with DOM matchers
+
+// Tests never leave this machine: `.env` names the live server, so an unstubbed call would reach it.
+// Sockets are the one door for fetch, http and jsdom's XHR. A refused call looks like being offline.
+const connect = net.Socket.prototype.connect as (...args: unknown[]) => net.Socket;
+net.Socket.prototype.connect = function guardedConnect(this: net.Socket, ...args: unknown[]) {
+  const first = Array.isArray(args[0]) ? (args[0] as unknown[])[0] : args[0];
+  const named = typeof first === 'object' && first !== null ? (first as { host?: string }).host : args[1];
+  const host = typeof named === 'string' ? named : 'localhost';
+  if (host === 'localhost' || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host)) {
+    return connect.apply(this, args);
+  }
+  const refusal = Object.assign(new Error(`A test tried to reach ${host}`), { code: 'ETESTNETWORK' });
+  process.nextTick(() => this.destroy(refusal));
+  return this;
+} as typeof net.Socket.prototype.connect;
 
 // `findBy*` and `waitFor` give up after this; a starved run must not read as a miss.
-configure({ asyncUtilTimeout: 10_000 });
+testingLibrary?.configure({ asyncUtilTimeout: 10_000 });
 
 // jsdom doesn't implement ResizeObserver; provide a no-op so components that observe element size
 // (e.g. MarkdownField's edit/preview height sharing) can render under test.
@@ -95,11 +113,13 @@ if (typeof window !== 'undefined' && typeof window.PointerEvent === 'undefined')
   class PointerEventStub extends MouseEvent {
     pointerId: number;
     pointerType: string;
+    isPrimary: boolean;
 
     constructor(type: string, init: PointerEventInit = {}) {
       super(type, init);
       this.pointerId = init.pointerId ?? 0;
       this.pointerType = init.pointerType ?? '';
+      this.isPrimary = init.isPrimary ?? false;
     }
   }
 
@@ -140,7 +160,7 @@ if (typeof window !== 'undefined') {
 // state that would otherwise carry one test's server answers into the next — the shared events list and
 // the prose read back behind it both live for the session by design.
 afterEach(async () => {
-  cleanup();
+  testingLibrary?.cleanup();
   // Imported here rather than at the top of this file, for two reasons. A static import would pull the
   // real `EventService` into every suite's module graph before its own `vi.mock` calls are registered,
   // and the cache would then read the live community server instead of the test's stub; and it reaches

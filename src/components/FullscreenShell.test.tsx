@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { FullscreenShell } from './FullscreenShell';
-import { dialogCornerButton } from '@/components/ui/dialog';
+import { dialogCornerButton, dialogSafeArea } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import type { MorphFullscreen } from '@/lib/useMorphFullscreen';
+import { MORPH_TRAVEL_EDGE, type MorphFullscreen } from '@/lib/useMorphFullscreen';
 
 const openMorph = (): MorphFullscreen => ({
   mounted: true,
@@ -45,12 +45,19 @@ describe('FullscreenShell', () => {
     expect(screen.getByText('Stat code').closest('div')?.className).toContain('sr-only');
   });
 
-  it('shows a heading only when asked, sized as a field caption and centered on mobile', () => {
+  it('shows a heading only when asked, sized as a dialog title and centered on mobile', () => {
     render(<FullscreenShell morph={openMorph()} title="Prompts" showTitle>body</FullscreenShell>);
     const heading = screen.getByText('Prompts');
-    // A caption, not a dialog heading: it names a box inside the app.
-    expect(heading.className).toContain('text-label');
+    expect(heading.className).toContain('text-title');
     expect(heading.parentElement?.className).toContain('text-center');
     expect(heading.parentElement?.className).toContain('sm:text-left');
+  });
+
+  it.each(['entering', 'open', 'leaving'] as const)('keeps the safe-area inset while %s', (phase) => {
+    const boxClassName = phase === 'open' ? '' : MORPH_TRAVEL_EDGE;
+    render(<FullscreenShell morph={{ ...openMorph(), phase, boxClassName }} title="Stat code">body</FullscreenShell>);
+    // A dropped inset makes the contents jump by the status bar's height as the window lands.
+    const classes = screen.getByRole('dialog').className.split(' ');
+    expect(classes).toEqual(expect.arrayContaining(dialogSafeArea.split(' ')));
   });
 });

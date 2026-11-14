@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
 import { Copy, X } from 'lucide-react';
 import { EmptyListHint } from '@/components/EmptyListHint';
@@ -7,6 +8,8 @@ import { useGameData } from '@/contexts/GameDataContext';
 import { newLocation } from '@/lib/blankWorld';
 import { copyWithFreshRolls, duplicateAfter } from '@/lib/duplicateAfter';
 import { matchesListSearch } from '@/lib/listSearch';
+import { locationRows } from '@/lib/locationTree';
+import { treeParentIds, type TreeCollapse } from '@/components/treeCollapse';
 import { randomUUID } from '@/lib/uuid';
 import type { FocusFieldHint } from '@/types';
 import { focusFieldForItem } from '@/views/findFocus';
@@ -15,17 +18,22 @@ import type { LocationView } from '@/views/locationViews';
 import { PanelErrorBoundary } from '@/components/PanelErrorBoundary';
 import LocationCanvas, { type ConnectionReveal, type SelectionReveal } from './LocationCanvas';
 import LocationManager from './LocationManager';
+import type { ConnectionOpen } from './LocationConnections';
 import LocationTree from './LocationTree';
+import type { EntityPick } from './useEntityPick';
 
 /** The World Editor's Locations tab as a List Editor adapter: the tree or the canvas, a flat sortable search, and the location panel. */
 export function useWorldLocationsAdapter({
-  selectedId, onSelect, search, view, tab, onTabChange, focusField, revealConnection, onConnectionRevealed,
-  revealSelection, onSelectionRevealed, onCanvasSelection,
+  selectedId, onSelect, search, collapse, view, tab, onTabChange, focusField, revealConnection, onConnectionRevealed,
+  revealSelection, onSelectionRevealed, onCanvasSelection, onOpenEntityRoutine, connectionOpen, onConnectionOpened,
+  entityPick,
 }: {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   /** The World Editor's shared search, which hides the open location while it leaves the location out. */
   search: ListSearch;
+  /** The tree's collapsed groups, held by the World Editor for the visit. */
+  collapse: TreeCollapse;
   view: LocationView;
   tab: LocationPanelTab;
   onTabChange: (tab: LocationPanelTab) => void;
@@ -38,9 +46,17 @@ export function useWorldLocationsAdapter({
   onSelectionRevealed?: () => void;
   /** Every selection the canvas reports. */
   onCanvasSelection?: (ids: string[]) => void;
+  /** Opens an entity's Routine tab from the Presence tab. */
+  onOpenEntityRoutine?: (entityId: string) => void;
+  /** A Connection row the open location's Connections tab should open. */
+  connectionOpen?: ConnectionOpen | null;
+  onConnectionOpened?: () => void;
+  /** The World Editor's entity pick, which the canvas picks and shows. */
+  entityPick?: EntityPick;
 }): ListEditorAdapter {
   const { locations, placeholders, placementLetters, placeholderOwners, addLocation, removeLocation, setLocations } = useGameData();
   const names = { placeholders, letters: placementLetters, owners: placeholderOwners };
+  const parents = useMemo(() => treeParentIds(locationRows(locations)), [locations]);
 
   const handleAdd = (typed: string) => {
     const id = randomUUID();
@@ -92,11 +108,13 @@ export function useWorldLocationsAdapter({
             revealSelection={revealSelection}
             onSelectionRevealed={onSelectionRevealed}
             onSelectionChange={onCanvasSelection}
+            entityPick={entityPick}
           />
         </PanelErrorBoundary>
       )
-      : <LocationTree selectedId={selectedId} onSelect={onSelect} />,
+      : <LocationTree selectedId={selectedId} onSelect={onSelect} collapse={collapse} />,
     ownsSlot: canvas,
+    collapse: { noun: 'locations', parents: canvas ? null : parents, state: collapse },
     rows,
     names,
     noun: 'locations',
@@ -109,6 +127,10 @@ export function useWorldLocationsAdapter({
           tab={tab}
           onTabChange={onTabChange}
           focusField={focusFieldForItem(focusField, location.id)}
+          connectionOpen={connectionOpen}
+          onConnectionOpened={onConnectionOpened}
+          onOpenEntityRoutine={onOpenEntityRoutine}
+          entityPick={entityPick}
         />
       );
     },

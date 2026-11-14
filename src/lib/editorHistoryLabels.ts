@@ -24,6 +24,7 @@ export const SLICE_TYPE_NAMES: Record<SliceName, [string, string]> = {
   bodies: ["Body", "Bodies"],
   placements: ["Placement", "Placements"],
   currencies: ["Currency", "Currencies"],
+  options: ["World Option", "World Options"],
 };
 
 /** Field labels as the editor shows them. A field missing here reads as its name in title case. */
@@ -38,6 +39,9 @@ export const FIELD_LABELS: Partial<Record<SliceName | "*", Record<string, string
     imageTags: "Image Tags",
     placeholderPins: "Placeholder Pins",
     openings: "Openings",
+    enabledWhen: "Enabled",
+    unlockedWhen: "Unlocked",
+    lockedText: "Locked Text",
   },
   worldOverview: {
     name: "World Name",
@@ -51,7 +55,6 @@ export const FIELD_LABELS: Partial<Record<SliceName | "*", Record<string, string
     introReadme: "Intro Readme",
     promptOverrides: "Prompt Overrides",
     openingWeights: "Opening Weights",
-    openingsEnabled: "Openings",
     allowedPersonas: "Allowed Personas",
     startPersona: "Starts On",
     mapBackground: "Map Background",
@@ -65,7 +68,8 @@ export const FIELD_LABELS: Partial<Record<SliceName | "*", Record<string, string
     regen: "Regen",
     regenUnit: "Regen",
     descriptors: "Stat Descriptors",
-    morphBindings: "Body Sliders",
+    morphBindings: "Sliders",
+    colorBindings: "Colors",
     scripts: "Scripts",
   },
   locations: {
@@ -74,6 +78,7 @@ export const FIELD_LABELS: Partial<Record<SliceName | "*", Record<string, string
     isStarting: "Starting Location",
     canvasPosition: "Position",
   },
+  traits: { morphPins: "Sliders", colorPins: "Colors" },
   connections: { aToB: "Travel Hint", bToA: "Travel Hint" },
   entities: { vrmPick: "Avatar" },
   statUpdates: { prompt: "Prompt", stats: "Stats" },

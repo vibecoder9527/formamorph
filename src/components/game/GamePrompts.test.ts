@@ -43,12 +43,12 @@ describe('default prompts carry the expected variable chips', () => {
       '<DICTIONARY|before>',
       '<TRAITS DESCRIPTION|markdown>',
       '<STATS DESCRIPTION|descriptions.markdown>',
-      '<PERSONA|markdown>',
+      '<PERSONA|norange.nodescription.markdown>',
       '<NOTES>',
       '<LOCATION|markdown>',
       '<LOCATION|sublocations.summary.markdown>',
       '<LOCATION|reachable.summary.markdown>',
-      '<ENTITIES|markdown>',
+      '<ENTITIES|norange.nodescription.markdown>',
       '<INVENTORY|markdown>',
       '<ENTITIES|sublocations.markdown>',
       '<ENTITIES|reachable.summary.markdown>',
@@ -60,21 +60,27 @@ describe('default prompts carry the expected variable chips', () => {
   });
 
   it('choices prompt', () => {
+    // Stat descriptors change most turns, so they sit last to keep the cacheable prefix long.
     expect(tokensIn(defaultChoicesPrompt)).toEqual([
       '<WORLD DESCRIPTION>',
       '<TRAITS DESCRIPTION|markdown>',
-      '<STATS DESCRIPTION|descriptions.markdown>',
-      '<PERSONA|summary.markdown>',
       '<NOTES>',
       '<LOCATION|summary.markdown>',
       '<LOCATION|sublocations.summary.markdown>',
       '<LOCATION|reachable.summary.markdown>',
-      '<ENTITIES|summary.markdown>',
+      '<ENTITIES|summary.norange.nodescription.markdown>',
       '<ENTITIES|sublocations.summary.markdown>',
       '<ENTITIES|reachable.summary.markdown>',
       '<ENTITIES|known.summary.markdown>',
+      '<STATS DESCRIPTION|descriptions.markdown>',
+      '<PERSONA|summary.norange.nodescription.markdown>',
       '<LANGUAGE>',
     ]);
+  });
+
+  it('choices prompt puts its fixed rules before any world chip', () => {
+    expect(defaultChoicesPrompt.indexOf('## Rules')).toBeGreaterThan(0);
+    expect(defaultChoicesPrompt.indexOf('## Rules')).toBeLessThan(defaultChoicesPrompt.indexOf('<WORLD DESCRIPTION'));
   });
 
   it('stat-updates prompt', () => {

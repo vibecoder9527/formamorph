@@ -22,6 +22,7 @@ import { ENTITY_EDITOR_SUBTABS, ENTITY_EDITOR_TABS, ENTITY_PANEL_TABS } from '@/
 import { ITEM_PANEL_TABS } from '@/views/itemPanelTabs';
 import { LOCATION_PANEL_TABS } from '@/views/locationPanelTabs';
 import { STAT_PANEL_TABS } from '@/views/statPanelTabs';
+import { OVERVIEW_PANEL_TABS } from '@/views/overviewPanelTabs';
 import { TRAIT_PANEL_TABS } from '@/views/traitPanelTabs';
 import { WORLD_EDITOR_TABS } from '@/views/worldEditorTabs';
 
@@ -49,6 +50,8 @@ const ENTRIES: [string, string][] = [
   ['codeRename', 'Update Code References'],
   ['replaceAll', 'Replace All'],
   ['deleteWorldAvatar', 'Delete Avatar'],
+  ['appearancePreview', 'Preview'],
+  ['statAppearancePreview', 'Preview'],
   ['savedElsewhere', 'World Saved in Another Tab'],
   ['deletedElsewhere', 'World Deleted in Another Tab'],
   ['settings', 'Settings'],
@@ -72,6 +75,7 @@ const ENTRIES: [string, string][] = [
   ['location', 'Change Location'],
   ['menu', 'Load Game'],
   ['backup', 'Backup & Restore'],
+  ['unreadableWorlds', "Worlds That Can't Be Read"],
   ['updateRequired', 'Update Formamorph'],
   ['changelog', "What's new"],
   ['avatar', 'Avatar Customization'],
@@ -83,6 +87,7 @@ const ENTRIES: [string, string][] = [
   ['auth', 'Login'],
   ['privacyPolicy', 'Privacy Policy'],
   ['credits', 'Credits'],
+  ['profileMerge', 'Merge Your Other Data'],
   ['usernameRename', 'Choose a New Username'],
   ['profile', 'User Profile'],
   ['deleteAccount', 'Delete Account'],
@@ -110,6 +115,7 @@ const ENTRIES: [string, string][] = [
   ['settingsPromptPreset.overview', OVERVIEW_LABEL],
   ...tabsOf('worldEditor', WORLD_EDITOR_TABS),
   ...tabsOf('worldEditorLocations', [{ value: 'list', label: 'List' }, { value: 'canvas', label: 'Canvas' }]),
+  ...tabsOf('worldEditorOverview', OVERVIEW_PANEL_TABS),
   ...tabsOf('worldEditorEntity', ENTITY_PANEL_TABS),
   ...tabsOf('worldEditorItem', ITEM_PANEL_TABS),
   ...tabsOf('worldEditorLocation', LOCATION_PANEL_TABS),
@@ -144,6 +150,9 @@ const ENTRIES: [string, string][] = [
   ['credits.credits', 'Credits'],
   ['credits.supporters', 'Supporters'],
   ['credits.licenses', 'Licenses'],
+  ['profileMerge.offer', 'Merge Offer'],
+  ['profileMerge.run', 'Merge Progress'],
+  ['profileMerge.result', 'Merge Result'],
   ['eventAck.start', 'Event Start'],
   ['eventAck.end', 'Event End'],
   ['gameViewer.entities', 'Entities'],
@@ -154,6 +163,7 @@ const ENTRIES: [string, string][] = [
   ['gameViewer.traits', 'Traits'],
   ['gameViewer.inventory', 'Inventory'],
   ['gameViewer.location', 'Location'],
+  ['gameViewer.options', 'World Options'],
 ];
 
 /** The label for each surface id the player can have open. */

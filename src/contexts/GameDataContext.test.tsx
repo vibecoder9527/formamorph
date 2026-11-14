@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { namedPlacesOf } from '@/lib/entityPlaces';
 import { renderHook, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { GameDataProvider, useGameData } from './GameDataContext';
@@ -6,6 +7,7 @@ import type { Stat, Tool, World } from '@/types';
 
 import { phValueId, phValues } from '@/test/placeholderValues';
 import { boxScripts } from '@/test/scriptFixtures';
+import { oneRoutine } from '@/test/routines';
 // The provider initializes IndexedDB storage on mount; stub it out so these tests exercise only
 // loadWorldData's normalization.
 vi.mock('../services/WorldStorageService', () => ({
@@ -27,7 +29,7 @@ describe('entity stats in the world store', () => {
   const trust: Stat = {
     id: 's-trust', name: 'Trust', type: 'number', description: 'How far Ash trusts you', min: -5, max: 20, value: 3, regen: 1,
     descriptors: [{ id: 'd1', threshold: 10, description: 'Wary' }], hidden: true, noDecrease: true, scripts: boxScripts({ after: 'return 1;' }),
-    morphBindings: ['Belly'],
+    morphBindings: [{ name: 'Belly' }],
   };
   const withStats = {
     ...world('w', {}),
@@ -286,7 +288,10 @@ describe('entity ↔ location membership', () => {
   // Membership is entity-owned (ADR-0003), so these worlds are stated the way the editor writes them.
   const worldWith = (entityIds: string[]) => ({
     ...world('w', {}),
-    entities: entityIds.map((id) => ({ id, name: id, locations: ['l1', 'l2'] })),
+    entities: entityIds.map((id) => ({
+      id, name: id, kind: 'generic', locations: ['l1', 'l2'],
+      routines: oneRoutine(['l1', 'l2'].map((place) => ({ id: place, place, weight: 1, schedule: [] }))),
+    })),
     locations: [
       { id: 'l1', name: 'Dock' },
       { id: 'l2', name: 'Green' },
@@ -310,7 +315,7 @@ describe('entity ↔ location membership', () => {
     act(() => { result.current.removeLocation('l1'); });
 
     // A stale id is invisible in every roster but rides into the exported world forever.
-    expect(result.current.entities[0].locations).toEqual(['l2']);
+    expect(namedPlacesOf(result.current.entities[0])).toEqual(['l2']);
   });
 
   it('moves the sub-locations of a deleted location up to its parent', () => {
@@ -348,7 +353,7 @@ describe('entity ↔ location membership', () => {
     const { result } = renderHook(() => useGameData(), { wrapper });
     act(() => { result.current.loadWorldData(legacyWorld); });
 
-    expect(result.current.entities[0].locations).toEqual(['l1']);
+    expect(namedPlacesOf(result.current.entities[0])).toEqual(['l1']);
     expect('entities' in result.current.locations[0]).toBe(false);
   });
 });
@@ -655,7 +660,7 @@ describe('loadWorldData', () => {
     act(() => { result.current.loadWorldData(exported); });
     expect(result.current.worldOverview.openings).toEqual(OPENINGS);
     expect(result.current.worldOverview.openingWeights).toEqual({ o1: 3 });
-    expect(result.current.worldOverview.openingsEnabled).toBe(false);
+    expect('openingsEnabled' in result.current.worldOverview).toBe(false);
   });
 
   it("carries the Map Background's images, rules, frame and opacity through an export and load", () => {
@@ -680,7 +685,7 @@ describe('loadWorldData', () => {
     const legacy = world('a', { openingCue: 'You wake in the reed-beds.' });
     act(() => { result.current.loadWorldData(legacy); });
     expect(result.current.worldOverview.openings?.map((o) => o.text)).toEqual(['You wake in the reed-beds.']);
-    expect(result.current.worldOverview.openingsEnabled).toBeUndefined();
+    expect('openingsEnabled' in result.current.worldOverview).toBe(false);
   });
 
   it("does not leak one world's openings into the next", () => {
@@ -688,7 +693,7 @@ describe('loadWorldData', () => {
     act(() => { result.current.loadWorldData(world('a', { openings: OPENINGS, openingsEnabled: false })); });
     act(() => { result.current.loadWorldData(world('b', {})); });
     expect(result.current.worldOverview.openings).toBeUndefined();
-    expect(result.current.worldOverview.openingsEnabled).toBeUndefined();
+    expect('openingsEnabled' in result.current.worldOverview).toBe(false);
   });
 
   it("carries the world's persona rules through the load, and does not leak them into the next world", () => {

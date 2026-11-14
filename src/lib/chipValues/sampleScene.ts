@@ -1,9 +1,10 @@
-import type { Currency, Entity, GameLocation, Item, ItemCopy, Placeholder, Stat, Trait, WorldOverview } from '@/types';
+import type { Currency, Entity, GameLocation, Item, ItemCopy, Placeholder, Stat, StatGroup, Trait, TraitGroup, WorldOverview } from '@/types';
 import type { ResolvedPersona } from '../persona';
 import { authoredChipScene, type AuthoredWorld } from './authoredScene';
 import { ownerStatParts } from '../statContext';
 import { seedNewGameStats } from '../traitRuntime';
 import type { ChipScene } from './chipScene';
+import { firstRoutine } from '@/lib/entityKind';
 
 // Generic on purpose, so no one takes the preview for their own world. Code-only, never in the library.
 
@@ -56,28 +57,36 @@ const trait = (id: string, name: string, aiDescription: string): Trait => ({
   id, name, aiDescription, isDefault: true, statChanges: [],
 });
 
+/** A Unique entity's routine: one Start at `place`, where it stays all day. */
+const staysAt = (id: string, place: string): Pick<Entity, 'kind' | 'routines'> => ({
+  kind: 'unique',
+  routines: [firstRoutine([
+    { id: `${id}-home`, place, weight: 1, schedule: [{ id: `${id}-stay`, time: 'allDay', action: { kind: 'stay', place } }] },
+  ])],
+});
+
 // Wren owns one stat and one trait, so the Entities chip's Only With and Include rows show lines in the sample.
 const wren: Entity = {
-  id: 'wren', name: 'Wren', locations: ['landing'], placeholders: [fixed('wren-pole', 'Pole', 'a hooked ash pole')],
+  id: 'wren', name: 'Wren', ...staysAt('wren', 'landing'), placeholders: [fixed('wren-pole', 'Pole', 'a hooked ash pole')],
   aiDescription: 'The lamp-keeper, gray-haired and unhurried, who has watched this shore longer than anyone will admit. Carries a hooked pole she uses for everything but its purpose.',
   aiSummary: 'The unhurried lamp-keeper.',
   traits: [trait('wren-night-watch', 'Night Watch', 'Keeps the lamp lit through the dark hours, whatever the weather.')],
   stats: [stat('wren-patience', 'Patience', 70, 'How long she waits on a stranger before she speaks.', [[30, 'Short'], [80, 'Measured'], [100, 'Endless']])],
 };
 const gull: Entity = {
-  id: 'gull', name: 'a gull', locations: ['landing'],
+  id: 'gull', name: 'a gull', ...staysAt('gull', 'landing'),
   aiDescription: 'Too fat to be wild, waiting on the post as if owed something.',
   aiSummary: 'Fat, waiting, owed something.',
 };
 const bell: Entity = {
-  id: 'bell', name: 'Bell', locations: ['boathouse'],
+  id: 'bell', name: 'Bell', ...staysAt('bell', 'boathouse'),
   aiDescription: 'A boat-mender working by feel in the dark of the boathouse, talking to the hull.',
   aiSummary: 'A boat-mender working in the dark.',
   traits: [trait('bell-by-touch', 'By Touch', 'Reads a hull with his fingers, and needs no light to find a leak.')],
   stats: [stat('bell-focus', 'Focus', 60, 'How steady his hands stay on a repair.', [[30, 'Scattered'], [80, 'Steady'], [100, 'Absorbed']])],
 };
 const harrow: Entity = {
-  id: 'harrow', name: 'Harrow', locations: ['sample-town'],
+  id: 'harrow', name: 'Harrow', ...staysAt('harrow', 'sample-town'),
   aiDescription: 'The man who sells maps in Sample Town, and is not currently at his stall.',
   aiSummary: 'The map-seller, absent from his stall.',
   traits: [trait('harrow-no-questions', 'No Questions', 'Sells a map to anyone, and never asks where it will be used.')],
@@ -86,7 +95,7 @@ const harrow: Entity = {
 
 // Known In the whole town, so the Known scope lists her at the Landing while she stands on the Causeway.
 const ossery: Entity = {
-  id: 'ossery', name: 'Mother Ossery', locations: ['causeway'], knownIn: ['sample-town'],
+  id: 'ossery', name: 'Mother Ossery', ...staysAt('ossery', 'causeway'), knownIn: ['sample-town'],
   aiDescription: 'The toll-keeper of the causeway, who has outlived three harbormasters and buried two of them.',
   aiSummary: 'The causeway toll-keeper everyone in town knows of.',
   traits: [trait('ossery-long-memory', 'Long Memory', 'Remembers every unpaid toll, and who it was owed by.')],
@@ -105,20 +114,26 @@ const ITEMS = [
 // The traveler and Wren hold Items and a gull doesn't, so the chip shows a balance on some owners only.
 const CURRENCIES: Currency[] = [{ id: 'tide-money', name: 'Coin', backing: { kind: 'items', items: [{ itemId: 'tide-bit', worth: 1 }, { itemId: 'tide-crown', worth: 10 }] } }];
 
+// One grouped and some top-level global stats and traits, so the Stats and Traits chips show both shapes.
+const STAT_GROUPS: StatGroup[] = [{ id: 'body', name: 'Body', aiDescription: 'What the coast has done to the traveler.', parentId: null }];
+const TRAIT_GROUPS: TraitGroup[] = [{ id: 'habits', name: 'Habits', aiDescription: 'Ways the traveler cannot help.', parentId: null }];
+
 /** The sample world the Settings preview renders when no game runs. */
 const SAMPLE_WORLD: AuthoredWorld = {
   worldOverview: overview,
   stats: [
-    stat('health', 'Health', 82, 'How much punishment the body still has in it.', [[30, 'Badly hurt'], [90, 'Bruised'], [100, 'Unhurt']]),
+    { ...stat('health', 'Health', 82, 'How much punishment the body still has in it.', [[30, 'Badly hurt'], [90, 'Bruised'], [100, 'Unhurt']]), groupId: 'body' },
     stat('resolve', 'Resolve', 40, 'The will to keep going when it stops being sensible.', [[25, 'Breaking'], [50, 'Fraying'], [100, 'Steady']]),
     stat('standing', 'Standing', 15, 'How the coast reckons the traveler.', [[20, 'A stranger'], [60, 'Known'], [100, 'Trusted']]),
   ],
+  statGroups: STAT_GROUPS,
   locations: [boathouse, tidePools, landing, causeway, sampleTown],
   entities: [wren, gull, bell, harrow, ossery],
   traits: [
-    trait('light-sleeper', 'Light Sleeper', 'Wakes at the smallest sound, and is never quite rested.'),
+    { ...trait('light-sleeper', 'Light Sleeper', 'Wakes at the smallest sound, and is never quite rested.'), groupId: 'habits' },
     trait('salvagers-eye', "Salvager's Eye", 'Spots the worth in a heap of junk, and rarely says so out loud.'),
   ],
+  traitGroups: TRAIT_GROUPS,
   dictionaries: [{
     id: 'sample-lore', name: 'Sample Lore', placeholders: [fixed('glass-color', 'Glass Color', 'sea green')], entries: [
       {

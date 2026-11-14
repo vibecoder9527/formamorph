@@ -3,12 +3,15 @@ import { OPENING_SCENE_CUE } from '@/components/game/GamePrompts';
 import { estimateTokens } from '@/lib/memoryUtils';
 import { drawNewGameOpening } from '@/lib/newGameOpening';
 import { activeDescriptor } from '@/lib/statContext';
-import type { Entity, GameLocation, Stat, Trait, TraitGroup, WorldOverview } from '@/types';
+import { PLAYER_START, type Entity, type EntityStart, type GameLocation, type Stat, type Trait, type TraitGroup, type WorldOption, type WorldOptionValues, type WorldOverview } from '@/types';
 import type { PlaceholderPick } from '@/lib/placeholders';
 import { buildLens, type LensState } from './lens';
 import { phValueId, phValues } from '@/test/placeholderValues';
 import {
   buildOpening, EMPTY_OPENING, primeOpeningRolls, rerollOpeningRolls, type OpeningWorld, type OpeningChoice } from './opening';
+import { AS_LISTED } from '@/test/asListed';
+import {  } from '@/lib/entityKind';
+import { oneRoutine } from '@/test/routines';
 
 // Chip tokens, spelled as the editor inserts them.
 const chip = (id: string, mode: 'world' | 'unique', placement: string) => `{{ph:${id}:${mode}:${placement}}}`;
@@ -301,12 +304,9 @@ describe('the assembled first prompt', () => {
     expect(opening.user).not.toContain(OPENING_SCENE_CUE);
   });
 
-  it('keeps the shipped cue for a world whose openings are switched off or blank', () => {
+  it('keeps the shipped cue for a world whose openings are blank', () => {
     const ov = (over: Partial<WorldOverview>) =>
       world({ worldOverview: { name: 'W', description: '', systemPrompt: '', ...over } as WorldOverview });
-    expect(openingFor(ov({
-      openings: [{ id: 'o1', text: 'Never applied.', kind: 'action' }], openingsEnabled: false,
-    })).user).toContain(OPENING_SCENE_CUE);
     expect(openingFor(ov({ openings: [{ id: 'o1', text: '   ', kind: 'action' }] })).user).toContain(OPENING_SCENE_CUE);
   });
 
@@ -429,6 +429,25 @@ describe('the opening pool', () => {
     expect(market.pool.map((r) => [r.ownerName, r.chance])).toEqual([[null, 20], [null, 60], ['Maren', 20]]);
   });
 
+  it('draws from the cast the Sample Placement puts at the chosen start', () => {
+    const stall = (id: string, name: string, starts: EntityStart[]): Entity => ({
+      id, name, kind: 'unique', routines: oneRoutine(starts, []), openings: [{ id: `o-${id}`, text: `${name} is here.`, kind: 'narration' }],
+    });
+    const w = pooled();
+    const sample = world({
+      ...w,
+      entities: [
+        // Begins at the market; a row names the harbor, which its stored list holds but no path reaches.
+        { ...stall('e-runner', 'Runner', [{ id: 'r1', place: 'market', weight: 1, schedule: [
+          { id: 'r1-day', time: 'allDay', action: { kind: 'stay', place: 'harbor' } },
+        ] }]), locations: ['market', 'harbor'] },
+        stall('e-urchin', 'Urchin', [{ id: 'u1', place: PLAYER_START, weight: 1, schedule: [] }]),
+      ],
+    });
+    expect(at(sample, 'market').pool.map((r) => r.ownerName)).toEqual([null, null, 'Runner', 'Urchin']);
+    expect(at(sample, 'harbor').pool.map((r) => r.ownerName)).toEqual([null, null, 'Urchin']);
+  });
+
   it('renders the user macro as the draw does', () => {
     const w = pooled({ openings: [{ id: 'o-greet', text: '{{user}} steps off the boat.', kind: 'narration' }] });
     expect(at(w, 'harbor').opening.text).toBe('You steps off the boat.');
@@ -470,19 +489,9 @@ describe('the opening pool', () => {
     expect(opening.system).not.toBe('');
   });
 
-  it('shows the default Opening Action for a switched-off list', () => {
-    const opening = at(pooled({ openingsEnabled: false }), 'market');
-    expect(opening.pool).toEqual([]);
-    expect(opening.openingsEnabled).toBe(false);
-    expect(opening.selectedKey).toBeNull();
-    expect(opening.opening).toEqual({ kind: 'action', text: OPENING_SCENE_CUE });
-    expect(opening.user).toContain(OPENING_SCENE_CUE);
-  });
-
   it('shows the default Opening Action for an empty pool', () => {
     const opening = at(pooled({ openings: [], openingWeights: undefined }), 'harbor');
     expect(opening.pool).toEqual([]);
-    expect(opening.openingsEnabled).toBe(true);
     expect(opening.opening).toEqual({ kind: 'action', text: OPENING_SCENE_CUE });
   });
 });
@@ -689,6 +698,20 @@ describe('the persona pick', () => {
     expect(texts(at(w, { personaId: 'e-wren' }))).toEqual(['You are Wren.']);
   });
 
+  it('starts under None at the Custom Persona’s own start place, not the pool’s first', () => {
+    // Harbor is the flagged first location; the Custom Persona lists the unflagged market.
+    const w = staged({
+      locations: [
+        { ...locations[0], isStarting: true, openings: [row('o-harbor', 'Gulls over the steps.')] },
+        { ...locations[1], isStarting: false, openings: [row('o-market', 'Stalls open.')] },
+      ],
+      entities: [...cast(), { ...custom(), openings: [], locations: ['market'] }],
+    });
+    const opening = at(w, { startLocationId: undefined });
+    expect(opening.pool.map((r) => r.locationName)).toContain('The Long Market');
+    expect(opening.pool.map((r) => r.locationName)).not.toContain('Harbor Steps');
+  });
+
   it('adds the location’s rows at the picked start and not at another', () => {
     const w = staged();
     const harbor = at(w, { startLocationId: 'harbor' }).pool;
@@ -742,11 +765,6 @@ describe('the persona pick', () => {
     expect(at(w, {}).opening.text).toBe('You wake.');
   });
 
-  it('shows the default opening when the switch is off, whatever the persona', () => {
-    const off = staged({ worldOverview: { ...ov, openings: [row('o-world', 'The fen wakes.')], openingsEnabled: false } });
-    expect(at(off, { personaId: 'e-wren' }).pool).toEqual([]);
-  });
-
   // The Bench reads the pool play draws from: every row a sweep of new-game draws can land on is a row
   // the Bench lists, and no other. Row texts are unique and weights equal, so text names a row and the
   // sweep reaches every one.
@@ -760,6 +778,7 @@ describe('the persona pick', () => {
       const drawn = new Set<string>();
       for (let i = 0; i < 50; i++) {
         drawn.add(drawNewGameOpening({
+          placesOf: AS_LISTED,
           pick: { ref }, worldEntities: w.entities ?? [], overview: w.worldOverview, locations: w.locations,
           startingLocationId: start, picked: [], random: () => i / 50,
         }).draw.opening.text);
@@ -816,6 +835,16 @@ describe('entity stats at game start', () => {
     const gatedOn = (value: number) => maren({ traits: [{ ...hardy, requires: [{ all: [{ kind: 'stat', id: 's-trust', operator: '>=', value, unit: 'raw' }] }] }] });
     expect(marenOf(staged([gatedOn(20)]))!.stats[0]).toMatchObject({ value: 35, max: 150 });
     expect(marenOf(staged([gatedOn(25)]))!.stats[0]).toMatchObject({ value: 20, max: 100 });
+  });
+
+  it('gates a default trait on a World Option at the lens’s pick, else the default (Q25)', () => {
+    const lit: WorldOption = { id: 'lit', name: 'Lanterns Lit', type: 'boolean', shownToPlayer: false, midGame: false, default: false };
+    const w = staged([maren({ traits: [{ ...hardy, requires: [{ all: [{ kind: 'option', id: 'lit' }] }] }] })], { options: [lit] });
+    const trustWith = (optionValues?: WorldOptionValues) =>
+      buildOpening(w, lensAt(w, optionValues ? { optionValues } : {}), primeOpeningRolls(w, {}, pickFirst)).entityStats[0].stats[0];
+    expect(trustWith()).toMatchObject({ value: 20, max: 100 });
+    expect(trustWith({ lit: true })).toMatchObject({ value: 35, max: 150 });
+    expect(trustWith({ lit: false })).toMatchObject({ value: 20, max: 100 });
   });
 
   it('leaves out a trait a fresh game does not pick', () => {

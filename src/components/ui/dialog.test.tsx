@@ -16,6 +16,62 @@ const classesFor = (shell: string) => {
   return screen.getByLabelText('shell').className.split(/\s+/);
 };
 
+describe('room for the window buttons', () => {
+  const ROOM = '[[data-window-overlay]_&]:top-[var(--header-line)]';
+  const placed = (placement?: 'centered' | 'own') => {
+    render(
+      <Dialog open>
+        <DialogContent hideClose placement={placement} aria-label="placed" aria-describedby={undefined}>
+          <DialogTitle className="sr-only">placed</DialogTitle>
+          body
+        </DialogContent>
+      </Dialog>,
+    );
+    return screen.getByLabelText('placed').className.split(/\s+/);
+  };
+
+  it('keeps a centered dialog below the header line', () => {
+    expect(placed()).toContain(ROOM);
+  });
+
+  it('leaves a box the caller places itself where the caller put it', () => {
+    expect(placed('own')).not.toContain(ROOM);
+  });
+});
+
+describe('room between the status bar and the gesture bar', () => {
+  const SAFE_TOP = 'max-sm:top-[calc(var(--app-top,0px)+env(safe-area-inset-top))]';
+  const placed = (placement?: 'centered' | 'own') => {
+    render(
+      <Dialog open>
+        <DialogContent hideClose placement={placement} aria-label="placed" aria-describedby={undefined}>
+          <DialogTitle className="sr-only">placed</DialogTitle>
+          body
+        </DialogContent>
+      </Dialog>,
+    );
+    return screen.getByLabelText('placed').className.split(/\s+/);
+  };
+
+  it('keeps a centered dialog below the status bar on mobile', () => {
+    // The keyboard shrinks the room, and a centered box then rose under the status bar.
+    const classes = placed();
+    expect(classes).toContain(SAFE_TOP);
+    expect(classes.join(' ')).toContain('max-sm:translate-y-[max(0px,');
+  });
+
+  it('leaves a box the caller places itself where the caller put it', () => {
+    expect(placed('own')).not.toContain(SAFE_TOP);
+  });
+
+  it('gives way to a dialog that fills the screen on mobile', () => {
+    const classes = classesFor(dialogFullHeightMobile);
+    expect(classes).toContain('max-sm:top-[var(--app-top,0px)]');
+    expect(classes).toContain('max-sm:translate-y-0');
+    expect(classes).not.toContain(SAFE_TOP);
+  });
+});
+
 describe('the stock open animation', () => {
   const contentClasses = (unanimated?: boolean) => {
     render(
@@ -97,5 +153,8 @@ describe('full-height dialog shells anchor to the top', () => {
     expect(classes).toContain('max-sm:top-[var(--app-top,0px)]');
     expect(classes).toContain('max-sm:translate-y-0');
     expect(classes).toContain('max-sm:h-[var(--app-h,100dvh)]');
+    // Full screen on mobile, so it clears the status bar and the gesture bar.
+    expect(classes).toContain('max-sm:border-t-[length:env(safe-area-inset-top)]');
+    expect(classes).toContain('max-sm:border-b-[length:env(safe-area-inset-bottom)]');
   });
 });

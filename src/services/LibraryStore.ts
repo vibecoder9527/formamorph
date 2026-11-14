@@ -1,4 +1,4 @@
-import { openDatabase, promisifyRequest, transactionDone, writeAfterRead } from '@/lib/idb';
+import { getAllReadable, openDatabase, promisifyRequest, transactionDone, writeAfterRead } from '@/lib/idb';
 import type { CommunityLink, LibraryDetails } from '@/types';
 
 /**
@@ -85,8 +85,14 @@ export class LibraryStore<T, M> {
   /** List stored records as grid metadata, projected by `toMetadata`. */
   async getMetadata(): Promise<M[]> {
     await this.ensureInitialized();
-    const records = await promisifyRequest<StoredRecord<T>[]>(this.objectStore('readonly').getAll());
+    const records = await getAllReadable<StoredRecord<T>>(this.db!, this.storeName);
     return records.map((record) => this.toMetadata(record));
+  }
+
+  /** How many records are stored, without reading them. */
+  async count(): Promise<number> {
+    await this.ensureInitialized();
+    return promisifyRequest<number>(this.objectStore('readonly').count());
   }
 
   /** Load one record's full payload; rejects if missing or malformed. */

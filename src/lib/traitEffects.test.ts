@@ -119,6 +119,20 @@ describe('re-reading saved stats from the world', () => {
     expect(stat.type).toBe('percentage');
   });
 
+  it('picks up the sliders and Change By amounts the author set since the save was made', () => {
+    const saved = [PS('vigor', { morphBindings: [{ name: 'Belly' }] }), PS('mood', { morphBindings: [{ name: 'Frown' }] })];
+    const authored = [S('vigor', { morphBindings: [{ name: 'Belly', by: -1 }, { name: 'Fat' }] }), S('mood')];
+    expect(refreshSavedStats(saved, authored).map((s) => s.morphBindings))
+      .toEqual([[{ name: 'Belly', by: -1 }, { name: 'Fat' }], undefined]);
+  });
+
+  it('picks up the color bindings the author set since the save was made, and drops removed ones', () => {
+    const saved = [PS('vigor'), PS('mood', { colorBindings: [{ channel: 'eye', color: '#000000' }] })];
+    const authored = [S('vigor', { colorBindings: [{ channel: 'skin', color: '#ff0000' }] }), S('mood')];
+    expect(refreshSavedStats(saved, authored).map((s) => s.colorBindings))
+      .toEqual([[{ channel: 'skin', color: '#ff0000' }], undefined]);
+  });
+
   it('keeps the numbers the playthrough actually reached, not the author\'s current defaults', () => {
     const saved = [PS('vigor', {
       value: 42, min: 5, max: 90, regen: 3, starting: 10, aiMaxDelta: 8,

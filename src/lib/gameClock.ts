@@ -12,6 +12,8 @@
  */
 
 import type { Daypart } from '@/types';
+import type { ResponseSchema } from '@/lib/aiRequest/responseSchema';
+import { parseJsonReply } from '@/lib/aiRequest/jsonReply';
 
 /** The story's time frame. Not authored anywhere yet — every field falls back to its default. */
 export interface WorldCalendar {
@@ -33,8 +35,6 @@ export const FLAT_HOURS_PER_TURN = 1;
  *  chronicle, and no single turn legitimately spans more than a year. Over-range replies fall back. */
 export const MAX_TURN_HOURS = 8760;
 
-const UNIT_HOURS: Record<string, number> = { m: 1 / 60, h: 1, d: 24, w: 168 };
-
 /** Counts the models actually write out in words rather than digits ("five minutes" was a third of one
  *  probe case's replies). Small values only — nobody spells out "seventeen". */
 const WORD_NUMBERS: Record<string, number> = {
@@ -43,25 +43,134 @@ const WORD_NUMBERS: Record<string, number> = {
 };
 const WORD_PATTERN = Object.keys(WORD_NUMBERS).join('|');
 
-/**
- * Read the clock pass's reply into hours. Accepts `0`, `15m`, `2h`, `3 days`, `2w`, and spelled-out
- * counts like `five minutes` — a count with an optional unit, anywhere in the reply, since small models
- * append stray prose. A bare number means hours (the unit the game already counts in). Returns null when
- * nothing parses or the value is out of range, which callers resolve to FLAT_HOURS_PER_TURN — never to
- * zero, so a garbled reply cannot silently freeze time.
- */
-export function parseTimeDelta(reply: string): number | null {
-  const m = (reply || '').match(
+const UNIT_NAMES: Record<string, TurnTimeUnit> = { m: 'minutes', h: 'hours', d: 'days', w: 'weeks' };
+
+/** A time of day a scene can run until. */
+export const CLOCK_ANCHORS = ['dawn', 'morning', 'noon', 'afternoon', 'evening', 'nightfall', 'midnight'] as const;
+export type ClockAnchor = (typeof CLOCK_ANCHORS)[number];
+
+/** A length of story time as the clock pass wrote it. */
+export interface ClockAmount {
+  count: number;
+  unit: TurnTimeUnit;
+}
+
+/** What the clock pass answered: the time of day the scene runs until, and how long it took. Either may be
+ *  missing; a reading with neither is no reading. */
+export interface ClockReading {
+  anchor: ClockAnchor | null;
+  amount: ClockAmount | null;
+}
+
+/** A count with an optional unit, anywhere in `text`. A bare number means hours. */
+function parseCount(text: string): ClockAmount | null {
+  const m = text.match(
     new RegExp(`(-?\\d+(?:\\.\\d+)?|${WORD_PATTERN})\\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|wks?|w)?\\b`, 'i'),
   );
   if (!m) return null;
   const raw = m[1].toLowerCase();
   // A spelled-out count needs its unit: a bare "a"/"one" in prose is not a measurement.
   if (raw in WORD_NUMBERS && !m[2]) return null;
-  const value = raw in WORD_NUMBERS ? WORD_NUMBERS[raw] : Number(m[1]);
-  if (!Number.isFinite(value) || value < 0) return null;
-  const hours = value * (m[2] ? UNIT_HOURS[m[2][0].toLowerCase()] : 1);
-  return hours <= MAX_TURN_HOURS ? hours : null;
+  const count = raw in WORD_NUMBERS ? WORD_NUMBERS[raw] : Number(m[1]);
+  if (!Number.isFinite(count) || count < 0) return null;
+  return { count, unit: m[2] ? UNIT_NAMES[m[2][0].toLowerCase()] : 'hours' };
+}
+
+/**
+ * Read the clock pass's text reply. Accepts `until dawn` and the other anchors, and a count with an optional
+ * unit (`0`, `15m`, `2h`, `3 days`, `five minutes`) anywhere in the reply, since small models append stray
+ * prose. Null when neither reads, which callers resolve to FLAT_HOURS_PER_TURN, never to zero.
+ */
+export function parseClockReading(reply: string): ClockReading | null {
+  const text = reply || '';
+  const until = text.match(new RegExp(`\\buntil\\s+(?:the\\s+)?(?:next\\s+)?(${CLOCK_ANCHORS.join('|')})\\b`, 'i'));
+  const amount = parseCount(until ? text.replace(until[0], ' ') : text);
+  if (!until && !amount) return null;
+  return { anchor: until ? (until[1].toLowerCase() as ClockAnchor) : null, amount };
+}
+
+/** The clock pass's text reply format, which rides after the user message out of the author's reach. */
+export const CLOCK_TEXT_FORMAT = `
+
+Write how long it took as a count followed by its unit: m for minutes, h for hours, d for days, w for weeks. Always write the count first - a bare unit letter is not an answer. When the passage ends at a time of day rather than after a length of time, answer with the word until and that time of day instead of a count. The times of day are: ${CLOCK_ANCHORS.join(', ')}. Your entire reply is that count and its unit, or until and a time of day, with nothing before or after it.`;
+
+/** The clock pass's reply schema: the anchor first, then the unit before its count. */
+export const clockReadingSchema = (): ResponseSchema => ({
+  name: 'time_passed',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['lasts_until', 'unit', 'count'],
+    properties: {
+      lasts_until: { type: 'string', enum: ['none', ...CLOCK_ANCHORS] },
+      unit: { type: 'string', enum: [...TURN_TIME_UNITS] },
+      count: { type: 'integer', minimum: 0 },
+    },
+  },
+});
+
+/** The schema request's reply format, which describes the fields. */
+export const CLOCK_SCHEMA_FORMAT = `
+
+Answer with three fields:
+- lasts_until: when the passage runs on until a time of day it shows or names, that time of day. Otherwise none. The time of day the scene happens at is not enough on its own.
+- unit and count: how long it took. Choose the unit first - minutes, hours, days, weeks - then the whole number of that unit.`;
+
+/** A schema reply's reading: a count of 0 beside an anchor is still a count. */
+function jsonClockReading(reply: Record<string, unknown>): ClockReading | null {
+  const { lasts_until: until, unit, count } = reply;
+  const anchor = CLOCK_ANCHORS.find((a) => a === until) ?? null;
+  const amount = typeof count === 'number' && Number.isInteger(count) && count >= 0 && isTurnTimeUnit(unit)
+    ? { count, unit } : null;
+  return anchor || amount ? { anchor, amount } : null;
+}
+
+/** The clock pass's reply from either request: a JSON object reads as the schema reply, anything else as text. */
+export function parseClockReply(raw: string): ClockReading | null {
+  const parsed = parseJsonReply(raw);
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    ? jsonClockReading(parsed as Record<string, unknown>) : parseClockReading(raw);
+}
+
+/** Where an anchor falls, as a fraction of the day: its daypart's start (nightfall starts night), noon at half, midnight at the end. */
+function anchorFraction(anchor: ClockAnchor): number {
+  if (anchor === 'noon') return 1 / 2;
+  if (anchor === 'midnight') return 1;
+  const part: Daypart = anchor === 'nightfall' ? 'night' : anchor;
+  return DAYPART_STARTS.find(([, d]) => d === part)?.[0] ?? 0;
+}
+
+/** Whole calendar days a count names: days and weeks directly, smaller units by filling days. */
+function countedCalendarDays(amount: { count: number; unit: TurnTimeUnit }, hoursPerDay: number): number {
+  if (amount.unit === 'days') return amount.count;
+  if (amount.unit === 'weeks') return amount.count * 7;
+  return (amount.count * TURN_TIME_UNIT_HOURS[amount.unit]) / hoursPerDay;
+}
+
+/** An anchor further ahead than this share of a day, beside a sub-day count, names the time it already is. */
+const ANCHOR_GUARD_FRACTION = 20 / 24;
+
+/**
+ * The hours a reading costs, measured from the clock at the turn's start. An anchor runs forward to its next
+ * occurrence (a full day when the clock stands on it), and a count of whole days adds the days beyond the
+ * first. An anchor more than 20 of 24 hours ahead with a sub-day count costs the count instead. Null when
+ * nothing is countable or the result passes MAX_TURN_HOURS.
+ */
+export function readingHours(reading: ClockReading, startElapsed: number, calendar?: WorldCalendar): number | null {
+  const { anchor, amount } = reading;
+  const countedHours = amount && amount.count * TURN_TIME_UNIT_HOURS[amount.unit];
+  let hours = countedHours;
+  if (anchor) {
+    const { hoursPerDay } = resolve(calendar);
+    const minutesPerDay = hoursPerDay * 60;
+    const startMinute = storyMinute(startElapsed, calendar) % minutesPerDay;
+    const anchorMinute = Math.round(anchorFraction(anchor) * minutesPerDay) % minutesPerDay;
+    const minutesAhead = (anchorMinute - startMinute + minutesPerDay) % minutesPerDay || minutesPerDay;
+    const countedDays = amount ? countedCalendarDays(amount, hoursPerDay) : null;
+    const countWins = minutesAhead > ANCHOR_GUARD_FRACTION * minutesPerDay && countedDays !== null && countedDays < 1;
+    if (!countWins) hours = minutesAhead / 60 + Math.max(0, Math.floor(countedDays ?? 0) - 1) * hoursPerDay;
+  }
+  return hours !== null && hours <= MAX_TURN_HOURS ? hours : null;
 }
 
 /** The dayparts the opening-time pass may answer with — exactly the set `daypart()` emits, so the answer
@@ -122,14 +231,39 @@ export const daypartSet = (dayparts: readonly Daypart[]): Daypart[] => DAYPARTS.
 export function daypart(hour: number, calendar?: WorldCalendar): Daypart {
   const { hoursPerDay } = resolve(calendar);
   const f = ((hour % hoursPerDay) + hoursPerDay) % hoursPerDay / hoursPerDay;
-  if (f < 0.25) return 'night';
-  if (f < 0.33) return 'dawn';
-  if (f < 0.46) return 'morning';
-  if (f < 0.54) return 'midday';
-  if (f < 0.71) return 'afternoon';
-  if (f < 0.83) return 'evening';
-  return 'night';
+  let part: Daypart = 'night';
+  for (const [start, next] of DAYPART_STARTS) if (f >= start) part = next;
+  return part;
 }
+
+/** Where each daypart after midnight's night begins, as a fraction of the day: whole hours of a 24-hour day. */
+const DAYPART_STARTS: readonly (readonly [number, Daypart])[] = [
+  [6 / 24, 'dawn'], [8 / 24, 'morning'], [11 / 24, 'midday'], [13 / 24, 'afternoon'], [17 / 24, 'evening'], [20 / 24, 'night'],
+];
+
+export const MINUTES_PER_DAY = 24 * 60;
+
+/** The daypart edges of a 24-hour day, in minutes from midnight, rounded to the minute. */
+const DAYPART_EDGE_MINUTES: readonly number[] = DAYPART_STARTS.map(([f]) => Math.round(f * MINUTES_PER_DAY));
+
+/** Where each daypart begins in a 24-hour day, in minutes from midnight. */
+export const DAYPART_START_MINUTE = Object.fromEntries(
+  DAYPART_STARTS.map(([f, d]) => [d, Math.round(f * MINUTES_PER_DAY)]),
+) as Record<Daypart, number>;
+
+/** The first daypart edge after story minute `minute`. */
+export function nextDaypartEdge(minute: number): number {
+  const day = Math.floor(minute / MINUTES_PER_DAY) * MINUTES_PER_DAY;
+  for (const base of [day, day + MINUTES_PER_DAY]) {
+    for (const edge of DAYPART_EDGE_MINUTES) if (base + edge > minute) return base + edge;
+  }
+  return day + 2 * MINUTES_PER_DAY; // unreachable: tomorrow always has an edge
+}
+
+/** Minutes since midnight of day 1 after `elapsed` story hours, on the rounded minute `clockReading` uses:
+ *  the absolute time the position engine counts in. */
+export const storyMinute = (elapsed: number, calendar?: WorldCalendar): number =>
+  Math.round((Math.max(0, elapsed) + resolve(calendar).startHour) * 60);
 
 /** The daypart after `elapsed` story hours, read off the rounded minute the clock stamp and scripts share. */
 export const daypartAt = (elapsed: number, calendar?: WorldCalendar): Daypart => clockReading(elapsed, calendar).daypart;
@@ -139,8 +273,29 @@ export const OPENING_DAYPART: Daypart = daypart(DEFAULT_START_HOUR);
 
 /** Absolute position in story time, e.g. `Day 3, evening`. */
 export function formatAbsolute(elapsed: number, calendar?: WorldCalendar): string {
-  const { day, hour } = dayAndHour(elapsed, calendar);
-  return `Day ${day}, ${daypart(hour, calendar)}`;
+  return formatStoryTime(elapsed, calendar, 'daypart', true);
+}
+
+/** How a story-time reading shows the time: the daypart, or a 24- or 12-hour clock. */
+export type ClockStyle = 'daypart' | '24h' | '12h';
+
+/** Story time in `style`, with or without the day: `Day 3, evening`, `19:00`, `Day 3, 7:00 PM`. */
+export function formatStoryTime(elapsed: number, calendar: WorldCalendar | undefined, style: ClockStyle, withDay: boolean): string {
+  let day: number;
+  let time: string;
+  if (style === 'daypart') {
+    const reading = dayAndHour(elapsed, calendar);
+    day = reading.day;
+    time = daypart(reading.hour, calendar);
+  } else {
+    const reading = clockReading(elapsed, calendar);
+    day = reading.day;
+    const mm = String(reading.minute).padStart(2, '0');
+    time = style === '24h'
+      ? `${String(reading.hour).padStart(2, '0')}:${mm}`
+      : `${reading.hour % 12 || 12}:${mm} ${reading.hour % 24 < 12 ? 'AM' : 'PM'}`;
+  }
+  return withDay ? `Day ${day}, ${time}` : time;
 }
 
 /** Position in story time as a readable timestamp, e.g. `Day 3, 19:00`. The player-facing log wants a
@@ -148,8 +303,7 @@ export function formatAbsolute(elapsed: number, calendar?: WorldCalendar): strin
  *  the log never enters context. Accumulated in whole minutes so a measured 15m delta shows, and so a
  *  moment just short of midnight rolls the day instead of printing `24:00`. */
 export function formatClock(elapsed: number, calendar?: WorldCalendar): string {
-  const { day, hour, minute } = clockReading(elapsed, calendar);
-  return `Day ${day}, ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  return formatStoryTime(elapsed, calendar, '24h', true);
 }
 
 /** Day, hour and minute after `elapsed` story hours, all from one rounded minute count, so `formatClock`'s
@@ -235,6 +389,7 @@ export function formatNow(nowHours: number, calendar?: WorldCalendar): string {
 
 export const TURN_TIME_UNITS = ['minutes', 'hours', 'days', 'weeks'] as const;
 export type TurnTimeUnit = (typeof TURN_TIME_UNITS)[number];
+const isTurnTimeUnit = (value: unknown): value is TurnTimeUnit => TURN_TIME_UNITS.some((u) => u === value);
 export const TURN_TIME_UNIT_HOURS: Record<TurnTimeUnit, number> = { minutes: 1 / 60, hours: 1, days: 24, weeks: 168 };
 
 const isWhole = (n: number) => Math.abs(n - Math.round(n)) < 1e-6;

@@ -104,6 +104,7 @@ import { EditorSectionsBar } from "@/components/editor/EditorSectionsBar";
 import { badgeVariants } from "@/components/ui/badge";
 import { useTutorial } from "@/lib/tutorials";
 import { likeStateOf, optimisticLikeState, type LikeState } from "@/lib/likeCount";
+import type { LikesMarkerReason } from "@/types";
 
 // Persisted preference to force the single-column (portrait) layout of the details modal at any width.
 // Key string kept as-is so an existing user's saved preference survives the rename.
@@ -179,7 +180,7 @@ const BrowserShell = ({ presentation, open, onOpenChange, children }: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent surface="community" aria-describedby={undefined}
+      <DialogContent surface="community" placement="own" aria-describedby={undefined}
         hideClose
         className="max-w-none w-screen h-dvh sm:max-w-none left-0 top-0 translate-x-0 translate-y-0 rounded-none sm:rounded-none p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] gap-0 flex flex-col data-[state=open]:!slide-in-from-top-0 data-[state=open]:!slide-in-from-left-0 data-[state=closed]:!slide-out-to-top-0 data-[state=closed]:!slide-out-to-left-0"
       >
@@ -284,8 +285,8 @@ const CommunityCreationsBrowser = ({
   const [quarantining, setQuarantining] = useState<WorldRecord | null>(null);
   const [isQuarantiningNow, setIsQuarantiningNow] = useState(false);
   const [quarantineNotice, setQuarantineNotice] = useState<QuarantineTarget | null>(null);
-  // Admin-only view of just what is hidden — the whole catalog is already in memory, so this is a filter
-  // over it rather than another request.
+  // The staff Show choice: all listings, only quarantined ones, or only ones with a Likes Marker. The whole
+  // catalog is already in memory, so each is a filter over it rather than another request.
   const [moderationView, setModerationView] = useState<ModerationView>('all');
   // The listing whose likes audit a Likes Marker opened.
   const [auditing, setAuditing] = useState<WorldRecord | null>(null);
@@ -542,12 +543,12 @@ const CommunityCreationsBrowser = ({
     searchQuery, applySearchInput, authorFilter, setAuthorFilter, tagFilter, setTagFilter,
     tagMode, setTagMode, modelFilter, setModelFilter, statusFilter, toggleStatus, clearFilters, activeFilterCount,
     sortField, setSortField, sortOrder, setSortOrder,
-    sortUpdatesFirst, setSortUpdatesFirst, currentPage, setCurrentPage,
+    sortUpdatesFirst, setSortUpdatesFirst, showHiddenGems, setShowHiddenGems, currentPage, setCurrentPage,
     hiddenWorldIds, hiddenTags, hiddenAuthors,
     hideRemoteWorld, hideRemoteTag, hideRemoteAuthor,
     setHiddenTagsList, setHiddenAuthorsList,
     resetHiddenWorlds, unhideWorld, hiddenWorldName,
-    allAuthors, allTags, allModels, filteredRemoteWorlds, totalPages, pagedRemoteWorlds, pinnedRemoteWorlds,
+    allAuthors, allTags, allModels, filteredRemoteWorlds, totalPages, pagedRemoteWorlds, pinnedRemoteWorlds, hiddenGemIds,
   } = useCommunityBrowserFilters(
     catalogInView, downloadStateForRecord, open, {
       tab: browseTab,
@@ -612,14 +613,14 @@ const CommunityCreationsBrowser = ({
       count: flaggedCount,
       applies: moderationHere,
       disabled: flaggedCount === 0 && !flaggedOnly,
-      help: 'Show only listings whose likes are flagged',
+      help: 'Show only listings marked for a burst or many flagged likes',
     },
   ];
   const moderationControl = (
     <ModerationMenu
       choices={moderationChoices}
       view={staffView}
-      onViewChange={setModerationView}
+      onViewChange={(next) => { setModerationView(next); setCurrentPage(1); }}
       pin={{
         applies: staffHere,
         checked: showPending,
@@ -793,6 +794,19 @@ const CommunityCreationsBrowser = ({
 
     setRemoteWorlds((prev) => prev.map((w) => ((w._id || w.id) === worldId ? { ...w, likes } : w)));
     setSelectedRemoteWorld((prev) => (prev && (prev._id || prev.id) === worldId ? { ...prev, likes } : prev));
+  };
+
+  /**
+   * Take a Likes Marker read fresh after a staff removal.
+   *
+   * Patched in place like the count, so the card, the details window and the Flagged Likes count agree
+   * without a catalog reload. The reasons come from the server's read, never from arithmetic here.
+   */
+  const handleMarkerChanged = (world: WorldRecord, reasons: LikesMarkerReason[]) => {
+    const worldId = String(world._id || world.id);
+
+    setRemoteWorlds((prev) => prev.map((w) => ((w._id || w.id) === worldId ? { ...w, likes_marker: reasons } : w)));
+    setSelectedRemoteWorld((prev) => (prev && (prev._id || prev.id) === worldId ? { ...prev, likes_marker: reasons } : prev));
   };
 
   const handlePendingUpdateChange = (world: WorldRecord, pending: boolean) => {
@@ -1112,6 +1126,18 @@ const CommunityCreationsBrowser = ({
     </div>
   );
 
+  const hiddenGemsControl = browseTab !== 'world' ? null : (
+    <Tip tip="Places a few well-liked worlds with few downloads on page 1" labelsChild={false}>
+      <label className="flex items-center gap-2 shrink-0 cursor-pointer text-label leading-4 select-none">
+        <Checkbox
+          checked={showHiddenGems}
+          onCheckedChange={(c) => setShowHiddenGems(c === true)}
+        />
+        Hidden Gems
+      </label>
+    </Tip>
+  );
+
   const hiddenControl = capabilities.hiddenFilters ? (
     // The tutorial wraps the Hidden popover rather than sitting inside it: its own Popover would otherwise
     // become the context the trigger below binds to.
@@ -1174,7 +1200,7 @@ const CommunityCreationsBrowser = ({
   ) : null;
 
   const updatesControl = !capabilities.localLibrary || browseTab === 'contest' ? null : (
-    <label className="flex items-center gap-2 shrink-0 cursor-pointer text-label select-none">
+    <label className="flex items-center gap-2 shrink-0 cursor-pointer text-label leading-4 select-none">
       <Checkbox
         checked={sortUpdatesFirst}
         onCheckedChange={(c) => { setSortUpdatesFirst(c === true); setCurrentPage(1); }}
@@ -1182,6 +1208,14 @@ const CommunityCreationsBrowser = ({
       Updates first
     </label>
   );
+
+  // Stacked so two checkboxes take one control's width at the end of the filter row.
+  const trailingToggles = updatesControl || hiddenGemsControl ? (
+    <div className="flex flex-col items-start gap-1">
+      {updatesControl}
+      {hiddenGemsControl}
+    </div>
+  ) : null;
 
   // Hidden and updates-first ride along inside the bar: they narrow or reorder the same grid, and a second
   // row for two controls reads as a second, unrelated set of filters.
@@ -1209,7 +1243,7 @@ const CommunityCreationsBrowser = ({
       models={browseTab === 'prompt' ? { filter: modelFilter, setFilter: setModelFilter, options: allModels } : undefined}
       signedIn={isAuthenticated}
       centered={eventChips}
-      trailing={updatesControl}
+      trailing={trailingToggles}
     >
       {hiddenControl}
     </CommunityFilterBar>
@@ -1244,6 +1278,8 @@ const CommunityCreationsBrowser = ({
       return placements;
     };
   }, [contests]);
+
+  const gemIds = useMemo(() => new Set(hiddenGemIds), [hiddenGemIds]);
 
   // One card for both the pinned group and the grid.
   const renderCard = (world: WorldRecord, inReviewGroup = false) => {
@@ -1289,6 +1325,7 @@ const CommunityCreationsBrowser = ({
         onReject={decides ? rejectCard : undefined}
         reviewBusy={decides && review.busyId !== null}
         onOpenLikes={moderationHere ? setAuditing : undefined}
+        hiddenGem={!inReviewGroup && gemIds.has(String(worldId))}
       />
     );
   };
@@ -1407,7 +1444,7 @@ const CommunityCreationsBrowser = ({
               ) : (
                 // The title row fills its header, so the search box grows into the free space. Refresh ends
                 // the row, after the sort select and the order toggle.
-                <div className="flex min-h-14 items-center py-2">
+                <div className="flex min-h-[var(--header-line)] items-center py-2 pr-[var(--window-buttons-width)]">
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-4">
                     <div className="flex items-center gap-1">
                       <BackButton onClick={() => onOpenChange(false)} />
@@ -1453,7 +1490,7 @@ const CommunityCreationsBrowser = ({
                 contest={shownContest}
                 contests={contests}
                 onSelect={setSelectedContestId}
-                entryCount={catalogInView.length}
+                entryCount={contestEntries.length}
               />
               {contestPhase(shownContest) === 'decided' && <ContestPodium contest={shownContest} />}
             </>
@@ -1549,6 +1586,7 @@ const CommunityCreationsBrowser = ({
         serverTakesLikes={anonymousLikes}
         onAnonymousLikes={setAnonymousLikes}
         onLikesChanged={handleLikesChanged}
+        onMarkerChanged={handleMarkerChanged}
         onPendingUpdateChange={handlePendingUpdateChange}
         onTogglePin={handleTogglePin}
         onToggleSupporterOnly={handleToggleSupporterOnly}
@@ -1721,6 +1759,7 @@ const CommunityCreationsBrowser = ({
           listingName={auditing?.name}
           currentUser={currentUser}
           onLikesChanged={(likes) => { if (auditing) handleLikesChanged(auditing, likes); }}
+          onMarkerChanged={(reasons) => { if (auditing) handleMarkerChanged(auditing, reasons); }}
           auditOnOpen
         />
       )}

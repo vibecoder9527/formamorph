@@ -1,0 +1,186 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, fireEvent, within } from '@testing-library/react';
+import type { World } from '@/types';
+import { renderDictionaryTab } from '@/test/dictionaryTabBench';
+import { panelWorld } from '@/test/panelBench';
+
+/** What the dictionary entry panel puts on screen, in its own tabs. Matching is Advanced only, so Simple mode keeps one tab and no strip. */
+
+vi.mock('../services/WorldStorageService', () => ({
+  default: {
+    initialize: vi.fn(),
+    getWorldMetadata: vi.fn().mockResolvedValue([]),
+    storeWorld: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock('@/lib/jsonFileWorkerUtils', () => ({
+  serializeJsonBlob: vi.fn(), parseJsonText: vi.fn(), terminateWorker: vi.fn(),
+}));
+
+vi.mock('react-toastify', () => ({
+  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
+  ToastContainer: () => null,
+}));
+
+/** Two books, so the persistence case can cross a book boundary the way an author reviewing values does. */
+const WORLD: World = panelWorld({
+  dictionaries: [
+    {
+      id: 'b1', name: 'Fen Lore', enabled: true,
+      entries: [
+        {
+          id: 'e1', name: 'Hostile Forces', key: ['dragon'], value: 'A big lizard.',
+          secondaryKeys: ['scaled'], scanDepth: 3,
+        },
+        { id: 'e2', name: 'Quiet Folk', key: ['reed'], value: 'They keep to the water.' },
+      ],
+    },
+    {
+      id: 'b2', name: 'Harbor Lore', enabled: true,
+      entries: [{ id: 'e3', name: 'Lamp Oil', key: ['lamp'], value: 'Burns blue.' }],
+    },
+  ],
+} as Partial<World>);
+
+/** The same books over a world that has a placeholder, so the keyword fields are chip-capable and the
+ *  Regex switch has a vocabulary to take away. */
+const CHIP_WORLD: World = panelWorld({
+  ...(WORLD as Partial<World>),
+  placeholders: [{ id: 'p1', name: 'Hair Color', values: [{ id: 'v1', text: 'copper' }] }],
+} as Partial<World>);
+
+/** Whether a keyword field takes chips. `KeywordChips` swaps its plain input for a chip editor exactly when
+ *  the vocabulary is on, and only the chip editor carries an accessible name. */
+const takesChips = (name: string) => screen.queryByLabelText(name) !== null;
+
+const FIELD_LABELS =
+  /^(Name|Trigger Keywords|Value|Scan Depth|Secondary Keywords)$/;
+
+/** Every field label the panel shows, in document order. The panel's own strip sits above them, so the
+ *  match skips anything inside a tablist. */
+const panelLabels = () =>
+  screen.getAllByText(FIELD_LABELS)
+    .filter((el) => !el.closest('[role="tablist"]'))
+    .map((el) => el.textContent);
+
+/** The checkbox captions the panel shows, which are label text rather than labeled fields. */
+const panelSwitches = () =>
+  screen.queryAllByText(/^(Always Inject|Regex|Recursive|Whole Words|Case-Sensitive|Require All|Exclude)$/)
+    .map((el) => el.textContent);
+
+/** The entry panel's own strip. The editor's top-level strip is on the same screen, so every read and click
+ *  here is taken from the named strip rather than by tab name. */
+const panelStrip = () => screen.queryByRole('tablist', { name: 'Entry Fields' });
+
+const panelTabNames = () => {
+  const strip = panelStrip();
+  return strip ? within(strip).getAllByRole('tab').map((el) => el.textContent) : [];
+};
+
+const panelTab = (name: string) =>
+  within(screen.getByRole('tablist', { name: 'Entry Fields' })).getByRole('tab', { name });
+
+const openPanelTab = (name: string) => fireEvent.mouseDown(panelTab(name));
+
+const selectEntry = (name: string) => {
+  fireEvent.click(screen.getByText(name));
+};
+
+beforeEach(() => { localStorage.clear(); });
+
+describe('the World Editor dictionary entry panel tabs', () => {
+  it('offers two tabs in Advanced mode and opens on Details', () => {
+    renderDictionaryTab(WORLD, 'advanced');
+    selectEntry('Hostile Forces');
+    expect(panelTabNames()).toEqual(['Details', 'Matching']);
+    expect(panelTab('Details')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('puts the name, the keywords with their two switches, and the value on Details', () => {
+    renderDictionaryTab(WORLD, 'advanced');
+    selectEntry('Hostile Forces');
+    expect(panelLabels()).toEqual(['Name', 'Trigger Keywords', 'Value']);
+    expect(panelSwitches()).toEqual(['Whole Words', 'Case-Sensitive']);
+  });
+
+  it('puts the set-once rules on Matching, with the secondary gate whole', () => {
+    renderDictionaryTab(WORLD, 'advanced');
+    selectEntry('Hostile Forces');
+    openPanelTab('Matching');
+    expect(panelLabels()).toEqual(['Scan Depth', 'Secondary Keywords']);
+    expect(panelSwitches()).toEqual([
+      'Always Inject', 'Regex', 'Recursive', 'Require All', 'Exclude',
+    ]);
+    // The gate's line reads off the entry's own modes, as it did before the split.
+    expect(screen.getByText('Activates when a Trigger Keyword matches and at least one Secondary Keyword matches')).toBeInTheDocument();
+  });
+
+  it('leaves Simple mode one tab, so no strip and no matching rules at all', () => {
+    renderDictionaryTab(WORLD, 'simple');
+    selectEntry('Hostile Forces');
+    expect(panelStrip()).toBeNull();
+    expect(panelLabels()).toEqual(['Name', 'Trigger Keywords', 'Value']);
+    expect(panelSwitches()).toEqual(['Whole Words', 'Case-Sensitive']);
+  });
+
+  it('keeps the chosen tab when the author selects another entry, book or not', () => {
+    renderDictionaryTab(WORLD, 'advanced');
+    selectEntry('Hostile Forces');
+    openPanelTab('Matching');
+    fireEvent.click(screen.getByText('Quiet Folk'));
+    expect(panelTab('Matching')).toHaveAttribute('aria-selected', 'true');
+
+    // Lamp Oil sits in the second book, so this crosses a book boundary as well as an entry.
+    fireEvent.click(screen.getByText('Lamp Oil'));
+    expect(panelTab('Matching')).toHaveAttribute('aria-selected', 'true');
+    expect(panelLabels()).toEqual(['Scan Depth', 'Secondary Keywords']);
+  });
+
+  it('drops the comma split from both keyword fields once Regex is on', () => {
+    renderDictionaryTab(WORLD, 'advanced');
+    selectEntry('Quiet Folk');
+    // With Regex off the offer is there to lose: a comma-bearing keyword is offered as a list.
+    const before = screen.getByPlaceholderText('Add keyword');
+    fireEvent.change(before, { target: { value: 'wyrm, drake' } });
+    fireEvent.keyDown(before, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: /^Split/ })).toBeInTheDocument();
+
+    openPanelTab('Matching');
+    fireEvent.click(screen.getByText('Regex'));
+    const secondary = screen.getByPlaceholderText('e.g. red');
+    fireEvent.change(secondary, { target: { value: 'green, blue' } });
+    fireEvent.keyDown(secondary, { key: 'Enter' });
+    expect(screen.queryByRole('button', { name: /^Split/ })).toBeNull();
+
+    openPanelTab('Details');
+    const keywords = screen.getByPlaceholderText('Add keyword');
+    fireEvent.change(keywords, { target: { value: 'adder, asp' } });
+    fireEvent.keyDown(keywords, { key: 'Enter' });
+    expect(screen.queryByRole('button', { name: /^Split/ })).toBeNull();
+  });
+
+  it('drops the chip vocabulary from both keyword fields once Regex is on', () => {
+    renderDictionaryTab(CHIP_WORLD, 'advanced');
+    selectEntry('Quiet Folk');
+    expect(takesChips('Add keyword')).toBe(true);
+
+    openPanelTab('Matching');
+    expect(takesChips('e.g. red')).toBe(true);
+    fireEvent.click(screen.getByText('Regex'));
+    expect(takesChips('e.g. red')).toBe(false);
+    expect(screen.getByPlaceholderText('e.g. red')).toBeInTheDocument();
+
+    openPanelTab('Details');
+    expect(takesChips('Add keyword')).toBe(false);
+    expect(screen.getByPlaceholderText('Add keyword')).toBeInTheDocument();
+  });
+
+  it('shows a book its own panel with no strip', () => {
+    renderDictionaryTab(WORLD, 'advanced');
+    fireEvent.click(screen.getByText('Fen Lore'));
+    expect(panelStrip()).toBeNull();
+    // The book panel's own first field, which the Label sits over rather than labels.
+    expect(screen.getByRole('textbox', { name: 'Description' })).toBeInTheDocument();
+  });
+});

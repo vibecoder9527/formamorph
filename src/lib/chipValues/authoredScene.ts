@@ -1,6 +1,7 @@
 import { flattenEnabledBookEntries } from '../dictionaryUtils';
 import { ownerStatParts, statPlacementOf } from '../statContext';
-import { entityIdsAt } from '../entityPresence';
+import { idsAt, samplePlacement } from '../entityPlaces';
+import { startRoutinePick } from '../inPlayWorld';
 import { allPlaceholders } from '../placeholderHomes';
 import { inCast, playsAs, resolveOwners, type Owner } from '../owners';
 import { characterAsPlayer } from '../builtinPlaceholders';
@@ -86,6 +87,7 @@ export function authoredChipScene(world: AuthoredWorld, options: AuthoredSceneOp
   const placeholders = allPlaceholders(world);
   // A world with no locations yet previews as "nowhere" rather than failing.
   const location = options.location !== undefined ? options.location : resolveStartingLocation(locations, null) ?? null;
+  const placesOf = samplePlacement(entities, { locations, connections }, location?.id, startRoutinePick({ ...world, entities, locations, traits, traitGroups, stats }));
   // Chips resolve against a fresh roll, since a world has no playthrough whose rolls could be reused.
   const resolve = options.resolve
     ?? ((text: string) => resolvePlaceholders(text, { placeholders, rolls: {} }));
@@ -117,7 +119,7 @@ export function authoredChipScene(world: AuthoredWorld, options: AuthoredSceneOp
   const cast = resolveEntity
     ? resolveOwnedTraitTexts(resolveEntityTexts(withLinks, resolveEntity), resolveOwned, resolveEntity)
     : withLinks;
-  const presentIds = entityIdsAt(location?.id, personaRef?.source === 'world' ? entities.filter((e) => inCast(e, personaRef)) : entities);
+  const presentIds = idsAt(location?.id, personaRef?.source === 'world' ? entities.filter((e) => inCast(e, personaRef)) : entities, placesOf);
   const defaultsOf = (tree: Pick<Owner, 'traits' | 'groups'>) =>
     defaultPicks(tree.traits, tree.groups);
   const activeIds = new Set(options.activeTraitIds ?? defaultsOf(global));
@@ -163,6 +165,7 @@ export function authoredChipScene(world: AuthoredWorld, options: AuthoredSceneOp
     connections,
     entities: cast,
     presentIds,
+    placesOf,
     // No turns have happened, so nobody is in scene beyond who the author placed here.
     inSceneIds: presentIds,
     lore: flattenEnabledBookEntries(dictionaries).filter((entry) => entry.enabled !== false),

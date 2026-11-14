@@ -1,11 +1,14 @@
 import { randomUUID } from "@/lib/uuid";
 import type {
   World, SaveObject, Stat, StatGroup, GameState, Trait, TraitGroup, Entity, PlayerStat, Connection, ConnectionLeg, GameLocation, Placeholder, PlaceholderValue,
-  Opening, TraitRequirement,
+  Opening, TraitRequirement, EntityStart, ScheduleRow, Traversable,
 } from '@/types';
+import { PLAYER_START } from '@/types';
+import { holdsStartList } from './customPersona';
+import { namedPlacesOf, withoutMembership } from './entityPlaces';
 import { isImplicitPair, parentIndex } from './locationGraph';
 import { LEGACY_DEFAULT_AVATAR_VALUES, migrateLegacyPlayerAvatar, type LegacyCharacterData } from './legacyVrm';
-import { autoBindLegacyBodyStats } from './bodyMorphs';
+import { autoBindLegacyBodyStats, migrateMorphBindingList, migrateStatListMorphBindings } from './bodyMorphs';
 import { appendCurrentToHistory } from './turnHistory';
 import { migrateGlobalFields } from './globalSaveFields';
 import { DEFAULT_AVATAR_ID } from './defaultAvatar';
@@ -19,6 +22,7 @@ import { migrateStatBoxes, migrateStatLinkBoxes, type OriginalOf } from './scrip
 import { allPlaceholders, placeholderOwners, type PlaceholderHomesWorld } from './placeholderHomes';
 import { blueprintItemIds, offeredWorldTraits } from './traitTree';
 import { mergeDuplicateStatLinks, mergeStatBlueprintsGroups, statBlueprintIds } from './statLinks';
+import { firstRoutine } from './entityKind';
 
 /** Current app version, derived from package.json (see vite.config.js `define`). User-managed. */
 export const APP_VERSION = __APP_VERSION__;
@@ -232,7 +236,18 @@ function migrateConnectionLegs(world: Record<string, unknown>): void {
       ? [record.a, record.b, legOf(record.aToB), legOf(record.bToA)]
       : [record.from, record.to, legWith(record.aiHint), record.twoWay ? legWith(record.aiHint) : undefined];
     if (typeof a !== 'string' || typeof b !== 'string' || (!aToB && !bToA)) return [];
-    return [{ id, a, b, ...(aToB ? { aToB } : {}), ...(bToA ? { bToA } : {}) }];
+    const far = record.distance === 'far';
+    return [{ id, a, b, ...(aToB ? { aToB } : {}), ...(bToA ? { bToA } : {}), ...(far ? { distance: 'far' as const } : {}) }];
+  });
+}
+
+/** Drop a location's `nearbyUsesConnections`: Nearby reach counts Connections for every location. Idempotent. */
+function dropNearbyUsesConnections(world: Record<string, unknown>): void {
+  if (!Array.isArray(world.locations)) return;
+  world.locations = world.locations.map((raw: unknown) => {
+    if (!raw || typeof raw !== 'object' || !('nearbyUsesConnections' in raw)) return raw;
+    const { nearbyUsesConnections: _dropped, ...rest } = raw as Record<string, unknown>;
+    return rest;
   });
 }
 
@@ -359,21 +374,20 @@ function normalizeContentLinks(world: Record<string, unknown>): void {
 }
 
 /**
- * Move the single `openingCue` into the openings list as one Opening Action, and drop the old fields. A cue
- * switched off keeps its row and switches the list off. A blank cue opened on the default and adds no row;
- * its switch still carries over.
+ * Move the single `openingCue` into the openings list as one Opening Action, and drop the old fields. The
+ * old switches (`openingCueEnabled`, `openingsEnabled`) are dropped too: a world with any opening uses it.
+ * A blank cue adds no row.
  * Idempotent: a world without the old fields passes through untouched.
  */
 function migrateOpeningCue(world: Record<string, unknown>): void {
   const ov = world.worldOverview as Record<string, unknown> | undefined;
-  if (!ov || typeof ov !== 'object' || !('openingCue' in ov || 'openingCueEnabled' in ov)) return;
-  const { openingCue: cue, openingCueEnabled: enabled, ...rest } = ov;
+  if (!ov || typeof ov !== 'object' || !('openingCue' in ov || 'openingCueEnabled' in ov || 'openingsEnabled' in ov)) return;
+  const { openingCue: cue, openingCueEnabled: _cueSwitch, openingsEnabled: _listSwitch, ...rest } = ov;
   const next: Record<string, unknown> = { ...rest };
   if (typeof cue === 'string' && cue.trim()) {
     const row: Opening = { id: randomUUID(), text: cue, kind: 'action' };
     next.openings = [...(Array.isArray(rest.openings) ? rest.openings : []), row];
   }
-  if (enabled === false) next.openingsEnabled = false;
   world.worldOverview = next;
 }
 
@@ -516,6 +530,21 @@ const linkWithOverrideSides = (field: string, fn: (side: unknown) => unknown) =>
 
 const linkWithGlobalTargets = linkWithOverrideSides('statChanges', rowsWithGlobalTarget);
 
+const linkWithMorphBindings = linkWithOverrideSides('morphBindings', migrateMorphBindingList);
+
+/** One entity with its own stats' and its stat links' `morphBindings` as objects. A library entity never passes
+ *  through `migrateWorld`, so its read boundary and a card's import call this too. Idempotent. */
+export function migrateEntityMorphBindings<T>(entity: T): T {
+  return withField(withField(entity, 'stats', migrateStatListMorphBindings), 'statLinks', mapList(linkWithMorphBindings)) as T;
+}
+
+/** Every stat binding stored as `{ name }` rather than a bare name: world stats, entity stats and stat links. Not
+ *  version-gated, since a world stamped with the current version can predate the change. */
+function migrateWorldMorphBindings(world: Record<string, unknown>): void {
+  if (Array.isArray(world.stats)) world.stats = migrateStatListMorphBindings(world.stats);
+  if (Array.isArray(world.entities)) world.entities = mapList(migrateEntityMorphBindings)(world.entities);
+}
+
 /** One entity with its owned traits' and its links' legacy `player` row targets stored as `global`. Idempotent. */
 export function migrateEntityGlobalTargets<T>(entity: T): T {
   return withField(withField(entity, 'traits', mapList(traitWithGlobalTargets)), 'traitLinks', mapList(linkWithGlobalTargets)) as T;
@@ -638,6 +667,99 @@ function dropEntityStartLocations(world: Record<string, unknown>): void {
     const { startingLocationId: _s, ...rest } = raw as Record<string, unknown>;
     return rest;
   });
+}
+
+/** A daypart's length for a migrated Wander's idle: the day split six ways. */
+export const MIGRATED_IDLE_MINUTES = 240;
+
+/** What the routine migration reads from the world around an entity. */
+export interface RoutineMigrationWorld {
+  /** Every location id of the world. */
+  locationIds: string[];
+  /** Some entity of the world has pronouns or a persona mark (Q151). */
+  usesPeopleFields: boolean;
+}
+
+const hasPronouns = (entity: Partial<Entity>): boolean => typeof entity.pronouns === 'string' && entity.pronouns.trim() !== '';
+
+/** Pronouns or the persona mark name one person; "it" pronouns name a creature or a thing (Q146). */
+const isPerson = (entity: Entity): boolean => entity.persona === true || (hasPronouns(entity) && !/^it\b/i.test(entity.pronouns!.trim()));
+
+/** The world facts the routine migration reads, from a raw world's entities and locations. */
+function routineMigrationWorld(world: Record<string, unknown>): RoutineMigrationWorld {
+  const entities = (Array.isArray(world.entities) ? world.entities : []).filter(isRecordLike) as Partial<Entity>[];
+  const locations = Array.isArray(world.locations) ? world.locations.filter(hasStringId) : [];
+  return {
+    locationIds: locations.map((l) => l.id),
+    usesPeopleFields: entities.some((e) => hasPronouns(e) || e.persona === true || e.customPersona === true),
+  };
+}
+
+const allDayWander = (id: string, places: string[]): ScheduleRow => ({
+  id, time: 'allDay', action: { kind: 'wander', places: places.map((place) => ({ place, weight: 1 })), idle: MIGRATED_IDLE_MINUTES },
+});
+
+/** An entity in the 3.7.0 shape: Starts and Traversable on the entity, before Routines. */
+type FlatRoutineEntity = Entity & { starts?: EntityStart[]; traversable?: Traversable };
+
+/** `entity` with one ungated Routine holding its flat Starts and Traversable (Routines Q10). An entity with a kind and
+ *  no Routines gets one, empty when it has no Starts (Q28). Idempotent; an entity with no kind passes through. */
+function withFlatRoutine(entity: FlatRoutineEntity): Entity {
+  if (!entity.kind) return entity;
+  const { starts, traversable, ...rest } = entity;
+  if (rest.routines?.length) return 'starts' in entity || 'traversable' in entity ? rest : entity;
+  return { ...rest, routines: [firstRoutine(Array.isArray(starts) ? starts : [], traversable)] };
+}
+
+/** The kind, Starts and Traversable of a released entity with several locations and no presence (Q143, Q144, Q146). */
+function migrateSeveralLocations(entity: Entity, places: string[], movement: unknown, world: RoutineMigrationWorld): FlatRoutineEntity {
+  const listed = new Set(places);
+  if (world.locationIds.length > 1 && world.locationIds.every((id) => listed.has(id))) {
+    const starts: EntityStart[] = [{ id: 'start-1', place: PLAYER_START, weight: 1, schedule: [], beginsFollowing: true }];
+    return { ...entity, kind: 'unique', starts, traversable: 'anywhere' };
+  }
+  if (world.usesPeopleFields && !isPerson(entity)) {
+    // One Start per place with no rows, so each Generic Entity Instance stays where it was (Q133).
+    const starts: EntityStart[] = places.map((place, i) => ({ id: `start-${i + 1}`, place, weight: 1, schedule: [] }));
+    return { ...entity, kind: 'generic', starts };
+  }
+  const starts: EntityStart[] = [{ id: 'start-1', place: places[0], weight: 1, schedule: [allDayWander('row-1', places)] }];
+  return { ...entity, kind: 'unique', starts, traversable: movement === 'follow' ? 'anywhere' : [...places] };
+}
+
+/**
+ * One entity's shipped `presence` and `movement` mapped to a kind, Starts and Traversable (NPC Schedules
+ * migration table), read from its membership, then its Starts and Traversable moved into one ungated Routine. An
+ * entity with a kind leaves without a stored list, whether it just got its kind or already had one (Q32). Idempotent:
+ * an entity without the old fields keeps its kind. Without `world`, as for a library entity, several locations always
+ * give the Wander.
+ */
+export function migrateEntityRoutine<T>(raw: T, world?: RoutineMigrationWorld): T {
+  if (!raw || typeof raw !== 'object') return raw;
+  const { presence, movement, ...rest } = raw as Record<string, unknown> & Partial<Entity>;
+  const entity = rest as Entity;
+  const legacy = presence !== undefined || movement !== undefined;
+  // `raw` is any record a file holds; only its entity fields are read here.
+  const kept = legacy ? entity : raw as unknown as Entity;
+  if (entity.kind) return withFlatRoutine(withoutMembership(kept)) as T;
+  const places = namedPlacesOf(entity);
+  // A Persona-Only and a Custom Persona entity keep their list: they hold no kind or Starts.
+  if (holdsStartList(entity) || !places.length) return kept as T;
+  if (presence !== 'random' && places.length > 1) {
+    return withFlatRoutine(withoutMembership(migrateSeveralLocations(entity, places, movement, world ?? { locationIds: [], usesPeopleFields: false }))) as T;
+  }
+  const startPlaces = presence === 'random' ? places : places.slice(0, 1);
+  const schedule = (n: number): ScheduleRow[] => (movement === 'between' ? [allDayWander(`row-${n}`, places)] : []);
+  const starts: EntityStart[] = startPlaces.map((place, i) => ({ id: `start-${i + 1}`, place, weight: 1, schedule: schedule(i + 1) }));
+  return withFlatRoutine(withoutMembership<FlatRoutineEntity>({
+    ...entity, kind: 'unique', starts, ...(movement === 'follow' && { traversable: 'anywhere' as const }),
+  })) as T;
+}
+
+function migrateEntityRoutines(world: Record<string, unknown>): void {
+  if (!Array.isArray(world.entities)) return;
+  const around = routineMigrationWorld(world);
+  world.entities = world.entities.map((raw) => migrateEntityRoutine(raw, around));
 }
 
 const hasStringId = (v: unknown): v is { id: string } => !!v && typeof v === 'object' && typeof (v as { id?: unknown }).id === 'string';
@@ -772,7 +894,7 @@ function migrateStatScripts(world: Record<string, unknown>): void {
  * Bring an imported world up to the current format and stamp it with `APP_VERSION`. The dictionary→books
  * fold, the keyword-array migration, the entity- and location-gallery folds, the entity-location flip, the
  * connection-record pair-merge, the Connection-leg conversion, the start-flag rename, the placeholder value-record conversion, the
- * opening-cue move, the player-setting split, the requirement-row wrap, the global-scope rewrite, the entity-stat shape guard, the stat-group shape guard, the content-link guard, the code-box-to-scripts rewrite, the stat-code route rewrite, the persona start-location drop and the legacy player-Avatar move run unconditionally (they aren't version-gated — see `foldDictionaryIntoBooks`); the
+ * opening-cue move, the player-setting split, the requirement-row wrap, the global-scope rewrite, the entity-stat shape guard, the stat-group shape guard, the content-link guard, the code-box-to-scripts rewrite, the stat-code route rewrite, the persona start-location drop, the legacy player-Avatar move and the stat-binding object form run unconditionally (they aren't version-gated — see `foldDictionaryIntoBooks`); the
  * rest is skipped for a world already at `APP_VERSION`. Auto-binds legacy body stats to morphs,
  * and renames v1.2 description keys on entities/locations/traits to the audience-based keys. Remaining field defaults are left to `loadWorldData`. Add further 2.0 → 2.x steps here when the shape changes — a version
  * bump is the user's call (see the export-shape-versioning note); shipped worlds are only reshaped through
@@ -787,6 +909,7 @@ export function migrateWorld(raw: unknown): World {
   flipEntityLocationMembership(world);
   migrateLocationConnections(world);
   migrateConnectionLegs(world);
+  dropNearbyUsesConnections(world);
   migrateStartLocationFlag(world);
   migrateWorldPlaceholders(world);
   migrateOpeningCue(world);
@@ -795,12 +918,14 @@ export function migrateWorld(raw: unknown): World {
   migrateRequirementRows(world);
   dropRootTraitLinks(world);
   dropEntityStartLocations(world);
+  migrateEntityRoutines(world);
   migrateStatLists(world);
   migrateGlobalScope(world);
   normalizeContentLinks(world);
   migrateStatScripts(world);
   migrateWorldScriptText(world);
   migrateLegacyPlayerAvatar(world);
+  migrateWorldMorphBindings(world);
   if (world.version === APP_VERSION) return world as unknown as World;
 
   if (Array.isArray(world.stats)) {
@@ -931,6 +1056,7 @@ function migrateBodyMorphs(state: GameState): GameState {
  *   5. Global fields (presence-based, every snapshot): `playerStats` and `playerTraits` become `globalStats` and
  *      `globalTraits`, and the cascade-off and applied-value maps split into global and owners parts.
  *   6. Scripts (presence-based, every snapshot): each saved stat's two code boxes become scripts.
+ *   7. Stat bindings (presence-based, every snapshot): each saved stat's bare binding names become `{ name }`.
  * The appended current page stays `=== currentState`, so `gameStates[page - 1]` resolves the current page
  * identically. Pure — callers decide whether to persist the result (import) or just load it (load).
  */
@@ -949,13 +1075,26 @@ function migrateSnapshotScripts(state: GameState): GameState {
   return { ...state, globalStats, ...(entityStats ? { entityStats } : {}) };
 }
 
+/** A snapshot with every saved stat's bindings as objects, global and each entity's. The same snapshot when none
+ *  holds a bare name. */
+function migrateSnapshotMorphBindings(state: GameState): GameState {
+  const globalStats = migrateStatListMorphBindings(state.globalStats);
+  const entityStats = state.entityStats && Object.fromEntries(
+    Object.entries(state.entityStats).map(([id, stats]) => [id, migrateStatListMorphBindings(stats)]),
+  );
+  const entitiesSame = !state.entityStats || Object.entries(state.entityStats).every(([id, stats]) => entityStats?.[id] === stats);
+  if (globalStats === state.globalStats && entitiesSame) return state;
+  return { ...state, globalStats, ...(entityStats ? { entityStats } : {}) };
+}
+
 export function migrateSave(save: SaveObject): SaveObject {
   const isLegacy = typeof save.version === 'number';
   const migratedCurrent = isLegacy ? migrateLegacySaveState(save.currentState) : save.currentState;
   const migratedHistory = isLegacy ? save.stateHistory.map(migrateLegacySaveState) : save.stateHistory;
   // Canonical flat history: an already-hoisted top-level copy, else the current snapshot's own copy.
   const messageHistory = save.messageHistory ?? migratedCurrent.fullMessageHistory ?? [];
-  const normalizeSnapshot = (s: GameState) => migrateSnapshotScripts(migrateBodyMorphs(migrateDefaultAvatarId(migrateGlobalFields(s))));
+  const normalizeSnapshot = (s: GameState) =>
+    migrateSnapshotMorphBindings(migrateSnapshotScripts(migrateBodyMorphs(migrateDefaultAvatarId(migrateGlobalFields(s)))));
   const currentState = normalizeSnapshot(stripSnapshotHistory(migratedCurrent));
   const history = isLegacy
     ? appendCurrentToHistory(migratedHistory.map(stripSnapshotHistory), currentState)

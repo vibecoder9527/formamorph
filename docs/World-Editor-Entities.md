@@ -4,7 +4,7 @@
 
 > 🛠️ Part of the [World Editor](WorldEditor) guide.
 
-An entity is a person, a creature, an object or a fixture in your world: a ferryman, an eel-smoker, a barred door. An entity belongs to one or more **Locations**. The AI reads the entities that can show up where the player is.
+An entity is a person, a creature, an object or a fixture in your world: a ferryman, an eel-smoker, a barred door. Each entity begins at a location, and its [schedule](#the-schedule) can take it to others. The AI reads the entities that can show up where the player is.
 
 ## Why it exists
 <!-- keywords: ai forgets characters, narrator invents people, recurring character, persistent npc, keeps renaming -->
@@ -20,7 +20,7 @@ The default prompt lists the entities that **may** appear in the current locatio
 1. Open the **Entities** tab.
 2. Type the entity's name in the **Filter Entities** box.
 3. Select the **+** button (**Add to Entities**), then select **Add Entity**.
-4. The new entity opens in the panel. On the **Profile** tab, pick one or more places in **Locations**.
+4. The new entity opens in the panel. On the **Presence** tab, pick the location it starts at.
 5. On the **Descriptions** tab, write the **AI-Facing Description**.
 6. Select **Save**.
 
@@ -61,7 +61,7 @@ See [SillyTavern cards](#sillytavern-cards) for what each part of the card becom
 4. Choose **Player Action** or **Narration**. See [Openings](World-Editor-Openings) for the difference.
 5. Make sure the entity is in a **Starting Location**. Its openings draw only when it is at the player's starting location.
 
-The world's **Openings** checkbox turns on by itself once an opening has text, unless you unchecked it. See [Entity Openings](World-Editor-Openings#entity-openings).
+See [Entity Openings](World-Editor-Openings#entity-openings) for when they draw.
 
 ## The panel
 <!-- keywords: pronouns, gender, profile tab, cast or playable, category, can player be them, seven tabs, relationships -->
@@ -71,26 +71,185 @@ Select an entity to open its panel.
 
 | Tab | Holds | Mode |
 |---|---|---|
-| **Profile** | **Name**, **Pronouns**, **Locations**, **Relationships**, the **Image** and the **Avatar** dropdown (**None**, **User's Default**, or an Avatar of the world; see [World Avatars](Avatars#world-avatars)). In Advanced mode, also **Aliases**, [**Stranger Name** and **Stranger Description**](#strangers), the **Persona** control, **Type**, **Image Tags** and the **3D Model**. | Simple and Advanced |
-| **Descriptions** | **Player-Facing Description** and **AI-Facing Description**. In Advanced mode, also **AI-Facing Summary**. | Simple and Advanced |
+| **Profile** | **Name**, **Pronouns**, **Relationships**, the **Image** and the **Avatar** dropdown (**None**, **User's Default**, or an Avatar of the world; see [World Avatars](Avatars#world-avatars)). In Advanced mode, also **Aliases**, [**Stranger Name**](#stranger-name) beside **Name**, the **Persona** control, **Type**, **Image Tags** and the **3D Model**. | Simple and Advanced |
+| **Descriptions** | **Player-Facing Description** and **AI-Facing Description**. In Advanced mode, also [**Stranger Description**](#stranger-description) under **Player-Facing Description**, and **AI-Facing Summary**. | Simple and Advanced |
 | **Items** | The entity's [Starting Items](World-Editor-Items#starting-items) | Simple and Advanced |
+| **Presence** | When the entity is on ([Enabled](#enabled)), its [Routines](#routines), where it starts, its daily [schedule](#the-schedule), and where the AI knows of it ([Known In](#known-in)) | Simple and Advanced |
 | **Traits** | The entity's own [traits](World-Editor-Traits#entity-traits) | Advanced only |
 | **Stats** | The entity's own [stats](#entity-stats) | Advanced only |
 | **Placeholders** | The entity's own [placeholders](World-Editor-Placeholders#placeholders-that-belong-to-an-entity-or-a-dictionary) | Advanced only |
 | **Openings** | The entity's own openings, including Self openings for a playable entity | Advanced only |
 
-The **Persona** control has four choices: **Cast**, **Playable**, **Persona-Only** and **Custom Persona**. It decides whether the player can play as the entity. See [Personas for Authors](Persona-Authoring#how-to-make-an-entity-playable). For an entity marked **Playable** or **Persona-Only**, its **Locations** are also where the player can start as it.
+The **Persona** control has four choices: **Cast**, **Playable**, **Persona-Only** and **Custom Persona**. It decides whether the player can play as the entity. See [Personas for Authors](Persona-Authoring#how-to-make-an-entity-playable). The player can start as a **Playable** entity at any of its [starts](#starts). A **Persona-Only** entity and the **Custom Persona** list **Start Locations** instead.
 
-**Relationships** lists how the entity relates to others. Pick a target, **Persona** or another entity, then type the role. Each row reaches the AI as a relationship line.
-
-**Presence**, **Movement** and **Known In** are set from the location side: on a location's **Presence** tab, or on the full-screen Locations Canvas. See [World Editor: Locations](World-Editor-Locations#entities).
+**Relationships** lists how the entity relates to others. Pick a target, **Persona** or another entity, then type what the target is to this entity. See [Relationships](#relationships).
 
 Each entity in the list has **Duplicate** and **Delete** actions.
+
+## Presence
+<!-- keywords: schedule, daily routine, routine tab, routines, add routine, requires, two ways of living, behavior changes, where does the npc start, npc moves, wander, patrol, away, gone for the night, stays at, follow the player, called over, unique, generic, crowd, herd, known in, where the ai knows -->
+<!-- route: worldEditorEntity.presence -->
+
+The **Presence** tab sets where the entity begins, where it goes, and where the AI knows of it. A location's **Presence** tab has the same editor for each entity that can be there.
+
+For a **Persona-Only** entity and the **Custom Persona**, the tab shows one **Start Locations** field. Pick the locations where the player can start as that persona. An empty field leaves the world's own starting locations. Routines, starts, **Known In** and **Placement** are hidden.
+
+**Placement** has two choices:
+
+- **Unique**: one character in one location at a time. A new entity is **Unique**. During the game it can move, follow the player and be left waiting.
+- **Generic**: a type of character, such as a crowd or a herd. One begins at every start at the same time, and each moves on its start's schedule. It never follows and is never called over.
+
+### On Map
+
+**On Map**, under **Placement**, sets how the player's map shows the entity. The map counts the entity at each location where it stands.
+
+| On Map | The player's map shows the entity |
+|---|---|
+| **Always** | At every location where it stands. This is the default. |
+| **Once Met** | Only after the player meets it. Without a [Stranger Name](#stranger-name), it works like **Always**. |
+| **When Nearby** | Only at the player's location and the locations **Nearby** it, met or not. |
+| **Never** | Nowhere, met or not. |
+
+Until the player meets an entity with a **Stranger Name**, the map shows it under the name the story gave it, or the **Stranger Name**, at the player's location and **Nearby** locations. Elsewhere it shows as an unknown. An entity with no **Stranger Name** shows under its **Name**.
+
+### Routines
+<!-- keywords: routine, add routine, requires, move earlier, move later, delete routine, behaves differently, second schedule -->
+
+An entity can have more than one Routine. Each Routine has its own starts and schedules, its own **Can Also Go**, and its own **Requires** rows. In play, the first Routine whose **Requires** holds applies.
+
+- ➕ **Add Routine** adds a Routine with no starts. With one Routine and no gate, the tab shows only this button above the starts.
+- 👆 The **Routines** list shows each Routine's name and when it applies. Click a row to show that Routine. Its **Name** and **Requires** come next, then its starts and schedule, then **Can Also Go**.
+- ✏️ Type in **Name** to rename it. A blank name shows as *Routine 2*, *Routine 3* and so on.
+- ↕️ Each row's **Move Earlier** and **Move Later** buttons change the order. When more than one Routine's **Requires** holds, the earliest applies.
+- 🗑 Each row's **Delete Routine** button removes that Routine. The last Routine can't be deleted.
+- 🔐 **Requires** takes rows of conditions, the same kind **Enabled** uses. The Routine applies while any row holds. With no rows, it always applies. A condition with no owner checks this entity.
+- ⚠️ A Routine with no starts shows a warning, because it never applies.
+
+Switching **Placement** keeps every Routine. Deleting a location removes it from every Routine.
+
+### Starts
+
+Every entity has one or more starts. Each start is a location and a schedule kept from there. Each Routine has its own starts.
+
+- 🎲 A **Unique** entity begins at one start, picked at random in each new game. Each start's tab shows its chance.
+- 👥 A **Generic** entity begins at every start at the same time. Its tabs show no chance, its rows have no lock, and it has no **Can Also Go**.
+- ✏️ Click the location in **Starts at …** to change it. For a **Unique** entity with several starts, click the percent to set the start's **Weight**.
+- ➕ Use **+** beside the tabs to add a start. A start's own delete button removes it. The last start can't be deleted.
+
+Switching between the two keeps every start and row. Chances, locks and **Can Also Go** come back as they were.
+
+#### Player's Starting Location
+
+Pick **Player's Starting Location** at the top of a start's location list. The entity then begins wherever the player begins, in a world with one starting location or many. It adds no location to the entity's list.
+
+- 🤝 For a **Unique** entity, tick **Follows the Player** to make a companion. In a game that picks this start, it travels with the player from the first turn, even through a locked row. **Can Also Go** still applies: it waits outside a location it can't enter.
+- 👥 A **Generic** entity begins beside the player and then keeps its schedule. It never follows.
+- 📍 The start's rows can use any location. In play, the game skips a location the player's real start doesn't connect to.
+- 🔁 Moving the start to a fixed location clears **Follows the Player**.
+
+### The schedule
+
+The schedule reads as sentences in the order of the day, such as *Morning – Afternoon, stays at Smithy.*
+
+- 🕑 Click the time to change it. Times use the time of day, such as **Morning**. **Use Hours** switches the row to exact hours, and **Use Time of Day** switches back, snapping to the parts of the day that cover those hours.
+- 🚶 Click the verb to pick **Stay**, **Wander**, **Patrol** or **Away**.
+  - **Stay** keeps it at one location.
+  - **Wander** moves it between locations at random. A higher **Weight** picks a location more often. It waits the set time between moves.
+  - **Patrol** walks the stops in order, waits at each, then starts over. Drag a stop to change the order.
+  - **Away** puts it at no location for those hours, such as *Night, is away.* It isn't on the map, in the scene or nearby, and the narration can't call it over. Its stats, regen, traits and scripts keep running, and the AI still knows of it where **Known In** says. If it's already following the player, it keeps following and goes away when the follow ends.
+- 📍 Click the locations to change them. The pickers list only locations the start location connects to.
+- 🔒 The lock beside a row stops the entity from being called over or starting to follow the player during that time. The lock on a free-time line does the same for every hour no row covers: it adds a locked **All Day** row at the start location.
+- ☕ Hours no row covers read *…, stays at* the start location. **All Day** covers the whole day, and reads *The rest of the day* beside timed rows.
+
+A bar above the sentences shows the whole day, from **Dawn** on the left to the end of **Night** on the right. Each row is a band in its action's color, and free hours are striped.
+
+- 👆 Click a band or a sentence to select that row in both places.
+- ↔️ Drag either end of a band to change its time. It snaps to the time of day or to whole hours, whichever the row uses, and stops at the next row. A band dragged across the whole bar becomes **All Day**; drag an end back in to give it hours again.
+- 🔁 A row that ends at the bar's right edge can carry on into the next morning: drag that end to the left side of the bar. A row that starts at the left edge can reach back into the night the same way.
+- ✋ Drag a band by its middle to move the whole row. An hours row keeps its length and moves by whole hours. A time-of-day row keeps its span, such as **Morning – Afternoon**. It lands in the nearest free time, and the left and right arrow keys do the same.
+- ➕ Click a striped stretch to add a **Stay** at the start location for exactly those hours.
+
+Two timed rows can't share an hour. Times another row uses are unavailable in the pickers, and the add buttons turn off once timed rows fill the day.
+
+⚠️ A listed location that a later link change disconnects stays in its row with a warning. The game skips it until it connects again.
+
+### Several routines in play
+<!-- keywords: routines, switch routine, behaves differently, requires, swap, after an event -->
+
+An entity can hold several routines, each with its own **Requires**, starts and **Can Also Go**. In play, the first routine whose **Requires** holds applies.
+
+- 🎲 **Each routine picks its start once.** A new game picks a start for every routine. When the world changes and another routine applies, the entity goes back to that routine's start and never picks again.
+- 🕑 **It switches by the clock.** It goes where the new routine puts it at the current time. A character at the player's location stays until the player leaves.
+- 🤝 **Followers stay if they can.** A follower keeps following when the new routine's **Can Also Go** reaches the player's location. Otherwise it parts ways. A follow a script started always continues.
+- 🌙 **No routine holds:** the entity is **Away** all day.
+- 🎬 **Page one already uses the right routine.** The new game reads the player's setup picks first.
+- 🗺️ **Presence** lists every routine's locations, each line led by its routine's name.
+
+### Can Also Go
+
+Each Routine has its own **Can Also Go**. With two or more Routines, it sits under the Routine's **Requires**.
+
+**Can Also Go** sets where the entity may go beyond its schedule: following the player, or being called over.
+
+- **Anywhere**: any location.
+- **Only Listed Locations**: its schedule's locations and the ones you list. A listed location doesn't include the locations inside it.
+
+### Enabled
+<!-- keywords: enabled, turn an entity off, hide an entity, appear later, disappear, gate, only exists when -->
+
+**Enabled** decides when the entity is on. Add rows of conditions, the same kind a trait's **Requires** uses. The entity is on while any row holds. With no rows, it's always on.
+
+- 🙈 **While it's off,** the player and the AI never see it: not in the scene, on the map, in lists or in what the AI reads. Scripts can't find it by name.
+- ⏸️ **It pauses.** Its stats, regen, traits, scripts and schedule stop where they are. When it turns back on, it picks up from there, in the same place.
+- 🚶 **It turns off at the end of a turn.** If it was following the player, it stops.
+- 👤 **A condition with no owner** checks this entity's own traits, stats and items.
+- 🎭 **The character the player plays** is always on.
+
+⚠️ If every condition checks only this entity's own traits or stats, a warning shows under the rows. Those pause while the entity is off, so once it turns off it can't turn back on. Add a condition on something else, such as a World Option, a global stat or the time of day.
+
+### Known In
+
+**Known In** sets where the AI gets the entity's summary when the entity isn't there.
+
+| Known In | The AI gets the entity's summary |
+|---|---|
+| **Nearby** | At locations one **Nearby** link from where the entity is now. Never across a **Far** link. The canvas marks every location this can be. |
+| **Nowhere** | Only at its own location |
+| **Picked Locations** | Anywhere inside the locations you pick. Use **Add Location** to pick one. |
+
+You can also pick them by clicking on the full-screen Locations Canvas. See [World Editor: Locations](World-Editor-Locations#entities).
+
+### On the Locations Canvas
+
+On the full-screen Locations Canvas, choose the entity and pick **Routine**. The map shows the schedule of the start whose tab is open, in the Routine on show. Each location takes its action's color, a bar shows when the entity is there, and a flag marks **Starts Here**. A start at the **Player's Starting Location** has no flag, and every location shows as one its rows can use. A key at the bottom lists what the map shows.
+
+- 👆 Select a row to edit its locations: click a location, or drag from one. The line over the map says what a click does.
+- 📍 Under **Only Listed Locations** with no row selected, a click adds the location to **Can Also Go** or removes it.
+
+A **Generic** entity shows the same view for the start whose tab is open, with no **Can Also Go**.
+
+- ⭕ A ring marks each location where another start begins. The key calls it **Is Here**.
+- ➕ With no row selected, click a location to add a start there with no rows. Click a location where starts begin to remove them. The last start can't be removed.
+
+### Entities from older worlds
+<!-- keywords: old world, older version, character moved, not where they were, missing npc, used to be everywhere, several locations, now wanders, became generic -->
+
+An older world can list an entity at several locations with no schedule. When you open the world, that entity gets one:
+
+| The entity | Gets |
+|---|---|
+| 🤝 Is listed at every location of the world | **Unique**, starting at the **Player's Starting Location** with **Follows the Player** on. **Can Also Go** is **Anywhere**. |
+| 🚶 Has **Pronouns** that don't start with *it*, or the **Persona** mark | **Unique**, starting at its first location, with an **All Day** **Wander** between its locations that waits one part of the day. **Can Also Go** lists those locations, or is **Anywhere** if it could follow the player. |
+| 👥 Has neither, or has *it/its*, in a world where some entity has **Pronouns** or a **Persona** mark | **Generic**, with a start at each of its locations and no rows. |
+
+In a world where no entity has **Pronouns** or a **Persona** mark, every such entity gets the **Wander**.
+
+⚠️ A **Unique** entity is in **one location at a time**, so it isn't always where the player looks. To keep it in one place, open its **Presence** tab and give it a **Stay** row, or switch it to **Generic**.
 
 ## What reaches the AI
 <!-- keywords: npc secret, hidden motive, character ignored, npc never appears, spoilers, does ai see image, private notes -->
 
-An entity reaches the AI through a location: one of its own **Locations**, or a location whose **Known Here** list holds it. A relationship with the persona or with an entity in the scene also brings it in. An entity with none of these never reaches the AI.
+An entity reaches the AI through a location. That is where its [schedule](#the-schedule) has it now, or a location whose **Known Here** list holds it. A relationship with the persona or with an entity in the scene also brings it in. An entity with none of these never reaches the AI.
 
 | Field | Sent? |
 |---|---|
@@ -161,34 +320,74 @@ Two more rules:
 <!-- keywords: stranger name, stranger description, hidden identity, unknown npc, meet, met, start met, hooded figure, known in, introduction -->
 <!-- route: worldEditorEntity.profile -->
 
-Give an entity a **Stranger Name** to hide who it is until the player meets it. Until then, the player sees the Stranger Name, such as "a hooded figure", in place of the **Name**. The AI narrator uses the Stranger Name too. Both stranger fields are in Advanced mode, in the World Editor only, and take placeholders and rolls.
+A stranger is an entity the player hasn't met. Give an entity a **Stranger Name**, a **Stranger Description**, or both. Both fields are in Advanced mode, in the World Editor only, and take placeholders and rolls.
 
-**How the player meets the entity.** Once met, the player sees the Name for the rest of the game.
+### Stranger Name
 
-- The narration uses the entity's Name, or a distinctive part of it such as a first name, while the entity is at the player's location. Dialogue counts. Entries in **Aliases** don't.
-- A script calls [`meet()`](Scripts-Reference#meeting-entities) on the entity.
+The name the player sees until they meet the entity, such as "a hooded figure". It sits beside **Name** on the **Profile** tab, and stacks under it when the panel is narrow. The AI narrator uses the Stranger Name too.
+
+- Leave it blank to show the Name.
+- Clearing it never clears the Stranger Description.
 
 **Before the player meets the entity:**
 
 - If the AI tracks the entity under another name, such as "the tall woman", the player sees that name instead.
-- The entity's popup in the **Entities** tab shows the **Stranger Description** in place of the **Player-Facing Description**. Leave the Stranger Description blank to show no description.
-- The Map doesn't show the entity. The Help window shows it only under that other name, with no description.
+- The Map doesn't show an entity with a Stranger Name. The Help window shows it only under that other name, with no description.
 
-**Entities the player has already met.** The player has met an entity from the start when it has no Stranger Name, or when either of these is true:
+**The story's use of the Stranger Name brings the entity into the scene.** When the narration writes the whole Stranger Name, such as "a hooded woman" or "the hooded woman", the entity takes part in the turn, as it does for its Name or an alias. One word of it never counts on its own, and a Stranger Name inside quoted dialogue doesn't count.
+
+### Stranger Description
+
+The description the player reads until they meet the entity. It sits directly under **Player-Facing Description** on the **Descriptions** tab. It works alone: with no Stranger Name, the player knows the **Name** but reads this description until they meet the entity.
+
+- The entity's popup in the **Entities** tab shows it in place of the **Player-Facing Description**. The Help window shows it too, for an entity with no Stranger Name.
+- Leave it blank to show no description until the player meets the entity.
+- The AI narrator sees nothing new.
+- A script reads [`met`](Scripts-Reference#meeting-entities) as false for the entity until the player meets it.
+
+**How the player meets the entity.** Once met, the player sees the Name and the Player-Facing Description for the rest of the game.
+
+- The narration uses the entity's Name, or a distinctive part of it such as a first name, while the entity is at the player's location. Dialogue counts. Entries in **Aliases** don't.
+- A script calls [`meet()`](Scripts-Reference#meeting-entities) on the entity.
+
+**Entities the player has already met.** The player has met an entity from the start when it has no Stranger Name and no Stranger Description, or when either of these is true:
 
 - It has a relationship with the persona, in either direction.
-- One of its **Known In** picks is one of the persona's **Locations**, or contains one. The **Nearby** default doesn't count.
+- One of its **Known In** picks is a location where the persona can start, or contains one. The **Nearby** default doesn't count.
 
 ## Locations
 <!-- keywords: where npc lives, assign to place, put in room, vanished after delete, several places, too many npcs, crowded scene, orphaned -->
 
-Each entity stores its own locations in one field. The location's **Entities** picker shows the same link from the other side. Set it from either side.
+An entity's **Presence** tab sets where it begins and where it goes. A location's [**Presence** tab](World-Editor-Locations#entities) has the same editor:
+
+- ➕ **Add an entity here** puts any Unique or Generic entity at the location. It adds a place to begin there, with no rows.
+- ✏️ Select an entity in **Entities Here** to edit its **Routine** or **Known In** under the list.
+- 🗑 A Generic entity's row has a remove button. It is off when the entity begins at no other location. A Unique entity has none: change its **Routine** to take it out.
 
 > ⚠️ **When you delete a location, each entity that was there loses it, and nothing warns you.** The entities stay. But an entity that was only in that location is now in no location, so it reaches the AI only through **Known Here** or a relationship. The entity still looks fine on its own tab.
 
 The default prompt sends entities from four places, as separate blocks: the player's **current location**, its **sub-locations**, **reachable** locations, and **Known Here**. The sub-location and reachable blocks list only entities whose **Known In** is **Nearby**.
 
 > ⚠️ **Each entity at the player's location is sent on every turn.** A crowded location uses context all the time. Two or three entities that matter to the scene are better than a full village.
+
+## Relationships
+<!-- keywords: family, mother, son, rival, friend, which way, wrong direction, backwards, relationship line -->
+
+Each row on the **Profile** tab says what another entity is to the one you're editing.
+
+**Example:** you're editing *Mara*, and *Tom* is her son.
+
+1. On Mara's **Profile** tab, pick **Tom** in **Add a relationship**.
+2. In the box beside **Tom**, type *son*.
+
+**How the AI reads a row**
+
+| Name in the row | | Entity you're editing | Role you type |
+|---|---|---|---|
+| Tom | is | Mara's | son |
+
+- 🧑 **Persona** — the row says what the player's character is to this entity.
+- 🔁 **One row per pair** — you don't need a second row on Tom for Mara. If both exist, the AI reads only one of them, so make sure they agree.
 
 ## Entity Stats
 <!-- keywords: npc stat, ally health, trust stat, give an entity a stat, entity owns stats, stats tab on entity -->
@@ -228,7 +427,7 @@ The **Entities** chip lists each entity's stats under its entry. Each stat shows
 - **Hidden stats are sent.** **Hidden** hides a stat from the player, and the AI still reads it.
 - **A stat that is switched off isn't sent.**
 - **Clear Include → Stats to leave them out.**
-- **Stat Detail picks which parts of each stat the AI reads:** **Range**, **Descriptor** and **Description**. At least one stays checked.
+- **Stat Detail picks which parts of each stat the AI reads:** **Range**, **Descriptor** and **Description**. With all three off, the chip sends stat names only.
 - **Only With keeps the entities that own stats or traits.** To send only entities with stats, check **Stats** under **Only With**. See [How to Send Only Entities With Stats](Prompt-Chips#how-to-send-only-entities-with-stats).
 
 ## Openings
@@ -344,7 +543,7 @@ Open an entity in the library's **Entities** tab, and its editor has four tabs.
 
 | Tab | What it holds |
 |---|---|
-| **Entity** | **Author** and **Tags** in a column on the left. On the right, the **Profile**, **Descriptions** and **Openings** tabs, with the World Editor's fields except **Locations**, **Relationships** and the stranger fields. Its **Avatar** dropdown lists your Avatar library. |
+| **Entity** | **Author** and **Tags** in a column on the left. On the right, the **Profile**, **Descriptions** and **Openings** tabs, with the World Editor's fields except **Relationships** and the stranger fields. Its **Avatar** dropdown lists your Avatar library. |
 | **Traits** | The entity's own [traits](World-Editor-Traits#entity-traits), across the full width. |
 | **Stats** | The entity's own [stats](#entity-stats), across the full width. The stats, groups and links save with the entity's card. A link brings nothing until the world you add the entity to has its Blueprint. |
 | **Placeholders** | The entity's own [placeholders](World-Editor-Placeholders), across the full width. |

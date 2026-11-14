@@ -1,42 +1,37 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useGameData } from '@/contexts/GameDataContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ChevronRight } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { targetAttribute } from '@/lib/surface/surfaceTargets';
+import { PanelTabContent, PanelTabs, type PanelTab } from "@/components/ui/panel-tabs";
 import PromptField from "@/components/prompt/PromptField";
 import PlaceholderField from "@/components/prompt/PlaceholderField";
 import { plainVocabulary } from "@/lib/chipVocabulary";
-import { PROMPT_KIND_VARIABLES } from "@/lib/promptVariables";
+import { PROMPT_KIND_VARIABLES, variableForToken } from "@/lib/promptVariables";
 import { authoredChipScene } from "@/lib/chipValues/authoredScene";
 import { chipValues } from "@/lib/chipValues/chipValues";
 import { composePreviewValues, languagePreviewValue } from "@/lib/previewValuePool";
 import { layerValues, omitValues } from "@/lib/promptValues";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Hint } from "@/components/ui/typography";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { HintInfo } from "@/components/SettingsRows";
 import {
-  clearWorldPromptOverride, setWorldPromptOverride, storedWorldPrompt, worldPromptEnabled, worldPromptFieldKey,
+  clearWorldPromptOverride, setWorldPromptOverride, storedWorldPrompt, worldPromptEnabled,
   WORLD_PROMPT_KINDS, WORLD_PROMPT_KIND_LABELS, type WorldPromptKind,
 } from "@/lib/worldPrompt";
-import { isOpeningFieldKey, openingsEnabled, setOpeningsEnabled } from "@/lib/openings";
-import { OpeningsPanel } from "./OpeningsPanel";
-import { OVERVIEW_PANELS, type OverviewPanel } from '@/views/overviewPanels';
+import type { OverviewPanelTab, OverviewPlace } from '@/views/overviewPanelTabs';
 import type { FieldReveal } from '@/views/useHistoryReveal';
 import { fieldFrame, fieldPath } from '@/lib/historyField';
-import { useEditorMode } from "@/lib/editorMode";
 import type { FocusFieldHint } from "@/types";
 
 /** Which preset field each kind replaces, and which chip palette that prompt is written against. */
 const PROMPT_KIND_VARIABLE_KEY = {
   narration: 'narration', choices: 'choices', statUpdates: 'statupdates',
 } as const;
-
-const PANEL_LABELS: Record<OverviewPanel, string> ={ ...WORLD_PROMPT_KIND_LABELS, opening: 'Openings' };
 
 /** The note-and-Reset row under whichever panel is open. Reset appears only for text the author stored. */
 const PanelFooter = ({ note, onReset }: { note: ReactNode; onReset?: () => void }) => (
@@ -51,22 +46,18 @@ const PanelFooter = ({ note, onReset }: { note: ReactNode; onReset?: () => void 
 );
 
 /**
- * The text this world supplies in place of the player's own, one panel each with its enable checkbox in the
- * picker's chrome: the narration, choices, and stat-update system prompts, plus the world's openings. A
- * prompt panel opens on the active preset's prompt as an unstored template, so an author edits something
- * that works; the first edit is what stores it on the world, and Reset drops it back to tracking the
- * template. Only these three system prompts are replaceable; every other AI pass keeps running on the
- * player's own preset.
- *
- * Openings need no player-facing opt-out where the prompts do: the pre-filled box is editable, so the
- * player already has the last word on what the opening turn says.
+ * The system prompts this world supplies in place of the player's own: narration, choices, and stat
+ * updates, one status row each above the selected prompt. A prompt opens on the active preset's prompt as
+ * an unstored template, so an author edits something that works; the first edit is what stores it on the world, and Reset drops it back
+ * to tracking the template. Only these three system prompts are replaceable; every other AI pass keeps
+ * running on the player's own preset.
  */
-const CustomPromptsSection = ({ focusField, tab, onTabChange: setTab, onOpenEntity, onOpenLocation }: {
-  focusField?: FocusFieldHint | null;
-  tab: OverviewPanel | null;
-  onTabChange: (tab: OverviewPanel | null) => void;
-  onOpenEntity?: (entityId: string) => void;
-  onOpenLocation?: (locationId: string) => void;
+// Chips a world alone cannot fill, in every variant; the sample turn supplies them.
+const SAMPLE_ONLY_CHIPS = new Set(['<NOTES>', '<TIME>']);
+
+const CustomPromptsSection = ({ kind, onKindChange }: {
+  kind: WorldPromptKind;
+  onKindChange: (kind: WorldPromptKind) => void;
 }) => {
   const {
     worldOverview, updateWorldOverview, stats, statGroups, locations, connections, entities, traits, traitGroups, dictionaries,
@@ -83,11 +74,10 @@ const CustomPromptsSection = ({ focusField, tab, onTabChange: setTab, onOpenEnti
   // fall through to the shared samples, exactly as they do for a live game between turns.
   const previewValues = useMemo(
     () => {
-      // A world has no notes or clock, so the pool's sample turn supplies both, as it does the per-turn chips.
       const authored = omitValues(chipValues(authoredChipScene({
         worldOverview, stats, statGroups, locations, connections, entities, traits, traitGroups, dictionaries, placeholders,
         items, placements, slots, bodies, currencies,
-      })), (key) => key === '<NOTES>' || key === '<TIME>');
+      })), (key) => SAMPLE_ONLY_CHIPS.has(variableForToken(key)?.token ?? ''));
       return composePreviewValues(
         {
           paragraphLimit, maxTokens, markdownOutput, sectionStyle: activeSectionStyle,
@@ -103,10 +93,6 @@ const CustomPromptsSection = ({ focusField, tab, onTabChange: setTab, onOpenEnti
       items, placements, slots, bodies, currencies,
     ],
   );
-  const { advanced } = useEditorMode();
-  // Nothing open by default, and picking the open one again closes it: four large fields is more of the
-  // panel than an author who isn't writing prompts should have to scroll past. The editor holds the choice,
-  // so a history reveal can open the panel an edit was made on.
   const [resetKind, setResetKind] = useState<WorldPromptKind | null>(null);
 
   // The prompt each tab tracks: what the game would send right now, preset pins and all — not the shipped
@@ -117,31 +103,9 @@ const CustomPromptsSection = ({ focusField, tab, onTabChange: setTab, onOpenEnti
     statUpdates: presetStatUpdatesPrompt,
   };
 
-  // Only the find bar can reach a panel that isn't showing, and it arrives as a fresh object per navigation.
-  useEffect(() => {
-    if (isOpeningFieldKey(focusField?.fieldKey)) { setTab('opening'); return; }
-    const hit = WORLD_PROMPT_KINDS.find((kind) => focusField?.fieldKey === worldPromptFieldKey(kind));
-    if (hit) setTab(hit);
-  }, [focusField]);
-
-  if (!advanced) return null;
-
-  // Nothing to switch until an opening exists: the box derives off, so a click would write a flag that
-  // reads off again. The world plays the default opening either way.
-  const noOpenings = !openingsEnabled(worldOverview, [...entities, ...locations]) && worldOverview.openingsEnabled !== false;
-
+  // Off keeps the text and only clears the flag, so a stray click costs nothing.
   const write = (kind: WorldPromptKind, update: { text?: string; enabled?: boolean }) =>
     updateWorldOverview({ promptOverrides: setWorldPromptOverride(worldOverview.promptOverrides, kind, update) });
-
-  // Switching off keeps the text and only clears the flag, so a stray click costs nothing — the editor
-  // writes straight through to world state, where the only undo is discarding every unsaved edit at once.
-  // Switching on opens the kind, since the author is about to want it; switching off leaves the panel as
-  // it stands rather than yanking a field open around the click.
-  const toggle = (kind: OverviewPanel, on: boolean) => {
-    if (on) setTab(kind);
-    if (kind === 'opening') updateWorldOverview(setOpeningsEnabled(on));
-    else write(kind, { enabled: on });
-  };
 
   const reset = () => {
     if (resetKind) {
@@ -150,109 +114,82 @@ const CustomPromptsSection = ({ focusField, tab, onTabChange: setTab, onOpenEnti
     setResetKind(null);
   };
 
+  const stored = storedWorldPrompt(worldOverview, kind);
+  const enabled = worldPromptEnabled(worldOverview, kind);
+  const kindName = WORLD_PROMPT_KIND_LABELS[kind];
+  const label = kindName.toLowerCase();
+
   return (
-    // A query container, so the picker below folds on the width it actually gets: this panel is a
-    // drag-resizable pane on desktop, where a viewport breakpoint would say "wide" for a column the
-    // author has just dragged narrow.
-    <div className="space-y-2 [container-type:inline-size]">
-      <Label className="block leading-none">Custom Prompts</Label>
-      {/* A segmented control rather than tabs: picking the open kind again clears the selection, which
-          Tabs cannot express. The checkbox sits beside its item rather than inside it — a button inside
-          a button is invalid — so the wrapper carries the selected chrome for the pair. Its own row, and
-          a grid rather than wrapping flex: four checkbox-and-label pairs do not fit a narrow column, and
-          letting them wrap freely strands the fourth alone on a full-width second row. */}
-      <ToggleGroup
-        type="single"
-        value={tab ?? ''}
-        onValueChange={(v) => setTab((v || null) as OverviewPanel | null)}
-        // The gate for the Openings panel: the panel shows only once its kind is open.
-        {...targetAttribute('worldEditor.overview', 'custom-prompts')}
-        // Four across only once the row clears the column with room to spare; two-up below that. Sized to
-        // its own labels rather than the column, so it stays a control instead of stretching into a banner.
-        className="inline-grid h-auto grid-cols-2 [@container(min-width:32rem)]:grid-cols-4"
-      >
-        {OVERVIEW_PANELS.map((kind, i) => (
-          <div key={kind} className="inline-flex items-center">
-            {/* The app's pipe (see PromptField's toolbar), pairing each checkbox with the label after it
-                rather than the one before. Only between neighbors on a row, never opening one: the second
-                of each pair always, the third only once the same query above puts all four on one row.
-                On this muted chrome the usual bg-border is invisible, hence the stronger fill. */}
-            <span
-              aria-hidden
-              className={cn('mx-0.5 h-4 w-hairline shrink-0 bg-muted-foreground/40',
-                i % 2 === 0 && 'hidden',
-                i === 2 && '[@container(min-width:32rem)]:inline-block')}
-            />
-            <div
-              className={cn('inline-flex flex-1 items-center gap-2 rounded-sm pl-2 transition-all',
-                tab === kind && 'bg-background shadow-sm')}
-            >
-              <Checkbox
-                className="shrink-0"
-                checked={kind === 'opening' ? openingsEnabled(worldOverview, [...entities, ...locations]) : worldPromptEnabled(worldOverview, kind)}
-                disabled={kind === 'opening' && noOpenings}
-                onCheckedChange={(c) => toggle(kind, c === true)}
-                {...fieldFrame('prompts', kind, 'enabled')}
-                aria-label={kind === 'opening'
-                  ? "Use this world's openings"
-                  : `Use this world's ${PANEL_LABELS[kind].toLowerCase()} prompt`}
-              />
-              <ToggleGroupItem
-                value={kind}
-                className="flex-1 px-2 data-[state=on]:bg-transparent data-[state=on]:shadow-none"
+    <div className="space-y-2">
+      <ul aria-label="Custom Prompt Kinds" className="divide-y divide-border overflow-hidden rounded-md border border-border">
+        {WORLD_PROMPT_KINDS.map((k) => {
+          const rowName = WORLD_PROMPT_KIND_LABELS[k];
+          const rowEnabled = worldPromptEnabled(worldOverview, k);
+          const selected = k === kind;
+          const status = rowEnabled ? 'Custom' : 'Default';
+          return (
+            <li key={k} className={cn('flex items-center', selected ? 'bg-accent' : 'hover:bg-accent/60')}>
+              <span className="flex items-center pl-3" {...fieldFrame('prompts', k, 'enabled')}>
+                <Checkbox
+                  checked={rowEnabled}
+                  aria-label={`Use ${rowName} Prompt`}
+                  onCheckedChange={(c) => write(k, { enabled: c === true })}
+                />
+              </span>
+              <button
+                type="button"
+                aria-current={selected ? 'true' : undefined}
+                aria-label={`${rowName}, ${status}`}
+                onClick={() => onKindChange(k)}
+                className={cn(
+                  'flex min-w-0 flex-1 items-center gap-2 py-2 pl-2 pr-3 text-left text-label outline-none',
+                  'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                  selected && 'font-medium',
+                )}
               >
-                {PANEL_LABELS[kind]}
-              </ToggleGroupItem>
-            </div>
-          </div>
-        ))}
-      </ToggleGroup>
-
-      {tab === 'opening' && <OpeningsPanel onOpenEntity={onOpenEntity} onOpenLocation={onOpenLocation} />}
-
-      {tab !== null && tab !== 'opening' && (() => {
-        const kind = tab;
-        const label = WORLD_PROMPT_KIND_LABELS[kind].toLowerCase();
-        const stored = storedWorldPrompt(worldOverview, kind);
-        const enabled = worldPromptEnabled(worldOverview, kind);
-        return (
-          <div className="space-y-2">
-            <PlaceholderField
-              historyField={fieldPath('prompts', kind)}
-              value={stored ?? presetPrompts[kind]}
-              // Storing on the first divergence is what keeps an untouched kind tracking the preset: a
-              // world only carries a prompt its author actually wrote.
-              onChange={(text) => {
-                if (stored === undefined && text === presetPrompts[kind]) return;
-                write(kind, { text, enabled });
-              }}
-              placeholders={placeholders}
-              promptChips={{
-                variables: PROMPT_KIND_VARIABLES[PROMPT_KIND_VARIABLE_KEY[kind]],
-                // The choices prompt's language chip names itself in the directive, so its preview says
-                // "choices" where the pool's default says "narration".
-                previewValues: kind === 'choices'
-                  ? layerValues(previewValues, languagePreviewValue('choices', language))
-                  : previewValues,
-                sampleData: 'Your world, sample turn',
-              }}
-              ariaLabel={`World ${label} prompt`}
-              resizable
-            />
-            <PanelFooter
-              note={(
-                <>
-                  {enabled
-                    ? `Replaces the player's ${label} prompt while they play this world. They can decline it from the world's details window.`
-                    : `Not applied until you switch this one on. Players use their own ${label} prompt.`}
-                  {stored === undefined && ` Shows your current ${label} prompt and follows it until you edit it here.`}
-                </>
-              )}
-              onReset={stored === undefined ? undefined : () => setResetKind(kind)}
-            />
-          </div>
-        );
-      })()}
+                <span className="flex-1 truncate">{rowName}</span>
+                <span className={cn('text-meta', rowEnabled ? 'text-foreground' : 'text-muted-foreground')}>{status}</span>
+                <ChevronRight aria-hidden className={cn('h-4 w-4 shrink-0', !selected && 'invisible')} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="pt-1 text-helper font-medium text-muted-foreground">{kindName} Prompt</p>
+      <PlaceholderField
+        key={kind}
+        historyField={fieldPath('prompts', kind)}
+        value={stored ?? presetPrompts[kind]}
+        // Storing on the first divergence is what keeps an untouched kind tracking the preset: a
+        // world only carries a prompt its author actually wrote.
+        onChange={(text) => {
+          if (stored === undefined && text === presetPrompts[kind]) return;
+          write(kind, { text, enabled });
+        }}
+        placeholders={placeholders}
+        promptChips={{
+          variables: PROMPT_KIND_VARIABLES[PROMPT_KIND_VARIABLE_KEY[kind]],
+          // The choices prompt's language chip names itself in the directive, so its preview says
+          // "choices" where the pool's default says "narration".
+          previewValues: kind === 'choices'
+            ? layerValues(previewValues, languagePreviewValue('choices', language))
+            : previewValues,
+          sampleData: 'Your world, sample turn',
+        }}
+        ariaLabel={`World ${label} prompt`}
+        resizable
+      />
+      <PanelFooter
+        note={(
+          <>
+            {enabled
+              ? `Replaces the player's ${label} prompt while they play this world. They can decline it from the world's details window.`
+              : `Not applied until you check ${kindName} above. Players use their own ${label} prompt.`}
+            {stored === undefined && ` Shows your current ${label} prompt and follows it until you edit it here.`}
+          </>
+        )}
+        onReset={stored === undefined ? undefined : () => setResetKind(kind)}
+      />
 
       <ConfirmDialog
         open={resetKind !== null}
@@ -339,55 +276,59 @@ const ReadmeSection = ({ focusField, fieldReveal }: {
 export const PLAYER_DESCRIPTION_INFO = 'Shows on your world\'s library card and community listing. The AI never reads it.';
 export const AI_DESCRIPTION_INFO = "Goes to the AI on every turn as your world's description. Players never see it.";
 
-/** The AI-facing world content fields (description, system prompt, readmes), shown in the editor's right
- *  column on the Overview tab. Identity/listing fields live in WorldOverviewManager (left column). */
-const WorldDetailsManager = ({ focusField, fieldReveal, panel, onPanelChange, onOpenEntity, onOpenLocation }: {
+/** The Overview's right column: the world's descriptions and readme on Details, then its custom prompts
+ *  on a tab of their own. The listing fields live in WorldOverviewManager (left column). */
+const WorldDetailsManager = ({ focusField, fieldReveal, place, onPlaceChange, tabs }: {
   focusField?: FocusFieldHint | null;
   /** The field the latest undo or redo returns to. */
   fieldReveal?: FieldReveal | null;
-  /** The open custom prompt panel, held by the editor. */
-  panel: OverviewPanel | null;
-  onPanelChange: (panel: OverviewPanel | null) => void;
-  /** Opens an entity's Openings tab, from the openings panel's group header. */
-  onOpenEntity?: (entityId: string) => void;
-  /** Opens a location's Openings tab, from the openings panel's group header. */
-  onOpenLocation?: (locationId: string) => void;
+  /** The shown tab and prompt kind, held by the editor, which also moves it for Find and undo. */
+  place: OverviewPlace;
+  onPlaceChange: Dispatch<SetStateAction<OverviewPlace>>;
+  /** The tabs the editor mode offers. */
+  tabs: readonly (PanelTab & { value: OverviewPanelTab })[];
 }) => {
   const { worldOverview, updateWorldOverview, placeholders } = useGameData();
   // The description shows in the library, before a playthrough exists — so placeholders can never be rolled
   // for it. No chip family here: any `{{ph…}}` an old world carries stays inert text, exactly as it'd read.
   const plainVocab = useMemo(() => plainVocabulary(), []);
-
   return (
-    // Player-facing text first, then the AI-facing prompts, so the Advanced-only section is last and a
-    // Simple-mode column ends on the AI-Facing Description.
-    <div className="space-y-4">
-      <PromptField
-        label="Player-Facing Description"
-        historyField="description"
-        info={<HintInfo>{PLAYER_DESCRIPTION_INFO}</HintInfo>}
-        value={worldOverview.description}
-        onChange={(description) => updateWorldOverview({ description })}
-        vocabulary={plainVocab}
-        markdown
-        resizable
-      />
+    <PanelTabs
+      tabs={tabs}
+      value={place.tab}
+      onValueChange={(tab) => onPlaceChange((held) => ({ ...held, tab }))}
+      stripLabel="Overview Fields"
+      surfaceTabs="worldEditorOverview"
+    >
+      <PanelTabContent value="details">
+        <PromptField
+          label="Player-Facing Description"
+          historyField="description"
+          info={<HintInfo>{PLAYER_DESCRIPTION_INFO}</HintInfo>}
+          value={worldOverview.description}
+          onChange={(description) => updateWorldOverview({ description })}
+          vocabulary={plainVocab}
+          markdown
+          resizable
+        />
 
-      <ReadmeSection focusField={focusField} fieldReveal={fieldReveal} />
+        <ReadmeSection focusField={focusField} fieldReveal={fieldReveal} />
 
-      <PlaceholderField
-        label="AI-Facing Description"
-        historyField="systemPrompt"
-        info={<HintInfo>{AI_DESCRIPTION_INFO}</HintInfo>}
-        value={worldOverview.systemPrompt || ''}
-        onChange={(systemPrompt) => updateWorldOverview({ systemPrompt })}
-        placeholders={placeholders}
-        resizable
-        tourAnchor="world-ai-description"
-      />
-
-      <CustomPromptsSection focusField={focusField} tab={panel} onTabChange={onPanelChange} onOpenEntity={onOpenEntity} onOpenLocation={onOpenLocation} />
-    </div>
+        <PlaceholderField
+          label="AI-Facing Description"
+          historyField="systemPrompt"
+          info={<HintInfo>{AI_DESCRIPTION_INFO}</HintInfo>}
+          value={worldOverview.systemPrompt || ''}
+          onChange={(systemPrompt) => updateWorldOverview({ systemPrompt })}
+          placeholders={placeholders}
+          resizable
+          tourAnchor="world-ai-description"
+        />
+      </PanelTabContent>
+      <PanelTabContent value="prompts">
+        <CustomPromptsSection kind={place.kind} onKindChange={(kind) => onPlaceChange((held) => ({ ...held, kind }))} />
+      </PanelTabContent>
+    </PanelTabs>
   );
 };
 

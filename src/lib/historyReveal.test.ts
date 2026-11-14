@@ -4,8 +4,9 @@ import {
 } from '@/lib/editorHistory';
 import { revealForMove, revealTarget } from '@/lib/historyReveal';
 import type {
-  Connection, Dictionary, DictionaryEntry, Entity, GameLocation, Stat, StatUpdate, Trait, WorldOverview,
+  Connection, Dictionary, DictionaryEntry, Entity, EntityStart, GameLocation, Stat, StatUpdate, Trait, WorldOverview,
 } from '@/types';
+import { withFirstStarts } from '@/lib/entityKind';
 
 /** A moved Step names the tab and the record the editor shows the author afterward. */
 
@@ -18,7 +19,7 @@ const overview = (name: string): WorldOverview => ({ name } as unknown as WorldO
 const emptyWorld = (over: Partial<WorldSlices> = {}): WorldSlices => ({
   worldOverview: overview('Sedge Landing'), stats: [], statGroups: [], locations: [], connections: [], entities: [], entityGroups: [],
   traits: [], traitGroups: [], statUpdates: [], dictionaries: [], placeholders: [], placeholderGroups: [], scripts: [], tools: [],
-  items: [], slots: [], bodies: [], placements: [], currencies: [],
+  items: [], slots: [], bodies: [], placements: [], currencies: [], options: [],
   ...over,
 });
 
@@ -254,7 +255,29 @@ describe('revealForMove', () => {
     it('rides with the Origin tab and record of a mirror', () => {
       const step = stepFrom({ tab: 'locations', ids: ['harbor'], subTab: 'presence', view: 'canvas' });
       expect(revealForMove([step], world, editor()))
-        .toEqual({ tab: 'locations', id: 'harbor', subTab: 'presence', view: 'canvas' });
+        .toEqual({
+          tab: 'locations', id: 'harbor', subTab: 'presence', view: 'canvas', presenceEntity: { entityId: 'wick', mode: 'locations' },
+        });
+    });
+
+    describe('the Start of a Presence edit', () => {
+      const start = (id: string, row = 'stay') => ({
+        id, place: 'harbor', weight: 1, schedule: [{ id: `${id}-row`, time: 'allDay', action: { kind: row, place: 'docks' } }],
+      });
+      const twoStarts = withFirstStarts(wick, [start('a'), start('b')] as unknown as EntityStart[]);
+      const edited = withFirstStarts(twoStarts, [start('a'), start('b', 'patrol')] as unknown as EntityStart[]);
+      const presence = (field?: string): StepOrigin => ({ tab: 'locations', ids: ['harbor'], subTab: 'presence', ...(field ? { field } : {}) });
+      const stepOfEdit = (origin: StepOrigin) => stepFrom(origin, [diffSlice('entities', [twoStarts], [edited]) as SliceEdit]);
+
+      it('names the Start whose data differs when the Origin field names none', () => {
+        expect(revealForMove([stepOfEdit(presence('routine/b-row'))], world, editor())?.presenceEntity)
+          .toEqual({ entityId: 'wick', mode: 'locations', startId: 'b' });
+      });
+
+      it('names the Start the Origin field holds over the one that differs', () => {
+        expect(revealForMove([stepOfEdit(presence('starts/a/weight'))], world, editor())?.presenceEntity)
+          .toEqual({ entityId: 'wick', mode: 'locations', startId: 'a' });
+      });
     });
 
     it('rides with the Origin tab alone when nothing was selected there', () => {

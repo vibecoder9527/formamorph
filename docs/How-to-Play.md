@@ -27,6 +27,32 @@ Select the ring to see the percent used, about how many turns are left, when the
 
 If Formamorph AI can't serve you right now, the ring stays empty. Select it to see why and what to do.
 
+## How to Make Your Formamorph AI Allowance Last
+<!-- keywords: use less, save allowance, last longer, running out fast, using a lot, why so much, usage going up, turns cost more, expensive, big world, long story, cheaper, reduce usage, stretch, fewer turns left -->
+<!-- route: gameViewer#action-box -->
+
+Each turn sends your world and the story so far to the AI. Two things decide how much a turn uses:
+
+| What | How It Changes |
+|---|---|
+| 🌍 **Your world** | A large world, with many entities, locations and dictionary entries, uses more on every turn, from the first turn on. |
+| 📜 **Your story** | The story so far grows with each turn, so a long save uses more per turn than a new one. |
+
+**About how many turns are left** follows your recent turns. It drops as a story grows or when you start a larger world, even if you play the same way.
+
+### Keep Memory Summaries On
+
+**Memory Summaries** is on by default. It sends the last few turns word for word and older turns as short memories, so a long story grows slowly. See [Story Memory](Memory).
+
+With it off, every older turn goes word for word. Each turn then uses more than the one before, until the story fills the AI's context. From then on, every turn uses that full amount.
+
+The memories cost a little each turn. On a short story that is more than they save. Past the first 20 or so turns, they save more than they cost, and the gap keeps growing.
+
+### Ways to Use Less
+
+- **Turn choices off.** Choices are their own request each turn. See [How to Turn Choices Off](#how-to-turn-choices-off).
+- **Check where your use goes.** Select the ring beside **Send**. The popup shows what share of this week's allowance each kind of request used.
+
 ## How to Use a Choice
 <!-- keywords: options, suggestions, pick, select, buttons, ready-made, click, combine, suggested actions, multiple choice, quick replies, prewritten, ctrl click, append, long press, tap answer -->
 <!-- route: gameViewer#action-box -->
@@ -144,7 +170,7 @@ An earlier page is read-only. The side panel shows a banner, *Viewing turn n of 
 2. Select **Current Location**. The **Change Location** dialog opens.
 3. Select a place on the **List** tab, or a box on the **Map** tab.
 
-You move at once. Travel costs no turn and writes no narration. The narrator can also suggest a move: select **Go** in the *Move to …?* bar, or **Dismiss**.
+You move at once. Travel costs no turn and writes no narration. A place with a lock 🔒 is locked: the line under it says why, and you can't travel there yet. The narrator can also suggest a move: select **Go** in the *Move to …?* bar, or **Dismiss**.
 
 ## How to Export the Story
 <!-- keywords: save as text, download, txt, markdown, copy, transcript, share, print, log, novel, archive, read later, ebook, document, pdf, keep the text, post online -->
@@ -154,13 +180,13 @@ You move at once. Travel costs no turn and writes no narration. The narrator can
 2. Select **Export Story**.
 3. Select **Plain text (.txt)** or **Markdown (.md)**.
 
-The file holds every turn's narration. Markdown keeps the formatting; plain text doesn't. To keep your progress, use **Save Game** in the game menu instead.
+The file holds every turn's narration. Markdown keeps the formatting; plain text doesn't. To keep your progress, use **Save Game** at the top right instead.
 
 ## How to See What the AI Read
 <!-- keywords: context, prompt, debug, inspector, raw, request, sent, tokens, log, behind the scenes, payload, full input, troubleshoot, what model saw, why did it, under the hood, api call -->
 <!-- route: aiContext -->
 
-1. Select the **Show the full AI context sent each turn** button at the top left. On mobile, open the **Menu** and select **AI Context**.
+1. Select **More Actions** (`...`) at the top right, then **AI Context**.
 2. Use the turn pager to pick a turn.
 3. Open a request to read its **Raw Input** and **Raw Output**.
 
@@ -201,12 +227,12 @@ See [The AI Context Inspector](#the-ai-context-inspector) for the search and the
 |---|---|
 | The story | The narration, the choices and the action box. While the AI works, a status strip over the bottom of the narration names the running request, such as *Generating Narration…*. A small animated icon for that request shows beside it. |
 | The left panel | The **Entities**, **Notes**, **Memory** and **Logs** tabs. The entity view shows the selected entity's Avatar, 3D model or image. See [In the Game](Avatars#in-the-game). |
-| The right panel | Your persona, the in-game date and time, and the **Stats**, **Traits**, **Inventory** and **Location** tabs |
-| Top left | The music button and the AI Context button |
-| Top right | **Edit World** and the **Menu** |
+| The right panel | Your persona, the in-game date and time, and the **Stats**, **Traits**, **Inventory**, **Location** and **World Options** tabs |
+| Top of the left panel | **Exit to Main Menu**, the music button and the entity view's toggle |
+| Top right | **Save Game**, **Load Game**, **Settings** and **More Actions** (`...`) |
 | Bottom left | **Hide UI**, which hides the panels so only the story shows |
 
-On mobile, three tabs at the top switch between **Story** (the left panel), **Game** (the story) and **Status** (the right panel). The **Story** tab also has a **View** tab that holds the entity view. **Edit World** and **AI Context** move into the **Menu**. **Hide UI** and the music button don't show.
+On mobile, three tabs at the top switch between **Story** (the left panel), **Game** (the story) and **Status** (the right panel). The **Story** tab also has a **View** tab that holds the entity view. The top-right buttons and **Exit to Main Menu** move into **More Actions** (`...`). **Hide UI** and the music button don't show.
 
 ## Turn Actions
 <!-- keywords: buttons under text, more menu, copy to clipboard, message options, toolbar, icons below, three dots, long press -->
@@ -233,7 +259,7 @@ No actions show while the AI writes a turn.
 
 | Tab | What it is |
 |---|---|
-| **Entities** | Every entity at your location, with those in the scene first. A stranger shows under the name you know. When you move, only your followers stay in the scene. See [Entities in Game](Entities). |
+| **Entities** | Every entity at your location, with those in the scene first. A stranger shows under the name you know. When you move, only your followers stay in the scene. See [Entities That Move](Entities#entities-that-move). |
 | **Notes** | Your standing notes for the AI. See [Notes](#notes). |
 | **Memory** | What the story remembers. See [Story Memory](Memory#the-memory-tab). |
 | **Logs** | A record of what changed. See [Logs](#logs). |
@@ -263,10 +289,24 @@ The **Logs** tab lists what the game changed. That includes your starting traits
 |---|---|
 | Language box | Sets the language or style the AI writes in, the same as **AI Language** in **Settings** |
 | Persona row | Shows who you play. **Change** opens **Change Persona**. See [Change It in Game](Personas#change-it-in-game). |
-| **Stats** | The global stats under **Global**, and your persona's stats under its name. **Edit Stats** lets you drag them; **Regenerate Stats** asks the AI again. A picker shows the stats of one entity in the scene. Shows only when the world has stats you can see. |
-| **Traits** | Your active traits. A **Global** section holds the global traits you picked. Your persona's section is marked **You**. Entities in the scene follow. Filter them, or switch one on or off. |
+| **Stats** | The global stats under **Global**, and your persona's stats under its name. **Edit Stats** lets you drag them; **Regenerate Stats** asks the AI again. A picker shows the stats of one entity in the scene. A stat that changes the Avatar shows an Avatar icon; hover it to see which sliders or colors. Shows only when the world has stats you can see. |
+| **Traits** | Your active traits. A **Global** section holds the global traits you picked. Your persona's section is marked **You**. Entities in the scene follow. Filter them, or switch one on or off. A trait that changes the Avatar shows an Avatar icon; hover it to see which sliders or colors. |
 | **Inventory** | What you wear and what you carry. See [How to Use Your Inventory](#how-to-use-your-inventory). Shows only when the world has items or money. |
 | **Location** | Where you are, its description and the places it connects to |
+| **World Options** | The World Options you can change during play. Shows only when the world has any. See [How to Change a World Option](#how-to-change-a-world-option). |
+
+## How to Change a World Option
+<!-- keywords: world option, change during play, reply length, setting, switch, slider -->
+<!-- route: gameViewer.options -->
+
+Some worlds let you change a World Option after the game starts.
+
+1. In the right panel, open the **World Options** tab. On mobile, open **Status** first.
+2. Pick a value, switch an Option, or drag its slider.
+
+The change applies at once, and your next turn reads it. The controls stay off while a turn runs and while you read an earlier turn. An earlier turn keeps the text it was written under.
+
+The change shows under **Since Last Turn** with **Only You**, so the AI isn't told about it. Select **Undo** to restore the old value.
 
 ## How to Use Your Inventory
 <!-- keywords: items, equipment, gear, equip, wear, wield, unequip, take off, drop, give, hand over, pick up, take item, loot, bag, pack, backpack, slot, bound item, quest item, charges, use, drink, potion, consume, buff, timed effects, time left -->
@@ -361,22 +401,25 @@ You meet a stranger when the story says its real name. After that, the full enti
 | **List** | Every location as a tree, with sublocations indented. Expand or collapse a parent. Your location is highlighted. |
 | **Map** | The author's map, read-only. A pin marks your location. Drag to pan, and pinch to zoom. |
 
+A count on a Map box shows the entities there. In your location and the places next to it, an entity you haven't met shows under the name you've heard for it. Everywhere else it shows as an unknown, marked **?**. An entity you've heard no name for is an unknown everywhere. The count's tooltip lists the names, then the unknowns.
+
 The dialog opens on the tab you used last.
 
-## The Game Menu
-<!-- keywords: pause menu, quit, leave, hamburger, back to title, options, exit without saving, suggestion -->
+## Game Actions
+<!-- keywords: pause menu, game menu, quit, leave, hamburger, three dots, more actions, back arrow, back to title, options, exit without saving, suggestion -->
 
-Select the **Menu** button at the top right.
+| Action | What it does | Where it is |
+|---|---|---|
+| **Save Game** | Saves your progress under a name | Top right |
+| **Load Game** | Opens a saved game | Top right |
+| **Settings** | Opens **Settings** | Top right |
+| **Edit World** | Opens the World Editor on this world | **More Actions** (`...`), top right |
+| **AI Context** | Opens the AI Context inspector | **More Actions** |
+| **Send Feedback** | Sends a bug report or a suggestion. Shows when you are logged in to Community Creations. | **More Actions** |
+| **Exit to Main Menu** | Leaves the game, after it asks. Unsaved progress is lost. | The back arrow on the left panel's top row |
+| **Exit Full Screen** | Leaves full screen. Windows desktop app only. **F11** also enters and leaves it. | **More Actions**, while in full screen |
 
-| Item | What it does |
-|---|---|
-| **Save Game** | Saves your progress under a name |
-| **Load Game** | Opens a saved game |
-| **Edit World** | Opens the World Editor on this world. Mobile only; desktop has its own button. |
-| **AI Context** | Opens the AI Context inspector. Mobile only. |
-| **Settings** | Opens **Settings** |
-| **Send Feedback** | Sends a bug report or a suggestion. Shows when you are logged in to Community Creations. |
-| **Exit to Main Menu** | Leaves the game. Unsaved progress is lost. |
+On mobile, every action is in **More Actions**, in the tab row at the top.
 
 ## Narration Layout
 <!-- keywords: difference between, paginated, continuous, scrolling feed, what each shows, jump to newest, dashed bubbles -->
@@ -434,10 +477,15 @@ In the browser and on Android, Formamorph starts on the **Demo AI**, a small fre
 A stronger model writes better narration and keeps each entity consistent. See [Connect Your Own AI](Connect-Your-Own-AI).
 
 ## The Formamorph AI Offer
-<!-- keywords: upgrade, see levels, spark, flame, beacon, support on patreon, card under the story, not now, stronger ai, morphie -->
+<!-- keywords: upgrade, see levels, spark, flame, beacon, support on patreon, card under the story, not now, stronger ai, morphie, built-in engine, local model, low vram, bigger model -->
 <!-- route: road -->
 
-After five turns on the Demo AI, a card with Morphie appears once, under the latest narration and above the choices. You can still pick a choice or type your action while it shows.
+A card with Morphie appears once, under the latest narration and above the choices:
+
+- After five turns on the Demo AI.
+- After 10 turns on **Built-In Engine** in the desktop app, when it runs on a GPU with 8 GB of memory or less, on an integrated GPU, or with no GPU. This card compares Formamorph AI with the model on your computer.
+
+Each card shows once per device, and seeing one doesn't hide the other. You can still pick a choice or type your action while a card shows.
 
 | Button | What it does |
 |---|---|
@@ -461,7 +509,7 @@ Each step shows a check when it's done, and the fire beside Morphie grows with e
 
 To open the levels screen again, select the **Demo AI** badge, then **See Levels**.
 
-The card and **See Levels** don't show when your support already includes Formamorph AI, when you narrate on another AI, or in a build without Formamorph AI.
+The cards and **See Levels** don't show when your support already includes Formamorph AI, when you narrate on another AI, or in a build without Formamorph AI.
 
 ## The Like Prompt
 <!-- keywords: enjoying popup, heart, rate this world, thumbs up, upvote, stop asking, favorite, review -->

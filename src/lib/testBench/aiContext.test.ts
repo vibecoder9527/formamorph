@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { buildDestinationsContext, buildEntityContext, buildLocationContext } from '@/lib/locationContext';
+import { describe, it, expect, vi } from 'vitest';
+import { forceOff } from '@/test/inPlayOverride';
+import { inPlayWorldOf } from '@/lib/inPlayWorld';
+import { buildDestinationsContext, buildLocationContext } from '@/lib/locationContext';
+import { rosterAsListed } from '@/test/asListed';
 import { estimateTokens } from '@/lib/memoryUtils';
 import { YOU_TARGET } from '@/lib/entityRelationships';
 import type { Connection, Dictionary, Entity, GameLocation, Placeholder, Stat, Trait, TraitGroup } from '@/types';
@@ -10,6 +13,8 @@ import {
 import { buildLens, type LensState } from './lens';
 
 import { phValues } from '@/test/placeholderValues';
+
+vi.mock('@/lib/inPlayGates', async (original) => (await import('@/test/inPlayOverride')).withForcedOff(original));
 // A chip in an entity's name and in a connection's travel hint, so both paths through the lens are covered.
 const HAIR_CHIP = '{{ph:ph-hair:world:p1}}';
 const hairColor: Placeholder = { id: 'ph-hair', name: 'Hair Color', values: phValues(['ash', 'copper', 'jet']) };
@@ -94,6 +99,23 @@ const block = (data: ReturnType<typeof context>, id: ContextBlockId) => data.blo
 const roster = (data: ReturnType<typeof context>, scope: RosterScope) =>
   data.rosters.find((r) => r.scope === scope)!;
 
+describe('the world as play sees it', () => {
+  const marketText = (data: ReturnType<typeof context>) =>
+    JSON.stringify([data.blocks.map((b) => b.text), data.destinations, data.rosters.map((r) => r.entities)]);
+
+  it('leaves out an entity and a location the gates turn off, and shows them while they are on', () => {
+    const state = at('loc-harbor');
+    const w = world();
+    const on = buildAiContext(inPlayWorldOf(w, null), buildLens({ ...w, traitGroups }, state));
+    expect(marketText(on)).toContain('The Long Market');
+    expect(marketText(on)).toContain('Mara');
+    forceOff({ entities: ['e-mara'], locations: ['loc-market'] });
+    const off = buildAiContext(inPlayWorldOf(w, null), buildLens({ ...w, traitGroups }, state));
+    expect(marketText(off)).not.toContain('The Long Market');
+    expect(marketText(off)).not.toContain('Mara');
+  });
+});
+
 describe('context blocks', () => {
   it('renders each block exactly as the game builder does for the same inputs', () => {
     // Chip-free, so the comparison is against the builders' raw output with nothing resolved over it.
@@ -105,7 +127,7 @@ describe('context blocks', () => {
     const data = context(at('loc-harbor'), plain);
     const harbor = locations[1];
     expect(block(data, 'location').text).toBe(buildLocationContext(harbor, { format: 'markdown' }));
-    expect(block(data, 'entities').text).toBe(buildEntityContext(harbor, plain.entities, { format: 'markdown' }));
+    expect(block(data, 'entities').text).toBe(rosterAsListed(harbor, plain.entities, { format: 'markdown' }));
     expect(block(data, 'destinations').text).toBe(
       buildDestinationsContext(harbor, locations, plain.connections, { preferSummary: true, format: 'markdown' }),
     );
@@ -235,8 +257,9 @@ describe('the Persona block', () => {
   it("serves the Custom Persona entity's traits and stats nested in one block, as the Persona chip renders it", () => {
     const lens = lensOf(withYou);
     const text = block(buildAiContext(withYou, lens), 'persona').text;
-    expect(text).toBe('- **You**\n  - **traits:**\n    - **Keen-Eyed:** Sees the far shore.\n  - **stats:**\n    - **Calm:** 3/10\n');
-    expect(text).toBe(buildStatBlock(withYou, lens, '<PERSONA|markdown>'));
+    // The default prompts send descriptors only, so a stat with no descriptors sends its name.
+    expect(text).toBe('- **You**\n  - **traits:**\n    - **Keen-Eyed:** Sees the far shore.\n  - **stats:**\n    - **Calm**\n');
+    expect(text).toBe(buildStatBlock(withYou, lens, '<PERSONA|norange.nodescription.markdown>'));
   });
 
   it('has nothing to send in a world with no Custom Persona entity', () => {
@@ -272,15 +295,28 @@ describe('destinations', () => {
   });
 
   it('honors a one-way connection: the return trip is never offered', () => {
-    const back = context(at('loc-market')).destinations.map((d) => d.id);
-    expect(back).not.toContain('loc-harbor');
-    expect(back).toContain('loc-landing');
+    const back = context(at('loc-market')).destinations;
+    expect(back.map((d) => d.id)).toContain('loc-landing');
+    // The harbor is reached on foot through the landing, never straight back across the one-way leg.
+    const harbor = back.find((d) => d.id === 'loc-harbor');
+    expect(harbor?.route).toEqual(['Sedge Landing']);
+    expect(harbor?.hint).toBeUndefined();
   });
 
   it('drops the implicit sibling link the connection replaced, so a pair is listed once', () => {
     const toMarket = context(at('loc-harbor')).destinations.filter((d) => d.id === 'loc-market');
     expect(toMarket).toHaveLength(1);
     expect(toMarket[0].via).toBe('connection');
+  });
+
+  it('leaves out a locked place under the lens’s Options, and lists it once they open it (Q54)', () => {
+    const open = (on: boolean) => ({
+      options: [{ id: 'opt-gate', name: 'Market Open', type: 'boolean' as const, shownToPlayer: true, midGame: false, default: on }],
+      locations: locations.map((l) => (l.id === 'loc-market' ? { ...l, unlockedWhen: [{ all: [{ kind: 'option' as const, id: 'opt-gate' }] }] } : l)),
+    });
+    const ids = (on: boolean) => context(at('loc-harbor'), open(on)).destinations.map((d) => d.id);
+    expect(ids(false)).not.toContain('loc-market');
+    expect(ids(true)).toContain('loc-market');
   });
 
   it('lists nothing at a location a connection points away from and nothing points into', () => {
@@ -428,7 +464,7 @@ describe('an entity’s own scope', () => {
     expect(block(scoped({ entities: [...entities, titled, you] }), 'entities').text).toContain('Wren the gray-Eyed has gray eyes.');
   });
 
-  it('reads the Custom Persona entity’s own text with the lens’s pins, its traits among them', () => {
+  it('reads the Custom Persona entity’s pins in every text, over a cast entity’s own (Q17, Q18)', () => {
     const hazel: Trait = {
       id: 't-hazel', name: 'Hazel-Eyed', isDefault: true, statChanges: [], order: 0,
       placeholderPins: [{ placeholderId: 'w-eyes', value: 'green' }],
@@ -436,7 +472,7 @@ describe('an entity’s own scope', () => {
     const self = { ...you, traits: [hazel], aiDescription: `Eyes of ${EYES}.` };
     const data = scoped({ entities: [...entities, wren, self] });
     expect(block(data, 'persona').text).toContain('Eyes of green.');
-    expect(block(data, 'entities').text).toContain('Wren has gray eyes.');
+    expect(block(data, 'entities').text).toContain('Wren has green eyes.');
   });
 
   it('lets a starting stat’s band pin win over the entity’s trait, as play lays them', () => {

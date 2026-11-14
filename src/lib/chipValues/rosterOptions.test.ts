@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { positionsIn } from '@/lib/entityPlaces';
 import { chipValues, sceneEntityChipValues } from './chipValues';
 import { splitToken } from '../promptVariables';
 import type { ChipScene } from './chipScene';
@@ -46,6 +47,7 @@ const chip = (base: string, ...ids: string[]) => {
 
 const scene = (over: Partial<ChipScene> = {}): ChipScene => ({
   overview: 'A quiet coast.',
+  placesOf: positionsIn({ positions: {}, generics: {} }),
   stats: [],
   traits: [],
   traitGroups: [],
@@ -197,7 +199,6 @@ describe('Stat Detail on the Entities chip', () => {
       ['nodescriptor.nodescription', '    Trust: 40/100'],
       ['norange.nodescription', '    Trust: Wary'],
       ['norange.nodescriptor', '    Trust: How far he trusts you.'],
-      ['norange.nodescriptor.nodescription', '    Trust'],
     ];
     for (const [ids, expected] of cases) {
       expect(line(chip('ENTITIES', ids)), ids).toBe(expected);
@@ -212,7 +213,27 @@ describe('Stat Detail on the Entities chip', () => {
     expect(line('<ENTITIES|norange.markdown>')).toBe('    - **Trust:** Wary — How far he trusts you.');
     expect(line('<ENTITIES|nodescriptor.markdown>')).toBe('    - **Trust:** 40/100 — How far he trusts you.');
     expect(line('<ENTITIES|nodescription.markdown>')).toBe('    - **Trust:** 40/100 (Wary)');
-    expect(line('<ENTITIES|norange.nodescriptor.nodescription.markdown>')).toBe('    - **Trust**');
+  });
+
+  it('lists stat names inline after the stats label with every piece off, in every format', () => {
+    const off = 'norange.nodescriptor.nodescription';
+    expect(values(`<ENTITIES|${off}>`)).toContain('  stats: Trust\n');
+    expect(values(`<ENTITIES|${off}.markdown>`)).toContain('  - **stats:** Trust\n');
+    expect(values(`<ENTITIES|${off}.xml>`)).toContain('  <stats>Trust</stats>\n');
+    expect(values(`<ENTITIES|${off}>`)).not.toContain('Trust:');
+  });
+
+  it('nests stat names under their stat group with every piece off, in every format', () => {
+    const off = 'norange.nodescriptor.nodescription';
+    const grouped: Entity = {
+      ...guard, stats: [{ ...trust, groupId: 'mind' }], statGroups: [{ id: 'mind', name: 'Mind', parentId: null }],
+    };
+    const values = lookup(scene({ entities: [grouped, ...entities.filter((e) => e !== guard)] }));
+    expect(values(`<ENTITIES|${off}>`)).toContain('  stats:\n    Mind:\n      Trust\n');
+    expect(values(`<ENTITIES|${off}.markdown>`)).toContain('  - **stats:**\n    - **Mind:**\n      - **Trust**');
+    // The Merchant holds the same stat with no group, so it keeps the inline line.
+    expect(values(`<ENTITIES|${off}.markdown>`)).toContain('  - **stats:** Trust\n');
+    expect(values(`<ENTITIES|${off}.xml>`)).toMatch(/<stats>\n\s*<group>\n\s*<name>Mind<\/name>\n\s*<stat>\n\s*<name>Trust<\/name>/);
   });
 
   it('renders the pieces in the xml format', () => {
@@ -223,7 +244,6 @@ describe('Stat Detail on the Entities chip', () => {
     expect(xml('nodescriptor')).toContain('<value>40/100</value>');
     expect(xml('nodescription')).not.toContain('<meaning>');
     expect(xml('nodescriptor')).toContain('<meaning>How far he trusts you.</meaning>');
-    expect(xml('norange.nodescriptor.nodescription')).toContain('  <stats>\n    <stat>\n      <name>Trust</name>\n    </stat>\n  </stats>\n');
   });
 
   it('applies in the summary content and in Sub-Locations with stats on', () => {
@@ -299,5 +319,6 @@ describe('the Persona chip options', () => {
     expect(values('<PERSONA|notraits>')).toContain('stats:');
     expect(values('<PERSONA|norange.nodescriptor>')).toContain('  stats:\n    Trust: How far he trusts you.\n');
     expect(values('<PERSONA|nodescription.markdown>')).toContain('    - **Trust:** 40/100 (Wary)\n');
+    expect(values('<PERSONA|norange.nodescriptor.nodescription>')).toContain('  stats: Trust\n');
   });
 });

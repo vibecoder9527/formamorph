@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  dropLocationFromConnections, effectiveDestinations, implicitPairs, overriddenPairs, pairKey,
-  reachableFromStarts,
+  dropLocationFromConnections, effectiveDestinations, implicitPairs, nearbyPlaces, overriddenPairs, pairKey,
+  reachableFromStarts, walkableReach, WALK_MOVE_CAP,
 } from "./locationGraph";
 import type { Connection, GameLocation } from "@/types";
 
@@ -84,6 +84,48 @@ describe("effectiveDestinations", () => {
   });
 });
 
+describe("nearbyPlaces", () => {
+  const near = (id: string, connections: Connection[] = []) => nearbyPlaces(id, world, connections).sort();
+  const road: Connection = { id: "road", a: "house", b: "landing", aToB: {}, bToA: {} };
+
+  it("reaches the implicit neighbors: parent, children and siblings", () => {
+    expect(near("tavern")).toEqual(["cellar", "house", "village"]);
+  });
+
+  it("reaches the other end of a Connection, from either end", () => {
+    expect(near("house", [road])).toEqual(["landing", "tavern", "village"]);
+    expect(near("landing", [road])).toEqual(["house"]);
+  });
+
+  it("reaches against a one-way leg, unlike travel", () => {
+    const oneWay: Connection = { id: "road", a: "house", b: "landing", aToB: {} };
+    expect(near("landing", [oneWay])).toEqual(["house"]);
+    expect(dests("landing", [oneWay])).toEqual([]);
+  });
+
+  it("never chains: a place two links away is out of reach", () => {
+    expect(near("tavern", [road])).not.toContain("landing");
+  });
+
+  it("never reaches across a Far Connection", () => {
+    const far: Connection = { ...road, distance: "far" };
+    expect(near("house", [far])).toEqual(["tavern", "village"]);
+    expect(near("landing", [far])).toEqual([]);
+  });
+
+  it("a Far Connection that replaces an implicit pair drops that neighbor", () => {
+    const farStair: Connection = { id: "stair", a: "tavern", b: "cellar", aToB: {}, bToA: {}, distance: "far" };
+    expect(near("tavern", [farStair])).toEqual(["house", "village"]);
+    expect(near("cellar", [farStair])).toEqual([]);
+  });
+
+  it("a Far link still allows travel", () => {
+    const far: Connection = { ...road, distance: "far" };
+    expect(dests("house", [far])).toContain("landing");
+    expect(walkableReach("landing", world, [far]).map((s) => s.id)).toContain("village");
+  });
+});
+
 describe("overriddenPairs", () => {
   it("names only the implicit pairs an authored Connection took over", () => {
     const sibling: Connection = { id: "c7", a: "house", b: "tavern", aToB: {}, bToA: {} };
@@ -111,6 +153,56 @@ describe("reachableFromStarts", () => {
     const unflagged = world.map((l) => ({ ...l, isStarting: false }));
     expect([...reachableFromStarts(unflagged, [])].sort())
       .toEqual(["cellar", "house", "landing", "shore", "tavern", "village"]);
+  });
+});
+
+describe("walkableReach", () => {
+  // farm > { barn, yard } ; town > store > backroom ; a two-way lane joins Yard to Town, and a one-way slide
+  // drops from Yard into a top-level Glen.
+  const farm: GameLocation = { id: "farm", name: "Farm" };
+  const barn: GameLocation = { id: "barn", name: "Barn", parentId: "farm" };
+  const yard: GameLocation = { id: "yard", name: "Yard", parentId: "farm" };
+  const town: GameLocation = { id: "town", name: "Town" };
+  const store: GameLocation = { id: "store", name: "Store", parentId: "town" };
+  const backroom: GameLocation = { id: "backroom", name: "Backroom", parentId: "store" };
+  const glen: GameLocation = { id: "glen", name: "Glen" };
+  const places = [farm, barn, yard, town, store, backroom, glen];
+  const lane: Connection = { id: "lane", a: "yard", b: "town", aToB: { hint: "down the lane" }, bToA: {} };
+  const slide: Connection = { id: "slide", a: "yard", b: "glen", aToB: {} };
+  const reach = (from: string, connections = [lane, slide]) =>
+    Object.fromEntries(walkableReach(from, places, connections).map((s) => [s.id, s.moves]));
+
+  it("lists a place 3 moves away and not one 4 moves away", () => {
+    // Barn → Yard → Town → Store is 3 moves; the Backroom under the Store is a fourth.
+    expect(reach("barn")).toEqual({ farm: 1, yard: 1, town: 2, glen: 2, store: 3 });
+  });
+
+  it("never walks a one-way leg backward", () => {
+    // The slide runs Yard → Glen only, so nothing leaves the Glen.
+    expect(reach("glen")).toEqual({});
+    expect(reach("store")).toEqual({ town: 1, backroom: 1, yard: 2, farm: 3, barn: 3, glen: 3 });
+  });
+
+  it("gives a far place the places it passes through, and a one-move place none", () => {
+    const steps = walkableReach("barn", places, [lane, slide]);
+    const routeOf = (id: string) => steps.find((s) => s.id === id)?.route;
+    expect(routeOf("yard")).toEqual([]);
+    expect(routeOf("town")).toEqual(["yard"]);
+    expect(routeOf("store")).toEqual(["yard", "town"]);
+  });
+
+  it("keeps the first move's Connection leg on a one-move place", () => {
+    const steps = walkableReach("yard", places, [lane, slide]);
+    expect(steps.find((s) => s.id === "town")?.via).toEqual({ via: "connection", connection: lane, leg: lane.aToB });
+  });
+
+  it("stops at the move cap", () => {
+    // A chain one longer than the cap: the last link is a move too far.
+    const chain: GameLocation[] = Array.from({ length: WALK_MOVE_CAP + 2 }, (_, i) => ({ id: `n${i}`, name: `N${i}` }));
+    const links: Connection[] = chain.slice(1).map((to, i) => ({ id: `l${i}`, a: chain[i].id, b: to.id, aToB: {} }));
+    const steps = walkableReach("n0", chain, links);
+    expect(steps.map((s) => s.moves)).toEqual(Array.from({ length: WALK_MOVE_CAP }, (_, i) => i + 1));
+    expect(steps.some((s) => s.id === `n${WALK_MOVE_CAP + 1}`)).toBe(false);
   });
 });
 

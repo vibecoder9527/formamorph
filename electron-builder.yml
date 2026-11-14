@@ -16,6 +16,11 @@ files:
   - '!electron/fixtures/**'
   - '!electron/fakeLlamaServer.mjs'
 # llama-server builds (scripts/fetchLlamaServer.mjs) ship as plain files in resources/llama-server/<build>/.
+# electron-builder adds these to each platform's own list. The pin carries the engine tag and the CUDA assets;
+# every platform reads it at engine start.
+extraResources:
+  - from: scripts/llamaServerPin.json
+    to: llama-server/llamaServerPin.json
 # Single icon source shared with the web favicon (public/icon.png, 512x512). electron-builder converts
 # it to .ico (Windows) and .icns (macOS) at build time and uses the PNG directly on Linux.
 win:

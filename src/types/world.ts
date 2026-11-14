@@ -48,6 +48,34 @@ export interface Script {
   order?: number;
 }
 
+/** One Avatar slider a stat changes: by the model's slider name, or an alias-mate of it. */
+export interface MorphBinding {
+  name: string;
+  /** The Change By amount at the stat's authored max. Absent = 1. */
+  by?: number;
+}
+
+/** One Avatar slider a trait holds at `value` while it is active, by the model's slider name or an alias-mate. */
+export interface MorphPin {
+  name: string;
+  value: number;
+}
+
+/** An Avatar color a stat or trait can drive. */
+export type ColorChannel = 'skin' | 'eye' | 'hair';
+
+/** One Avatar color a stat blends toward `color` (`#rrggbb`) as it rises. */
+export interface ColorBinding {
+  channel: ColorChannel;
+  color: string;
+}
+
+/** One Avatar color a trait sets to `color` (`#rrggbb`) while it is active. */
+export interface ColorPin {
+  channel: ColorChannel;
+  color: string;
+}
+
 /** A world-defined stat: its schema (type, range, descriptors) plus its live/starting value. */
 export interface Stat {
   id: string;
@@ -70,9 +98,11 @@ export interface Stat {
   thresholdUnit?: ThresholdUnit;
   /** Scripts with this stat as `self`, run while the stat is enabled. Absent = none. */
   scripts?: Script[];
-  /** Body-mesh morph target names this stat drives; the value maps linearly across [min, authored max],
-   *  so a max raised during the game pushes the influence past 1. */
-  morphBindings?: string[];
+  /** Avatar sliders this stat changes, each by `by` times its value's share of [min, authored max]. */
+  morphBindings?: MorphBinding[];
+  /** Avatar colors this stat blends toward a target, by its value's share of [min, authored max], capped at 1.
+   *  One per channel. */
+  colorBindings?: ColorBinding[];
   /** `false` starts the stat inert — hidden from the player and the AI, regen and code paused — until a
    *  trait switches it on. Absent = enabled. */
   enabled?: boolean;
@@ -143,7 +173,8 @@ export interface StatLinkFields {
   descriptors: StatDescriptor[];
   thresholdUnit: ThresholdUnit;
   scripts: Script[];
-  morphBindings: string[];
+  morphBindings: MorphBinding[];
+  colorBindings: ColorBinding[];
   enabled: boolean;
   hidden: boolean;
   noIncrease: boolean;
@@ -219,7 +250,23 @@ export type TraitRequirement =
   | { kind: 'playingAs'; id: string; name?: string; not?: true }
   | StatRequirement
   | ItemRequirement
-  | TimeRequirement;
+  | TimeRequirement
+  | OptionRequirement;
+
+/** A World Option Condition. It names no owner. A choice Option holds `valueId`; a boolean holds on; Not flips
+ *  either. A number compares by `operator` to `value` and takes no Not. Fields that do not fit the Option's
+ *  type, or a missing Option or value, leave it unresolved. `name` and `valueName` are stored for display. */
+export interface OptionRequirement {
+  kind: 'option';
+  id: string;
+  name?: string;
+  valueId?: string;
+  valueName?: string;
+  operator?: StatComparison;
+  value?: number;
+  owner?: undefined;
+  not?: true;
+}
 
 /** An item Condition: an owner has a copy of the item, or has one equipped. `name` is the item's name when it
  *  was stored, so an unresolved one still reads. An owner-less one means the host's owner; on an item it is
@@ -366,6 +413,10 @@ export interface Trait {
   scripts?: Script[];
   /** The Body its owner takes while it is active. Absent = no Body row. */
   body?: TraitBodyRow;
+  /** Avatar sliders held while it is active. Absent = none. */
+  morphPins?: MorphPin[];
+  /** Avatar colors set while it is active, one per channel. Absent = none. */
+  colorPins?: ColorPin[];
 }
 
 /** A trait's Body row. Absent `pick` = blank: the row sets no Body. */
@@ -382,6 +433,81 @@ export interface GalleryImage {
   /** The Visibility rule: in play any one row that holds shows the image. Absent or empty = always shown. */
   requires?: TraitRequirementRow[];
 }
+
+/** Generic: every Start runs at once, one Generic Entity Instance each. Unique: one body, from one Start rolled per playthrough. */
+export type EntityKind = 'generic' | 'unique';
+
+/** A schedule row's hours, in minutes from midnight. `end` before `start` wraps past midnight. */
+export interface ScheduleRange {
+  start: number;
+  end: number;
+}
+
+/** A Wander place and its pick weight. */
+export interface WanderPlace {
+  place: string;
+  weight: number;
+}
+
+/** A Patrol stop and how long the character idles there, in minutes. */
+export interface PatrolStop {
+  place: string;
+  idle: number;
+}
+
+/** What a schedule row does. Idle durations are in minutes. */
+export type ScheduleAction =
+  | { kind: 'stay'; place: string }
+  | { kind: 'wander'; places: WanderPlace[]; idle: number }
+  | { kind: 'patrol'; stops: PatrolStop[] }
+  /** At no place: off the map and out of every scene, its stats and scripts still running. */
+  | { kind: 'away' };
+
+/** One row of a Start's schedule. A timed row beats the All-day row for the hours it covers. */
+export interface ScheduleRow {
+  id: string;
+  time: 'allDay' | ScheduleRange;
+  /** During the row narration can't call the character over, and it won't start following unless a script asks. */
+  strict?: boolean;
+  action: ScheduleAction;
+}
+
+/** The Start place that resolves at New Game to where the player begins. Never a location id. */
+export const PLAYER_START = '@playerStart';
+
+/** What the editor calls `PLAYER_START`. */
+export const PLAYER_START_LABEL = "Player's Starting Location";
+
+/** One beginning: a place and the daily schedule kept from there. A Unique entity rolls one by weight; a Generic entity runs them all. */
+export interface EntityStart {
+  id: string;
+  /** A location id, or `PLAYER_START`. */
+  place: string;
+  /** Positive integer. */
+  weight: number;
+  schedule: ScheduleRow[];
+  /** At `PLAYER_START`, a Unique entity that rolls this Start begins the game Following. */
+  beginsFollowing?: true;
+}
+
+/** Where a Unique entity may go beyond its schedule. An empty list means schedule places only. */
+export type Traversable = 'anywhere' | string[];
+
+/** One way an entity with a kind lives: its own Starts and Traversable, applied while its Requires holds. */
+export interface EntityRoutine {
+  id: string;
+  /** The author's name, such as "Routine 1". */
+  name: string;
+  /** Holds while any row holds; absent or empty = always. A Condition with no owner reads the entity itself. */
+  requires?: TraitRequirementRow[];
+  /** A Unique entity's places beyond its schedule. Absent = an empty list. A Generic entity ignores it. */
+  traversable?: Traversable;
+  /** The beginnings, in author order. A Unique entity rolls one per playthrough; a Generic entity runs every one. */
+  starts: EntityStart[];
+}
+
+/** How the player's map shows an entity. Read it through `lib/onMap`. */
+export type OnMap = 'always' | 'onceMet' | 'whenNearby' | 'never';
 
 /** A character or object in the world, with separate player-facing and AI-facing descriptions plus optional media. */
 export interface Entity {
@@ -432,18 +558,21 @@ export interface Entity {
   model?: MediaAsset;
   /** The entity's Avatar. Absent = none. */
   vrmPick?: VrmPick;
-  /** Ids of the locations this entity belongs to. The entity is present at every one of them
-   *  simultaneously. Read it through `lib/entityPresence`, which inverts it into per-location rosters. Under
-   *  the Persona mark they are also where the player can start as it (see `lib/personaPick`). */
+  /** The membership of an entity with no kind: the ids of the locations it belongs to. An entity with a kind stores
+   *  none; its routine is the only source of its places. Only `lib/entityPlaces` reads or writes it (ADR-0017). */
   locations?: string[];
-  /** `random`: one individual, placed at one of `locations` at random in each new game. Absent = present at
-   *  every listed location at once. The persona ignores it. */
-  presence?: EntityPresence;
-  /** How the entity moves during play. Absent = Free: no position, no AI request. The persona ignores it. */
-  movement?: EntityMovement;
+  /** The Enabled gate: on while any row holds; absent or empty = always on. A Condition with no owner reads the
+   *  entity itself. Off in play, the entity is hidden and inert. */
+  enabledWhen?: TraitRequirementRow[];
+  /** Absent for an entity with no locations, the persona and the played entity. */
+  kind?: EntityKind;
+  /** The Routines of an entity with a kind, in priority order; at least one. Absent for an entity with no kind. */
+  routines?: EntityRoutine[];
   /** Where the AI knows of the entity while it isn't present: `nowhere`, or the picked location ids, each
    *  covering its whole subtree. Absent = Nearby, one step from where it is. */
   knownIn?: 'nowhere' | string[];
+  /** How the player's map shows the entity. Absent = Always. */
+  onMap?: OnMap;
   /** The entity's links to other entities, at most one per target, in author order. Absent or empty = none. */
   relationships?: EntityRelationship[];
   /** Editor-only folder this entity lives in; null/absent = ungrouped. Purely organizational — never sent
@@ -497,12 +626,6 @@ export interface Entity {
   /** What this copy follows, where it follows anything (see `ContentLink`). Absent = independent copy. */
   link?: ContentLink;
 }
-
-/** An entity's Presence beyond the default, Everywhere Listed. */
-export type EntityPresence = 'random';
-
-/** An entity's Movement beyond the default, Free. */
-export type EntityMovement = 'stays' | 'between' | 'follow';
 
 /** One authored link from an entity to another. `label` is the target's role toward the owner, read as
  *  "<target> is <owner>'s <label>". */
@@ -718,13 +841,18 @@ export interface GameLocation {
   /** Parent location id for sub-location nesting; null/absent = top-level. Editor-only for now — not
    *  sent to the AI (excluded in buildLocationContext). Sibling order is the `locations` array order. */
   parentId?: string | null;
+  /** The Enabled gate: on while any row holds; absent or empty = always on. A Condition with no owner reads the
+   *  played persona. Off in play, the location and its subtree are absent. */
+  enabledWhen?: TraitRequirementRow[];
+  /** The Lock gate: unlocked while any row holds; absent or empty = never locked. A Condition with no owner reads
+   *  the played persona. Locked, it and its subtree bar the player's travel in; only a script moves them in. */
+  unlockedWhen?: TraitRequirementRow[];
+  /** What the player reads on a locked location in place of its lock line. Placeholders resolve. */
+  lockedText?: string;
   /** Where the author dragged this location on the Locations canvas — relative to its parent's box when
    *  nested, as the canvas reads a child's position. Editor-only: never sent to the AI. Absent means the
    *  canvas lays it out itself. */
   canvasPosition?: { x: number; y: number };
-  /** `true`: the entities reachable from here are the ones at the router's effective destinations (tree
-   *  neighbors plus Connection legs). Absent = the parent and siblings only. */
-  nearbyUsesConnections?: boolean;
   /** Placeholders held at a fixed value while the player is here. Released on leaving; a child location
    *  inherits nothing through `parentId`. */
   placeholderPins?: PlaceholderPin[];
@@ -750,6 +878,8 @@ export interface Connection {
   aToB?: ConnectionLeg;
   /** Present when travel runs `b → a`. */
   bToA?: ConnectionLeg;
+  /** The pair's distance, both legs. Absent = Nearby. Far keeps travel and drops pull reach and context. */
+  distance?: 'far';
 }
 
 /** Which direction of a Connection a leg is. */
@@ -913,8 +1043,6 @@ export interface WorldOverview {
   openings?: Opening[];
   /** Relative draw weight per opening id; an opening absent from the map weighs 1, and 0 benches it. */
   openingWeights?: Record<string, number>;
-  /** `false` keeps `openings` on the world without drawing them. Absent = on. */
-  openingsEnabled?: boolean;
   /** Which personas the player can pick. Absent = any. */
   allowedPersonas?: AllowedPersonas;
   /** The persona a new player starts on. Absent = the player's default persona. */
@@ -1007,7 +1135,61 @@ export interface World {
   bodies?: Body[];
   /** Starting Item Copies. Absent = none. */
   placements?: Placement[];
+  /** World Options, in Options-tab order. Absent = none. */
+  options?: WorldOption[];
 }
+
+/** What every World Option carries, whatever its type. */
+interface WorldOptionBase {
+  id: string;
+  name: string;
+  /** Shown under the control at new game. Never sent to the AI. */
+  playerDescription?: string;
+  /** False keeps the Option out of every player surface; it still pins and gates. */
+  shownToPlayer: boolean;
+  /** True lets the player change it during play. */
+  midGame: boolean;
+}
+
+/** One named value of a choice Option. */
+export interface WorldOptionValue {
+  id: string;
+  name: string;
+  placeholderPins?: PlaceholderPin[];
+}
+
+/** Pick one of named values. `default` is a value id. */
+export interface ChoiceWorldOption extends WorldOptionBase {
+  type: 'choice';
+  values: WorldOptionValue[];
+  default: string;
+}
+
+/** On or off, each state with its own pins. */
+export interface BooleanWorldOption extends WorldOptionBase {
+  type: 'boolean';
+  default: boolean;
+  onPins?: PlaceholderPin[];
+  offPins?: PlaceholderPin[];
+}
+
+/** A whole number in `min`–`max`, moved by `step`. Pins nothing. */
+export interface NumberWorldOption extends WorldOptionBase {
+  type: 'number';
+  min: number;
+  max: number;
+  /** Absent = 1. */
+  step?: number;
+  default: number;
+}
+
+/** A player-facing setup switch that acts only through placeholder pins and gates. */
+export type WorldOption = ChoiceWorldOption | BooleanWorldOption | NumberWorldOption;
+
+export type WorldOptionType = WorldOption['type'];
+
+/** What one Option holds: a choice's value id, a boolean, or a number. */
+export type WorldOptionValueOf = string | boolean | number;
 
 /** One authored value: a stable id and the author's text. The id is minted once and never changes, so a
  *  draw weight or a trait pin keyed by it survives the author re-spelling the value; `text` is what

@@ -74,7 +74,8 @@ Select a trait to open its panel.
 |---|---|---|
 | **Details** | **Name** and the two descriptions | Simple and Advanced |
 | **Availability** | **Mode**, **Starts**, **In Game** and [**Requires**](#requirements) | Simple and Advanced |
-| **Stats** | **Stat Changes**, [**Body**](#body), and **Stat Availability** in Advanced mode | Simple and Advanced |
+| **Stats** | **Stat Changes** and **Stat Availability** in Advanced mode | Simple and Advanced |
+| **Appearance** | [**Body**](#body), [**Sliders**](#sliders) and [**Colors**](#colors) | Simple and Advanced |
 | **Pins** | **Placeholder Pins** | Advanced only |
 | **Scripts** | [Scripts](#scripts) | Advanced only |
 
@@ -149,6 +150,7 @@ A disabled stat isn't shown to the player or sent to the AI. Its Regen and scrip
 
 ## Body
 <!-- keywords: transformation, wolf form, change shape, equipment slots, lose slots, unequip on transform, curse body -->
+<!-- route: worldEditorTrait.appearance -->
 
 A Body row changes which equipment slots the trait's owner has while the trait is active. For example, a *Wolf Form* trait sets the Body to *Wolf*, which has no hand slots.
 
@@ -158,6 +160,48 @@ A Body row changes which equipment slots the trait's owner has while the trait i
 - The game log shows the change, such as *Body: Wolf. Unequipped Iron Helm*.
 
 When two active traits set a Body, the one switched on last wins. When it switches off, the one before it takes over. With none left, the Body goes back to the one the owner started with.
+
+## Sliders
+<!-- keywords: elf ears, ear shape, trait changes avatar, set slider, lock slider, race look, head features trait -->
+
+**Sliders** set the [Avatar's](Avatars#in-the-game) sliders while the trait is active. For example, an *Elf* trait sets Ear Shape to 1, and a *Human* trait sets it to 0.
+
+- On the **Appearance** tab, pick sliders in the **Sliders** list. It has two groups for each model: **Body Sliders** and **Head Features**. On an entity's own trait, the list holds the sliders of its 3D model and of the Avatar it shows on this device. For **User's Default**, that is your Default Avatar. On a world trait, the list holds the Avatar of each persona the player can pick, once each. A world that allows one persona lists one Avatar. A library persona or **None** uses your **Custom Persona**'s Avatar. **Starts On** does not narrow the list. With no Avatar and no 3D model, the **Appearance** tab asks you to pick one.
+- A slider you bound that the list no longer holds stays on the trait, and you can remove it.
+- Each picked slider gets a row with a **Set To** number, 1 by default. Any number works, even one past what Customization allows.
+- The slider takes the **Set To** value in place of the player's own setting. A stat bound to that slider still adds its change on top.
+- When the trait switches off, the player's own setting comes back.
+- A world trait changes the player's Avatar. An entity's own trait changes that entity's model.
+- A row shows **Not on this model** when none of the models the trait plays on has that slider.
+
+When two active traits set the same slider, the one switched on last wins. A row says **Also set by** and names the other traits. Traits in a group where only one can be picked never show it.
+
+## Colors
+<!-- keywords: skin color trait, drow skin, eye color, hair color, trait changes color, recolor avatar -->
+
+**Colors** set the [Avatar's](Avatars#in-the-game) skin, eye or hair color while the trait is active. For example, a *Drow* trait sets the skin to gray.
+
+- Pick **Skin**, **Eye** or **Hair** in the **Colors** list. Each gets a row with a **Set To** color, which starts at the Avatar's own color, or white when the trait has no Avatar.
+- The color replaces the player's own pick. A stat bound to that color still shifts it on from there.
+- When the trait switches off, the player's own color comes back.
+- Colors work on Avatars only. An entity's 3D model keeps its colors.
+- A row shows **Not on this model** when the model lacks that color.
+
+When two active traits set the same color, the one switched on last wins. The row says **Also set by**, as for [Sliders](#sliders).
+
+## Preview
+<!-- keywords: preview trait look, see trait on avatar, set ears by eye, try trait sliders, avatar preview -->
+<!-- route: appearancePreview -->
+
+**Preview** shows the trait's look on its Avatar, so you can set sliders and colors by eye.
+
+- On the **Appearance** tab, select **Preview** at the bottom left of the panel. The dialog opens the Avatar the trait plays on. With several, it opens the first and offers an **Avatar** menu to switch. Your changes stay when you switch. A control the other Avatar lacks is hidden there, and Save still writes its change.
+- Each slider shows its **Set To** value, or the Avatar's own value where the trait has no row. Colors work the same way. Only this trait's rows apply.
+- The dialog has the Avatar's **Head Features**, **Body Sliders**, and its hair, eye and skin colors.
+- Each control's **Undo** button returns it to the value it had when the dialog opened.
+- **Save** writes your changes to the trait. A changed row keeps its place. A slider or color you changed that has no row gets a new one. Save never removes a row. One **Undo** in the editor takes the whole change back.
+- Closing with unsaved changes asks before it discards them.
+- With no Avatar, **Preview** is disabled. An entity's 3D model has no Preview, so set an Avatar on its **Profile** tab first.
 
 ## Placeholder Pins
 <!-- keywords: appearance from choice, force a word, lock random text, returns when off, type custom text, hair by perk -->
@@ -170,6 +214,8 @@ You can type a value that isn't in the placeholder's list. The game uses it as w
 A value that is one chip pins the part that chip holds. Pin a Wildcard to the value that holds *isAsian*, and every chip of that Wildcard reads that variant.
 
 [Pin a blueprint](World-Editor-Blueprints#pins-by-blueprint) to pin each owner's own copy of it. A link can replace this list for one owner.
+
+An entity's trait pins every text, whoever the player plays.
 
 A stat descriptor's pin outranks a location's, and a location's outranks a trait's. See [Pins](World-Editor-Placeholders#pins) for the full order.
 
@@ -191,7 +237,9 @@ A stat descriptor's pin outranks a location's, and a location's outranks a trait
 
 Two active traits can change the availability of the same stat, or pin the same placeholder. The trait lower in the trait list then wins. The row tells you when this applies, and it links to the other trait.
 
-[Body](#body) rows work differently: the trait switched on last wins.
+For a pin on traits of different owners, a world trait wins, then the played persona's, then the entity lower in the entity list.
+
+[Body](#body) rows, [Sliders](#sliders) and [Colors](#colors) work differently: the trait switched on last wins.
 
 ## Groups
 <!-- keywords: category, start button disabled, choose more message, cant begin game, none of these, swap mid game, over the limit, folders -->
@@ -249,7 +297,7 @@ During the game:
 
 A **row** is one way to open the trait. It holds when every condition in it holds, so a row means **and**. The trait opens when any one row holds, so rows mean **or**.
 
-- **Add Requirement** adds the first condition. It opens a search with these lists: **Traits**, **Any Trait in a Group**, **Stats** with a page for each owner, **Items**, **Time of Day** and **Playing As**. In a large world, the search opens on those lists with a count beside each. Select a list, then an owner, to see its targets. Type in the search to find a target in every list.
+- **Add Requirement** adds the first condition. It opens a search with these lists: **Traits**, **Any Trait in a Group**, **Stats** with a page for each owner, **Items**, **Time of Day**, **World Options** and **Playing As**. In a large world, the search opens on those lists with a count beside each. Select a list, then an owner, to see its targets. Type in the search to find a target in every list.
 - **And** (in a row) adds another condition to that row.
 - **Or Another Way** (below the rows) adds a new row.
 - The **X** at the end of a row removes the whole row. Remove the last condition in a row, and the row goes too.
@@ -265,8 +313,9 @@ A **condition** checks one target. A target is one of these:
 - A persona the player plays as
 - A stat
 - The [time of day](#time-conditions)
+- A [World Option](#world-option-conditions)
 
-Select a condition to open its target. A [stat condition](#stat-conditions) or a time condition has nowhere to open, so it shows its controls instead.
+Select a condition to open its target. A [stat condition](#stat-conditions), a time condition or a World Option condition has nowhere to open, so it shows its controls instead.
 
 Select **Require it to be off** on a condition's chip to make it **Not**. A Not condition shows a **NOT** mark and a dashed border, and it holds while its target is off. Select the button again to require the target instead.
 
@@ -357,9 +406,9 @@ A **time condition** checks the story's time of day. *Night Hunter* requires *ev
 
 1. Open the trait's **Availability** tab.
 2. Under **Requires**, select **Add Requirement**, then pick **Time of Day**.
-3. Turn on each daypart that counts: **Night**, **Dawn**, **Morning**, **Midday**, **Afternoon** or **Evening**.
+3. Turn on each time of day that counts: **Night**, **Dawn**, **Morning**, **Midday**, **Afternoon** or **Evening**.
 
-| Daypart | On a 24-hour day, to the nearest hour |
+| Time of day | On a 24-hour day |
 |---|---|
 | 🌙 Night | 20:00 to 6:00 |
 | 🌅 Dawn | 6:00 to 8:00 |
@@ -369,10 +418,33 @@ A **time condition** checks the story's time of day. *Night Hunter* requires *ev
 | 🌆 Evening | 17:00 to 20:00 |
 
 - The narration's time of day uses the same split, so the condition matches what the story says.
-- At least one daypart stays on. To exclude a daypart, turn on the others. A time condition has no **Not**.
+- At least one time of day stays on. To exclude one, turn on the others. A time condition has no **Not**.
 - A row holds one time condition. It never checks the day number or an hour.
 - The game checks once per turn, after the turn's time passes, like a [stat condition](#when-the-game-checks). With the AI clock off, each turn is one hour.
 - Outside play, the [Test Bench](#test-bench-checks) reads the time the story opens at, which is morning.
+
+### World Option conditions
+<!-- keywords: world option, option, setting, setup choice, on or off, flag, switch, unlock with a script, player setup, difficulty -->
+<!-- route: worldEditorTrait.availability -->
+
+A **World Option condition** checks an Option from the [Options tab](World-Editor-Options). *Lantern Glow* requires *Lanterns Lit is on*, so it opens while that Option is on.
+
+1. Open the trait's **Availability** tab.
+2. Under **Requires**, select **Add Requirement**, then pick an Option under **World Options**.
+3. Set what it checks on the chip:
+
+| Option type | The chip checks | Reads as |
+|---|---|---|
+| Choice | One value, picked from the list | *Reply Length is Short* |
+| On or Off | On; **Require it to be off** checks off | *Lanterns Lit is on* |
+| Number | A comparison and a whole number | *Heat >= 3* |
+
+- A Choice or On or Off condition takes **Not**. A Number condition has no **Not**: pick the opposite comparison instead.
+- In play it reads the Option's current value. A script can set it, and the trait follows at once.
+- On the new game screen it reads what the player picks above the traits.
+- In the [Test Bench](#test-bench-checks), pick values under **World Options** in the lens bar. Anywhere else outside play, it reads each Option's default.
+- A condition on a hidden Option never shows on the player's lines. A lock with nothing else left reads *Locked*.
+- Change an Option's type, or delete the value a condition picked, and the condition reads red and never holds.
 
 ### What the player reads
 

@@ -7,6 +7,7 @@ import type { TokenValues } from '@/lib/promptValues';
 import type { ResponseSchema } from '@/lib/aiRequest/responseSchema';
 import type { PromptAttachmentsMap } from '@/lib/promptAttachments';
 import type { EntityMoveReply } from '@/lib/entityFollowing';
+import type { ToldAction } from '@/lib/actionList';
 
 /**
  * The Turn Plan: what one turn will ask the model, decided before any request is sent.
@@ -26,6 +27,7 @@ export type TurnPassId =
   | 'character'
   | 'storyboard'
   | 'narration'
+  | 'narratedMove'
   | 'choices'
   | 'statUpdates'
   | 'locationSuggest'
@@ -40,7 +42,7 @@ export type TurnPassId =
   | 'inventory';
 
 /** Where a pass sits relative to the narration. Passes run in stage order, then in plan order. */
-export type TurnStage = 'preNarration' | 'planning' | 'narration' | 'postNarration';
+export type TurnStage = 'preNarration' | 'planning' | 'narration' | 'narratedMove' | 'postNarration';
 
 /** The concurrency knob: whether the post-narration passes are dispatched together or one at a time. */
 export type TurnConcurrency = 'serial' | 'parallel';
@@ -68,6 +70,10 @@ export interface TurnSettings {
   inventoryDue: boolean;
   /** The inventory endpoint refused a response schema before, so the pass sends its text request alone. */
   inventoryTextPass: boolean;
+  /** The entity location endpoint refused a response schema before, so the request sends its text form alone. */
+  entityLocationTextPass: boolean;
+  /** The clock endpoint refused a response schema before, so the clock pass sends its text request alone. */
+  clockTextPass: boolean;
   /** The Image Attachments setting. Off, no pass includes the action's images. */
   imageAttachments: boolean;
   /** The active preset's Include Attachments flags. An absent prompt takes its default. */
@@ -83,6 +89,8 @@ export interface TurnSettings {
 export interface TurnPrompts {
   locationChange: string;
   locationChangeUser: string;
+  narratedMove: string;
+  narratedMoveUser: string;
   entityLocation: string;
   entityLocationUser: string;
   thinking: string;
@@ -92,6 +100,8 @@ export interface TurnPrompts {
   storyboard: string;
   narrationUser: string;
   oocDirective: string;
+  /** The line above the told panel actions in the narration request. */
+  actionList: string;
   /** The text the opening turn's legacy "START GAME" sentinel resolves to: the session's drawn opening
    *  (see lib/openings). */
   openingCue: string;
@@ -134,6 +144,8 @@ export interface TurnPlanInput {
   writtenNarration?: string;
   /** The images the player attached to the action, in attach order. */
   attachments?: ImageAttachment[];
+  /** The panel actions this send tells the AI: shown entries only, oldest first. Absent ⇒ none. */
+  toldActions?: ToldAction[];
   settings: TurnSettings;
   prompts: TurnPrompts;
 }
@@ -156,6 +168,8 @@ export interface TurnPassSubject {
   moves?: EntityMoveReply[];
   /** The places an entity location request offers this subject to walk to, after `moves`. */
   destinations?: GameLocation[];
+  /** The story minute an entity location request reads: its time line and when each wait ends. */
+  moveClock?: number;
 }
 
 /**
@@ -182,6 +196,13 @@ export interface TurnMaterial {
   sceneEntityTokens: TokenValues;
   /** Names the location router may answer with. */
   destinations: string[];
+  /** The names in `destinations` more than one move away, which the router matches only on an exact reply.
+   *  Absent: every destination is one move away. */
+  farDestinations?: string[];
+  /** The name of the location the turn began in. A reply that names it moves nobody. */
+  here?: string;
+  /** The player already moved this turn, before the narration. */
+  moved?: boolean;
   /**
    * The assembled narration system prompt. Built by the caller: the dictionary scan, banded history and
    * notes fallback that produce it are the narration request's own assembly, not a turn decision.
@@ -222,8 +243,8 @@ export interface TurnMaterial {
   milestone?: { kept: string[]; fresh: string[] };
 }
 
-/** The four values a turn knows before any pass has answered. Everything else is derived mid-run. */
-export type TurnMaterialSeed = Pick<TurnMaterial, 'action' | 'effectiveAction' | 'turnId' | 'baseCtx' | 'destinations'>;
+/** The values a turn knows before any pass has answered. Everything else is derived mid-run. */
+export type TurnMaterialSeed = Pick<TurnMaterial, 'action' | 'effectiveAction' | 'turnId' | 'baseCtx' | 'destinations' | 'farDestinations' | 'here'>;
 
 /** A turn's starting material: what the caller knows up front, with every derived field at its empty value. */
 export function emptyTurnMaterial(seed: TurnMaterialSeed): TurnMaterial {
@@ -297,6 +318,8 @@ export interface TurnPassRecord<TParsed = unknown> {
   companion?: boolean;
   buildRequest(input: TurnPlanInput, material: TurnMaterial): TurnPassRequest<ChatMessage>;
   parseResponse(raw: string, material: TurnMaterial): TParsed;
+  /** What the pass's own answer adds to the material, folded in before the caller's advance. */
+  fold?(parsed: TParsed): Partial<TurnMaterial>;
 }
 
 /** The plan for one turn: its shape, its concurrency, and the passes it will dispatch in order. */

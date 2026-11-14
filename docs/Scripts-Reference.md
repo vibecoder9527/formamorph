@@ -12,7 +12,7 @@ A script can use only these objects. In the table, a word in angle brackets is a
 | --- | --- | --- | --- |
 | `self` | `id`, `name`, `type`, `description`, `enabled`, `min`, `max`, `value`, `regen`, `hidden`, `descriptor`, `previous`, `delta` | `self.value` | `self.value = <n>` |
 | `stats` | `id`, `name`, `type`, `description`, `enabled`, `min`, `max`, `value`, `regen`, `hidden`, `descriptor`, `previous`, `delta` | `stats.<Stat>.value` | `stats.<Stat>.value = <n>` |
-| `owner` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `owner.stats.<Stat>.value` | `owner.stats.<Stat>.value = <n>` |
+| `owner` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `owner.stats.<Stat>.value` | `owner.stats.<Stat>.value = <n>` |
 | `clock` | `day`, `daypart`, `hour`, `minute`, `deltaHours`, `elapsedHours`, `previous`, `advance()` | `clock.day` | `clock.advance(<n>)` |
 | `turn` | `action`, `number`, `narration`, `choices` | `turn.number` | `turn.choices = [<text>]`, After the AI only |
 | `locations` | `id`, `name`, `description`, `summary`, `starting`, `present`, `parent`, `children`, `exits`, `items` | `locations.<Location>.present` | Read-only |
@@ -21,12 +21,13 @@ A script can use only these objects. In the table, a word in angle brackets is a
 | `memories` | `id`, `turn`, `timestamp`, `day`, `daypart`, `text`, `custom`, `kept`, `inContext`, `pinned`, `forgotten`, `add()`, `pin()`, `forget()`, `edit()`, `remove()` | `memories.length` | `memories.pin(<text>)` |
 | `notes` | — | `notes` | Read-only |
 | `traits` | `enabled`, `acquired`, `id`, `name`, `mode`, `available`, `group`, `playerToggle` | `traits.<Trait>.enabled` | `traits.<Trait>.enabled = true` |
-| `persona` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body` | `persona.traits.<Trait>.enabled` | `persona.traits.<Trait>.enabled = true` |
-| `entities` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `entities.<Entity>.stats.<Stat>.value` | `entities.<Entity>.traits.<Trait>.enabled = true` |
+| `persona` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body` | `persona.traits.<Trait>.enabled` | `persona.traits.<Trait>.enabled = true` |
+| `entities` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `entities.<Entity>.stats.<Stat>.value` | `entities.<Entity>.traits.<Trait>.enabled = true` |
 | `placeholders` | `id`, `name`, `value`, `values`, `text`, `roll()`, `pin()`, `unpin()` | `placeholders.<Placeholder>.text` | `placeholders.<Placeholder>.pin(<text>)` |
 | `dictionaries` | `id`, `name`, `enabled`, `entries`, `placeholders` | `dictionaries.<Dictionary>.enabled` | `dictionaries.<Dictionary>.enabled = true` |
 | `items` | `id`, `name`, `unidentifiedName`, `unidentifiedDescription`, `placeholders`, `copies`, `give()` | `items.<Item>.copies.length` | `items.<Item>.give(persona)` |
 | `currencies` | `id`, `name`, `kind`, `balance()`, `pay()` | `currencies.<Currency>.balance(persona)` | `currencies.<Currency>.pay(persona, null, <n>)` |
+| `options` | — | `options.<Option>` | `options.<Option> = true` |
 | `console` | `log()` | — | `console.log(<text>)` |
 
 A timing adds one name to those objects. A script reads only the name its own timing adds:
@@ -92,7 +93,7 @@ Each entry has the [same members as `self`](#stat-properties). Each entry takes 
 <!-- keywords: own stats, read the entity's other stats, script on a monster's stat, this entity, entity's own stat, self entity, creature code, npc code, blueprint owner, empty owner, owner is blank, owner stats, owner traits, owner placeholders -->
 <!-- route: worldEditorStat.code -->
 
-`owner` is the entity that owns the running stat. It has the same members as an [entity entry](#entities): `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()` and `diary()`.
+`owner` is the entity that owns the running stat. It has the same members as an [entity entry](#entities): `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()` and `diary()`.
 
 The entity's own stats are under `owner.stats`, its own traits under `owner.traits`, and its own placeholders under `owner.placeholders`.
 
@@ -497,10 +498,11 @@ A write to an unknown trait name is ignored. **Test Code** and the **Test Bench*
 | `placeholders` | The placeholders the persona owns. See [Owned Placeholders](#owned-placeholders) |
 | `stats` | The persona's own stats by name, as an [entity's `stats`](#entities). Entries take writes |
 
-`persona` also has the `id`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `description`, `summary`, `aliases`, `items` and `body` of an [entity entry](#entities).
+`persona` also has the `id`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `items` and `body` of an [entity entry](#entities).
 
 - `inScene` and `met` are always true for the played persona.
 - `location` is where the player is. `following` is always false.
+- `kind`, `action` and `knownIn` are always `''`, `held` is always false, and `knownInPlaces` is always empty.
 - While a persona plays, `persona.meet()` is ignored. `persona.move`, `follow`, `unfollow` and `diary` stop the script with an error.
 - Each entry in `persona.traits` has the [same members as a `traits` entry](#traits), for the persona's state. A write to `enabled` switches the persona's own trait, by the same rules as `traits`.
 
@@ -540,10 +542,16 @@ When the player plays no entity, `persona` is an empty entry:
 | `name` | The entity's code name. Read-only |
 | `type` | The entity's type, or `''` when it has none. Read-only |
 | `pronouns` | The entity's pronouns, or `''` when it has none. Read-only |
-| `inScene` | True when the entity is in this turn's scene. Read-only |
+| `inScene` | True when the **Entities** tab lists the entity under **In Scene**. An entity under **Also Here** reads false. Read-only |
 | `met` | True when the player has met the entity. Never turns false. Read-only |
-| `location` | The code name of the location the entity is at. A follower reads the player's location. Empty when the entity has no position of its own and is at every location it lists. Read-only |
+| `location` | The code name of the location the entity is at. A Unique entity reads its own location, and a follower reads the player's. Empty for a Generic entity, which is in `present` at each place one of its presences is, and for an entity with no position. Read-only |
 | `following` | True when the entity follows the player. Read-only |
+| `waiting` | True when the entity stopped following and waits where it was left. Read-only |
+| `kind` | `'unique'` or `'generic'`, or `''` for an entity with no kind. An entity the story added reads `'unique'`. `move()` and `follow()` are ignored on a Generic entity. Read-only |
+| `action` | What the entity's routine row does now: `'stay'`, `'wander'`, `'patrol'` or `'away'`. `''` when no row covers the hour or none of its places can be reached, while the entity follows or waits, and for a Generic entity. Read-only |
+| `held` | True when the narration called the entity over, or a script `move()` moved it, and it is off its routine for now. It reads true even when `action` is `''`, such as in a gap or for an entity the story added. False while it follows or waits, and for a Generic entity. Read-only |
+| `knownIn` | Where the AI receives the entity while it's not present: `'nowhere'`, `'nearby'`, or `'picked'` for the locations in `knownInPlaces`. Read-only |
+| `knownInPlaces` | The code names of the locations **Known In** picks. Empty unless `knownIn` is `'picked'`. Read-only |
 | `description` | The full AI description, with each placeholder chip filled in. Read-only |
 | `summary` | The short AI summary, with each placeholder chip filled in. Read-only |
 | `aliases` | The entity's other names, as a list, with each placeholder chip filled in. Read-only |
@@ -552,9 +560,9 @@ When the player plays no entity, `persona` is an empty entry:
 | `stats` | The entity's own stats by name. Entries take writes |
 | `items` | The Item Copies the entity owns. See [Items](#items). Read-only |
 | `body` | The entity's Body in force, or `null`. Assign a Body name to set its base Body. See [Bodies](#bodies) |
-| `move()` | Moves the entity to a location. See [Moving Entities](#moving-entities) |
-| `follow()` | Makes the entity follow the player |
-| `unfollow()` | Stops the entity following the player |
+| `move()` | Moves a Unique entity to a location. Ignored on a Generic entity. See [Moving Entities](#moving-entities) |
+| `follow()` | Makes a Unique entity follow the player. Ignored on a Generic entity |
+| `unfollow()` | Stops a Unique entity following or waiting, so it goes back to its usual places. Ignored on a Generic entity |
 | `meet()` | The player meets the entity. See [Meeting Entities](#meeting-entities) |
 | `diary(line)` | Adds a line to the entity's diary. See [Diary](#diary) |
 
@@ -606,7 +614,7 @@ A `diary` call reads the key as an id first, then as a name. So `entities[id].di
 #### Meeting Entities
 <!-- keywords: met, meet, stranger, introduce, reveal identity, stranger name, known entity, hooded stranger -->
 
-The player sees an entity with a **Stranger Name** under that name until the player meets it. The player meets it when the narration uses its name. [Strangers](World-Editor-Entities#strangers) lists the rules. `entities.<Entity>.met` is true after the player has met the entity. It never turns false again.
+The player sees an entity with a **Stranger Name** under that name until the player meets it. An entity with only a **Stranger Description** shows its Name and that description until then. The player meets it when the narration uses its name. [Strangers](World-Editor-Entities#strangers) lists the rules. `entities.<Entity>.met` reads false for an entity with either field until the player meets it, then true. A relationship or a **Known In** pick can meet it at the start. It never turns false again.
 
 **`entities.<Entity>.meet()`** makes the player meet the entity, so the player sees its name from then on.
 
@@ -626,17 +634,16 @@ if (self.value >= 3) entities.Sylvie.meet();
 #### Moving Entities
 <!-- keywords: move npc, companion joins, follow player, leave party, schedule, patrol, entity location, send away -->
 
-Three calls on an entity's entry set its location. Each one works on any entity, whatever its **Movement**.
+Three calls on an entity's entry set its location. They work on a **Unique** entity. On a **Generic** entity they are ignored: it has no position of its own, never follows, and its presences keep their routines.
 
-- **`entities.<Entity>.move("<Location>")`** puts the entity at a location of your world, by id, else by name. A following entity stops following.
-- **`entities.<Entity>.follow()`** makes the entity follow the player, at the player's location.
-- **`entities.<Entity>.unfollow()`** stops the entity following and leaves it at the player's location. An entity that is not following keeps its location.
+- **`entities.<Entity>.move("<Location>")`** puts the entity at a location of your world, by id, else by name. A following or waiting entity stops. The entity stays there until its current idle runs out. On a Stay row it stays until that stretch of the day ends, and with no timed row at all it stays until a script moves it again. Then its routine applies again.
+- **`entities.<Entity>.follow()`** makes the entity follow the player, at the player's location. It follows past a locked row and past **Can Also Go**. A follower still waits or parts ways when the player asks it to.
+- **`entities.<Entity>.unfollow()`** stops the entity following or waiting. It goes back to its usual places once the player leaves. An entity that is not following keeps its location.
 
 How the calls apply:
 
-- **The writes apply when the turn ends**, after the player's move, the followers and the AI's entity answers. So a script's write wins over the AI's answer. Prompts in the same turn read the entities at their earlier locations.
+- **The writes apply when the turn ends**, after the player's move, the followers and the AI's entity answers. So a script's write wins over the AI's answer. Which scripts read a write before then depends on the timing. See [Where Each Timing Reads Entities](#where-each-timing-reads-entities).
 - **Calls apply in call order**, across every script of the turn. The last call on an entity wins.
-- **A `move` or a `follow` gives the entity a position of its own from then on.** A **Free** entity is then at one location, not at every listed one.
 - **Three targets stop the script with an error:** a location your world does not have, the persona (which moves with the player), and an unknown entity name.
 - **A When a Trait Switches script that runs outside a turn applies none of them.**
 - **In suggest mode, a script's write wins over a waiting "come along".** The AI can ask an entity to come along, and that entity waits for **Go**. A write on the entity ends its wait.
@@ -648,6 +655,32 @@ if (traits["Crown Restored"].enabled) entities.Wight.move("Barrow Road");
 // Albus joins the party when his trust is high enough.
 if (entities.Albus.stats.Trust.value >= 50) entities.Albus.follow();
 ```
+
+#### Where Each Timing Reads Entities
+<!-- keywords: entity location this turn, follower location, companion moved, who is present, stale location, after the move -->
+
+Each timing reads `location`, `following`, `waiting`, `action`, `held` and `present` at its own point in the turn:
+
+| When the script runs | Where it reads the entities |
+| --- | --- |
+| 🌅 **At Game Start** and **Before the AI** | As the turn began, before the player moves |
+| ✍️ **During AI Output**, and a Tool's script during the turn | After the player's move, once it is known: followers beside the player, the entities told to wait left behind. An entity the narration calls over is still where it was |
+| ✅ **After the AI**, and an item script that the turn's item changes fire | After the player's move and the followers, with each entity the narration calls over at the player's location |
+| 🎲 A re-roll of the turn's stats | Where they are now, after the turn ended |
+| ⏸️ Between turns | Where they are now |
+
+- **A move the narration describes is known only when the narration ends.** Until then, scripts read the entities as the turn began.
+- **After the AI scripts read the end of the turn.** Each entity is where its routine puts it when the turn ends, and `action` and `held` read that same time.
+- **A turn that begins with no current location is the exception.** After the AI scripts then read the entities, with their `action` and `held`, as the turn began.
+- **After the AI scripts' own writes come later.** Their entity writes, and a `clock.advance` they call, apply once the turn's item scripts run. A re-roll reads the result.
+
+Which scripts read an entity write before the turn ends:
+
+| The write comes from | Who reads it this turn |
+| --- | --- |
+| 🌅 **At Game Start** | After the AI scripts read it. Before the AI scripts don't. |
+| 🌅 **Before the AI** | The next Before the AI scripts and the After the AI scripts read it. The script that wrote it, During AI Output and a Tool's script don't. |
+| ✅ **After the AI** | The next After the AI scripts read it. |
 
 **Test Code** lists every authored entity except persona-only ones. No trait is chosen, and each stat is at its starting value. A switch or a stat write that it makes is reported and never applied.
 
@@ -807,6 +840,31 @@ if (!toll.paid) player.toast("You can't pay the toll.");
 - **A user Tool reads `balance` and can't pay.** Calling `pay` stops the Tool with an error.
 - **Test Code and the Test Bench apply nothing.** **Test Code** lists each `pay` with its result. With no persona in play, `persona` holds only what the world places on the player, and a Global Stat. A payment it can't afford is refused. To test with a persona's own money, select a persona in the Test Bench.
 
+### World Options
+<!-- keywords: options, world options, setting, switch, flag, choice, on or off, setup, unlock, open a door, hidden flag -->
+
+`options` holds every World Option by name, hidden ones too. You set them up on the **Options** tab.
+
+| Type | Reads as | Write |
+| --- | --- | --- |
+| Choice | The picked value's name, such as `"Short"` | `options["Reply Length"] = "Long"` |
+| On or Off | `true` or `false` | `options.Lit = true` |
+| Number | A whole number | `options.Heat = 5` |
+
+```javascript
+// Pulling the lever opens the vault for good.
+if (turn.action.includes('lever')) options["Vault Open"] = true;
+```
+
+- **A script can set any Option,** one the player picked at the start included.
+- **A value applies when the script ends.** Scripts later in the same timing read the new value. A trait or image that requires the Option follows at once.
+- **A Number snaps to its step and stays inside its range.** Writing `99` to an Option that goes up to 10 sets 10.
+- **A value the Option can't hold stops the script with an error:** a Choice value that isn't on its list, text on an On or Off, or text on a Number.
+- **A write to an unknown name is ignored and reported.** The editor underlines the name.
+- **Renaming an Option on the Options tab offers to update every script that names it.**
+- **`options` is read-only in a user Tool.**
+- **Test Code reads each Option's default.** The Test Bench reads the values you pick under **World Options** in its lens bar.
+
 ### Bodies
 <!-- keywords: body, bodies, transform, wolf form, change slots, set body from code, body in force, base body, unequip on transform, unknown body name -->
 
@@ -952,7 +1010,7 @@ A bound that a stat writes applies at the written number, after that script's tr
 - **A failed script still adds nothing.** Later scripts read none of its writes.
 - **A script can write to the diary of an entity that an earlier script discovered.** The diary has no value to read, so only the write applies.
 
-The timings run in order against each other. Everything a Before the AI script wrote is in place when an After the AI script reads. On the opening turn, an At Game Start script's writes are in place when Before the AI reads.
+The timings run in order against each other. Everything a Before the AI script wrote is in place when an After the AI script reads. On the opening turn, an At Game Start script's writes are in place when Before the AI reads, except its entity writes. See [Where Each Timing Reads Entities](#where-each-timing-reads-entities).
 
 ### The Story Clock
 <!-- keywords: calendar, date, day night cycle, duration, time passed, timer, how long slept, always one hour, in game time -->
@@ -1049,10 +1107,10 @@ if (stats.Bridge.value === 0) turn.choices = turn.choices.filter((choice) => !/b
 | `description` | The full AI description, with each placeholder chip filled in |
 | `summary` | The short AI summary, with each placeholder chip filled in |
 | `starting` | True when the game can start at the location |
-| `present` | The [entity entries](#entities) at the location. The persona comes first when the player is there, then the entities in `entities` order. An entity with no position of its own is in `present` at every location it lists |
+| `present` | The [entity entries](#entities) at the location. The persona comes first when the player is there, then the entities in `entities` order. A Unique entity is in `present` at its own location, and a follower at the player's. A Generic entity is in `present` at each place one of its presences is, once. An entity with no position is in `present` at every location it lists |
 | `parent` | The code name of the location that holds this one. Empty at the top level |
 | `children` | The code names of the locations inside this one, in the editor's order |
-| `exits` | The places the AI can move the player to from here, each with a `name` (a code name) and a `hint` (the Connection's travel hint, or empty). It's the same list the AI picks from |
+| `exits` | The direct ways out of here, each with a `name` (a code name), a `hint` (the Connection's travel hint, or empty), a `distance` (`'nearby'`, or `'far'` across a Far Connection) and `oneWay` (true when the Connection runs this way only). A parent, child or sibling with no Connection is `'nearby'` and two-way. A move can carry the player further than these |
 | `items` | The Item Copies lying at the location. See [Items](#items) |
 
 In a world with no location, `location.id` and `location.name` are empty, and `location.present` is an empty list. An unknown location name reads as a blank entry.
@@ -1069,11 +1127,22 @@ const exit = location.exits[Math.floor(Math.random() * location.exits.length)];
 if (exit) location.move(exit.name);
 ```
 
+`location.move` moves the player into a [locked](World-Editor-Locations#unlocked) location too. To open a locked location to the player, set the [World Option](#world-options) its **Unlocked** rows read.
+
 `location` and its `exits` keep reading the location where the script started, even after `location.move` in the same script. The scripts below it read the new location, with its `present` and `exits`.
 
-In **Test Code** and the **Test Bench**, no entity has a position. Each entity is in `present` at every location it lists, and the persona is at the starting location.
+In **Test Code** and the **Test Bench**, each entity is where a new game puts it at the start of the story:
+
+- 🧍 A **Unique** entity is where its first start puts it. A game picks one of its starts at random.
+- 👥 A **Generic** entity is where each of its starts puts it.
+- 🤝 An entity that starts at **Player's Starting Location** is at the starting location. With **Follows the Player** on, it follows.
+- 🕗 A start's schedule applies as it does at the start of the story. A row that begins later in the day hasn't begun.
+
+The persona is at the starting location.
 
 `location.move("<Location>")` moves the turn to a location of your world, by name or id. It replaces the AI's move for that turn. It needs no path from the turn's location.
+
+In an At Game Start script, `location.move` moves the player and does not change Player's Starting Location. An entity that begins at **Player's Starting Location** without **Follows the Player** stays at the location the player started at in **New Game**.
 
 - **A Before the AI move applies before the AI writes.** The narration is written at the new location.
 - **A During AI Output or After the AI move applies with the turn.**

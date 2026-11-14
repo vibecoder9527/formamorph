@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { useGameData } from '../contexts/GameDataContext';
 import { PanelTabContent, PanelTabs } from '@/components/ui/panel-tabs';
-import { EntityDescriptionFields, EntityLocationsField, EntityProfileFields } from './EntityFields';
+import { EntityDescriptionFields, EntityProfileFields, EntityStrangerDescriptionField } from './EntityFields';
+import { RoutineTab } from './routine/RoutineTab';
 import ScopedPlaceholdersSection from './ScopedPlaceholdersSection';
 import EntityStatsMirror from './EntityStatsMirror';
 import EntityTraitsMirror from './EntityTraitsMirror';
@@ -9,18 +10,17 @@ import { EntityOpenings } from './OpeningsPanel';
 import { useEditingDraft } from '@/lib/useEditingDraft';
 import { statCodeName } from '@/lib/statCodeNames';
 import { useRenameField } from '@/lib/useCodeRename';
-import { withEntityLocations } from '@/lib/entityPresence';
 import { entitiesInTreeOrder } from '@/lib/entityGroupTree';
 import { withRelationships } from '@/lib/entityRelationships';
 import EntityRelationshipsField from './EntityRelationshipsField';
-import { customPersonaHeldElsewhere } from '@/lib/customPersona';
+import { customPersonaHeldElsewhere, holdsStartList } from '@/lib/customPersona';
 import type { Entity, FocusFieldHint } from '@/types';
-import { Hint } from '@/components/ui/typography';
+import { KnownInField } from './KnownInField';
 import { labelPlaceholders } from '@/lib/placementLetters';
-import { locationRows } from '@/lib/locationTree';
 import { useEditorMode } from '@/lib/editorMode';
 import PlacementsSection from './PlacementsSection';
 import EntityBodyField from './EntityBodyField';
+import { EntityEnabledField } from '@/components/editor/HostGateField';
 import { entityPanelTabsFor, entityTabForField, type EntityPanelTab } from '@/views/entityPanelTabs';
 
 /**
@@ -52,7 +52,7 @@ const EntityManager = ({
   onOpenWorldPlaceholder: (id: string) => void;
   focusField?: FocusFieldHint | null;
 }) => {
-  const { updateEntity, entities, entityGroups, locations, placeholders, placementLetters, placeholderOwners } = useGameData();
+  const { updateEntity, entities, entityGroups, placeholders, placementLetters, placeholderOwners } = useGameData();
   const { draft: editingEntity, setDraft, setField: handleChange } = useEditingDraft<Entity>(entity, updateEntity);
   const { advanced } = useEditorMode();
   // An entity that owns placeholders is a node of the `placeholders` map, so renaming it moves the owner
@@ -66,29 +66,11 @@ const EntityManager = ({
     subject: { kind: 'entity', id: entity.id },
   });
 
-  // Membership is the entity's own field, so the picker reads and writes it directly. Locations the world
-  // no longer has are filtered out of the selection rather than shown as blank rows.
-  const selectedLocationIds = (editingEntity?.locations ?? []).filter((id) => locations.some((l) => l.id === id));
-
   // Written whole rather than through `setField`, so a patch of several fields lands at once and a cleared
   // field drops instead of persisting an empty value.
   const writeWhole = (next: Entity) => {
     setDraft(next);
     updateEntity(next);
-  };
-
-  // Read as the tree it is, so a picker presents the hierarchy the way the game's own list does.
-  const locationOptions = useMemo(
-    () => locationRows(locations).map(({ location, depth }) => ({
-      label: labelPlaceholders(location.name, placeholders, { letters: placementLetters, owners: placeholderOwners }),
-      value: location.id,
-      depth,
-    })),
-    [locations, placeholders, placementLetters, placeholderOwners],
-  );
-
-  const handleLocationsChange = (ids: string[]) => {
-    if (editingEntity) writeWhole(withEntityLocations(editingEntity, ids));
   };
 
   // Before the reveal, which is a timer behind this render: the field it looks for has to be mounting by
@@ -117,30 +99,19 @@ const EntityManager = ({
             // column comes back only where the pane is wide enough — once in the sheet, again at `xl`.
             columnsClassName="sm:grid-cols-[18rem_minmax(0,1fr)] md:grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)]"
             locations={(
-              <>
-                <EntityLocationsField
-                  {...groupProps}
-                  options={locationOptions}
-                  selectedIds={selectedLocationIds}
-                  onLocationsChange={handleLocationsChange}
-                />
-                {!editingEntity.customPersona && (
-                  <Hint>Set <b>Presence</b>, <b>Movement</b> and <b>Known In</b> on the full-screen <b>Locations Canvas</b></Hint>
-                )}
-                <EntityRelationshipsField
-                  entity={editingEntity}
-                  entities={entitiesInTreeOrder(entityGroups, entities)}
-                  labelOf={(e) => labelPlaceholders(e.name, placeholders, { letters: placementLetters, owners: placeholderOwners })}
-                  placeholders={placeholders}
-                  onChange={(relationships) => writeWhole(withRelationships(editingEntity, relationships))}
-                />
-              </>
+              <EntityRelationshipsField
+                entity={editingEntity}
+                entities={entitiesInTreeOrder(entityGroups, entities)}
+                labelOf={(e) => labelPlaceholders(e.name, placeholders, { letters: placementLetters, owners: placeholderOwners })}
+                placeholders={placeholders}
+                onChange={(relationships) => writeWhole(withRelationships(editingEntity, relationships))}
+              />
             )}
           />
         </PanelTabContent>
 
         <PanelTabContent value="descriptions">
-          <EntityDescriptionFields {...groupProps} />
+          <EntityDescriptionFields {...groupProps} afterPlayer={<EntityStrangerDescriptionField {...groupProps} home="world" />} />
         </PanelTabContent>
 
         <PanelTabContent value="items">
@@ -150,6 +121,12 @@ const EntityManager = ({
             label="Starting Items"
             hint="Gives this entity items when a game starts"
           />
+        </PanelTabContent>
+
+        <PanelTabContent value="presence">
+          <EntityEnabledField entity={editingEntity} onChange={writeWhole} />
+          <RoutineTab entity={editingEntity} onChange={writeWhole} />
+          {!holdsStartList(editingEntity) && <KnownInField entity={editingEntity} onChange={writeWhole} list />}
         </PanelTabContent>
 
         {advanced && (

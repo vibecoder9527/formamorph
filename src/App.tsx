@@ -27,6 +27,7 @@ import { PrivacyPolicyProvider } from './contexts/PrivacyPolicyContext';
 import { AccountDeletionProvider } from './contexts/AccountDeletionContext';
 import { UpdateRequiredGate } from './components/modals/UpdateRequiredDialog';
 import { HostedAiStateSync } from './components/HostedAiStateSync';
+import { DailyInstallSender } from './components/DailyInstallSender';
 import { UsernameRenameGate } from './components/modals/UsernameRenameDialog';
 import { SignInHost } from './components/SignInHost';
 import { EXIT_TO_MENU_PROMPT } from './lib/leavePrompts';
@@ -36,7 +37,7 @@ import { Formaquestion } from './components/formaquestion/Formaquestion';
 import { TooltipProvider } from './components/ui/tooltip';
 import GameViewer from './views/GameViewer';
 import MainMenu from './views/MainMenu';
-import type { CharacterData, Dictionary, Entity, OwnedTraitPicks } from '@/types';
+import type { CharacterData, Dictionary, Entity, OwnedTraitPicks, WorldOptionValues } from '@/types';
 import type { PersonaPick } from '@/lib/persona';
 
 const DesignSystemShowcase = import.meta.env.DEV
@@ -75,6 +76,8 @@ function AppViews() {
     if (typeof window === 'undefined' || window.location.hash.includes('dev')) return true;
     try { return localStorage.getItem(INTRO_SEEN_KEY) !== null; } catch { return true; }
   });
+  // The intro waits for the menu's world library, so first-run seeding stays out of the animation.
+  const [libraryReady, setLibraryReady] = useState(false);
   const handleIntroDone = () => {
     setIntroPace(null);
     try { localStorage.setItem(INTRO_SEEN_KEY, '1'); } catch { /* private mode — just don't persist */ }
@@ -127,6 +130,7 @@ function AppViews() {
   useEffect(() => registerDevHook('surface', surfaceRegistry.get), []);
   const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
   const [initialOwnedTraits, setInitialOwnedTraits] = useState<OwnedTraitPicks>({});
+  const [initialOptionValues, setInitialOptionValues] = useState<WorldOptionValues>({});
   const [initialCharacterData, setInitialCharacterData] = useState<CharacterData | null>(null);
   const [initialLocationId, setInitialLocationId] = useState<string | null>(null);
   const [initialDictionaries, setInitialDictionaries] = useState<Dictionary[] | null>(null);
@@ -143,9 +147,11 @@ function AppViews() {
     characters?: Entity[] | null,
     persona?: PersonaPick | null,
     ownedTraits?: OwnedTraitPicks,
+    optionValues?: WorldOptionValues,
   ) => {
     setSelectedTraits(traits);
     setInitialOwnedTraits(ownedTraits ?? {});
+    setInitialOptionValues(optionValues ?? {});
     setInitialCharacterData(customCharacterData);
     setInitialLocationId(startingLocationId ?? null);
     setInitialDictionaries(dictionaries ?? null);
@@ -187,6 +193,7 @@ function AppViews() {
   return (
     <>
       <DevFixtureLoader onPicked={setInitialCharacters} />
+      <LocalEngineManager bootHeld={introPace !== null} />
       {/* Android only: elsewhere there is no hardware back button and the plugin has nothing to send.
           The DEV route mounts it anyway, so the exit prompt's copy is reachable without a phone. */}
       {(Capacitor.isNativePlatform() || (import.meta.env.DEV && devRoute?.modal === 'exitApp')) && (
@@ -211,12 +218,13 @@ function AppViews() {
             onReplayIntro={() => setIntroPace('snap')}
             introActive={introPace !== null}
             introSeenAtLaunch={introSeenAtLaunch}
+            onLibraryReady={() => setLibraryReady(true)}
           />
         </SurfaceLayer>
       )}
       {currentView === 'mainMenu' && introPace && (
         <SurfaceLayer id="intro">
-          <IntroSequence pace={introPace} onComplete={handleIntroDone} />
+          <IntroSequence pace={introPace} ready={libraryReady} onComplete={handleIntroDone} />
         </SurfaceLayer>
       )}
       {currentView === 'gameViewer' && (
@@ -225,6 +233,7 @@ function AppViews() {
             <GameViewer
               initialTraits={selectedTraits}
               initialOwnedTraits={initialOwnedTraits}
+              initialOptionValues={initialOptionValues}
               initialCharacterData={initialCharacterData}
               initialLocationId={initialLocationId}
               initialDictionaries={initialDictionaries}
@@ -268,7 +277,6 @@ function App() {
           instant-open window, so no screen can time its own differently. */}
       <TooltipProvider>
         <SettingsProvider>
-          <LocalEngineManager />
           <GameDataProvider>
             {/* Above the view switch: a playthrough's placeholder rolls are drawn in the enter-world flow,
                 which the main menu owns, and read again by the game view. */}
@@ -289,6 +297,8 @@ function App() {
                           made from either screen, and sibling effects run in order — so the header this
                           installs is on `fetch` before any screen's mount effect asks for anything. */}
                       <UpdateRequiredGate />
+                      {/* After the gate above, so the client header is on `fetch` before its first send. */}
+                      <DailyInstallSender />
                       <HostedAiStateSync />
                       {COMMUNITY_ENABLED && <UsernameRenameGate />}
                       {/* One sign-in for every view, inside the age gate and the privacy prompt it

@@ -3,7 +3,6 @@ import { useEntityRuleHost, type RuleHost } from '@/components/editor/ImageRuleC
 import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Hint } from "@/components/ui/typography";
-import { MultiSelect, type MultiSelectOption } from "@/components/ui/multi-select";
 import { KeywordChips } from "@/components/KeywordChips";
 import { HelpButton } from "@/components/HelpButton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -16,7 +15,8 @@ import { entityImages } from '../lib/entityImages';
 import { ImageGallery, ImageTags, ImageWidget, type GalleryFrameProps } from './ImageTagsField';
 import { useEditorMode } from '@/lib/editorMode';
 import { labelPlaceholders } from '@/lib/placementLetters';
-import { customPersonaCounts, personaRole, personaRolePatch, unmarkLine, type PersonaRole } from '@/lib/customPersona';
+import { randomUUID } from '@/lib/uuid';
+import { customPersonaCounts, personaRole, personaRolePatch, unmarkLine, withPersonaRole, type PersonaRole } from '@/lib/customPersona';
 import type { RenameFieldHandlers } from '@/lib/useCodeRename';
 import type { ReactNode } from 'react';
 import type { Entity, Placeholder, VrmPick } from '@/types';
@@ -28,6 +28,7 @@ import { SelectOptions } from "@/components/SelectOptions";
 import { useGameDataOptional } from '@/contexts/GameDataContext';
 import { useWorldHistoryStep } from '@/contexts/worldRecorder';
 import { fieldFrame } from '@/lib/historyField';
+import { SplitNameField, SplitNameRow } from '@/components/editor/SplitNameRow';
 import { useMountedRef } from '@/lib/useMountedRef';
 import ModelStorageService from '@/services/ModelStorageService';
 
@@ -52,25 +53,42 @@ export interface DescribedFieldGroupProps<T extends DescribedRecord = DescribedR
 export type EntityFieldGroupProps = DescribedFieldGroupProps<Entity>;
 
 /** The short identity fields beside the picture, with Advanced-only Aliases and Type. */
-export const EntityIdentityFields = ({ value, onChange, placeholders = [], ownerId, nameHandlers }: EntityFieldGroupProps & {
+export const EntityIdentityFields = ({ value, onChange, placeholders = [], ownerId, nameHandlers, home }: EntityFieldGroupProps & {
   /** What reports a committed rename of this entity, so the code that reaches its placeholders by path can
    *  follow. Absent outside the World Editor, where there is no world code to rewrite. */
   nameHandlers?: RenameFieldHandlers;
+  /** Where the entity lives. Only a world entity shows the Stranger Name beside Name. */
+  home?: EntityHome;
 }) => {
   const { advanced } = useEditorMode();
   return (
     <>
-      <div data-tour-anchor="entity-name" className="space-y-2" {...fieldFrame('name')}>
-        <Label>Name</Label>
-        <PlaceholderNameField
-          value={value.name || ''}
-          onChange={(v) => onChange('name', v)}
-          placeholders={placeholders}
-          ownerId={ownerId}
-          ariaLabel="Name"
-          {...nameHandlers}
-        />
-      </div>
+      <SplitNameRow
+        name={(
+          <SplitNameField historyField="name" label="Name" tourAnchor="entity-name">
+            <PlaceholderNameField
+              value={value.name || ''}
+              onChange={(v) => onChange('name', v)}
+              placeholders={placeholders}
+              ownerId={ownerId}
+              ariaLabel="Name"
+              {...nameHandlers}
+            />
+          </SplitNameField>
+        )}
+        partner={advanced && home === 'world' ? (
+          <SplitNameField historyField="strangerName" label="Stranger Name" helpTopicId="worldEditor.strangerName">
+            <PlaceholderNameField
+              value={value.strangerName ?? ''}
+              onChange={(v) => onChange('strangerName', v.trim() ? v : undefined)}
+              placeholders={placeholders}
+              ownerId={ownerId}
+              ariaLabel="Stranger Name"
+              placeholder="a hooded figure"
+            />
+          </SplitNameField>
+        ) : undefined}
+      />
       {advanced && (
       <div className="space-y-2" {...fieldFrame('aliases')}>
         <div className="flex items-center gap-2">
@@ -112,43 +130,23 @@ export const EntityIdentityFields = ({ value, onChange, placeholders = [], owner
   );
 };
 
-/** What the player sees before meeting the entity. World Editor and Advanced only. */
-export const EntityStrangerFields = ({ value, onChange, placeholders = [], ownerId, home }: EntityFieldGroupProps & { home: EntityHome }) => {
+/** What the player reads before meeting the entity, for `afterPlayer` on the Descriptions tab. World Editor and Advanced only. */
+export const EntityStrangerDescriptionField = ({ value, onChange, placeholders = [], ownerId, home }: EntityFieldGroupProps & { home: EntityHome }) => {
   const { advanced } = useEditorMode();
   if (!advanced || home !== 'world') return null;
   return (
-    <>
-      <div className="space-y-2" {...fieldFrame('strangerName')}>
-        <div className="flex items-center gap-2">
-          <Label>Stranger Name</Label>
-          <HelpButton topicId="worldEditor.strangerName" className="h-6 w-6" />
-        </div>
-        <Hint id={`entity-stranger-name-hint-${value.id}`}>
-          Shows this name to the player until the narration uses the entity&apos;s Name
-        </Hint>
-        <PlaceholderNameField
-          value={value.strangerName ?? ''}
-          onChange={(v) => onChange('strangerName', v.trim() ? v : undefined)}
-          placeholders={placeholders}
-          ownerId={ownerId}
-          ariaLabel="Stranger Name"
-          ariaDescribedBy={`entity-stranger-name-hint-${value.id}`}
-          placeholder="a hooded figure"
-        />
-      </div>
-      <PlaceholderField
-        label="Stranger Description"
-        ariaLabel="Stranger Description"
-        historyField="strangerDescription"
-        hint="Replaces the Player-Facing Description until the narration uses the entity's Name. Leave it blank to show no description."
-        value={value.strangerDescription ?? ''}
-        onChange={(v) => onChange('strangerDescription', v.trim() ? v : undefined)}
-        placeholders={placeholders}
-        ownerId={ownerId}
-        ownerName={value.name}
-        resizable
-      />
-    </>
+    <PlaceholderField
+      label="Stranger Description"
+      ariaLabel="Stranger Description"
+      historyField="strangerDescription"
+      labelAside={<HelpButton topicId="worldEditor.strangerDescription" className="h-6 w-6" />}
+      value={value.strangerDescription ?? ''}
+      onChange={(v) => onChange('strangerDescription', v.trim() ? v : undefined)}
+      placeholders={placeholders}
+      ownerId={ownerId}
+      ownerName={value.name}
+      resizable
+    />
   );
 };
 
@@ -194,8 +192,15 @@ export const EntityPersonaField = ({ value, onChange, placeholders = [], home, c
   if (!advanced) return null;
   const roles = PERSONA_ROLES[home];
   const role = personaRole(value);
+  // One History Step: the marks, the converted start places and the dropped routine fields land together.
   const apply = (next: PersonaRole) => spendFallback('Set Persona', next === 'custom' && !!value.vrmPick, () => {
-    for (const [field, v] of Object.entries(personaRolePatch(next))) onChange(field, v);
+    // Indexed by field name so every changed or dropped field is written through `onChange`.
+    const converted = withPersonaRole(value, next, randomUUID) as unknown as Record<string, unknown>;
+    const before = value as unknown as Record<string, unknown>;
+    const marks = Object.keys(personaRolePatch(next));
+    for (const field of new Set([...marks, ...Object.keys(before), ...Object.keys(converted)])) {
+      if (marks.includes(field) || before[field] !== converted[field]) onChange(field, converted[field]);
+    }
   });
   const pick = (next: PersonaRole) => {
     const line = role === 'custom' ? unmarkLine(customPersonaCounts(value)) : null;
@@ -246,7 +251,10 @@ export const EntityPersonaField = ({ value, onChange, placeholders = [], home, c
 };
 
 /** The three prose fields with their AI-generate controls. The summary is Advanced only. */
-export const EntityDescriptionFields = ({ value, onChange, placeholders = [], ownerId }: DescribedFieldGroupProps) => {
+export const EntityDescriptionFields = ({ value, onChange, placeholders = [], ownerId, afterPlayer }: DescribedFieldGroupProps & {
+  /** The replacement description, rendered directly under Player-Facing Description. */
+  afterPlayer?: ReactNode;
+}) => {
   const { advanced } = useEditorMode();
   return (
     <>
@@ -269,6 +277,7 @@ export const EntityDescriptionFields = ({ value, onChange, placeholders = [], ow
         resizable
         tourAnchor="entity-player-description"
       />
+      {afterPlayer}
       <PlaceholderField
         label="AI-Facing Description"
         historyField="aiDescription"
@@ -311,29 +320,6 @@ export const EntityDescriptionFields = ({ value, onChange, placeholders = [], ow
     </>
   );
 };
-
-/** The world's locations to pick from, and the entity's own membership in them. */
-export interface EntityLocationsFieldProps extends EntityFieldGroupProps {
-  options: MultiSelectOption[];
-  selectedIds?: string[];
-  onLocationsChange?: (ids: string[]) => void;
-}
-
-/** The locations the entity belongs to, and where the player can start as it under the Persona mark. World
- *  Editor only: a library character has no world locations. */
-export const EntityLocationsField = ({ value, options, selectedIds, onLocationsChange }: EntityLocationsFieldProps) => (
-  <div data-tour-anchor="entity-locations" className="space-y-2" {...fieldFrame('locations')}>
-    <Label>Locations</Label>
-    {value.persona === true && <Hint>Lets the player start at any of these when they play this entity</Hint>}
-    <MultiSelect
-      key={value.id}
-      options={options}
-      defaultValue={selectedIds}
-      onValueChange={(ids) => onLocationsChange?.(ids)}
-      placeholder="Select locations"
-    />
-  </div>
-);
 
 /**
  * The entity's picture widget with neither piece placed: a host draws `ImageGallery` and `ImageTags` where
@@ -465,7 +451,7 @@ export const LibraryEntityVrmPickField = ({ value, onChange }: EntityFieldGroupP
 
 /**
  * The Profile tab of both entity editors: the picture beside the short identity fields and its tags, then the
- * Stranger fields, the Persona mark, `locations` (World Editor only), the Avatar and the model at full width.
+ * Persona mark, `locations` (World Editor only), the Avatar and the model at full width. The Stranger Name sits beside Name.
  * `columnsClassName` sets when the header splits into two columns, since each host's pane widens differently.
  */
 export const EntityProfileFields = ({ columnsClassName, nameHandlers, locations, home, customPersonaEntityName, ...props }: EntityFieldGroupProps & {
@@ -481,12 +467,11 @@ export const EntityProfileFields = ({ columnsClassName, nameHandlers, locations,
       <div className={`grid gap-4 ${columnsClassName}`}>
         <ImageGallery />
         <div className="space-y-4">
-          <EntityIdentityFields {...props} nameHandlers={nameHandlers} />
+          <EntityIdentityFields {...props} nameHandlers={nameHandlers} home={home} />
           <ImageTags />
         </div>
       </div>
     </EntityImageWidget>
-    <EntityStrangerFields {...props} home={home} />
     <EntityPersonaField {...props} home={home} customPersonaEntityName={customPersonaEntityName} />
     {locations}
     {home === 'world' ? <EntityVrmPickField {...props} /> : <LibraryEntityVrmPickField {...props} />}

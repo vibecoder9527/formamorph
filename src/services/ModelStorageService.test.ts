@@ -5,6 +5,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import ModelStorageService, { type StoredModelRecord } from './ModelStorageService';
 import { LibraryRecordNotFoundError } from './LibraryStore';
 import { promisifyRequest } from '@/lib/idb';
+import { refuseReads } from '@/test/idbRefusal';
+import { LEGACY_DEFAULT_AVATAR_ID } from '@/lib/defaultAvatar';
 import { makeVrm1, THUMB_DATA_URL } from '@/test/glbFixture';
 import { readVrmMeta } from '@/lib/vrmMeta';
 import { renderVrmThumbnail } from '@/lib/vrmThumbnail';
@@ -189,17 +191,10 @@ describe('deleteModel', () => {
     await expect(ModelStorageService.getModelData(gone.id)).rejects.toBeInstanceOf(LibraryRecordNotFoundError);
   });
 
-  it('refuses to delete the last model, so the player always has one to be', async () => {
+  it('deletes the last model, even on a build with a bundled Avatar', async () => {
     const only = await ModelStorageService.addModel(new File([blob()], 'only.vrm', { type: 'model/vrm' }));
-    await expect(ModelStorageService.deleteModel(only.id)).rejects.toThrow('Cannot delete the last player avatar');
-    await expect(ModelStorageService.getModelData(only.id)).resolves.toBeDefined();
-  });
-
-  it('allows deleting the last model once a second exists, whichever one it is', async () => {
-    // The rule is "keep at least one", not "keep the first/bundled one".
-    const first = await ModelStorageService.addModel(new File([blob('a')], 'first.vrm', { type: 'model/vrm' }));
-    await ModelStorageService.addModel(new File([blob('b')], 'second.vrm', { type: 'model/vrm' }));
-    await expect(ModelStorageService.deleteModel(first.id)).resolves.toBeUndefined();
+    await ModelStorageService.deleteModel(only.id);
+    await expect(ModelStorageService.getModelMetadata()).resolves.toEqual([]);
   });
 
   it('does not block deleting an id the library does not hold', async () => {
@@ -278,11 +273,6 @@ describe('findDuplicate', () => {
 });
 
 describe('addModel metadata', () => {
-  it('records a content hash', async () => {
-    const record = await ModelStorageService.addModel(new File([blob()], 'x.vrm', { type: 'model/vrm' }));
-    expect(record.data.hash).toBeTruthy();
-  });
-
   it('prefers the VRM title over the filename', async () => {
     const vrm = await makeVrm1({ name: 'Proper Name' }).arrayBuffer();
     const record = await ModelStorageService.addModel(new File([vrm], 'export_final_v2.vrm', { type: 'model/vrm' }));
@@ -573,5 +563,85 @@ describe('bundledAvatarHashes', () => {
   it('ignores a response that is not the file', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, blob: async () => new Blob(['<html>']) }));
     await expect(ModelStorageService.bundledAvatarHashes()).resolves.toEqual([]);
+  });
+});
+
+describe('a model that can not be read', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  const stored = (id: string, hash?: string) => ({ id, name: id, data: { type: 'model/vrm', blob: blob(id), size: 1, ...(hash ? { hash } : {}) } });
+
+  it('leaves every operation working past a record whose file is lost', async () => {
+    await putRaw(stored('lost', 'h-lost'));
+    await putRaw(stored('good', 'h-good'));
+    const restore = refuseReads({ [STORE]: ['lost'] });
+
+    const listed = await ModelStorageService.getModelMetadata();
+    const hashes = await ModelStorageService.getModelHashes();
+    const duplicate = await ModelStorageService.findDuplicate(blob('no match'));
+    const thumbnail = await ModelStorageService.ensureThumbnail('lost');
+
+    restore();
+    expect(listed.map((model) => model.id)).toEqual(['good']);
+    expect([...hashes.keys()]).toEqual(['good']);
+    expect(duplicate).toBeNull();
+    expect(thumbnail).toBeUndefined();
+  });
+
+  it('deletes the last usable model while a lost one remains', async () => {
+    await putRaw(stored('lost', 'h-lost'));
+    await putRaw(stored('kept', 'h-kept'));
+    const restore = refuseReads({ [STORE]: ['lost'] });
+
+    await ModelStorageService.deleteModel('kept');
+
+    restore();
+    expect(await getRaw('kept')).toBeUndefined();
+  });
+
+  it('removes a record whose file is lost', async () => {
+    await putRaw(stored('lost', 'h-lost'));
+    await putRaw(stored('good', 'h-good'));
+    const restore = refuseReads({ [STORE]: ['lost'] });
+
+    await ModelStorageService.deleteModel('lost');
+
+    restore();
+    expect((await ModelStorageService.getModelMetadata()).map((model) => model.id)).toEqual(['good']);
+  });
+
+  it('still folds a flat record forward past a lost one', async () => {
+    await putRaw(stored('lost', 'h-lost'));
+    await putRaw({ id: 'flat', name: 'Flat', type: 'model/vrm', blob: blob('flat'), size: 4, addedAt: '2026-01-01' });
+    const restore = refuseReads({ [STORE]: ['lost'] });
+
+    await ModelStorageService.getModelMetadata();
+
+    restore();
+    expect((await getRaw('flat')).data).toBeTruthy();
+  });
+
+  it('runs the migration when the legacy default record is lost', async () => {
+    await putRaw(stored('good', 'h-good'));
+    await putRaw(stored(LEGACY_DEFAULT_AVATAR_ID, 'h-lost'));
+    const restore = refuseReads({ [STORE]: [LEGACY_DEFAULT_AVATAR_ID] });
+
+    const listed = await ModelStorageService.getModelMetadata();
+
+    restore();
+    expect(listed.map((model) => model.id)).toContain('good');
+  });
+
+  it('leaves out a model whose blob fails to read, and imports the rest', async () => {
+    await putRaw(stored('good', 'h-good'));
+    // The structured clone strips `arrayBuffer()`, so hashing this blob fails as a lost file does.
+    await putRaw({ id: 'gone', name: 'gone', data: { type: 'model/vrm', blob: blob('gone'), size: 1 } });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const hashes = await ModelStorageService.getModelHashes();
+
+    expect([...hashes.keys()]).toEqual(['good']);
+    expect(warn.mock.calls[0][0]).toContain('gone');
+    warn.mockRestore();
   });
 });

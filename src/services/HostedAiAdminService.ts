@@ -74,14 +74,82 @@ export interface HostedPause {
 }
 
 /** One UTC day. `providerMicros` is null until the daily provider read has stored that day. */
-export interface HostedSpendDay {
+export interface HostedUsageDay {
   day: string;
   calls: number;
+  turns: number;
+  accounts: number;
   costMicros: number;
   providerMicros: number | null;
+  /** Distinct app installs that opened that day. Null for a day before counting began. */
+  installs: number | null;
 }
 
-/** The admin surface of Formamorph AI: the setting, grants, the pause and the spend report. */
+/** One population's active counts by UTC calendar month. `averageDay` is the mean full day so far, null with none counted. */
+export interface HostedActiveFigures {
+  today: number;
+  yesterday: number;
+  month: number;
+  averageDay: number | null;
+}
+
+/** One platform and version's active installs. The month counts an install under its first build that month. */
+export interface HostedInstallBuild {
+  platform: string;
+  version: string;
+  today: number;
+  yesterday: number;
+  month: number;
+}
+
+/** Settled cost over what admission reserved. `ratio` is null with nothing reserved. */
+export interface HostedReservation {
+  calls: number;
+  reserveMicros: number;
+  costMicros: number;
+  ratio: number | null;
+}
+
+/** One prompt type's sums. A speed figure is null when the type has no timed call in the range. */
+export interface HostedPromptTypeUsage {
+  promptType: string | null;
+  calls: number;
+  costMicros: number;
+  avgPromptTokens: number | null;
+  avgOutputTokens: number | null;
+  cachedShare: number | null;
+  firstTokenP50Ms: number | null;
+  tokensPerSecondP50: number | null;
+  maxGapP90Ms: number | null;
+  failed: number;
+}
+
+/** Sums and call timings for a range of UTC days. It names no account. */
+export interface HostedUsageReport {
+  since: string;
+  /** The budget week that `tiers` and `heaviest` cover. */
+  week: { since: string; resetAt: string };
+  activeUsers: { installs: HostedActiveFigures; accounts: HostedActiveFigures; builds: HostedInstallBuild[] };
+  totals: { calls: number; turns: number; accounts: number; costMicros: number; failed: number; providerMicros: number; cachedShare: number | null };
+  days: HostedUsageDay[];
+  promptTypes: HostedPromptTypeUsage[];
+  endings: { status: string; calls: number }[];
+  failures: { failure: string; calls: number }[];
+  tiers: { tier: SupporterTier; entitled: number; active: number; turns: number; costMicros: number; topBudgetShare: number | null }[];
+  slowest: { startedAt: string; promptType: string | null; firstTokenMs: number | null; maxGapMs: number | null; tokensPerSecond: number | null; status: string; failure: string | null }[];
+  heaviest: { tier: SupporterTier; turns: number; costMicros: number; budgetShare: number | null }[];
+  offer: { step: string; count: number }[];
+  reservations: { overall: HostedReservation; promptTypes: (HostedReservation & { promptType: string | null })[] };
+  /** Per build. A null version is a call that sent no readable client header. */
+  clients: { clientVersion: string | null; calls: number; turns: number; costMicros: number; turnsWithoutNarration: number }[];
+  refusals: {
+    days: { day: string; code: string; count: number; accounts: number }[];
+    tiers: { tier: SupporterTier | null; code: string; count: number; accounts: number }[];
+    budgetExhaustedAccounts: number;
+  };
+}
+
+/** The admin surface of Formamorph AI: the setting, grants, the pause and the usage report. */
 export interface HostedAiAdminApi {
   fetchSettings(): Promise<HostedAiSettings>;
   saveSettings(value: HostedAiSettings): Promise<HostedAiSettings>;
@@ -90,7 +158,7 @@ export interface HostedAiAdminApi {
   revokeGrant(id: number): Promise<HostedGrant>;
   fetchPause(): Promise<HostedPause>;
   liftPause(): Promise<HostedPause>;
-  fetchSpendReport(days: number): Promise<HostedSpendDay[]>;
+  fetchUsageReport(days: number): Promise<HostedUsageReport>;
 }
 
 /** The server's value, with the lists and objects a form reads always present. */
@@ -169,9 +237,9 @@ class HostedAiAdminService implements HostedAiAdminApi {
     return (await unwrap<{ data: HostedPause }>(response, 'Failed to lift the pause')).data;
   }
 
-  async fetchSpendReport(days: number): Promise<HostedSpendDay[]> {
-    const response = await fetch(`${this.base}/hosted-ai/admin/spend-report?days=${days}`, { headers: authHeaders() });
-    return (await unwrap<{ data: { days: HostedSpendDay[] } }>(response, 'Failed to read the spend report')).data.days;
+  async fetchUsageReport(days: number): Promise<HostedUsageReport> {
+    const response = await fetch(`${this.base}/hosted-ai/admin/usage-report?days=${days}`, { headers: authHeaders() });
+    return (await unwrap<{ data: HostedUsageReport }>(response, 'Failed to read the usage report')).data;
   }
 }
 

@@ -14,10 +14,11 @@
 import { authoredChipScene } from '@/lib/chipValues/authoredScene';
 import { chipValues, knownPulledIds } from '@/lib/chipValues/chipValues';
 import type { CopyLookup } from '@/lib/blueprints';
+import { startTravelGate } from '@/lib/inPlayWorld';
 import { allPlaceholders } from '@/lib/placeholderHomes';
 import { traitScopedPins } from '@/lib/placeholderPins';
 import {
-  contextDelivery, knownEntityIds, navigableDestinationEntries, reachableEntityIds, scopedChipOpts, sublocationEntityIds,
+  contextDelivery, knownEntityIds, reachableEntityIds, walkableDestinationEntries, scopedChipOpts, sublocationEntityIds,
   type ContextDelivery,
 } from '@/lib/locationContext';
 import { estimateTokens } from '@/lib/memoryUtils';
@@ -27,6 +28,8 @@ import type { ValueLookup } from '@/lib/promptValues';
 import { splitToken, variableForToken } from '@/lib/promptVariables';
 import { enabledStats } from '@/lib/traitEffects';
 import type { Entity, GameLocation, PlayerStat } from '@/types';
+import { samplePlacement } from '@/lib/entityPlaces';
+import { startRoutinePick } from '@/lib/inPlayWorld';
 import { inCast } from '@/lib/owners';
 import { openingPersonaOf } from '@/lib/openingState';
 import { lensActiveTraits, lensOwnerScopes, lensPersonaRef, resolveLensEntityText, resolveLensText, type BenchLens } from './lens';
@@ -36,7 +39,7 @@ import type { RuleWorld } from './rules';
 export type AiContextWorld = Pick<
   RuleWorld,
   'worldOverview' | 'stats' | 'statGroups' | 'locations' | 'connections' | 'entities' | 'traits' | 'traitGroups'
-  | 'dictionaries' | 'placeholders'
+  | 'dictionaries' | 'placeholders' | 'options'
 >;
 
 /** The blocks, in the order the prompts lay them out: the world, then who you are, then where you are. */
@@ -65,8 +68,10 @@ export interface ContextBlock {
 export interface DestinationRow {
   id: string;
   name: string;
-  /** The Connection's authored travel hint — what the model is told the trip involves. */
+  /** The Connection's authored travel hint, on a one-move place. */
   hint?: string;
+  /** A far place's route: the places passed through, in walk order. Absent for a one-move place. */
+  route?: string[];
   via: 'implicit' | 'connection';
 }
 
@@ -113,7 +118,7 @@ export const EMPTY_AI_CONTEXT: AiContextData = {
 // positions under one row, Background first, so it shows every entry a turn could inject.
 const BLOCK_TOKENS: Record<ContextBlockId, { label: string; token: string; parts?: string[] }> = {
   world: { label: 'World Description', token: '<WORLD DESCRIPTION>' },
-  persona: { label: 'Persona', token: '<PERSONA|markdown>' },
+  persona: { label: 'Persona', token: '<PERSONA|norange.nodescription.markdown>' },
   stats: { label: 'Stats', token: '<STATS DESCRIPTION|descriptions.markdown>' },
   traits: { label: 'Traits', token: '<TRAITS DESCRIPTION|markdown>' },
   location: { label: 'Location', token: '<LOCATION|markdown>' },
@@ -121,7 +126,7 @@ const BLOCK_TOKENS: Record<ContextBlockId, { label: string; token: string; parts
   parent: { label: 'Parent Location', token: '<LOCATION|parent.summary.markdown>' },
   reachable: { label: 'Reachable Locations', token: '<LOCATION|reachable.summary.markdown>' },
   destinations: { label: 'Destinations', token: '<LOCATION|destinations.summary.markdown>' },
-  entities: { label: 'Entities Here', token: '<ENTITIES|markdown>' },
+  entities: { label: 'Entities Here', token: '<ENTITIES|norange.nodescription.markdown>' },
   subEntities: { label: 'Entities in Sub-Locations', token: '<ENTITIES|sublocations.markdown>' },
   reachableEntities: { label: 'Entities Reachable', token: '<ENTITIES|reachable.summary.markdown>' },
   knownEntities: { label: 'Entities Known Here', token: '<ENTITIES|known.summary.markdown>' },
@@ -198,7 +203,7 @@ function lensStats(world: AiContextWorld, lens: BenchLens): PlayerStat[] {
 function lensScene(world: AiContextWorld, lens: BenchLens) {
   const placeholders = allPlaceholders(world);
   const scopeOf = lensOwnerScopes(world, lens);
-  return authoredChipScene(world, {
+  const scene = authoredChipScene(world, {
     location: lens.location,
     activeTraitIds: activeTraitIds(world, lens),
     stats: lensStats(world, lens),
@@ -213,6 +218,14 @@ function lensScene(world: AiContextWorld, lens: BenchLens) {
       });
     },
   });
+  return { ...scene, canEnter: lensTravelGate(world, lens) };
+}
+
+/** The travel gate from the lens location at the world's start, under the lens persona and Options (Q54). */
+function lensTravelGate(world: AiContextWorld, lens: BenchLens): (id: string) => boolean {
+  const start = { ...world, entities: world.entities ?? [], locations: world.locations ?? [] };
+  const canEnter = startTravelGate(start, lens.persona?.id ?? null, lens.state.optionValues);
+  return (id) => canEnter(lens.location?.id, id);
 }
 
 /**
@@ -226,8 +239,8 @@ export function buildAiContext(world: AiContextWorld, lens: BenchLens): AiContex
   const locations = world.locations ?? [];
   const connections = world.connections ?? [];
   // The played persona is no one's neighbor, so it stays off every roster.
-  const entities = (world.entities ?? []).filter((e) => !lens.persona || inCast(e, lensPersonaRef(lens.persona.id)));
   const location = lens.location;
+  const cast = (world.entities ?? []).filter((e) => !lens.persona || inCast(e, lensPersonaRef(lens.persona.id)));
   const scene = lensScene(world, lens);
   const values = chipValues(scene);
   const resolve = scene.resolve;
@@ -236,11 +249,12 @@ export function buildAiContext(world: AiContextWorld, lens: BenchLens): AiContex
   // roster that listed someone twice would disagree with the text beside it.
   const hereIds = scene.presentIds;
   const here = new Set(hereIds);
-  const subIds = sublocationEntityIds(location, locations, entities).filter((id) => !here.has(id));
+  const placesOf = samplePlacement(cast, { locations, connections }, location?.id, startRoutinePick({ ...world, entities: world.entities ?? [], locations }, lens.persona?.id ?? null, lens.state.optionValues));
+  const subIds = sublocationEntityIds(location, locations, connections, cast, placesOf).filter((id) => !here.has(id));
   const shown = new Set([...hereIds, ...subIds]);
-  const reachIds = reachableEntityIds(location, locations, connections, entities).filter((id) => !shown.has(id));
+  const reachIds = reachableEntityIds(location, locations, connections, cast, placesOf).filter((id) => !shown.has(id));
   const listed = new Set([...shown, ...reachIds]);
-  const knownIds = knownEntityIds(location, locations, entities, knownPulledIds(scene)).filter((id) => !listed.has(id));
+  const knownIds = knownEntityIds(location, locations, cast, knownPulledIds(scene), lens.persona ? lensPersonaRef(lens.persona.id) : undefined).filter((id) => !listed.has(id));
 
   // Text stays exactly as the module produced it, trailing newline included — what an author reads here is
   // byte-for-byte what the model receives; the Dictionary block is its two lore chips, one after the other.
@@ -260,7 +274,7 @@ export function buildAiContext(world: AiContextWorld, lens: BenchLens): AiContex
     };
   });
 
-  const byId = new Map(entities.map((e) => [e.id, e]));
+  const byId = new Map(cast.map((e) => [e.id, e]));
   const roster = (ids: string[], summary: boolean): RosterEntity[] => ids.flatMap((id) => {
     const entity: Entity | undefined = byId.get(id);
     return entity
@@ -275,10 +289,11 @@ export function buildAiContext(world: AiContextWorld, lens: BenchLens): AiContex
     location,
     locationName: location ? resolve(location.name) : '',
     blocks,
-    destinations: navigableDestinationEntries(location, locations, connections).map((entry) => ({
+    destinations: walkableDestinationEntries(location, locations, connections, scene.canEnter).map((entry) => ({
       id: entry.location.id,
       name: resolve(entry.location.name),
       hint: entry.hint ? resolve(entry.hint) : undefined,
+      route: entry.route.length ? entry.route.map((place) => resolve(place.name)) : undefined,
       via: entry.via,
     })),
     rosters: ROSTERS.map((scope) => ({

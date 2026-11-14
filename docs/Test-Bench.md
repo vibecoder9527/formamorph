@@ -127,8 +127,10 @@ The **AI Context** tab shows what the AI gets from the location in the **at** li
 
 - The top line estimates a turn's token cost from here.
 - **Context Blocks** lists each block of text the prompts can use, with its cost. Select a block to read it.
-- **Destinations** lists every place a player can go from here. A place not on the list can't be reached.
+- **Destinations** lists every place the story can move the player to from here, up to 3 steps away. A place more than one step away shows the places on the way. A place not on the list can't be reached in one turn.
 - **Entities the AI Is Told About** shows whether each entity arrives in full, as a summary or by name only.
+
+The bench places entities as a new game does at the opening hour. A Unique entity is at the location of its first [start](World-Editor-Entities#starts). A Generic entity is at the location of each of its starts. An entity that begins at **Player's Starting Location** is at the bench's location.
 
 ## Opening
 <!-- keywords: odds of each intro, probability, likelihood of repeat, raw first request, perks at start, try different stat levels, what wildcards rolled, custom presets ignored -->
@@ -143,6 +145,8 @@ The **Opening** tab shows turn one of a new game for your **Testing as** pick.
 - **First Prompt** shows the **System Prompt** and **Opening User Turn**. An Opening Narration shows **Page One** instead, since no request goes out on turn one.
 
 The **First Prompt** uses the default prompts. Custom prompt presets aren't read here.
+
+The bench places entities as a new game does at the opening hour. A Unique entity begins at its first [start](World-Editor-Entities#starts). A Generic entity begins at each of its starts. An entity that begins at **Player's Starting Location** begins at the **Starting Location** you picked. The **Opening Pool** holds the openings of the entities placed there.
 
 ## Related
 

@@ -187,7 +187,7 @@ Helps when you build a world or debug a prompt.`,
   entityMovement: {
     label: 'Entity Movement',
     description: 'Asks the AI each turn whether entities here come with you',
-    info: `- Each entity that can follow you adds its **own request**
+    info: `- Adds **one request** a turn, for every entity that can come with you
 - Without it, followers still follow and fixed entities keep their places`,
   },
 
@@ -533,6 +533,21 @@ More context uses more **VRAM**. If a model doesn't fit, lower this first.`,
 
 The **Engine device** line above shows the result.`,
   },
+  localEngineBackend: {
+    label: 'Backend',
+    description: 'Chooses whether the engine runs on CUDA or Vulkan',
+    info: `CUDA and Vulkan are two versions of the engine. On NVIDIA cards, CUDA is often faster.
+
+- **Auto** uses CUDA once it's downloaded. Beside a second graphics card, it uses Vulkan, so both cards stay in use
+- **Vulkan** always uses the version that comes with Formamorph
+- **CUDA** needs the CUDA download first
+
+The **Engine device** line above shows the result.`,
+  },
+  localCuda: {
+    label: 'CUDA',
+    description: 'Downloads the CUDA version of the engine for your NVIDIA card',
+  },
   localFlashAttention: {
     label: 'Flash Attention',
     description: 'Saves VRAM and often runs faster',
@@ -693,6 +708,12 @@ Each chip adds its own clause and is left out when it has no value. Any mix of c
     sentWhen: 'Sent in the narration history when Scene Recall recalls an old turn',
     info: 'Sent right after the recap, with the old turn’s full narration as the reply. The wording must mark the scene as past. An unframed old scene can overrule what the recap says happened since.',
   },
+  actionListMessage: {
+    label: 'Since Last Turn Message',
+    description: 'Introduces what you did outside the action box',
+    sentWhen: 'Sent when Since Last Turn lists anything for the AI',
+    info: 'Comes before one line for each action Since Last Turn tells the AI, such as an item you used',
+  },
   directionMessage: {
     label: 'Direction Message',
     description: 'Marks bracketed text as your direction, not speech',
@@ -746,10 +767,26 @@ Each chip adds its own clause and is left out when it has no value. Any mix of c
     description: 'Waits this long after your last edit before saving',
     info: 'A longer pause saves less often, so more edits stay unsaved',
   },
+  backupRestore: {
+    label: 'Backup & Restore',
+    description: 'Saves your data to a file, or restores it from one',
+    info: 'A backup holds your worlds, saves, library entities and library dictionaries. Make one before you update the app or move to a new device.',
+  },
   authoringTour: {
     label: 'Authoring Tour',
     description: 'Guides you through building a new world, one field at a time',
     info: "Opens the **World Editor** on a new world with an example for every step. Your other worlds don't change.",
+  },
+
+  // ── Data · Privacy ──────────────────────────────────────────────────────────
+  dailySendEnabled: {
+    label: 'Daily Check-In',
+    description: 'Sends a daily count that helps decide where development time goes',
+    info: `Daily counts show how many players come back each day and month, and on which platforms and app versions. They show which platforms need the most support and whether an update keeps players or loses them.
+- Sends a random ID for this copy of the app, plus the app version and platform
+- The server stores a scrambled form of the ID and keeps only totals after each month
+- Sends no play data, worlds, or account details
+- Starts after you accept the adult-content warning`,
   },
 } as const satisfies Record<string, SettingCopy>;
 
@@ -761,6 +798,8 @@ export const SETTINGS_BUTTONS = {
   clearCachedImages: 'Clear Cached Images',
   resetTutorials: 'Reset Tutorials',
   startAuthoringTour: 'Start Authoring Tour',
+  backUp: 'Back Up',
+  restoreBackup: 'Restore',
   resetAiEndpoint: 'Reset AI Endpoint',
   troubleConnecting: 'Trouble Connecting?',
   howToSetUp: 'How to Set Up',

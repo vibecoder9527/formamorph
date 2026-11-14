@@ -17,8 +17,9 @@ import { filesFrom } from '@/lib/importFiles';
 import { useVrmSourceUrl } from '@/lib/useVrmSourceUrl';
 import { useBackStop } from '@/hooks/useBackStop';
 import { useVrmCustomization } from '@/lib/useVrmCustomization';
+import type { AvatarLock } from '@/lib/customizationLock';
 import { Hint } from '@/components/ui/typography';
-import { BUNDLED_DEFAULT_URL, DEFAULT_AVATAR_ID, pickerStart, readUserDefaultAvatar } from '@/lib/defaultAvatar';
+import { DEFAULT_AVATAR_ID, pickerStart, readUserDefaultAvatar } from '@/lib/defaultAvatar';
 import { namedVrmSource } from '@/lib/vrmResolver';
 import { useGameData } from '@/contexts/GameDataContext';
 import { useMountedRef } from '@/lib/useMountedRef';
@@ -26,9 +27,11 @@ import { toastError } from '@/lib/linkToast';
 import { SurfaceLayer } from '@/components/ui/surface';
 import { targetAttribute } from '@/lib/surface/surfaceTargets';
 
-const CharacterCustomization = ({ vrm, onCharacterCustomized, onBack, onAbort }: {
+const CharacterCustomization = ({ vrm, lock, onCharacterCustomized, onBack, onAbort }: {
   /** The played entity's Avatar. User's Default offers the library picker; any other pick shows as set. */
   vrm?: VrmPick;
+  /** The checked traits that hold sliders and colors. Absent when the screen has no world. */
+  lock?: AvatarLock;
   onCharacterCustomized: (data: CharacterData) => void;
   /** Step back in the enter-world flow. Undefined on the flow's first step, where the button becomes Abort. */
   onBack?: () => void;
@@ -40,7 +43,7 @@ const CharacterCustomization = ({ vrm, onCharacterCustomized, onBack, onAbort }:
   useBackStop(onBack ?? onAbort);
   // The sliders and color pickers (and the state that drives the preview) live in the shared hook, so the
   // model-library details modal can offer the same controls to test an exported model.
-  const { setCaps, vrmViewerRef, viewerProps, controls, characterData } = useVrmCustomization();
+  const { setCaps, vrmViewerRef, viewerProps, controls, characterData } = useVrmCustomization(true, lock);
 
   const { worldOverview } = useGameData();
   const locked = vrm && vrm.kind !== 'default' ? vrm : undefined;
@@ -48,7 +51,9 @@ const CharacterCustomization = ({ vrm, onCharacterCustomized, onBack, onAbort }:
   const [selectedModelId, setSelectedModelId] = useState<string>(DEFAULT_AVATAR_ID);
   const [libraryModels, setLibraryModels] = useState<ModelMetadata[]>();
   const lockedSource = locked && libraryModels
-    && namedVrmSource(locked, { store: worldOverview?.vrmStore, libraryIds: new Set(libraryModels.map((m) => m.id)) });
+    && namedVrmSource(locked, {
+      store: worldOverview?.vrmStore, libraryIds: new Set(libraryModels.map((m) => m.id)), deviceDefault: readUserDefaultAvatar(),
+    });
   const { url: resolvedModelUrl, resolving: resolvingModel } = useVrmSourceUrl(
     locked ? lockedSource : { kind: 'library', id: selectedModelId });
   const isMountedRef = useMountedRef();
@@ -87,6 +92,8 @@ const CharacterCustomization = ({ vrm, onCharacterCustomized, onBack, onAbort }:
   };
 
   const noAvatars = !locked && !!libraryModels && libraryModels.length === 0;
+  // With no Avatar on screen there is nothing to customize.
+  const showsAvatar = !noAvatars && !(locked && !listing && !lockedSource);
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const handleFinalize = () => {
@@ -112,11 +119,11 @@ const CharacterCustomization = ({ vrm, onCharacterCustomized, onBack, onAbort }:
             <Loader2 className="animate-spin" size={32} />
           ) : noAvatars ? (
             <AvatarEmptyState onAdd={() => uploadRef.current?.click()} />
-          ) : locked && !lockedSource && !BUNDLED_DEFAULT_URL ? (
+          ) : locked && !lockedSource ? (
             <Hint className="text-center">This world&apos;s Avatar isn&apos;t available.</Hint>
           ) : (
             <VRMViewer
-              key={resolvedModelUrl ?? 'default'}
+              key={resolvedModelUrl ?? 'none'}
               ref={vrmViewerRef}
               {...viewerProps}
               modelUrl={resolvedModelUrl}
@@ -162,7 +169,7 @@ const CharacterCustomization = ({ vrm, onCharacterCustomized, onBack, onAbort }:
           </div>
           )}
 
-          {controls}
+          {showsAvatar && controls}
     </>
   );
 
@@ -183,7 +190,8 @@ const CharacterCustomization = ({ vrm, onCharacterCustomized, onBack, onAbort }:
       <SurfaceLayer id="avatar" />
       {uploadInput}
       {viewer}
-      <Card className="w-1/3 m-4 flex flex-col overflow-hidden">
+      {/* Its scrolling controls start below the header line, clear of the window buttons. */}
+      <Card className="w-1/3 m-4 flex flex-col overflow-hidden [[data-window-overlay]_&]:mt-[var(--header-line)]">
         <ScrollArea className="flex-1 min-h-0">
           <CardHeader>
             <CardTitle>Avatar Customization</CardTitle>

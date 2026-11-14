@@ -117,18 +117,19 @@ Each stat's **Name** is always sent. The Stats chip in your [prompt](Prompt-Chip
 | **Descriptor** | The matching Stat Descriptor, a word for the current level |
 | **Description** | The stat's **Description** |
 
-Each piece is a checkbox in the **Stat Detail** row of the chip's [Chip Options](Prompt-Chips#chip-options). At least one stays checked. The **Entities** and **Persona** chips have the same row for the stats they send.
+Each piece is a checkbox in the **Stat Detail** row of the chip's [Chip Options](Prompt-Chips#chip-options). With all three off, the chip sends stat names only. The **Entities** and **Persona** chips have the same row for the stats they send.
 
 > ⚠️ **Every active stat is sent on every turn.** Stats use your context budget all the time. Three stats that matter are better than twelve that don't.
 
 ## The panel
 <!-- keywords: scripts tab missing, code tab missing, cant find descriptors, no tabs showing, three tabs -->
 
-Select a stat to open its panel. In Advanced mode the panel has three tabs.
+Select a stat to open its panel. In Advanced mode the panel has four tabs.
 
 | Tab | Holds | Mode |
 |---|---|---|
-| **Details** | The fields below | Simple and Advanced |
+| **Details** | The fields below, except **Sliders** and **Colors** | Simple and Advanced |
+| **Appearance** | [**Sliders** and **Colors**](#appearance) | Simple and Advanced, for Number and Percentage stats |
 | **Descriptors** | [Stat Descriptors](#stat-descriptors) | Advanced only |
 | **Scripts** | [Scripts](#scripts) | Advanced only |
 
@@ -146,7 +147,6 @@ In Simple mode the panel shows the basic fields with no tabs.
 | **Min** / **Max** | The range. The value always stays in it. A percentage stat locks these at 0 and 100, so you set only its **Base Value (%)**. |
 | **Base Value** | Where the stat starts, before traits change it. |
 | **Regen** | Added to the value as story time passes. Pick the span it counts per: **Minute**, **Hour**, **Day** or **Week**. Hour is the default. With **Measured Clock** off, each turn takes the player's **Time Per Turn**, one hour by default. A positive number heals over time, and a negative number drains. An inactive stat gets no Regen. |
-| **Body Sliders** | Binds the [Avatar's](Avatars#in-the-game) body sliders to this stat. The value, from Min to Max, sets each slider's position. Each slider belongs to one stat only. To add sliders to a model, see [How to Add Body Sliders in Blender](Avatars#how-to-add-body-sliders-in-blender). |
 
 ### Availability
 
@@ -169,6 +169,34 @@ In Simple mode the panel shows the basic fields with no tabs.
 | **Don't Decrease Max** | Lowering the Max |
 
 A percentage stat shows only the first two, because its Max is always 100.
+
+## Appearance
+<!-- keywords: stat changes avatar, slider, ear shape, color, skin eye hair, body sliders, head features -->
+<!-- route: worldEditorStat.appearance -->
+
+On the **Appearance** tab:
+
+| Field | What it does |
+|---|---|
+| **Sliders** | Binds the [Avatar's](Avatars#in-the-game) sliders to this stat. The list has two groups for each model: **Body Sliders** and **Head Features**, such as Ear Shape. On an entity's own stat, the list holds the sliders of its 3D model and of the Avatar it shows on this device. For **User's Default**, that is your Default Avatar. On a world stat, the list holds the Avatar of each persona the player can pick, once each. A world that allows one persona lists one Avatar. A library persona or **None** uses your **Custom Persona**'s Avatar. **Starts On** does not narrow the list. With no Avatar and no 3D model, the **Appearance** tab asks you to pick one. Each picked slider gets a row with a **Change By** number, 1 by default. As the value goes from Min to Max, the stat adds 0 up to the **Change By** to the slider. A negative **Change By** makes the slider smaller. Several stats can change one slider, and their changes add up. A row shows **Not on this model** when none of the models the stat plays on has that slider. A slider you bound that the list no longer holds stays on the stat, and you can remove it. To add sliders to a model, see [How to Add Body Sliders in Blender](Avatars#how-to-add-body-sliders-in-blender). |
+| **Colors** | Shifts the Avatar's **Skin**, **Eye** or **Hair** color toward a **Target Color** as the stat rises. At Min, the color is unchanged. At Max and above, it is the target. A new row starts at the Avatar's own color, or white when the stat has no Avatar. When several stats change one color, they apply in their order in the stat list. Colors work on Avatars only, not on 3D models. A row shows **Not on this model** when none of the Avatars the stat plays on has that color. |
+
+## Preview
+<!-- keywords: preview stat look, see stat on avatar, set change by by eye, stat at max, scrub stat -->
+<!-- route: statAppearancePreview -->
+
+**Preview** shows the stat's look on its Avatar, so you can set sliders and colors by eye.
+
+- On the **Appearance** tab, select **Preview** at the bottom left of the panel. The dialog opens the Avatar the stat plays on. With several, it opens the first and offers an **Avatar** menu to switch. Your changes stay when you switch. A control the other Avatar lacks is hidden there, and Save still writes its change.
+- The dialog opens at Max. Each slider shows the Avatar's own value plus its **Change By**. Each color shows its **Target Color**. Only this stat's rows apply.
+- Drag the stat's slider at the top to see the look from Min to Max. At Min, the Avatar shows its own sliders and colors.
+- A drag or a color pick sets the look at Max, and moves the stat's slider to Max first. The **Change By** becomes the value you drag to, less the Avatar's own value.
+- A **Change By** past a slider's range shows the slider at its end, with the number beside it. It changes only when you drag that slider.
+- During the game, the stat adds to the player's own slider values, so a player who starts higher ends higher.
+- Each control's **Undo** button returns it to the look at Max from the saved rows.
+- **Save** writes your changes to the stat. A slider or color you changed that has no row gets a new one. Save never removes a row. One **Undo** in the editor takes the whole change back.
+- Closing with unsaved changes asks before it discards them.
+- With no Avatar, **Preview** is disabled. An entity's 3D model has no Preview, so set an Avatar on its **Profile** tab first. **Preview** is also disabled until Max is above Min, because the stat changes nothing in play until then.
 
 ## Stat Descriptors
 <!-- keywords: no status red, gap in coverage, which band wins, raw or percent, scales with max, above top tier, label missing, coverage bar -->
@@ -201,6 +229,9 @@ When you switch, your numbers convert, so no band moves. The choice only changes
 ### Pins on a descriptor
 
 **Advanced mode only.** Each descriptor row has a pin button. A pin keeps a [placeholder](World-Editor-Placeholders) at one value while the stat is in that band.
+
+- **An entity's own stat pins too.** Its band can pin a world placeholder or one of that entity's own placeholders. The pin applies in every text, whoever the player plays. See [Pins](World-Editor-Placeholders#pins) for which pin wins.
+- **A Blueprint stat's band pins a blueprint placeholder.** Its pin list offers only blueprints. Each entity that links the stat pins its own copy, from its own value. See [Pins by Blueprint](World-Editor-Blueprints#pins-by-blueprint).
 
 ## Scripts
 <!-- keywords: scripts tab, stat code, dynamic value calculation, javascript, script, formula, derived from another, automatic math, custom logic, programming, ai change overwritten, code box, computed, add script, timing -->

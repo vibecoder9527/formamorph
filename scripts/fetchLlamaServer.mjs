@@ -24,7 +24,15 @@ export const BUILDS = [
   { id: 'linux-x64-cpu', platform: 'linux', asset: (tag) => `llama-${tag}-bin-ubuntu-x64.tar.gz` },
 ];
 
-export const readPin = async () => JSON.parse(await readFile(path.join(HERE, 'llamaServerPin.json'), 'utf8')).tag;
+const PIN_FILE = path.join(HERE, 'llamaServerPin.json');
+const readPinFile = async () => JSON.parse(await readFile(PIN_FILE, 'utf8'));
+export const readPin = async () => (await readPinFile()).tag;
+
+/** The Windows CUDA 13.5 assets the optional CUDA download needs. The cudart asset name carries no tag. */
+export const CUDA_ASSETS = [
+  { id: 'cuda', asset: (tag) => `llama-${tag}-bin-win-cuda-13.5-x64.zip` },
+  { id: 'cudart', asset: () => 'cudart-llama-bin-win-cuda-13.5-x64.zip' },
+];
 
 const headers = () => ({
   Accept: 'application/vnd.github+json',
@@ -32,13 +40,88 @@ const headers = () => ({
   ...(process.env.GH_TOKEN ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {}),
 });
 
-/** The release's asset names, with download URLs. Throws a clear error for a tag that is not a release. */
-export async function listAssets(tag, fetchImpl = fetch) {
+/** The release's assets as the API lists them. Throws a clear error for a tag that is not a release. */
+export async function listReleaseAssets(tag, fetchImpl = fetch) {
   const res = await fetchImpl(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`, { headers: headers() });
   if (res.status === 404) throw new Error(`llama.cpp has no release tagged "${tag}". Fix the tag in scripts/llamaServerPin.json.`);
   if (!res.ok) throw new Error(`GitHub answered ${res.status} for llama.cpp release "${tag}".`);
-  const release = await res.json();
-  return new Map(release.assets.map((a) => [a.name, a.browser_download_url]));
+  return (await res.json()).assets;
+}
+
+/** The release's asset names, with download URLs. */
+export async function listAssets(tag, fetchImpl = fetch) {
+  return new Map((await listReleaseAssets(tag, fetchImpl)).map((a) => [a.name, a.browser_download_url]));
+}
+
+/** The pinned CUDA assets of `tag` as the release lists them: `{ name, digest, size, url }`. Throws when either is missing or has no digest. */
+export async function cudaAssetsOf(tag, fetchImpl = fetch) {
+  const listed = new Map((await listReleaseAssets(tag, fetchImpl)).map((a) => [a.name, a]));
+  const names = CUDA_ASSETS.map((c) => c.asset(tag));
+  const missing = names.filter((n) => !listed.has(n));
+  if (missing.length) throw new Error(`Release "${tag}" lacks CUDA assets: ${missing.join(', ')}.`);
+  const undigested = names.filter((n) => !/^sha256:[0-9a-f]{64}$/.test(listed.get(n).digest ?? ''));
+  if (undigested.length) throw new Error(`Release "${tag}" lists no SHA-256 digest for: ${undigested.join(', ')}.`);
+  return names.map((name) => {
+    const a = listed.get(name);
+    return { name, digest: a.digest, size: a.size, url: a.browser_download_url };
+  });
+}
+
+const ZIP_EOCD = 0x06054b50;
+const ZIP_CENTRAL = 0x02014b50;
+const EOCD_SEARCH = 65_557; // the 22-byte record plus the longest zip comment
+
+async function fetchRange(url, start, end, fetchImpl) {
+  const res = await fetchImpl(url, { headers: { 'User-Agent': headers()['User-Agent'], Range: `bytes=${start}-${end}` }, redirect: 'follow' });
+  if (res.status !== 206) throw new Error(`Range request for ${url} answered ${res.status}.`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** The summed uncompressed size of a remote zip's entries, read from its central directory with two range requests. */
+export async function zipUnpackedSize(url, size, fetchImpl = fetch) {
+  const tailStart = Math.max(0, size - EOCD_SEARCH);
+  const tail = await fetchRange(url, tailStart, size - 1, fetchImpl);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= 0; i--) if (tail.readUInt32LE(i) === ZIP_EOCD) { eocd = i; break; }
+  if (eocd < 0) throw new Error(`${url} has no zip end record.`);
+  const cdSize = tail.readUInt32LE(eocd + 12);
+  const cdOffset = tail.readUInt32LE(eocd + 16);
+  if (cdSize === 0xffffffff || cdOffset === 0xffffffff) throw new Error(`${url} is a ZIP64 archive, which the pin reader does not read.`);
+  const cd = await fetchRange(url, cdOffset, cdOffset + cdSize - 1, fetchImpl);
+  let total = 0;
+  for (let p = 0; p + 46 <= cd.length && cd.readUInt32LE(p) === ZIP_CENTRAL;) {
+    total += cd.readUInt32LE(p + 24);
+    p += 46 + cd.readUInt16LE(p + 28) + cd.readUInt16LE(p + 30) + cd.readUInt16LE(p + 32);
+  }
+  return total;
+}
+
+/**
+ * Fails when the pinned release lacks a CUDA asset, or when its digest differs from the pin.
+ * Runs on every fetch step, even when the bundled builds are current.
+ */
+export async function verifyCudaPin({ fetchImpl = fetch, pin } = {}) {
+  pin ??= await readPinFile();
+  const pinned = pin.cuda?.assets ?? [];
+  if (pinned.length !== CUDA_ASSETS.length) throw new Error('scripts/llamaServerPin.json holds no CUDA assets. Run npm run llama-server:bump -- <tag>.');
+  const live = await cudaAssetsOf(pin.tag, fetchImpl);
+  for (const asset of live) {
+    const mine = pinned.find((p) => p.name === asset.name);
+    if (!mine) throw new Error(`The pin does not name ${asset.name}. Run npm run llama-server:bump -- ${pin.tag}.`);
+    if (mine.digest !== asset.digest) throw new Error(`CUDA asset ${asset.name} has digest ${asset.digest} on release "${pin.tag}", but the pin holds ${mine.digest}.`);
+    if (mine.size !== asset.size) throw new Error(`CUDA asset ${asset.name} has size ${asset.size} on release "${pin.tag}", but the pin holds ${mine.size}. Run npm run llama-server:bump -- ${pin.tag}.`);
+    if (!(mine.unpackedSize > 0)) throw new Error(`The pin holds no unpacked size for ${asset.name}. Run npm run llama-server:bump -- ${pin.tag}.`);
+  }
+}
+
+/** Writes `tag` and its CUDA asset names, digests, sizes and unpacked sizes into the pin file. Refuses a tag whose release lacks either asset. */
+export async function bumpPin(tag, { fetchImpl = fetch, file = PIN_FILE } = {}) {
+  const assets = [];
+  for (const { name, digest, size, url } of await cudaAssetsOf(tag, fetchImpl)) {
+    assets.push({ name, digest, size, unpackedSize: await zipUnpackedSize(url, size, fetchImpl) });
+  }
+  await writeFile(file, `${JSON.stringify({ tag, cuda: { assets } }, null, 2)}\n`);
+  return assets;
 }
 
 async function download(url, file, fetchImpl) {
@@ -131,10 +214,17 @@ export async function fetchLlamaServer({ tag, platforms, dest = DEFAULT_DEST, fe
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const platforms = platformsFromArgs(process.argv);
     const tag = await readPin();
-    const got = await fetchLlamaServer({ tag, platforms });
-    console.log(got.length ? `llama-server ${tag}: downloaded ${got.join(', ')}` : `llama-server ${tag}: up to date`);
+    const checkOnly = process.argv.includes('--check-cuda');
+    const platforms = checkOnly ? undefined : platformsFromArgs(process.argv);
+    // CUDA is Windows-only. The digest check runs even when the bundled builds are current.
+    if (checkOnly || !platforms || platforms.includes('win')) await verifyCudaPin();
+    if (checkOnly) {
+      console.log(`llama-server ${tag}: CUDA assets match the pin`);
+    } else {
+      const got = await fetchLlamaServer({ tag, platforms });
+      console.log(got.length ? `llama-server ${tag}: downloaded ${got.join(', ')}` : `llama-server ${tag}: up to date`);
+    }
   } catch (err) {
     console.error(err.message);
     process.exit(1);

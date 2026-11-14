@@ -11,6 +11,7 @@ import { renderPromptTemplate } from './promptTemplate';
 import { readValue, type TokenValues } from './promptValues';
 import { estimateTokens } from './memoryUtils';
 import { buildStamper, hoursByPosition } from './gameClock';
+import type { ToldAction } from './actionList';
 import type { SectionStyle } from './promptPresets';
 import { outputReserve, type ParagraphLimit } from './outputLength';
 import { toAnatomyBlocks, type AnatomyBlock } from './requestAnatomy';
@@ -41,6 +42,8 @@ export interface AnatomyConditions {
   recall: boolean;
   /** The action carries a `[bracketed]` authorial direction, which rides the Direction Message. */
   brackets: boolean;
+  /** Since Last Turn lists actions for the AI, which ride the Since Last Turn Message. */
+  listedActions: boolean;
 }
 
 /** The player's live generation settings, as plain data — everything the assembly reads that a player can
@@ -67,9 +70,8 @@ export interface AnatomyPreviewSettings {
  * Which conditions this configuration can produce at all. The builder gates on this, so a caller asking
  * for a condition the settings rule out draws the request without it rather than a lie.
  *
- * These are the Recap and Recall editor surfaces' own availability conditions. Brackets are never gated:
- * the bracket rides the action in every Thinking mode, and the Direction rider answering it only with
- * thinking off is the thing worth showing.
+ * These are the Recap and Recall editor surfaces' own availability conditions. Brackets and listed actions
+ * are never gated: the riders answering them only with thinking off are the thing worth showing.
  */
 export function anatomyToggleAvailability(
   settings: AnatomyPreviewSettings,
@@ -78,6 +80,7 @@ export function anatomyToggleAvailability(
     recap: settings.memoryDigests,
     recall: settings.memoryDigests && settings.semanticMemory && settings.semanticRehydration,
     brackets: true,
+    listedActions: true,
   };
 }
 
@@ -145,6 +148,12 @@ const FIXTURE_SCENE_CAST = SAMPLE_TURN.sceneCast;
 /** The authorial direction a bracketed action carries. */
 const FIXTURE_BRACKET = ' [keep the tide going out through this scene]';
 
+/** The panel actions a send tells the AI. */
+const FIXTURE_TOLD: ToldAction[] = [
+  { facts: { kind: 'use', item: { key: 'lamp-oil', name: 'Lamp Oil' }, copyId: 'c1' }, count: 1 },
+  { facts: { kind: 'give', item: { key: 'map', name: 'Tide Map' }, quantity: 1, to: { id: 'wren', name: 'Wren' } }, count: 1 },
+];
+
 /** The plan a planning mode hands the narration. Canned with the narrations, and for the same reason: a
  *  plan is what an earlier pass's model wrote this run, not something a setting decides. */
 const FIXTURE_TURN_PLAN = `- The traveler pockets the map and leaves the Landing for the stair.
@@ -170,6 +179,8 @@ const FIXTURE_SUBJECT = {
   stance: 'at the rail, pole across her knees',
   entity: FIXTURE_SUBJECT_ENTITY,
   diary: ['I told them about the crate and not about Harrow. Let them find the stall shut themselves.'],
+  // The entity location request's story minute: early evening on day one.
+  moveClock: 18 * 60,
 };
 
 /** Where the location router could send this turn. Parse-side only — never rendered into a request. */
@@ -211,7 +222,7 @@ function previewInput(prompts: AnatomyPreviewPrompts, settings: AnatomyPreviewSe
       choicesEnabled: true, statUpdatesEnabled: true, statCount: 3,
       locationChangeEnabled: true, locationAutoApply: settings.locationAutoApply, entityMovement: true,
       aiClock: true, memoryDigests: recap, characterDiaries: true, describeCharacters: true,
-      inventoryDue: true, inventoryTextPass: false,
+      inventoryDue: true, inventoryTextPass: false, entityLocationTextPass: false, clockTextPass: false,
       imageAttachments: false, promptAttachments: {}, language: settings.language,
       stripLinksAndImages: false,
     },
@@ -241,6 +252,7 @@ function previewMaterial(values: TokenValues, action: string, plannerRecap: stri
     overflow: FIXTURE_OVERFLOW,
     sceneCast: FIXTURE_SCENE_CAST,
     subject: FIXTURE_SUBJECT,
+    subjects: { entityLocationAuto: [FIXTURE_SUBJECT], entityLocationSuggest: [FIXTURE_SUBJECT] },
     milestone: SAMPLE_MOMENTS,
   };
 }
@@ -287,15 +299,23 @@ const CAPTIONS: Record<string, string> = {
   diary: EXAMPLE_CAPTION,
 };
 
-/** The location prompt drives two different requests; which one a turn sends is the detection mode's call,
- *  so the hub asks the passes themselves rather than restating the rule. */
+/** The location prompts each drive a request per detection mode; the hub asks the passes themselves which
+ *  one a turn sends rather than restating the rule. */
 const LOCATION_PASSES: { id: TurnPassId; caption: string }[] = [
   { id: 'locationAuto', caption: 'Sent before the narration. The move applies first, so the whole turn runs in the new place.' },
+];
+const NARRATED_MOVE_PASSES: { id: TurnPassId; caption: string }[] = [
+  { id: 'narratedMove', caption: 'Sent after the narration when your action moved you nowhere. The move applies before the rest of the turn.' },
   { id: 'locationSuggest', caption: 'Sent after the narration. The move is offered, and you choose whether to take it.' },
 ];
 
+const LOCATION_HUBS: Record<string, { id: TurnPassId; caption: string }[]> = {
+  location: LOCATION_PASSES,
+  narratedmove: NARRATED_MOVE_PASSES,
+};
+
 /** The entity location prompt rides beside whichever location request the turn sends. */
-const ENTITY_LOCATION_CAPTION = `Sent with the location request, once per entity that can follow you. ${EXAMPLE_CAPTION}`;
+const ENTITY_LOCATION_CAPTION = `Sent once with the location request, for every entity that can follow you. ${EXAMPLE_CAPTION}`;
 const ENTITY_LOCATION_PASSES: { id: TurnPassId; caption: string }[] = [
   { id: 'entityLocationAuto', caption: ENTITY_LOCATION_CAPTION },
   { id: 'entityLocationSuggest', caption: ENTITY_LOCATION_CAPTION },
@@ -334,8 +354,9 @@ export function buildAnatomyHub(
       blocks: toAnatomyBlocks([{ role: 'system', content: request.systemPrompt }, ...request.messages], request.anatomy),
     };
   };
-  if (tab === 'location') {
-    return LOCATION_PASSES
+  const locationPasses = LOCATION_HUBS[tab];
+  if (locationPasses) {
+    return locationPasses
       .filter(({ id }) => passById(id).isDue(input))
       .map(({ id, caption }) => draw(passById(id), caption));
   }
@@ -356,7 +377,7 @@ function fixtureRecap(
   values: TokenValues,
   settings: AnatomyPreviewSettings,
 ): string {
-  return narrationBand(prompts, values, { recap: true, recall: false, brackets: false }, settings).band.recap;
+  return narrationBand(prompts, values, { recap: true, recall: false, brackets: false, listedActions: false }, settings).band.recap;
 }
 
 /** The narration's two assembly steps ahead of its pass: its system prompt, and the banded history the
@@ -432,7 +453,8 @@ function buildNarrationAnatomy(
   const { prompt, runs, band, action, recap } = narrationBand(prompts, values, conditions, settings);
   const input = previewInput(prompts, settings, recap);
   const planningMode = settings.thinkingMode === 'precall' || settings.thinkingMode === 'staged';
-  const request = narrationPass.buildRequest({ ...input, action }, {
+  const told = conditions.listedActions ? { toldActions: FIXTURE_TOLD } : {};
+  const request = narrationPass.buildRequest({ ...input, action, ...told }, {
     ...previewMaterial(values, action, band.recap),
     // The narration is what this request asks for, so nothing has been written yet.
     narration: '',

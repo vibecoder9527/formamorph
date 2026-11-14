@@ -1,5 +1,6 @@
-import type { Stat, Trait, Entity, Dictionary, CommunityLink, ScriptTiming, PlacementWhere, BodyPick } from './world';
+import type { Stat, Trait, Entity, Dictionary, CommunityLink, ScriptTiming, PlacementWhere, BodyPick, WorldOptionValueOf } from './world';
 import type { ChatMessage } from './ai';
+import type { ActionSnapshot, ListedAction, SentActionList } from '@/lib/actionList';
 
 /** A director-invented character promoted to a persisted, per-playthrough entity (runtime characters,
  *  Slice 2). Save-only: it rolls back with the turn and is never written to the world export. */
@@ -58,8 +59,65 @@ export type OwnedTraitStates = Record<string, OwnedTraitState>;
 /** Entity id → its stats during the game, in authored order. */
 export type EntityStatValues = Record<string, PlayerStat[]>;
 
-/** Entity id → the location id it stands at during the game. An absent entity is at every location it lists. */
+/** Unique entity id → the location id it stands at during the game. A Generic entity's places come from `GenericStates`. */
 export type EntityPositions = Record<string, string>;
+
+/** Where the cast stood when the game opened: each Unique entity's place, and the places each Generic entity's
+ *  Generic Entity Instances stood at. */
+export interface OpeningPlacement {
+  positions: EntityPositions;
+  genericPlaces: Record<string, string[]>;
+}
+
+/** A Unique entity traveling with the player, or left waiting at its position until `until`. `script`: a
+ *  script started it, so Strict and Traversable don't apply. */
+export type FollowState =
+  | { mode: 'following'; script?: boolean }
+  | { mode: 'waiting'; until: number; script?: boolean };
+
+/** What keeps a pulled or script-moved Unique entity off its schedule: a time, or nothing but the next script move. */
+export type PositionHold = { until: number } | { untilScriptMove: true };
+
+/** The position engine's saved state for one Unique entity. Times are story minutes (see `storyMinute`). */
+export interface UniqueState {
+  /** The rolled Start of the Routine it plays. */
+  startId: string;
+  /** The Routine it plays. Absent = the first (a v3.7.0 save), written only for an entity with two or more. */
+  routineId?: string;
+  /** Every other Routine's rolled Start, by Routine id: rolled once at new game and kept for swaps (Q4). */
+  rolls?: Record<string, string>;
+  /** No Routine holds: Away all day on `routineId`'s Start (Q24). */
+  nowhere?: true;
+  /** The row in force when the engine last ran. Absent = no row. */
+  rowId?: string;
+  lastRun: number;
+  /** Absent = not following. */
+  follow?: FollowState;
+  hold?: PositionHold;
+  /** When the current Wander or Patrol idle runs out. */
+  idleEnd?: number;
+  /** The Patrol stop last reached, as an index into the row's stops. */
+  stop?: number;
+}
+
+/** Unique entity id → its position engine state. */
+export type UniqueStates = Record<string, UniqueState>;
+
+/** Where one Start of a Generic entity stands, and its schedule state. Times are story minutes. */
+export interface GenericEntityInstanceState {
+  /** Absent while an Away row holds it. */
+  position?: string;
+  /** The row in force when the engine last ran. Absent = no row. */
+  rowId?: string;
+  lastRun: number;
+  /** When the current Wander or Patrol idle runs out. */
+  idleEnd?: number;
+  /** The Patrol stop last reached, as an index into the row's stops. */
+  stop?: number;
+}
+
+/** Generic entity id → Start id → that Generic Entity Instance's state. */
+export type GenericStates = Record<string, Record<string, GenericEntityInstanceState>>;
 
 /** Entity id → stat id → what one turn moved that stat's value. Unmoved stats are absent. */
 export type EntityStatChanges = Record<string, Record<string, number>>;
@@ -125,7 +183,7 @@ export interface HairTypeDef {
 
 /** The player character's appearance customization applied to the VRM model. */
 export interface CharacterData {
-  /** Chosen body-morph influences, keyed by the model's morph name. The value is the absolute morph
+  /** Chosen morph influences, body and head keys alike, keyed by the model's morph name. The value is the absolute morph
    *  influence written to three.js (0 = off, 1 = the model's authored full shape); the customization
    *  slider's range is only a UI clamp, so it can change without touching this stored meaning. Auto-derived
    *  per model, so any morph the model exposes is adjustable — nothing is hardcoded to a fixed field. */
@@ -382,8 +440,10 @@ export interface GameState {
   entityStats?: EntityStatValues;
   /** Where each positioned entity stands, by entity id. Absent ⇒ none. */
   entityPositions?: EntityPositions;
-  /** The ids of the entities following the player, in the order they joined. Absent ⇒ none. */
-  entityFollowers?: string[];
+  /** The position engine's state per Unique entity, runtime characters included. Absent ⇒ none. */
+  uniqueStates?: UniqueStates;
+  /** The position engine's state per Generic entity, one record per Start. Absent ⇒ none. */
+  genericStates?: GenericStates;
   /** The ids of the entities the player has met, in the order they met. Absent ⇒ none. */
   metEntities?: string[];
   /** The latest alias each stranger was seen under, by entity id. Absent ⇒ none. */
@@ -402,6 +462,8 @@ export interface GameState {
   codePins?: CodePins;
   /** Absent ⇒ none. */
   loreToggles?: LoreToggles;
+  /** The playthrough's World Option values. An Option missing here reads its default. Absent ⇒ every default. */
+  worldOptionValues?: WorldOptionValues;
   /** The live scene list — who is physically present this turn, with alias/reveal state for the tab. Legacy
    *  saves stored a bare `string[]` of names; those are normalized to `{ name, revealed: true }` on load. */
   visibleEntities: SceneEntity[];
@@ -421,6 +483,11 @@ export interface GameState {
    *  `DEFAULT_START_HOUR`, which is exactly how the game behaved before. Never re-asked for an existing
    *  save: a retroactive answer would shift every memory stamp already written. */
   startHour?: number;
+  /** Where the player began, resolved once at New Game: the place of every Start at `PLAYER_START`. */
+  playerStartLocationId?: string;
+  /** Where the cast stood when the game opened, which a redraw of page one reads. Absent, the redraw reads the
+   *  Sample Placement at the page-one start. */
+  openingPlacement?: OpeningPlacement;
   /** A snapshot's own copy of the flat chat history. Live `currentState` carries it in memory, but it is
    *  stripped from persisted snapshots — the canonical history lives once at `SaveObject.messageHistory`.
    *  Absent on migrated/persisted snapshots; present on the in-memory current state. */
@@ -515,6 +582,12 @@ export interface SaveObject {
   /** What scripts told the player with `player.tell`, by turn id, in call order, each with its script's
    *  timing. Never sent in a request. Absent ⇒ none. */
   scriptTells?: Record<string, { text: string; timing: ScriptTiming }[]>;
+  /** The Action List each turn was sent with, by turn id. Only the newest turn's entries keep their
+   *  snapshots, whose states carry no `fullMessageHistory`. Absent ⇒ none. */
+  sentActions?: Record<string, SentActionList<ActionSnapshot>>;
+  /** The live Action List, with one snapshot per repeat. Snapshot states carry no `fullMessageHistory`.
+   *  Absent ⇒ empty. */
+  actionList?: ListedAction<ActionSnapshot>[];
   /** The opening turn's `turn.action`: the Opening Action the player sent, or empty for an Opening Narration.
    *  History holds the "START GAME" stand-in instead. Absent ⇒ a page-one re-roll reads the drawn opening. */
   openingAction?: string;
@@ -544,6 +617,9 @@ export interface LoreEntryToggle {
   enabled?: boolean;
   constant?: boolean;
 }
+
+/** Option id → the value the playthrough holds for it. */
+export type WorldOptionValues = Readonly<Record<string, WorldOptionValueOf>>;
 
 /** Book id → what scripts set on that book and its entries, by entry id. The save's books stay as entered. */
 export type LoreToggles = Readonly<Record<string, {

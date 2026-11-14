@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildLocationContext, buildEntityContext, buildSublocationsContext, buildSublocationEntitiesContext,
+  buildLocationContext, buildSublocationsContext, buildSublocationEntitiesContext,
   buildReachableLocationsContext, buildReachableEntitiesContext,
-  navigableDestinations, navigableDestinationEntries, buildDestinationsContext, sublocationEntityIds, reachableEntityIds, renderEntityRoster,
+  navigableDestinations, navigableDestinationEntries, buildDestinationsContext, walkableDestinationEntries, walkableDestinations, sublocationEntityIds, reachableEntityIds, renderEntityRoster,
   buildParentLocationContext, buildSceneEntitiesContext, scenePresentHere, knownEntityIds, buildKnownEntitiesContext,
 } from "./locationContext";
 import { NONE_PLACEHOLDER } from "./promptFallbacks";
 import type { Connection, Entity, GameLocation } from "@/types";
+import { AS_LISTED, rosterAsListed } from "@/test/asListed";
 
 const guard: Entity = {
   id: "e1",
@@ -138,27 +139,27 @@ describe("buildSublocationsContext / buildSublocationEntitiesContext", () => {
   });
 
   it("sublocation entities: rosters entities from direct children, N/A when none", () => {
-    const out = buildSublocationEntitiesContext(keep, locs, [rat]);
+    const out = buildSublocationEntitiesContext(keep, locs, [], [rat], AS_LISTED);
     expect(out).toContain("Rat");
     expect(out).toContain("A big rat.");
     // Cellar's own child (Sub-cellar) has no entities → N/A.
-    expect(buildSublocationEntitiesContext(cellar, locs, [rat])).toBe(NONE_PLACEHOLDER);
-    expect(buildSublocationEntitiesContext(null, locs, [rat])).toBe(NONE_PLACEHOLDER);
+    expect(buildSublocationEntitiesContext(cellar, locs, [], [rat], AS_LISTED)).toBe(NONE_PLACEHOLDER);
+    expect(buildSublocationEntitiesContext(null, locs, [], [rat], AS_LISTED)).toBe(NONE_PLACEHOLDER);
   });
 
   it("sublocation entities: excludeIds drops anyone shown in a higher-precedence roster (present here)", () => {
-    expect(buildSublocationEntitiesContext(keep, locs, [rat], { excludeIds: ["g1"] })).toBe(NONE_PLACEHOLDER);
+    expect(buildSublocationEntitiesContext(keep, locs, [], [rat], AS_LISTED, { excludeIds: ["g1"] })).toBe(NONE_PLACEHOLDER);
   });
 
   it("sublocationEntityIds: deduped union across direct children only", () => {
-    expect(sublocationEntityIds(keep, locs, [rat])).toEqual(["g1"]);
-    expect(sublocationEntityIds(tower, locs, [rat])).toEqual([]);
-    expect(sublocationEntityIds(null, locs, [rat])).toEqual([]);
+    expect(sublocationEntityIds(keep, locs, [], [rat], AS_LISTED)).toEqual(["g1"]);
+    expect(sublocationEntityIds(tower, locs, [], [rat], AS_LISTED)).toEqual([]);
+    expect(sublocationEntityIds(null, locs, [], [rat], AS_LISTED)).toEqual([]);
   });
 
   it("sublocation entities: someone who belongs to two children is rostered once", () => {
     const bat: Entity = { id: "g2", name: "Bat", aiDescription: "A bat.", locations: ["a", "b"] };
-    expect(sublocationEntityIds(keep, locs, [rat, bat])).toEqual(["g1", "g2"]);
+    expect(sublocationEntityIds(keep, locs, [], [rat, bat], AS_LISTED)).toEqual(["g1", "g2"]);
   });
 });
 
@@ -206,22 +207,22 @@ describe("buildReachableLocationsContext / buildReachableEntitiesContext", () =>
   });
 
   it("reachable entities: gathers the containing location's cast alongside the neighbors'", () => {
-    const out = buildReachableEntitiesContext(houseA, locs, [], [sarah, mayor]);
+    const out = buildReachableEntitiesContext(houseA, locs, [], [sarah, mayor], AS_LISTED);
     expect(out).toContain("Sarah");
     expect(out).toContain("Mayor");
     expect(out).toContain("Runs the town.");
   });
 
   it("reachable entities: honors excludeIds, N/A when nobody is left or nothing is reachable", () => {
-    expect(buildReachableEntitiesContext(houseA, locs, [], [sarah, mayor], { excludeIds: ["sarah", "mayor"] })).toBe(NONE_PLACEHOLDER);
-    expect(buildReachableEntitiesContext(top, locs, [], [sarah])).toBe(NONE_PLACEHOLDER);
+    expect(buildReachableEntitiesContext(houseA, locs, [], [sarah, mayor], AS_LISTED, { excludeIds: ["sarah", "mayor"] })).toBe(NONE_PLACEHOLDER);
+    expect(buildReachableEntitiesContext(top, locs, [], [sarah], AS_LISTED)).toBe(NONE_PLACEHOLDER);
   });
 
   it("reachableEntityIds: dedupes someone standing in two reachable places", () => {
     const twoPlaceMayor: Entity = { ...mayor, locations: ["town", "m"] }; // Mayor is in Town and at the Mall
-    expect(reachableEntityIds(houseA, [town, houseA, sarahs, mall], [], [sarah, twoPlaceMayor]).sort())
+    expect(reachableEntityIds(houseA, [town, houseA, sarahs, mall], [], [sarah, twoPlaceMayor], AS_LISTED).sort())
       .toEqual(["mayor", "sarah"]);
-    expect(reachableEntityIds(top, locs, [], [sarah, mayor])).toEqual([]); // top-level → nothing reachable
+    expect(reachableEntityIds(top, locs, [], [sarah, mayor], AS_LISTED)).toEqual([]); // top-level → nothing reachable
   });
 });
 
@@ -255,6 +256,19 @@ describe("Known In rosters", () => {
     expect(knownEntityIds(inn, locs, [{ ...queen, knownIn: ["market"] }])).toEqual([]);
   });
 
+  it("leaves out an unpicked Persona-Only entity and the played persona, however they are picked", () => {
+    const only = { ...queen, id: "only", persona: true, personaOnly: true };
+    const playable = { ...queen, id: "playable", persona: true };
+    expect(knownEntityIds(inn, locs, [queen, only, playable], [], undefined)).toEqual(["queen", "playable"]);
+    expect(knownEntityIds(inn, locs, [queen, only, playable], [], { source: "world", entityId: "playable" })).toEqual(["queen"]);
+    expect(knownEntityIds(inn, locs, [queen, only], [], { source: "world", entityId: "only" })).toEqual(["queen"]);
+  });
+
+  it("leaves out a Persona-Only entity a relationship pulls in", () => {
+    const only = { ...guard, id: "only", persona: true, personaOnly: true };
+    expect(knownEntityIds(inn, locs, [guard, only], ["guard", "only"])).toEqual(["guard"]);
+  });
+
   it("Nearby and Nowhere entities are never on the known roster", () => {
     expect(knownEntityIds(inn, locs, [sage, guard])).toEqual([]);
   });
@@ -262,7 +276,7 @@ describe("Known In rosters", () => {
   it("an emptied pick list falls back to Nearby: reachable again, not known", () => {
     const emptied = { ...queen, knownIn: [] };
     expect(knownEntityIds(inn, locs, [emptied])).toEqual([]);
-    expect(reachableEntityIds(inn, locs, [], [emptied])).toEqual(["queen"]);
+    expect(reachableEntityIds(inn, locs, [], [emptied], AS_LISTED)).toEqual(["queen"]);
   });
 
   it("picks stay fixed when the entity moves", () => {
@@ -271,11 +285,11 @@ describe("Known In rosters", () => {
   });
 
   it("the reachable roster lists only Nearby entities", () => {
-    expect(reachableEntityIds(inn, locs, [], [queen, sage, guard])).toEqual(["guard"]);
+    expect(reachableEntityIds(inn, locs, [], [queen, sage, guard], AS_LISTED)).toEqual(["guard"]);
   });
 
   it("the sublocations roster lists only Nearby entities", () => {
-    expect(sublocationEntityIds(rosewood, locs, [queen, sage, guard])).toEqual(["guard"]);
+    expect(sublocationEntityIds(rosewood, locs, [], [queen, sage, guard], AS_LISTED)).toEqual(["guard"]);
   });
 
   it("the known roster sends name and summary only, even under Full content", () => {
@@ -293,25 +307,35 @@ describe("Known In rosters", () => {
     expect(buildKnownEntitiesContext(null, locs, [queen])).toBe(NONE_PLACEHOLDER);
   });
 
-  describe("nearbyUsesConnections", () => {
-    it("absent: the reachable roster is the tree only, so a Connection reaches nobody", () => {
-      expect(reachableEntityIds(market, locs, [road], [smith])).toEqual([]);
+  describe("Nearby reach", () => {
+    it("lists someone one Nearby Connection away", () => {
+      expect(reachableEntityIds(market, locs, [road], [smith, guard], AS_LISTED).sort()).toEqual(["guard", "smith"]);
     });
 
-    it("true: the reachable roster follows the router's effective destinations", () => {
-      const linked = { ...market, nearbyUsesConnections: true };
-      expect(reachableEntityIds(linked, locs, [road], [smith, guard]).sort()).toEqual(["guard", "smith"]);
+    it("leaves out someone across a Far Connection", () => {
+      expect(reachableEntityIds(market, locs, [{ ...road, distance: "far" }], [smith, guard], AS_LISTED)).toEqual(["guard"]);
     });
 
-    it("true: a one-way leg reaches only in its own direction", () => {
+    it("a one-way leg is Nearby from both ends", () => {
       const oneWay: Connection = { id: "road", a: "market", b: "ashby", bToA: {} };
-      const linked = { ...market, nearbyUsesConnections: true };
-      expect(reachableEntityIds(linked, locs, [oneWay], [smith])).toEqual([]);
+      expect(reachableEntityIds(market, locs, [oneWay], [smith], AS_LISTED)).toEqual(["smith"]);
+      expect(reachableEntityIds(ashby, locs, [oneWay], [{ ...guard, locations: ["market"] }], AS_LISTED)).toEqual(["guard"]);
     });
 
-    it("true: a top-level location reaches through its Connections", () => {
-      const linked = { ...ashby, nearbyUsesConnections: true };
-      expect(reachableEntityIds(linked, locs, [road], [{ ...guard, locations: ["market"] }])).toEqual(["guard"]);
+    it("a Far Connection over an implicit pair drops that sibling", () => {
+      const farWalk: Connection = { id: "walk", a: "inn", b: "throne", aToB: {}, bToA: {}, distance: "far" };
+      expect(reachableEntityIds(inn, locs, [farWalk], [guard], AS_LISTED)).toEqual([]);
+      expect(reachableEntityIds(inn, locs, [], [guard], AS_LISTED)).toEqual(["guard"]);
+    });
+
+    it("never chains: two links away is out of reach", () => {
+      expect(reachableEntityIds(inn, locs, [road], [smith], AS_LISTED)).toEqual([]);
+    });
+
+    it("the sublocations roster drops a child across a Far Connection", () => {
+      const farStair: Connection = { id: "stair", a: "rosewood", b: "throne", aToB: {}, bToA: {}, distance: "far" };
+      expect(sublocationEntityIds(rosewood, locs, [], [guard], AS_LISTED)).toEqual(["guard"]);
+      expect(sublocationEntityIds(rosewood, locs, [farStair], [guard], AS_LISTED)).toEqual([]);
     });
   });
 });
@@ -444,7 +468,7 @@ describe("navigableDestinations / buildDestinationsContext", () => {
     it("gives no hint to a leg without one, even when the other leg has one", () => {
       const oneSided: Connection = { id: "c7", a: "green", b: "landing", aToB: { hint: "down the steps" }, bToA: {} };
       expect(hintTo(landing, green, [oneSided])).toBeUndefined();
-      expect(buildDestinationsContext(landing, locs, [oneSided])).not.toContain("via");
+      expect(buildDestinationsContext(landing, locs, [oneSided])).not.toMatch(/^Green — via/m);
     });
 
     it("offers no return trip on a one-way Connection whose leg has a hint", () => {
@@ -455,21 +479,72 @@ describe("navigableDestinations / buildDestinationsContext", () => {
   });
 });
 
-describe("buildEntityContext", () => {
-  it("returns the placeholder for a null location or no entities", () => {
-    expect(buildEntityContext(null, [guard])).toBe(NONE_PLACEHOLDER);
-    expect(buildEntityContext({ id: "loc2", name: "Empty Field" }, [guard])).toBe(NONE_PLACEHOLDER);
+describe("walkableDestinations / buildDestinationsContext reach", () => {
+  // farm > { barn, yard } ; town > { store > backroom, well } ; a lane joins Yard to Town both ways.
+  const farm: GameLocation = { id: "farm", name: "Farm" };
+  const barn: GameLocation = { id: "barn", name: "Barn", parentId: "farm" };
+  const yard: GameLocation = { id: "yard", name: "Yard", parentId: "farm", aiSummary: "A muddy yard." };
+  const town: GameLocation = { id: "town", name: "Town", aiSummary: "A market town." };
+  const store: GameLocation = { id: "store", name: "Store", parentId: "town", aiSummary: "A general store." };
+  const backroom: GameLocation = { id: "backroom", name: "Backroom", parentId: "store" };
+  const well: GameLocation = { id: "well", name: "Well", parentId: "town" };
+  const places = [farm, barn, yard, town, store, backroom, well];
+  const lane: Connection = { id: "lane", a: "yard", b: "town", aToB: { hint: "down the lane" }, bToA: {} };
+  const names = (from: GameLocation, locations = places) =>
+    walkableDestinations(from, locations, [lane]).map((l) => l.name);
+
+  it("lists every place up to 3 moves away, nearest first, and none past it", () => {
+    expect(names(barn)).toEqual(["Farm", "Yard", "Town", "Store", "Well"]);
+  });
+
+  it("trails a far place with the places it passes through, and keeps a one-move Connection's hint", () => {
+    const out = buildDestinationsContext(yard, places, [lane], { preferSummary: true });
+    expect(out).toContain("Town: A market town. — via down the lane\n");
+    expect(out).toContain("Store: A general store. — via Town\n");
+    expect(out).toContain("Backroom — via Town, then Store\n");
+    expect(out).toContain("Barn\n"); // a one-move implicit place carries no tail
+    const fromBarn = buildDestinationsContext(barn, places, [lane], { preferSummary: true, format: "markdown" });
+    expect(fromBarn).toContain("- **Store:** A general store. — via Yard, then Town\n");
+  });
+
+  it("keeps only the nearest place of a shared name", () => {
+    const farCellar: GameLocation = { id: "far-cellar", name: "Cellar", parentId: "town" }; // 3 moves from the Barn
+    const nearCellar: GameLocation = { id: "near-cellar", name: "the cellar", parentId: "farm" };
+    const entries = walkableDestinationEntries(barn, [...places, farCellar, nearCellar], [lane]);
+    expect(entries.filter((e) => e.location.name.toLowerCase().endsWith("cellar")).map((e) => e.location.id))
+      .toEqual(["near-cellar"]);
+  });
+
+  it("lists neither place when two of a name are equally near", () => {
+    // Both mills sit beside the Barn, one move each.
+    const millA: GameLocation = { id: "mill-a", name: "Mill", parentId: "farm" };
+    const millB: GameLocation = { id: "mill-b", name: "Mill", parentId: "farm" };
+    expect(names(barn, [...places, millA, millB])).not.toContain("Mill");
+    // Two moves apart, past the Town: the Yard's own lane makes one nearer, so it lists.
+    const millC: GameLocation = { id: "mill-c", name: "Mill", parentId: "town" };
+    expect(walkableDestinations(yard, [...places, millA, millC], [lane]).map((l) => l.id)).toContain("mill-a");
+  });
+
+  it("drops a far place that shares the current location's name", () => {
+    const farBarn: GameLocation = { id: "far-barn", name: "Barn", parentId: "town" };
+    expect(walkableDestinations(barn, [...places, farBarn], [lane]).map((l) => l.id)).not.toContain("far-barn");
+  });
+});
+
+describe("the <ENTITIES> roster", () => {
+  it("returns the placeholder for a location with no entities", () => {
+    expect(rosterAsListed({ id: "loc2", name: "Empty Field" }, [guard])).toBe(NONE_PLACEHOLDER);
   });
 
   it("rosters a multi-location entity at every place it lists, simultaneously", () => {
     const roamer: Entity = { ...guard, locations: ["loc1", "docks"] };
     const docks: GameLocation = { id: "docks", name: "The Docks" };
-    expect(buildEntityContext(location, [roamer], { nameOnly: true })).toBe("Guard");
-    expect(buildEntityContext(docks, [roamer], { nameOnly: true })).toBe("Guard");
+    expect(rosterAsListed(location, [roamer], { nameOnly: true })).toBe("Guard");
+    expect(rosterAsListed(docks, [roamer], { nameOnly: true })).toBe("Guard");
   });
 
   it("emits only allow-listed fields — an unknown field never leaks to the AI by default", () => {
-    const out = buildEntityContext(
+    const out = rosterAsListed(
       location,
       [{ ...guard, playerDescription: "What the player reads.", imageTags: "1girl, blue_hair", placeholders: [], someFutureField: "secret editor state" } as never],
     );
@@ -484,7 +559,7 @@ describe("buildEntityContext", () => {
   });
 
   it("emits a top-level roster (name as subject, indented fields) with full aiDescription by default", () => {
-    const out = buildEntityContext(location, [guard]);
+    const out = rosterAsListed(location, [guard]);
     expect(out).toContain("Guard\n");
     expect(out).toContain("  description: A burly guard in full plate, scarred from old wars.");
     expect(out).toContain("  type: npc");
@@ -493,14 +568,14 @@ describe("buildEntityContext", () => {
   });
 
   it("markdown format leads each entity with a bold-name bullet and nested bold-key fields", () => {
-    const out = buildEntityContext(location, [guard], { format: "markdown" });
+    const out = rosterAsListed(location, [guard], { format: "markdown" });
     expect(out).toContain("- **Guard**");
     expect(out).toContain("  - **description:** A burly guard in full plate, scarred from old wars.");
     expect(out).toContain("  - **type:** npc");
   });
 
   it("xml format wraps each entity in <entity> with <name> and one <key> child per field", () => {
-    const out = buildEntityContext(location, [guard], { format: "xml" });
+    const out = rosterAsListed(location, [guard], { format: "xml" });
     expect(out).toBe(
       "<entity>\n" +
       "  <name>Guard</name>\n" +
@@ -511,7 +586,7 @@ describe("buildEntityContext", () => {
   });
 
   it("prefers aiSummary for entities when preferSummary is set", () => {
-    const out = buildEntityContext(location, [guard], { preferSummary: true });
+    const out = rosterAsListed(location, [guard], { preferSummary: true });
     expect(out).toContain("  summary: A burly scarred guard.");
     expect(out).not.toContain("description:");
     expect(out).not.toContain("full plate");
@@ -519,13 +594,13 @@ describe("buildEntityContext", () => {
 
   it("falls back to aiDescription when aiSummary is empty or whitespace", () => {
     const ent: Entity = { id: "e2", name: "Merchant", aiDescription: "A shrewd traveling merchant.", aiSummary: "", locations: ["loc1"] };
-    const out = buildEntityContext(location, [ent], { preferSummary: true });
+    const out = rosterAsListed(location, [ent], { preferSummary: true });
     expect(out).toContain("  description: A shrewd traveling merchant.");
   });
 
   it("returns the placeholder when nobody belongs to the location", () => {
     const elsewhere: GameLocation = { ...location, id: "loc-empty" };
-    expect(buildEntityContext(elsewhere, [guard])).toBe(NONE_PLACEHOLDER);
+    expect(rosterAsListed(elsewhere, [guard])).toBe(NONE_PLACEHOLDER);
   });
 
   describe("owned traits in force", () => {
@@ -599,47 +674,47 @@ describe("buildEntityContext", () => {
 
   it("surfaces aliases as an 'also known as' line, joined, right after the name", () => {
     const aka = { ...guard, aliases: ["Matron", "Em"] };
-    const simple = buildEntityContext(location, [aka]);
+    const simple = rosterAsListed(location, [aka]);
     expect(simple).toContain("  also known as: Matron, Em");
-    const md = buildEntityContext(location, [aka], { format: "markdown" });
+    const md = rosterAsListed(location, [aka], { format: "markdown" });
     expect(md).toContain("  - **also known as:** Matron, Em");
-    const xml = buildEntityContext(location, [aka], { format: "xml" });
+    const xml = rosterAsListed(location, [aka], { format: "xml" });
     expect(xml).toContain("  <name>Guard</name>\n  <aliases>Matron, Em</aliases>\n"); // spaced label can't be an xml tag
   });
 
   it("emits no alias line when aliases are absent, empty, or blank", () => {
-    expect(buildEntityContext(location, [guard])).not.toContain("also known as");
-    expect(buildEntityContext(location, [{ ...guard, aliases: [] }])).not.toContain("also known as");
-    expect(buildEntityContext(location, [{ ...guard, aliases: ["  "] }])).not.toContain("also known as");
+    expect(rosterAsListed(location, [guard])).not.toContain("also known as");
+    expect(rosterAsListed(location, [{ ...guard, aliases: [] }])).not.toContain("also known as");
+    expect(rosterAsListed(location, [{ ...guard, aliases: ["  "] }])).not.toContain("also known as");
   });
 
   it("renders pronouns after the aliases in each format", () => {
     const she = { ...guard, aliases: ["Em"], pronouns: " she/her " };
-    expect(buildEntityContext(location, [she])).toContain("  also known as: Em\n  pronouns: she/her\n");
-    expect(buildEntityContext(location, [she], { format: "markdown" }))
+    expect(rosterAsListed(location, [she])).toContain("  also known as: Em\n  pronouns: she/her\n");
+    expect(rosterAsListed(location, [she], { format: "markdown" }))
       .toContain("  - **also known as:** Em\n  - **pronouns:** she/her\n");
-    expect(buildEntityContext(location, [she], { format: "xml" }))
+    expect(rosterAsListed(location, [she], { format: "xml" }))
       .toContain("  <aliases>Em</aliases>\n  <pronouns>she/her</pronouns>\n");
   });
 
   it("renders an entity with no pronouns exactly as one without the field", () => {
     for (const format of ["simple", "markdown", "xml"] as const) {
-      const bare = buildEntityContext(location, [guard], { format });
-      expect(buildEntityContext(location, [{ ...guard, pronouns: "" }], { format })).toBe(bare);
-      expect(buildEntityContext(location, [{ ...guard, pronouns: "  " }], { format })).toBe(bare);
+      const bare = rosterAsListed(location, [guard], { format });
+      expect(rosterAsListed(location, [{ ...guard, pronouns: "" }], { format })).toBe(bare);
+      expect(rosterAsListed(location, [{ ...guard, pronouns: "  " }], { format })).toBe(bare);
       expect(bare).not.toContain("pronouns");
     }
   });
 
   it("never sends the Persona mark to the AI", () => {
-    expect(buildEntityContext(location, [{ ...guard, persona: true }])).toBe(buildEntityContext(location, [guard]));
+    expect(rosterAsListed(location, [{ ...guard, persona: true }])).toBe(rosterAsListed(location, [guard]));
   });
 
   it("never emits editor-only grouping fields (groupId/order) to the AI", () => {
     // Grouping is purely organizational; the entity context is identical whether grouped or not.
     const grouped: Entity = { id: "g9", name: "Synthia", aiDescription: "The matron.", groupId: "elf", order: 2, locations: ["l"] };
     const loc: GameLocation = { id: "l", name: "Hall" };
-    const out = buildEntityContext(loc, [grouped]);
+    const out = rosterAsListed(loc, [grouped]);
     expect(out).toContain("Synthia\n");
     expect(out).toContain("description: The matron.");
     expect(out).not.toContain("groupId");
@@ -665,18 +740,18 @@ describe('name-only content variant', () => {
   });
 
   it('returns entity names as a plain comma-separated list', () => {
-    expect(buildEntityContext(here, cast, { nameOnly: true })).toBe('Sarah Jones, Mira');
+    expect(rosterAsListed(here, cast, { nameOnly: true })).toBe('Sarah Jones, Mira');
   });
 
   it('ignores format, since a bare list has nothing to decorate', () => {
     for (const format of ['simple', 'markdown', 'xml'] as const) {
       expect(buildLocationContext(here, { nameOnly: true, format })).toBe("Sarah's Place");
-      expect(buildEntityContext(here, cast, { nameOnly: true, format })).toBe('Sarah Jones, Mira');
+      expect(rosterAsListed(here, cast, { nameOnly: true, format })).toBe('Sarah Jones, Mira');
     }
   });
 
   it('still returns the N/A placeholder when there is nothing to name', () => {
-    expect(buildEntityContext({ ...here, id: 'empty' }, cast, { nameOnly: true })).toBe(NONE_PLACEHOLDER);
+    expect(rosterAsListed({ ...here, id: 'empty' }, cast, { nameOnly: true })).toBe(NONE_PLACEHOLDER);
   });
 
   it('leaves the full and summary variants untouched', () => {

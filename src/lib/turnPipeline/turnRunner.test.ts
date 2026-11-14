@@ -7,7 +7,7 @@ import type { TurnMaterial, TurnPassId, TurnPassSubject, TurnPlanInput, TurnSett
 import type { ParsedDirector } from '@/lib/stagedPlanning';
 import { UNPARSEABLE_MESSAGE } from './turnErrors';
 import { navigableDestinations } from '@/lib/locationContext';
-import type { Connection, GameLocation, ImageAttachment, RequestMessage } from '@/types';
+import type { Connection, Entity, GameLocation, ImageAttachment, RequestMessage } from '@/types';
 
 /**
  * The runner through its own interface: a fake request adapter stands in for the model, and the real pass
@@ -295,25 +295,27 @@ describe('the concurrency knob', () => {
 });
 
 describe('the entity location requests', () => {
+  const sylvie: Entity = { id: 'sylvie', name: 'Sylvie' };
+  const albus: Entity = { id: 'albus', name: 'Albus' };
   const movers: TurnPassSubject[] = [
-    { name: 'Sylvie', moves: ['stay', 'comeAlong'] },
-    { name: 'Albus', moves: ['keepFollowing', 'stayHere'] },
+    { name: 'Sylvie', entity: sylvie, moves: ['stay', 'comeAlong'], moveClock: 12 * 60 },
+    { name: 'Albus', entity: albus, moves: ['keepFollowing', 'waitHour', 'waitThisDaypart', 'waitNextDaypart', 'partWays'], moveClock: 12 * 60 },
   ];
 
-  it('go out with the player router, one per entity, when parallel', async () => {
+  it('go out with the player router as one request for every entity, when parallel', async () => {
     const { result, seen } = await run({ subjects: { entityLocationAuto: movers } });
     const finished = ok(result);
     expect(seen.slice(0, 3).map((s) => [s.type, s.inFlight])).toEqual([
-      ['locationChange', 1], ['entityLocation', 2], ['entityLocation', 3],
+      ['locationChange', 1], ['entityLocation', 2], ['director', 1],
     ]);
-    expect(finished.passes.filter((p) => p.id === 'entityLocationAuto').map((p) => p.subject?.name)).toEqual(['Sylvie', 'Albus']);
+    expect(finished.passes.filter((p) => p.id === 'entityLocationAuto')).toHaveLength(1);
   });
 
-  it('go out one at a time after the player router when serial', async () => {
+  it('go out right after the player router when serial', async () => {
     const { result, seen } = await run({ subjects: { entityLocationAuto: movers }, settings: { concurrentTurnRequests: false } });
     ok(result);
     expect(seen.slice(0, 3).map((s) => [s.type, s.inFlight])).toEqual([
-      ['locationChange', 1], ['entityLocation', 1], ['entityLocation', 1],
+      ['locationChange', 1], ['entityLocation', 1], ['director', 1],
     ]);
   });
 
@@ -323,10 +325,12 @@ describe('the entity location requests', () => {
     expect(types).not.toContain('entityLocation');
   });
 
-  it('read each reply against its own entity’s options', async () => {
-    const { result } = await run({ subjects: { entityLocationAuto: movers }, answers: { entityLocation: 'Stay here' } });
+  it('read each entity’s reply against its own options', async () => {
+    const { result } = await run({
+      subjects: { entityLocationAuto: movers }, answers: { entityLocation: '{"Sylvie": "Stay", "Albus": "Part ways"}' },
+    });
     const replies = ok(result).passes.filter((p) => p.id === 'entityLocationAuto').map((p) => p.parsed);
-    expect(replies).toEqual(['stay', 'stayHere']);
+    expect(replies).toEqual([[{ entity: sylvie, move: 'stay' }, { entity: albus, move: 'partWays' }]]);
   });
 
   it.each([true, false])('drop a failed entity request and carry on with the turn (parallel: %s)', async (parallel) => {
@@ -354,14 +358,14 @@ describe('the entity location requests', () => {
     });
     ok(result);
     const after = types.slice(types.indexOf('narration') + 1);
-    expect(after).toEqual(['choices', 'statUpdates', 'locationChange', 'entityLocation', 'entityLocation', 'timePassed']);
+    expect(after).toEqual(['choices', 'statUpdates', 'narratedMove', 'entityLocation', 'timePassed']);
   });
 
   it('ask after the narration in the suggest batch', async () => {
     const { result, seen } = await run({ subjects: { entityLocationSuggest: movers }, settings: { locationAutoApply: false } });
     ok(result);
     const after = seen.slice(seen.findIndex((s) => s.type === 'narration') + 1);
-    expect(after.filter((s) => s.type === 'entityLocation')).toHaveLength(2);
+    expect(after.filter((s) => s.type === 'entityLocation')).toHaveLength(1);
     expect(after.map((s) => s.inFlight)).toEqual(after.map((_, i) => i + 1));
   });
 });
@@ -777,7 +781,7 @@ describe('a written page one', () => {
     const upToNarration = ['locationChange', 'director', 'character', 'storyboard', 'narration'];
     const after = asked.filter((t) => !upToNarration.includes(t));
     // The fixture must really send these on a model-written opening, or the comparison proves nothing.
-    for (const type of ['choices', 'statUpdates', 'summary', 'openingTime', 'diary', 'discoverEntity']) {
+    for (const type of ['narratedMove', 'choices', 'statUpdates', 'summary', 'openingTime', 'diary', 'discoverEntity']) {
       expect(after, type).toContain(type);
     }
     expect([...types].sort()).toEqual([...after].sort());
@@ -803,7 +807,7 @@ describe('a written page one', () => {
         if (event.at === 'stage') order.push(event.stage);
       },
     });
-    expect(order).toEqual(['preNarration', 'planning', 'narration', 'written:true', 'postNarration']);
+    expect(order).toEqual(['preNarration', 'planning', 'narration', 'written:true', 'narratedMove', 'postNarration']);
   });
 
   it('never calls the adapter in the page\'s slot, so nothing can stream it', async () => {
@@ -944,5 +948,94 @@ describe('image attachments', () => {
   it('keeps the narration text-only when the turn has no images', async () => {
     const finished = ok((await run({ settings: { imageAttachments: true } })).result);
     expect(hasParts(outcome(finished, 'narration').request)).toBe(false);
+  });
+});
+
+describe('the narrated move', () => {
+  const NONE = { locationChange: 'NONE', narratedMove: 'The Long Pier' };
+  const afterNarration = (types: string[]) => types.slice(types.indexOf('narration') + 1, types.indexOf('narration') + 3);
+
+  it('follows the narration in Auto mode when the router found no move, before the passes after it', async () => {
+    const { result, types } = await run({ answers: NONE });
+    const finished = ok(result);
+    expect(afterNarration(types)).toEqual(['narratedMove', 'choices']);
+    const check = outcome(finished, 'narratedMove');
+    expect(check.request.messages[0].content).toBe(`Carried: I read the notices. | ${ANSWERS.narration}`);
+    expect(check.parsed).toBe('The Long Pier');
+  });
+
+  it('runs alone before the passes after it when dispatching serially too', async () => {
+    const { result, types } = await run({ answers: NONE, settings: { concurrentTurnRequests: false } });
+    ok(result);
+    expect(afterNarration(types)).toEqual(['narratedMove', 'choices']);
+  });
+
+  it('never runs after the router moved the player: one move per turn', async () => {
+    const { result, types } = await run();
+    ok(result);
+    expect(types).toContain('locationChange');
+    expect(types).not.toContain('narratedMove');
+  });
+
+  it('never runs with Location Changes off', async () => {
+    const { result, types } = await run({ answers: NONE, settings: { locationChangeEnabled: false } });
+    ok(result);
+    expect(types).not.toContain('narratedMove');
+  });
+
+  it("follows the opening narration, with no action of the player's", async () => {
+    const { result, types } = await run({ answers: NONE, input: { isGameStarted: false } });
+    const finished = ok(result);
+    expect(types).not.toContain('locationChange');
+    expect(outcome(finished, 'narratedMove').request.messages[0].content).toBe(`Carried:  | ${ANSWERS.narration}`);
+  });
+
+  it('names no place when the story went Elsewhere, even past a listed one', async () => {
+    const { result } = await run({ answers: { ...NONE, narratedMove: 'Elsewhere, beyond The Long Pier' } });
+    expect(outcome(ok(result), 'narratedMove').parsed).toBeNull();
+  });
+
+  it('leaves the turn going when the check fails', async () => {
+    const { result, types } = await run({ answers: { ...NONE, narratedMove: () => { throw new Error('down'); } } });
+    ok(result);
+    expect(types).toContain('choices');
+  });
+});
+
+describe('the Suggest mode offer', () => {
+  it('reads the narration, and offers the move without taking it', async () => {
+    const fake = makeFake({ answers: { narratedMove: 'The Long Pier' } });
+    const plan = planTurn(testInput({}, { locationAutoApply: false }));
+    const result = await runTurn({ plan, material: material(), request: fake.adapter, signal: new AbortController().signal, advance: advanceLikeTheView() });
+    const finished = ok(result);
+    expect(fake.seen.map((s) => s.type)).not.toContain('locationChange');
+    expect(outcome(finished, 'locationSuggest').request.messages[0].content).toBe(`Carried: I read the notices. | ${ANSWERS.narration}`);
+    const commit = computeTurnCommit({
+      result,
+      plan,
+      context: {
+        participants: [], knownDiscoveredNames: [], notes: '', reasoning: { text: '', ms: 0 }, gameTime: 0,
+        locationId: 'dock', currentLocationName: 'The Dock',
+      },
+    });
+    expect(commit?.suggestedLocation).toBe('The Long Pier');
+    expect(commit?.turn.locationId).toBe('dock');
+  });
+
+  it('offers no move when the story went Elsewhere', async () => {
+    const fake = makeFake({ answers: { narratedMove: 'Elsewhere, beyond The Long Pier' } });
+    const plan = planTurn(testInput({}, { locationAutoApply: false }));
+    const result = await runTurn({ plan, material: material(), request: fake.adapter, signal: new AbortController().signal, advance: advanceLikeTheView() });
+    ok(result);
+    const commit = computeTurnCommit({
+      result,
+      plan,
+      context: {
+        participants: [], knownDiscoveredNames: [], notes: '', reasoning: { text: '', ms: 0 }, gameTime: 0,
+        locationId: 'dock', currentLocationName: 'The Dock',
+      },
+    });
+    expect(commit?.suggestedLocation).toBeNull();
+    expect(commit?.turn.locationId).toBe('dock');
   });
 });

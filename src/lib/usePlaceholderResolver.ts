@@ -3,9 +3,11 @@ import { useGameData } from '@/contexts/GameDataContext';
 import { useGameplay } from '@/contexts/GameplayContext';
 import { usePlaceholderSession } from '@/contexts/PlaceholderSessionContext';
 import { resolveEntityText, resolvePlaceholders, type ResolveOptions } from '@/lib/placeholders';
-import { activeOwnedTraitIds, addedCharacters, ownerPins, inPlayLibrary, type PinSet } from '@/lib/ownedTraitsInPlay';
+import { activeOwnedTraitIds, addedCharacters, ownerPins, inPlayLibrary, pinBlueprintsOf, type PinSet } from '@/lib/ownedTraitsInPlay';
 import { inAuthoredOrder, traitOrderIndex } from '@/lib/traitEffects';
 import { usePersonaName } from '@/lib/useResolvedWorld';
+import { optionPinLists } from '@/lib/worldOptions';
+import { useInPlayWorld } from '@/lib/useInPlayWorld';
 import type { ResolveEntityText } from '@/lib/resolveWorldNames';
 
 /**
@@ -33,31 +35,40 @@ export function useEntityTextResolver(): ResolveEntityText {
 }
 
 function useViewPins(): { opts: ResolveOptions; pinSet: PinSet } {
-  const { traits, traitGroups, locations, entities, worldPlaceholders } = useGameData();
+  const { traits, traitGroups, locations, entities, worldPlaceholders, stats, statGroups, placeholderGroups, options } = useGameData();
   const { placeholders } = usePlaceholderSession();
   // View-aliased (equal to live on the latest page): a past page resolves with the pins that were in
   // force on that turn, not whatever the player has toggled or walked into since.
   const {
     placeholderRolls, viewTraits, viewDisabledTraitIds, viewOwnedTraits, viewStats, viewLocationId, viewCodePins,
-    personaRef, libraryPersona, discoveredEntities,
+    personaRef, libraryPersona, discoveredEntities, viewEntityStats, viewWorldOptionValues,
   } = useGameplay();
+  const blueprints = useMemo(
+    () => pinBlueprintsOf({ stats, statGroups, placeholders: worldPlaceholders, placeholderGroups }),
+    [stats, statGroups, worldPlaceholders, placeholderGroups],
+  );
+  const inPlay = useInPlayWorld();
   const pinSet = useMemo(() => ownerPins({
-    world: { traits, traitGroups, entities },
+    world: { traits, traitGroups, entities: inPlay.runningEntities },
     persona: personaRef,
-    library: inPlayLibrary({ traits, traitGroups, entities }, libraryPersona, addedCharacters(discoveredEntities)),
+    library: inPlay.entitiesOn(inPlayLibrary({ traits, traitGroups, entities }, libraryPersona, addedCharacters(discoveredEntities))),
     globalTraits: inAuthoredOrder(viewTraits, traitOrderIndex(traits, traitGroups)),
     disabledTraitIds: viewDisabledTraitIds,
     owned: activeOwnedTraitIds(viewOwnedTraits),
     sharedPlaceholders: worldPlaceholders,
+    entityStats: viewEntityStats,
+    blueprints,
   }, {
+    options: optionPinLists(options, viewWorldOptionValues),
     location: locations.find((l) => l.id === viewLocationId),
     stats: viewStats,
     placeholders,
     rolls: placeholderRolls,
     codePins: viewCodePins,
   }), [
-    viewTraits, viewDisabledTraitIds, viewOwnedTraits, traits, traitGroups, entities, worldPlaceholders, personaRef,
+    viewTraits, viewDisabledTraitIds, viewOwnedTraits, traits, traitGroups, entities, inPlay, worldPlaceholders, personaRef,
     libraryPersona, discoveredEntities, locations, viewLocationId, viewStats, placeholders, placeholderRolls, viewCodePins,
+    viewEntityStats, blueprints, options, viewWorldOptionValues,
   ]);
   const pins = pinSet.world;
   const name = usePersonaName(placeholderRolls, pins);

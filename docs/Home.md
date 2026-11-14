@@ -12,7 +12,7 @@ Pick a world that comes with Formamorph, import one, or build your own in the Wo
 > 🌐 **Play in your browser:** [formamorph.ai/play](https://formamorph.ai/play/) opens at once, with no install. *(18+, see below.)*
 
 > [!CAUTION]
-> **For adults only (18+).** Formamorph is an open-ended AI roleplay engine. **Your chosen AI model** writes the stories. **Anyone** can author a world. Content therefore has no fixed limits. The in-app world browser shows **user-created worlds as-is**. The repository's README has the full responsible-use disclaimer.
+> **For adults only (18+).** Formamorph is an open-ended AI text RPG engine. **Your chosen AI model** writes the stories. **Anyone** can author a world. Content therefore has no fixed limits. The in-app world browser shows **user-created worlds as-is**. The repository's README has the full responsible-use disclaimer.
 
 > 🔒 **Privacy:** Community Creations uses an account. The [Privacy Policy](https://formamorph.ai/privacy) says what the server stores about it, and how to delete your account.
 
@@ -29,7 +29,7 @@ Pick a world that comes with Formamorph, import one, or build your own in the Wo
 | 📚 **[Library](Library)** | The main menu's board: the four tabs, tile sizes, Groups, the card menu, and import and export of worlds, entities, dictionaries and avatars |
 | 🧍 **[Avatars](Avatars)** | The 3D models an entity can show: importing a VRM file, your default Avatar, Avatar Customization, the details and license, and how an Avatar differs from an entity's 3D model and your Profile Image |
 | 🚪 **[Starting a Game](Starting-a-Game)** | Everything before page one: Enter World, Quick Start, starting traits, the starting location and Library Additions |
-| 🎮 **[How to Play](How-to-Play)** | Taking a turn: actions, choices, `[bracket]` direction, images, regenerate, edit, rewind, the side panels, your inventory and the game menu |
+| 🎮 **[How to Play](How-to-Play)** | Taking a turn: actions, choices, `[bracket]` direction, images, regenerate, edit, rewind, the side panels, your inventory and the game's actions |
 | ❓ **[Formaquestion](Formaquestion)** | The help window in the app: the **Help** tab and F1, asking a question, asking about your world or your story, searching this guide, reading a page, the chat styles and moving the window |
 | ⚙️ **[Formaquestion Settings](Formaquestion-Settings)** | The AI behind help: its endpoint, its prompts and their presets, Tools, Sort Questions, Semantic Search and reasoning |
 | 🧸 **[Formaquestion Mascot](Formaquestion-Mascot)** | The mascot beside the help window: presets, layers, looks, the head view, the transition, mascot cards and publishing |
@@ -62,6 +62,7 @@ Pick a world that comes with Formamorph, import one, or build your own in the Wo
 | 🎒 **[World Editor: Items](World-Editor-Items)** | The objects someone can own, their properties, and the world's equipment slots |
 | 🗺️ **[World Editor: Locations](World-Editor-Locations)** | The places, nesting, Connections and Travel Hints, and starting locations |
 | 🧬 **[World Editor: Traits](World-Editor-Traits)** | Trait modes, Pick Counts, requirements, entity traits and the Custom Persona |
+| 🔘 **[World Editor: Options](World-Editor-Options)** | World Options the player picks at new game, and the text they pin |
 | 🔗 **[World Editor: Blueprints](World-Editor-Blueprints)** | Share one trait across entities: Blueprints, links, overrides and Detach |
 | 📖 **[World Editor: Dictionary](World-Editor-Dictionary)** | Lore entries, what gets scanned, keyword matching, and books |
 | 🧩 **[World Editor: Placeholders](World-Editor-Placeholders)** | Wildcards, Objects and Variables, rolls, pins, copies and the built-in chips |

@@ -12,8 +12,8 @@ const sameFold = (a: HeaderFold, b: HeaderFold) => a.tabs === b.tabs && a.center
  * Picks the main menu top bar's fold from its measured parts.
  *
  * The bar marks its parts with data attributes: `data-fold-left` on the library tabs' cell,
- * `data-fold-live="toggle"` on the view toggle, and hidden copies marked `data-fold-measure` as `center`
- * (one per library tab), `center-menu`, `right-menu`, `badges-full` and `badges-count`.
+ * `data-fold-live="toggle"` on the view toggle, `data-fold-window-buttons` on its spacer, and hidden copies marked `data-fold-measure` as `center`
+ * (one per library tab), `right-direct`, `right-more`, `badges-full` and `badges-count`.
  *
  * @param bar - The top bar
  * @param tabs - The library tabs' width at each step, from the tabs themselves
@@ -33,11 +33,12 @@ export function useHeaderFold(bar: RefObject<HTMLElement | null>, tabs: Record<S
       const centers = Array.from(node.querySelectorAll<HTMLElement>('[data-fold-measure="center"]'), (e) => e.offsetWidth);
       const hasBadges = !!node.querySelector('[data-fold-measure="badges-full"]');
       const widths: HeaderWidths = {
-        bar: node.clientWidth,
+        // The spacer holds the room for the window buttons, so it can't hold a control.
+        bar: node.clientWidth - width('[data-fold-window-buttons]'),
         gap: GAP,
         tabs: tabsShown ? tabs ?? UNMEASURED_TABS : null,
-        center: { full: Math.max(0, ...centers), menu: width('[data-fold-measure="center-menu"]') },
-        right: { toggle: width('[data-fold-live="toggle"]'), menu: width('[data-fold-measure="right-menu"]') },
+        center: Math.max(0, ...centers),
+        right: { toggle: width('[data-fold-live="toggle"]'), direct: width('[data-fold-measure="right-direct"]'), more: width('[data-fold-measure="right-more"]') },
         badges: hasBadges ? { full: width('[data-fold-measure="badges-full"]'), count: width('[data-fold-measure="badges-count"]') } : null,
       };
       const next = headerFold(widths);
@@ -49,7 +50,7 @@ export function useHeaderFold(bar: RefObject<HTMLElement | null>, tabs: Record<S
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(read);
     observer.observe(node);
-    node.querySelectorAll('[data-fold-measure], [data-fold-live]').forEach((e) => observer.observe(e));
+    node.querySelectorAll('[data-fold-measure], [data-fold-live], [data-fold-window-buttons]').forEach((e) => observer.observe(e));
     return () => observer.disconnect();
   }, [bar, tabs, layoutKey]);
 

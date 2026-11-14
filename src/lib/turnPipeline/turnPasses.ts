@@ -18,17 +18,23 @@ import {
 } from '@/lib/stagedPlanning';
 import { languageDirective } from '@/lib/languages';
 import { stripLinksAndImages } from '@/lib/stripLinksAndImages';
-import { matchLocationResponse } from '@/lib/locationMatch';
+import { matchLocationResponse, matchNarratedMoveResponse, matchRouterResponse } from '@/lib/locationMatch';
 import {
-  entityMoveCandidates, entityMoveOptions, entityMoveOptionsText, entityMoveStateText, type EntityMove,
+  entityMoveCandidates, entityMoveOptions, entityMoveOptionsText, entityMoveStateText, entityMoveTimeLine, type EntityMove,
+  type EntityReply,
 } from '@/lib/entityFollowing';
+import type { ResponseSchema } from '@/lib/aiRequest/responseSchema';
+import { parseJsonReply } from '@/lib/aiRequest/jsonReply';
 import { parseChoices } from '@/lib/choices';
 import { parseStatUpdates } from '@/lib/statChanges';
 import { INVENTORY_JSON_FORMAT, INVENTORY_TEXT_FORMAT, inventoryPassSchema, parseInventoryReply } from '@/lib/inventory/pass';
 import { backingStatIds } from '@/lib/currency';
+import { toldLines, type ToldAction } from '@/lib/actionList';
 import type { Currency, InventoryPassOp } from '@/types';
 import { statRequestSchema, textPassTargets, type StatRequestSnapshot } from '@/lib/statRequest';
-import { parseTimeDelta, parseOpeningDaypart } from '@/lib/gameClock';
+import {
+  CLOCK_SCHEMA_FORMAT, CLOCK_TEXT_FORMAT, clockReadingSchema, parseClockReply, parseOpeningDaypart, type ClockReading,
+} from '@/lib/gameClock';
 import { cleanDiscoveredDescription, DISCOVER_LATER_LABEL, DISCOVER_PASSAGE_LABEL } from '@/lib/runtimeCharacters';
 import {
   milestoneMomentValues, milestoneReplyFormat, parseIncrementalMilestoneReply, type IncrementalVerdict,
@@ -59,6 +65,8 @@ export const TURN_PASS_CAPS = {
   summary: 200,
   /** One value like "2h"; anything longer is stray prose the parser ignores. */
   timePassed: 12,
+  /** The clock pass's three-field JSON reply, with room for spacing. */
+  timePassedSchema: 60,
   /** One daypart word. */
   openingTime: 8,
   /** A diary entry is one or two first-person sentences. */
@@ -125,6 +133,16 @@ const labeledRequest = (
   messages: [{ role: 'user', content: message.content }],
   anatomy: { system: system.runs, messages: [message.runs] },
 });
+
+/** A schema request that falls back to the text request's prompt when the endpoint refuses the schema. */
+const withTextFallback = (
+  textRequest: TurnPassRequest<ChatMessage>,
+  schemaRequest: TurnPassRequest<ChatMessage>,
+  responseSchema: ResponseSchema,
+): TurnPassRequest<ChatMessage> => {
+  const { systemPrompt, messages, maxTokens, anatomy } = textRequest;
+  return { ...schemaRequest, responseSchema, textFallback: { systemPrompt, messages, maxTokens, anatomy } };
+};
 
 const isOpening = (input: TurnPlanInput): boolean => !input.isGameStarted;
 
@@ -240,13 +258,44 @@ const locationAutoPass: TurnPassRecord<string | null> = {
     systemTiled(input.prompts.locationChange, material.baseCtx),
     userTiled(input.prompts.locationChangeUser, { '<PLAYER ACTION>': material.action }),
   ),
-  parseResponse: (raw, material) => matchLocationResponse(raw, material.destinations),
+  parseResponse: (raw, material) => matchRouterResponse(raw, material.destinations, material.farDestinations ?? [], material.here),
+  fold: (parsed) => (parsed === null ? {} : { moved: true }),
 };
 
-/** After the narration, ask whether the player should move and offer it. Suggest mode only. */
+/** The narrated-move request: where the narration left the player, among the places they can go. The opening
+ *  has no action of the player's. */
+const narratedMoveRequest = (input: TurnPlanInput, material: TurnMaterial, quiet: boolean) => labeledRequest(
+  { type: 'narratedMove', maxTokens: locationChangeCap(material.destinations), silent: false, quiet },
+  systemTiled(input.prompts.narratedMove, material.ctx),
+  userTiled(input.prompts.narratedMoveUser, {
+    '<PLAYER ACTION>': isOpening(input) ? '' : material.action,
+    '<NARRATION>': material.narration,
+  }),
+);
+
+/** After the narration, follow a move the story made. Auto mode only, and only when nothing moved the player
+ *  before the narration. */
+const narratedMovePass: TurnPassRecord<string | null> = {
+  id: 'narratedMove',
+  type: 'narratedMove',
+  stage: 'narratedMove',
+  fanOut: false,
+  companion: true,
+  isDue: (input) =>
+    input.settings.locationAutoApply &&
+    input.settings.locationChangeEnabled &&
+    input.destinationCount > 0 &&
+    input.prompts.narratedMove !== '' &&
+    input.hasCurrentLocation,
+  isReady: (material) => !material.moved,
+  buildRequest: (input, material) => narratedMoveRequest(input, material, false),
+  parseResponse: (raw, material) => matchNarratedMoveResponse(raw, material.destinations, material.here),
+};
+
+/** After the narration, ask whether the story moved the player and offer it. Suggest mode only. */
 const locationSuggestPass: TurnPassRecord<string | null> = {
   id: 'locationSuggest',
-  type: 'locationChange',
+  type: 'narratedMove',
   stage: 'postNarration',
   fanOut: false,
   // A single-location world has nowhere to move, so don't run it even when enabled.
@@ -255,77 +304,185 @@ const locationSuggestPass: TurnPassRecord<string | null> = {
     !input.settings.locationAutoApply &&
     input.settings.locationChangeEnabled &&
     input.locationCount > 1 &&
-    input.prompts.locationChange !== '',
-  buildRequest: (input, material) => labeledRequest(
-    { type: 'locationChange', maxTokens: locationChangeCap(material.destinations), silent: false, quiet: quietInBatch(input) },
-    systemTiled(input.prompts.locationChange, material.ctx),
-    userTiled(input.prompts.locationChangeUser, {
-      '<PLAYER ACTION>': material.action,
-      '<NARRATION>': material.narration,
-    }),
-  ),
-  parseResponse: (raw, material) => matchLocationResponse(raw, material.destinations),
+    input.prompts.narratedMove !== '',
+  buildRequest: (input, material) => narratedMoveRequest(input, material, quietInBatch(input)),
+  parseResponse: (raw, material) => matchNarratedMoveResponse(raw, material.destinations, material.here),
 };
 
-/** One entity's location request: its system prompt over `values`, its user message over the action, the
- *  narration, whether it already follows, and its own closed list of replies. */
-const entityLocationRequest = (input: TurnPlanInput, material: TurnMaterial, values: TokenValues, narration: string) => {
-  const subject = subjectOf(material);
-  const moves = subject.moves ?? entityMoveOptions(false);
-  const destinations = subject.destinations ?? [];
-  return labeledRequest(
-    { type: 'entityLocation', maxTokens: locationChangeCap(subjectCandidates(subject).map(([label]) => label)), silent: false, quiet: true },
-    systemTiled(input.prompts.entityLocation, layerValues(values, { '<CHARACTER NAME>': subject.name })),
-    userTiled(
-      input.prompts.entityLocationUser,
-      {
-        '<CHARACTER NAME>': subject.name,
-        '<PLAYER ACTION>': material.action,
-        '<NARRATION>': narration,
-        '<MOVE STATE>': entityMoveStateText(subject.name, moves.includes('keepFollowing')),
-        '<MOVE OPTIONS>': entityMoveOptionsText(moves, destinations),
-      },
-      { '<MOVE STATE>': 'move-options', '<MOVE OPTIONS>': 'move-options' },
-    ),
-  );
+/** The tokens each subject's key and quotes add to its line in the schema reply. */
+const JSON_REPLY_SLACK = 6;
+
+/** `user` with a reply format appended as its own run. */
+const withReplyFormat = (user: TiledRuns, format: string): TiledRuns => ({
+  content: user.content + format,
+  runs: [...user.runs, { start: user.content.length, end: user.content.length + format.length, contextLabel: 'reply-format' }],
+});
+
+/** What `<CHARACTER NAME>` renders in a saved entity location template that still holds it (Q117): the request
+ *  covers every subject at once. */
+const SAVED_TEMPLATE_CHARACTER_NAME = 'each character listed';
+
+const movesOf = (subject: TurnPassSubject) => subject.moves ?? entityMoveOptions(false);
+
+/** The story minute the subject's request reads. Its time line and wait ends need one. */
+const clockOf = (subject: TurnPassSubject): number => {
+  if (subject.moveClock === undefined) throw new Error('an entity location request needs the story clock');
+  return subject.moveClock;
 };
 
 /** Each line a subject is offered, with the move it stands for. */
 const subjectCandidates = (subject: TurnPassSubject): [string, EntityMove][] =>
-  entityMoveCandidates(subject.moves ?? entityMoveOptions(false), subject.destinations);
+  entityMoveCandidates(movesOf(subject), subject.destinations ?? [], clockOf(subject));
 
-/** The move an entity location request matched among its own options, or null. */
-const parseEntityMove = (raw: string, material: TurnMaterial): EntityMove | null => {
-  const candidates = subjectCandidates(subjectOf(material));
-  const matched = matchLocationResponse(raw, candidates.map(([label]) => label));
-  return candidates.find(([label]) => label === matched)?.[1] ?? null;
+/** Each subject's name in the request, in order. A later namesake is numbered from (2), so each reply maps back. */
+export const entityReplyKeys = (subjects: readonly TurnPassSubject[]): string[] => {
+  const seen = new Map<string, number>();
+  return subjects.map(({ name }) => {
+    const count = (seen.get(name) ?? 0) + 1;
+    seen.set(name, count);
+    return count === 1 ? name : `${name} (${count})`;
+  });
 };
 
-/** Each tracked entity in the scene, asked beside the up-front router whether it moves with the player. */
-const entityLocationAutoPass: TurnPassRecord<EntityMove | null> = {
-  id: 'entityLocationAuto',
-  type: 'entityLocation',
-  stage: 'preNarration',
-  fanOut: true,
-  companion: true,
-  isDue: (input) =>
-    locationAutoPass.isDue(input) && input.settings.entityMovement && input.prompts.entityLocation !== '',
-  buildRequest: (input, material) => entityLocationRequest(input, material, material.baseCtx, ''),
-  parseResponse: parseEntityMove,
+/** The entity location request's schema: one field per subject, each from that subject's closed list. */
+export const entityMovesSchema = (subjects: readonly TurnPassSubject[]): ResponseSchema => {
+  const keys = entityReplyKeys(subjects);
+  return {
+    name: 'entity_moves',
+    schema: {
+      type: 'object', additionalProperties: false, required: keys,
+      properties: Object.fromEntries(subjects.map((subject, i) => [
+        keys[i], { type: 'string' as const, enum: subjectCandidates(subject).map(([label]) => label) },
+      ])),
+    },
+  };
 };
 
-/** Each tracked entity in the scene, asked beside the suggest router. Suggest mode only. */
-const entityLocationSuggestPass: TurnPassRecord<EntityMove | null> = {
-  id: 'entityLocationSuggest',
-  type: 'entityLocation',
-  stage: 'postNarration',
-  fanOut: true,
-  companion: true,
-  isDue: (input) =>
-    locationSuggestPass.isDue(input) && input.settings.entityMovement && input.prompts.entityLocation !== '',
-  buildRequest: (input, material) => entityLocationRequest(input, material, material.ctx, material.narration),
-  parseResponse: parseEntityMove,
+/** The reply format after the user message: the time, the ask, then each subject's state and closed list. The
+ *  parser depends on it, so it sits out of the author's reach. */
+const entityMovesFormat = (subjects: readonly TurnPassSubject[], json: boolean): string => {
+  const keys = entityReplyKeys(subjects);
+  const blocks = subjects.map((subject, i) => {
+    const moves = movesOf(subject);
+    const list = entityMoveOptionsText(moves, subject.destinations ?? [], clockOf(subject));
+    return `## ${keys[i]}\n${entityMoveStateText(keys[i], moves.includes('keepFollowing'))}\nLines for ${keys[i]}:\n${list}`;
+  });
+  const ask = json
+    ? 'Decide for each character alone. Reply for each character with the one line from their own list that fits.'
+    : 'Decide for each character alone. Reply with one row per character: the name, a colon, and one line from their own list. Write nothing else.';
+  return `\n\n${entityMoveTimeLine(clockOf(subjects[0]))}\n${ask}\n\n${blocks.join('\n\n')}`;
 };
+
+/**
+ * The turn's one entity location request: the system prompt over `values`, the user message over the action
+ * and the narration, then the reply format covering every subject. The schema request carries the text request
+ * as its fallback; an endpoint that refused the schema before gets the text request alone.
+ */
+const entityLocationRequest = (
+  input: TurnPlanInput, subjects: readonly TurnPassSubject[], material: TurnMaterial, values: TokenValues, narration: string,
+): TurnPassRequest<ChatMessage> => {
+  const keys = entityReplyKeys(subjects);
+  const system = systemTiled(input.prompts.entityLocation, layerValues(values, { '<CHARACTER NAME>': SAVED_TEMPLATE_CHARACTER_NAME }));
+  const user = trimEndTiled(userTiled(
+    input.prompts.entityLocationUser,
+    {
+      '<CHARACTER NAME>': SAVED_TEMPLATE_CHARACTER_NAME,
+      '<PLAYER ACTION>': material.action,
+      '<NARRATION>': narration,
+      // Each subject's state and list ride in the reply format (Q117); a saved template that still holds these
+      // chips sends nothing there.
+      '<MOVE STATE>': '',
+      '<MOVE OPTIONS>': '',
+    },
+  ));
+  // One row per subject: its key, a colon, and its longest line.
+  const cap = subjects.reduce(
+    (sum, subject, i) => sum + estimateTokens(keys[i].length + 2) + locationChangeCap(subjectCandidates(subject).map(([label]) => label)), 0,
+  );
+  const shared = { type: 'entityLocation' as const, silent: false, quiet: true };
+  const textRequest = labeledRequest({ ...shared, maxTokens: cap }, system, withReplyFormat(user, entityMovesFormat(subjects, false)));
+  if (input.settings.entityLocationTextPass) return textRequest;
+  return withTextFallback(
+    textRequest,
+    labeledRequest(
+      { ...shared, maxTokens: cap + JSON_REPLY_SLACK * subjects.length }, system, withReplyFormat(user, entityMovesFormat(subjects, true)),
+    ),
+    entityMovesSchema(subjects),
+  );
+};
+
+/** A schema reply's fields that hold a line, by key. Null when the reply is not a JSON object. */
+const jsonReplies = (raw: string): Map<string, string> | null => {
+  const parsed = parseJsonReply(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  return new Map(Object.entries(parsed).flatMap(([key, line]): [string, string][] => (typeof line === 'string' ? [[key, line]] : [])));
+};
+
+/** A text reply's rows, by the key each starts with. The first row for a key wins; a row naming no key is dropped. */
+const textReplies = (raw: string, keys: readonly string[]): Map<string, string> => {
+  const said = new Map<string, string>();
+  for (const row of raw.split('\n')) {
+    const text = row.replace(/\*\*/g, '').replace(/^[\s>*•-]+/, '').trim();
+    const colon = text.indexOf(':');
+    if (colon < 0) continue;
+    const head = text.slice(0, colon).trim().toLowerCase();
+    const key = keys.find((k) => k.toLowerCase() === head);
+    if (key && !said.has(key)) said.set(key, text.slice(colon + 1).trim());
+  }
+  return said;
+};
+
+/** Each subject's matched move, in subject order, null where the reply has nothing usable for it. A key the
+ *  request did not ask about is ignored, and a place a subject was not offered, and so not allowed, matches
+ *  nothing. */
+export const parseEntityMoves = (raw: string, subjects: readonly TurnPassSubject[]): EntityReply[] => {
+  const keys = entityReplyKeys(subjects);
+  const said = jsonReplies(raw) ?? textReplies(raw, keys);
+  return subjects.flatMap((subject, i) => {
+    if (!subject.entity) return [];
+    const line = said.get(keys[i]);
+    const candidates = subjectCandidates(subject);
+    const matched = line === undefined ? null : matchLocationResponse(line, candidates.map(([label]) => label));
+    return [{ entity: subject.entity, move: candidates.find(([label]) => label === matched)?.[1] ?? null }];
+  });
+};
+
+/**
+ * One entity location pass: every tracked entity in the scene, asked in one request beside the router that
+ * `router` names. `scope` reads the context and the narration its stage sees.
+ */
+const entityLocationPass = (
+  id: 'entityLocationAuto' | 'entityLocationSuggest',
+  stage: TurnPassRecord['stage'],
+  router: TurnPassRecord<string | null>,
+  scope: (material: TurnMaterial) => { values: TokenValues; narration: string },
+): TurnPassRecord<EntityReply[]> => {
+  const subjects = (material: TurnMaterial): TurnPassSubject[] => material.subjects?.[id] ?? [];
+  return {
+    id,
+    type: 'entityLocation',
+    stage,
+    fanOut: false,
+    companion: true,
+    isDue: (input) => router.isDue(input) && input.settings.entityMovement && input.prompts.entityLocation !== '',
+    isReady: (material) => subjects(material).length > 0,
+    buildRequest: (input, material) => {
+      const { values, narration } = scope(material);
+      return entityLocationRequest(input, subjects(material), material, values, narration);
+    },
+    parseResponse: (raw, material) => parseEntityMoves(raw, subjects(material)),
+  };
+};
+
+/** Before the narration, from the action alone. */
+const entityLocationAutoPass = entityLocationPass(
+  'entityLocationAuto', 'preNarration', locationAutoPass, (material) => ({ values: material.baseCtx, narration: '' }),
+);
+
+/** After the narration, in suggest mode only. */
+const entityLocationSuggestPass = entityLocationPass(
+  'entityLocationSuggest', 'postNarration', locationSuggestPass, (material) => ({ values: material.ctx, narration: material.narration }),
+);
 
 /** The precall planner: one call that lays out the turn before the narration. */
 const thinkingPass: TurnPassRecord<ParsedDirector> = {
@@ -429,6 +586,16 @@ const storyboardPass: TurnPassRecord<string> = {
   parseResponse: (raw) => raw,
 };
 
+/** The told panel actions under the preset's wrapper line (Q19). A blank wrapper sends the lines alone. */
+function toldPieces(wrapper: string, told: readonly ToldAction[] | undefined): AnatomyPiece[] {
+  if (!told?.length) return [];
+  return [
+    { text: '\n\n', glue: true },
+    ...(wrapper.trim() ? [{ text: wrapper, source: 'action-list' as const }, { text: '\n', glue: true }] : []),
+    { text: toldLines(told), contextLabel: 'listed-actions' },
+  ];
+}
+
 /**
  * The turn's story text. Its system prompt is assembled by the caller (dictionary scan, banded history,
  * notes fallback); what the pass owns is the final user turn — the action as the model receives it, plus
@@ -464,6 +631,7 @@ export const narrationPass: TurnPassRecord<string> = {
             ...(ridden
               ? [{ text: '\n\n', glue: true }, { text: input.prompts.oocDirective, source: 'direction' as const }]
               : []),
+            ...toldPieces(input.prompts.actionList, input.toldActions),
           ]
         : [{ text: actionText, contextLabel: 'action' }];
     // Both directives ride the final user turn, adjacent to where the model writes — recency is what makes
@@ -557,17 +725,14 @@ export function statUpdatesRequest(
     userTiled(text.user, user),
   );
   if (!statRequest || statRequest.textPass) return textRequest;
-  const { systemPrompt, messages, maxTokens, anatomy } = textRequest;
-  return {
-    ...labeledRequest(
-      { ...shared, maxTokens: statSchemaCap(statRequest.targets.length, new Set(statRequest.targets.map((t) => t.ownerKey)).size) },
-      withItemLine(systemTiled(prompts.system, layerValues(values.ctx, statRequest.context)), base.itemNames),
-      userTiled(prompts.user, user),
-    ),
-    responseSchema: statRequestSchema(statRequest),
-    // With no stat of the player's, the text pass has nothing to ask.
-    ...(textStats > 0 && { textFallback: { systemPrompt, messages, maxTokens, anatomy } }),
-  };
+  const schemaRequest = labeledRequest(
+    { ...shared, maxTokens: statSchemaCap(statRequest.targets.length, new Set(statRequest.targets.map((t) => t.ownerKey)).size) },
+    withItemLine(systemTiled(prompts.system, layerValues(values.ctx, statRequest.context)), base.itemNames),
+    userTiled(prompts.user, user),
+  );
+  const responseSchema = statRequestSchema(statRequest);
+  // With no stat of the player's, the text pass has nothing to ask.
+  return textStats > 0 ? withTextFallback(textRequest, schemaRequest, responseSchema) : { ...schemaRequest, responseSchema };
 }
 
 /** Whether a stat request has a stat to ask about on the path it takes. No snapshot sends the text pass. */
@@ -607,19 +772,10 @@ export function inventoryRequest(
 ): TurnPassRequest<ChatMessage> {
   const system = systemTiled(prompts.system, values.ctx);
   const user = userTiled(prompts.user, { '<PLAYER ACTION>': values.action, '<NARRATION>': values.narration });
-  const withFormat = (format: string): TiledRuns => ({
-    content: user.content + format,
-    runs: [...user.runs, { start: user.content.length, end: user.content.length + format.length, contextLabel: 'reply-format' }],
-  });
   const shared = { type: 'inventory' as const, maxTokens: TURN_PASS_CAPS.inventory, silent: false, quiet: base.quiet };
-  const textRequest = labeledRequest(shared, system, withFormat(INVENTORY_TEXT_FORMAT));
+  const textRequest = labeledRequest(shared, system, withReplyFormat(user, INVENTORY_TEXT_FORMAT));
   if (base.textPass) return textRequest;
-  const { systemPrompt, messages, maxTokens, anatomy } = textRequest;
-  return {
-    ...labeledRequest(shared, system, withFormat(INVENTORY_JSON_FORMAT)),
-    responseSchema: inventoryPassSchema(),
-    textFallback: { systemPrompt, messages, maxTokens, anatomy },
-  };
+  return withTextFallback(textRequest, labeledRequest(shared, system, withReplyFormat(user, INVENTORY_JSON_FORMAT)), inventoryPassSchema());
 }
 
 /** How the story changed who has which item and money (R1, Q23). Due only in a world with items or money that settles (Q37, Q55). */
@@ -659,22 +815,30 @@ export const summaryPass: TurnPassRecord<string> = {
   parseResponse: (raw) => raw.trim(),
 };
 
-/** How much in-world time this turn consumed. */
-const timePassedPass: TurnPassRecord<number | null> = {
+/** How much in-world time this turn consumed, as a reading the turn commit resolves against the clock. */
+const timePassedPass: TurnPassRecord<ClockReading | null> = {
   id: 'timePassed',
   type: 'timePassed',
   stage: 'postNarration',
   fanOut: false,
   isDue: (input) => input.settings.aiClock,
-  buildRequest: (input, material) => labeledRequest(
-    { type: 'timePassed', maxTokens: TURN_PASS_CAPS.timePassed, ...silentOn(material) },
-    systemTiled(input.prompts.timePassed, material.ctx),
-    userTiled(input.prompts.timePassedUser, {
+  // An endpoint that refused the schema before gets the text request alone.
+  buildRequest: (input, material) => {
+    const system = systemTiled(input.prompts.timePassed, material.ctx);
+    const user = userTiled(input.prompts.timePassedUser, {
       '<PLAYER ACTION>': stripOocDirectives(material.effectiveAction),
       '<NARRATION>': material.narration,
-    }),
-  ),
-  parseResponse: (raw) => parseTimeDelta(raw),
+    });
+    const shared = { type: 'timePassed' as const, ...silentOn(material) };
+    const textRequest = labeledRequest({ ...shared, maxTokens: TURN_PASS_CAPS.timePassed }, system, withReplyFormat(user, CLOCK_TEXT_FORMAT));
+    if (input.settings.clockTextPass) return textRequest;
+    return withTextFallback(
+      textRequest,
+      labeledRequest({ ...shared, maxTokens: TURN_PASS_CAPS.timePassedSchema }, system, withReplyFormat(user, CLOCK_SCHEMA_FORMAT)),
+      clockReadingSchema(),
+    );
+  },
+  parseResponse: (raw) => parseClockReply(raw),
 };
 
 /**
@@ -831,6 +995,7 @@ export const TURN_PASSES: TurnPassRecord[] = [
   characterPass,
   storyboardPass,
   narrationPass,
+  narratedMovePass,
   choicesPass,
   statUpdatesPass,
   inventoryPass,

@@ -54,7 +54,7 @@ The import adds a new world. It never replaces the world you exported. Import sk
 1. Add an object to the top-level `entities` list.
 2. Give it a new `id` and a `name`.
 3. Write `playerDescription`, `aiDescription` and, for a long description, `aiSummary`.
-4. Set `locations` to the ids of the locations where the entity is. Leave it out for an entity with no fixed place.
+4. Set `locations` to the ids of the locations where the entity is. When the app opens the world, it turns the list into a `kind` and one [Routine](#routines) and drops it. Leave it out for an entity with no fixed place.
 5. To make the entity playable, set `persona` to `true`. See [Persona Marks](#persona-marks).
 
 ```json
@@ -98,6 +98,7 @@ The import adds a new world. It never replaces the world you exported. Import sk
 | `statUpdates` | ✓ | [StatUpdate](#stat-updates)[] | An older field. Write `[]` |
 | `scripts` | | [Script](#scripts)[] | Scripts no stat or trait owns. They run with no `self` |
 | `tools` | | [Tool](#world-tools)[] | The World Tools, in **Tools** tab order. Absent = none |
+| `options` | | [WorldOption](#world-options)[] | The World Options, in **Options** tab order. Absent = none |
 | `items` | | [Item](#items)[] | The world's items, in **Items** tab order. Absent = none |
 | `currencies` | | [Currency](#currencies)[] | The world's money, in order. The first is the **Default**. Absent = none |
 | `slots` | | [Slot](#slots-and-bodies)[] | Where items equip, such as Hand. Absent = none |
@@ -126,16 +127,18 @@ Import runs every world through a migration. The migration changes an older shap
 | A connection with `from`, `to`, `twoWay` and `aiHint` | A connection with `a`, `b` and legs |
 | A location `isStartLocation` flag | `isStarting` |
 | Placeholder `values` as strings, `weights` keyed by text | Value records, weights keyed by value `id` |
-| `worldOverview.openingCue` and `openingCueEnabled` | One Opening Action in `openings`, and `openingsEnabled` |
+| `worldOverview.openingCue` and `openingCueEnabled` | One Opening Action in `openings` |
 | `worldOverview.playerSetting` | `allowedPersonas` and `startPersona` |
 | A trait group `exclusive: true` | `maxPicks: 1` |
 | An entity link to a trait outside Blueprints | Removed, with its overrides |
 | A stat's `beforeCode` and `code` | Scripts with the timings `"before"` and `"after"` |
 | A script that uses `stats.find(…)` | The same code with the stat map |
 | A root `customPlayerVRM` | An Avatar in `worldOverview.vrmStore`. See [Avatar Picks](#avatar-picks) |
-| An entity `startingLocationId` | Removed. A persona's `locations` are where it can start |
+| An entity `startingLocationId` | Removed. A persona's Starts are where it can start |
+| An entity `starts` and `traversable` (3.7.0 and older) | One Routine with no gate, named "Routine 1", that holds them |
 | A stat with `type: "list"` | A `number` stat at its `min`. The items are dropped |
 | A Stomach, Fatness or Breastsize stat with no `morphBindings` | The matching body morphs |
+| A `morphBindings` entry that is a bare name | `{ name }` |
 | Entity and location `inGameDescription` and `detailedDescription` | `playerDescription` and `aiDescription` |
 | A trait `description` | Both `playerDescription` and `aiDescription` |
 
@@ -162,7 +165,6 @@ Write new files in the current shape. A file with `scripts` loads in an older ve
 | `promptOverrides` | | Object | The world's **Custom Prompts**. See below. Absent = the player's prompts |
 | `openings` | | [Opening](#openings)[] | The world's own openings, in order |
 | `openingWeights` | | Object | Draw weight per opening `id`. A missing entry weighs 1. `0` keeps an opening and never draws it |
-| `openingsEnabled` | | Boolean | `false` stops every opening of the world, its locations and its entities from drawing. Absent = on |
 | `allowedPersonas` | | `"any"` \| `"world"` | Which personas the player can pick. `"world"` allows only this world's personas and its Custom Persona. Absent = `"any"` |
 | `startPersona` | | Object | The persona a new player starts on: `{ "source": "none" }`, or `{ "source": "world", "entityId": "<entity id>" }`. Absent = the player's default persona |
 | `mapBackground` | | Object | The picture behind the Locations canvas and the in-game Map. See below. Absent = none |
@@ -208,7 +210,8 @@ Each stat is a number the game tracks. A stat in the top-level `stats` is global
 | `descriptors` | ✓ | [Descriptor](#stat-descriptors)[] | Text for each band of values |
 | `thresholdUnit` | | `"raw"` \| `"percent"` | What a descriptor's `threshold` measures. `"raw"` = the stat's own units. `"percent"` = a percent of `min` to `max`. Absent = `"raw"`. A `percentage` stat is always percent |
 | `scripts` | | [Script](#scripts)[] | Code with this stat as `self`. See the [Scripts Guide](ScriptsGuide) |
-| `morphBindings` | | String[] | Body morph names this stat drives. `min` to `max` maps to 0 to 1 |
+| `morphBindings` | | `{ name, by? }`[] | Avatar sliders this stat changes. From `min` to `max`, the stat adds 0 up to `by` to slider `name`. Absent `by` = 1. A negative `by` makes the slider smaller. The changes of several stats on one slider add up |
+| `colorBindings` | | `{ channel, color }`[] | Avatar colors this stat blends toward `color` (`#rrggbb`), in OKLab. `channel` is `skin`, `eye` or `hair`, once each. From `min` to `max`, the blend goes from 0 to the full target, and stops there. Several stats on one channel apply in stat-tree order. Avatars only |
 | `enabled` | | Boolean | `false` starts the stat off. The player and the AI don't see it, and regen and code stop. A trait's `statToggles` switches it on. Absent = on |
 | `hidden` | | Boolean | `true` hides the stat from the player. The AI still reads it, and regen and code still run |
 | `noIncrease` / `noDecrease` | | Boolean | The AI can't raise or lower the value |
@@ -312,6 +315,8 @@ A trait describes the player or an entity. The player picks traits before play. 
 | `statToggles` | | `{ "statId", "enabled" }`[] | Stats switched on or off while the trait is active |
 | `placeholderPins` | | [Pin](#placeholder-pins)[] | Placeholder values pinned while the trait is active |
 | `body` | | `{ "pick"? }` | The Body its owner takes while the trait is active. `pick` is a [Body pick](#slots-and-bodies) other than absent. No `pick` = the row sets no Body |
+| `morphPins` | | `{ "name", "value" }`[] | Avatar sliders held at `value` while the trait is active, in place of the player's own. Any number. Bound stats add on top. When two active traits set one slider, the one switched on last wins. A link can't override it |
+| `colorPins` | | `{ "channel", "color" }`[] | Avatar colors (`skin`, `eye` or `hair`, once each) set to `color` (`#rrggbb`) while the trait is active, in place of the player's own. Bound stats blend on from it. When two active traits set one channel, the one switched on last wins. A link can't override it. Avatars only |
 | `scripts` | | [Script](#scripts)[] | Code with this trait as `self`. It runs while the trait is active. See the [Scripts Guide](ScriptsGuide) |
 
 See [World Editor: Traits](World-Editor-Traits) for how modes, requirements and pick counts behave during the game.
@@ -385,9 +390,11 @@ The world group with `system: "blueprints"`, and every group below it, holds Blu
 | `images` | | [Gallery image](#media-fields)[] | The gallery, in author order. During the game, the backdrop shows the first visible image |
 | `imageTags` | | String | Comma-separated tags for image generation |
 | `ambientSound` | | [MediaAsset](#media-fields) | Looping sound |
-| `isStarting` | | Boolean | A new game can start here. One marked = every game starts there. Several = the player picks. None = any location. A played entity's `locations` join the choices |
+| `isStarting` | | Boolean | A new game can start here. One marked = every game starts there. Several = the player picks. None = any location. A played entity's Start places join the choices |
 | `parentId` | | String \| `null` | The parent location's `id`. Absent or `null` = the top level. List order is the order among siblings |
-| `nearbyUsesConnections` | | Boolean | **Nearby Through Connections**. `true` = the entities the AI reads as nearby include those one [Connection](#connections) away. Absent = only the parent's and the siblings'. The editor sets `true` on a new location |
+| `enabledWhen` | | [Requirement Row](#trait-requirements)[] | The **Enabled** rows: the location and the locations inside it are in the game while any row holds. A condition with no `owner` reads the played persona. Absent or empty = always on |
+| `unlockedWhen` | | [Requirement Row](#trait-requirements)[] | The **Unlocked** rows: the player may travel into the location and the locations inside it while any row holds. A condition with no `owner` reads the played persona. Absent or empty = never locked |
+| `lockedText` | | string | What the player reads on the location while it's locked, in place of what unlocks it. Placeholders fill in |
 | `canvasPosition` | | `{ "x", "y" }` | Editor-only. The location's place on the Locations canvas, relative to its parent. Absent = automatic |
 | `placeholderPins` | | [Pin](#placeholder-pins)[] | Placeholder values pinned while the player is here. A child location does not get its parent's pins |
 | `openings` | | [Opening](#openings)[] | Openings that draw when a game starts at this exact location |
@@ -404,8 +411,9 @@ A connection is a travel link between two locations. A connection between two lo
 | `b` | ✓ | String | The other location's `id` |
 | `aToB` | | Leg | Present when travel goes from `a` to `b` |
 | `bToA` | | Leg | Present when travel goes from `b` to `a` |
+| `distance` | | String | `"far"` = the AI gets nothing about the entities at the other end. Travel is unchanged. Absent = Nearby |
 
-A connection needs at least one leg. Both legs = two-way. A leg has one optional field, `hint`: how the trip is made, such as "through the old gate". The AI reads it after the destination's name.
+A connection needs at least one leg. Both legs = two-way. A leg has one optional field, `hint`: how the trip is made, such as "through the old gate". The AI reads it after the destination's name when the destination is one step away.
 
 ## Entities
 <!-- keywords: npc properties, character object, persona marks, nickname list, gallery array, link object keys, card file extras, folder key -->
@@ -432,10 +440,12 @@ A connection needs at least one leg. Both legs = two-way. A leg has one optional
 | `sound` | | [MediaAsset](#media-fields) | A sound |
 | `model` | | [MediaAsset](#media-fields) | A 3D model |
 | `vrmPick` | | [Avatar pick](#avatar-picks) | The entity's Avatar. Absent = none |
-| `locations` | | String[] | The `id`s of the locations where the entity is. It is at all of them |
-| `presence` | | `"random"` | **Presence**. `"random"` = **One, at Random**: one of `locations`, picked in each new game. Absent = **Everywhere Listed**. The played persona ignores it |
-| `movement` | | `"stays"` \| `"between"` \| `"follow"` | **Movement**: **Stays Put**, **Moves Between Its Locations** or **Can Follow the Player**. Absent = **Free**. The played persona ignores it |
+| `locations` | | String[] | Only for the Persona-Only entity and the Custom Persona, which have no `kind`: the `id`s of the locations where the player can start as it. A Unique or a Generic entity has none; its `routines` say where it can be |
+| `enabledWhen` | | [Requirement Row](#trait-requirements)[] | The **Enabled** rows: the entity is in the game while any row holds. A condition with no `owner` reads the entity itself. Absent or empty = always on |
+| `kind` | | `"unique"` \| `"generic"` | A Unique entity is one body in one place. A Generic entity runs every Start at once, one presence each. Absent for the Persona-Only entity, the Custom Persona and an entity with no locations |
+| `routines` | | [Routine](#routines)[] | Only with a `kind`: the entity's Routines, in priority order. At least one |
 | `knownIn` | | `"nowhere"` \| String[] | **Known In**: where the AI knows of the entity while it isn't present. `"nowhere"`, or location `id`s, each with every location below it. Absent = **Nearby** |
+| `onMap` | | `"onceMet"` \| `"whenNearby"` \| `"never"` | **On Map**: how the player's map shows the entity. Absent = `"always"`. A value this build does not know reads as `"always"` |
 | `relationships` | | `{ "targetId", "label" }`[] | **Relationships**, in author order, at most one per target. `targetId` is another entity's `id`, or `"you"` for the played persona. `label` is the target's role toward this entity |
 | `groupId` | | String \| `null` | Editor-only. The [entity group's](#entity-groups) `id`. Absent or `null` = no group |
 | `order` | | Number | Editor-only. The order in its group |
@@ -451,6 +461,63 @@ A connection needs at least one leg. Both legs = two-way. A leg has one optional
 | `statLinks` | | [StatLink](#stat-links)[] | Links to Blueprint stats and stat groups |
 | `statPlacement` | | `{ "groupId", "order" }` | Where the entity's node sits in the world's Stats tree, as `traitPlacement` does for Traits |
 | `link` | | [ContentLink](#linked-copies) | What library item this copy follows. Absent = it follows nothing |
+
+#### Routines
+
+A Routine is one way an entity with a `kind` lives. An entity with one Routine and no `requires` behaves as one set of Starts.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | String | Unique within the entity |
+| `name` | String | The author's name, such as `"Routine 1"` |
+| `requires` | [Requirement Row](#trait-requirements)[] | When the Routine applies: while any row holds. A condition with no `owner` reads the entity itself. Absent or empty = always. This build stores it but doesn't read it yet; the first Routine always applies |
+| `traversable` | `"anywhere"` \| String[] | Where a Unique entity may be led or called beyond its schedule: anywhere, or exact location `id`s. Absent = an empty list: its schedule places only. A Generic entity ignores it |
+| `starts` | [Start](#starts)[] | The Routine's beginnings, in author order. A Unique entity picks one by `weight` in each new game. A Generic entity runs all of them |
+
+```json
+"routines": [{
+  "id": "routine-1", "name": "Routine 1", "traversable": [],
+  "starts": [{ "id": "start-1", "place": "loc-inn", "weight": 1, "schedule": [] }]
+}]
+```
+
+> 🔁 **A file from 3.7.0 or older has `starts` and `traversable` on the entity.** The app moves them into one Routine with no `requires`, named "Routine 1", when it opens the world. 3.7.0 and older read only those fields, so they show an entity from a newer file as placed nowhere.
+
+#### Starts
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | String | Unique within the entity |
+| `place` | String | The location `id` where the entity begins, or `"@playerStart"`: wherever the player begins, fixed when the game starts |
+| `weight` | Number | A positive whole number. Higher is picked more often. A Generic entity ignores it |
+| `schedule` | Row[] | The daily routine kept from there. Empty = it stays at `place` |
+| `beginsFollowing` | `true` | Only with `"@playerStart"`, on a Unique entity: a game that picks this Start begins with the entity following the player, even on a `strict` row. Its Routine's `traversable` still applies. Absent = not following |
+
+A Start at `"@playerStart"` stands for the starting locations, or every location when none is marked. Its schedule can name any location; play skips one the player's real start doesn't connect to.
+
+> ⚠️ **Formamorph 3.6.2 and older read only `locations`.** They open a world from a newer build, but show each Unique and Generic entity as placed nowhere.
+>
+> A file that still has `locations` on a Unique or a Generic entity opens in this build. The app ignores the list and drops it when you save.
+
+Each schedule row:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | String | Unique within the Start |
+| `time` | `"allDay"` \| `{ "start", "end" }` | Minutes from midnight. An `end` before `start` runs past midnight. A timed row wins over the All-day row for its hours |
+| `strict` | Boolean | During the row a Unique entity can't be called over and won't start following. A Generic entity ignores it |
+| `action` | Object | `{ "kind": "stay", "place" }`, `{ "kind": "wander", "places": [{ "place", "weight" }], "idle" }` or `{ "kind": "patrol", "stops": [{ "place", "idle" }] }` or `{ "kind": "away" }`. `idle` is in minutes. Away has no `place`: the entity is at no location for the row's hours |
+
+In hours no row covers, the entity stays at its Start's `place`.
+
+A Generic entity is one entity with one set of stats, items and memories. Each of its Starts plays as its own presence on its own schedule, and two Starts can share a place. Where two presences meet, the entity is listed once. A Generic entity is never called over and never follows.
+
+> 🔁 An older world file used `presence` and `movement`. The app maps them when it opens the world: an entity at one location, or with **One, at Random**, becomes a Unique entity with one Start per location; **Moves Between** becomes an all-day wander over its locations; **Can Follow** becomes a Routine with `traversable: "anywhere"`. An entity at several locations with no `presence` maps by what it looks like:
+>
+> - Listed at every location: a Unique entity that begins at the player's starting location and follows the player.
+> - With `pronouns` that don't start with "it", or the persona mark: a Unique entity that begins at its first location and wanders over the list all day.
+> - With neither, in a world where some entity has them: a Generic entity with one Start per location and no rows.
+> - In a world where no entity has them: the same wandering Unique entity.
 
 `statChanges` and `statToggles` on an entity's own traits act on the entity's own stats. A row acts on the global stat when its `target` is `"global"`, or when the entity has no stat with that `id`.
 
@@ -771,7 +838,7 @@ An entity's `body` picks its Body:
 
 The player's Body comes from the persona they play. A world persona uses its own `body`. With no persona, or with a library persona, the player uses the Custom Persona entity's `body`. Library entities and story-invented entities use the Default.
 
-A trait's `body` row overrides this while the trait is active. A world trait sets the player's Body, and an entity's own trait sets that entity's. When several active traits set one, the trait switched on last wins. A save records that order in `bodies.traitsOn`.
+A trait's `body` row overrides this while the trait is active. A world trait sets the player's Body, and an entity's own trait sets that entity's. When several active traits set one, the trait switched on last wins. A save records that order in `bodies.traitsOn`, for traits with a `body` pick, `morphPins` or `colorPins`.
 
 ```json
 "slots": [{ "id": "hand", "name": "Hand" }, { "id": "collar", "name": "Collar" }],
@@ -794,6 +861,27 @@ A trait's `body` row overrides this while the trait is active. A world trait set
 | `hidden` | | Boolean | `true` = the player doesn't see the copies until the story reveals them |
 | `equipped` | | Boolean | `true` = the copies start equipped. Never on a location |
 | `source` | ✓ | Object | `{ "kind": "item", "itemId": "<item id>" }` |
+
+## World Options
+<!-- keywords: options key, world option json, choice boolean number, values, default, onPins offPins, shownToPlayer, midGame -->
+
+`options` lists the world's [Options](World-Editor-Options).
+
+| Field | Req. | Type | Meaning |
+|---|---|---|---|
+| `id` | ✓ | String | Unique id. A save keys its value by it |
+| `name` | ✓ | String | The name the player reads |
+| `type` | ✓ | String | `choice`, `boolean` or `number` |
+| `default` | ✓ | String, Boolean or Number | A choice's value `id`, `true` or `false`, or a whole number |
+| `shownToPlayer` | ✓ | Boolean | `false` keeps the Option off every player screen |
+| `midGame` | ✓ | Boolean | `true` lets the player change it during play |
+| `playerDescription` | | String | Shows under the Option at new game. Never sent to the AI |
+| `values` | choice | Value[] | The named values: `id`, `name`, optional `placeholderPins` |
+| `onPins`, `offPins` | | Pin[] | A boolean's [placeholder pins](#placeholder-pins) for each state |
+| `min`, `max` | number | Number | The whole-number range |
+| `step` | | Number | The slider's step. Absent = 1 |
+
+A save holds the values under `worldOptionValues`, by Option `id`. A missing value, or one the Option no longer accepts, reads the `default`.
 
 ## World Tools
 <!-- keywords: tools key, world tool json, function object, params array, handler object, lookup, template, script handler, offered to, call limit -->

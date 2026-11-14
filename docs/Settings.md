@@ -4,7 +4,7 @@
 
 Settings controls how the app looks, what the AI writes each turn, which AI it connects to, and some stored data. Your settings stay on this device.
 
-To open it, select **Menu** on the main menu, then **Settings**. During a game, open the **Menu** and select **Settings**.
+To open it, select **Settings** at the top right of the main menu. On a narrow screen, select **More Actions** (`...`), then **Settings**. During a game, select **Settings** at the top right. On mobile, select **More Actions** (`...`), then **Settings**.
 
 > The **Endpoints**, **Prompts** and **Tools** tabs have their own pages: [Endpoint Settings](Endpoint-Settings), [Prompts](Prompts) and [Tools](Tools). This page covers the other three tabs.
 
@@ -158,8 +158,8 @@ What the AI makes each turn, and what it carries forward. Most of these settings
 | Setting | What it does |
 |---|---|
 | **System Prompts** | Three checkboxes for the requests that run after the narration: **Choices**, **Stat Updates** and **Location Change**. Turn one off and its feature stops, and its editor in the **Prompts** tab hides. |
-| **Move Automatically** | Applies the move in your action before the scene is written, so the scene happens in the new location. It skips the **Move to…?** question. Shows when **Location Change** is on. |
-| **Entity Movement** | Asks the AI each turn which entities come with you. Each one that can follow adds a request. Shows when **Location Change** is on. |
+| **Move Automatically** | Applies the move in your action before the scene is written, and a move the narration makes after it. It skips the **Move to…?** question. Shows when **Location Change** is on. |
+| **Entity Movement** | Asks the AI each turn which entities come with you. It adds one request a turn, for every follower and every entity here that can go somewhere else. Shows when **Location Change** is on. |
 
 ### Reasoning
 
@@ -231,9 +231,11 @@ See [When Each Memory Happened](Memory#when-each-memory-happened).
 <!-- keywords: clear cache, free up space, tutorial again, show tips again, wipe downloaded pictures, guided tour, auto saving toggle, housekeeping -->
 <!-- route: settings.data -->
 
-Saves, the Authoring Tour, and stored data.
+Backup, saves, the Authoring Tour, and stored data.
 
-To back up your worlds, saves, library entities and library dictionaries, use [Backup & Restore](Saves-and-Backup#the-backup--restore-dialog) in the main menu's **Menu**. See [How to Make a Backup](Saves-and-Backup#how-to-make-a-backup).
+### Backup
+
+**Backup & Restore** saves your worlds, saves, library entities and library dictionaries to a file, or restores them from one. Select **Back Up** or **Restore** to open [the dialog](Saves-and-Backup#the-backup--restore-dialog) over **Settings**. **Restore** asks for the backup file first. The row shows only on the main menu, because a restore reloads the app. See [How to Make a Backup](Saves-and-Backup#how-to-make-a-backup).
 
 ### Saves
 

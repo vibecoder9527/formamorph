@@ -7,7 +7,7 @@ import { planDirective } from '@/components/game/GamePrompts';
 import { personaContextValues } from '@/lib/personaContext';
 import {
   fixture, PARITY_PROMPTS as PROMPTS, PASS_ID_BY_TYPE, DRAINER_TYPES,
-  recordedPasses, inputFor, narrationOf, expectedCap, PARITY_DESTINATIONS,
+  recordedPasses, inputFor, narrationOf, expectedCap, expectedMessages, recordedTemplate, PARITY_DESTINATIONS,
 } from './parityTestInputs';
 
 /**
@@ -87,16 +87,6 @@ const assertRendersTemplate = (systemPrompt: string, template: string): void => 
   }
 };
 
-/** The text prompt from its rules on, as the run recorded it: no owner rule or slight-shift rule, and the change bound it had. */
-const sharedStatTail = (template: string): string =>
-  template.slice(template.indexOf('## What to change')).replace(/^- The stats under Player Character.*\n/m, '')
-    .replace('a value-over-maximum. Put', 'a value-over-maximum; keep it between -20 and 20. Put')
-    .replace(/^- A slight but clear shift still gets a line.*\n/m, '');
-
-/** The storyboard as the run sent it, before its closing rule named the player character. */
-const recordedStoryboard = (template: string): string =>
-  template.replace("- Let the player character's stats", "- Let the player's stats");
-
 const templateById: Partial<Record<TurnPassId, string>> = {
   locationAuto: PROMPTS.locationChange,
   director: PROMPTS.director,
@@ -134,9 +124,11 @@ describe('turn plan parity with the recorded run', () => {
       const recorded = recordedPasses(fixture.turns[index as number]).map((p) => p.id);
       // Collapse repeats of a fan-out pass: how many characters the director named is the model's answer.
       const collapsed = recorded.filter((id, i) => id !== recorded[i - 1] || !record(id).fanOut);
-      // A due fan-out pass with no subjects sends nothing, so it may be absent from the recording.
+      // A due pass that asks about the turn's subjects sends nothing without one, so it may be absent from the
+      // recording: the fan-outs, and the one entity location request.
+      const asksSubjects = (p: TurnPassRecord) => p.fanOut || p.id === 'entityLocationAuto' || p.id === 'entityLocationSuggest';
       const expected = plan.passes
-        .filter((p) => !p.fanOut || collapsed.includes(p.id))
+        .filter((p) => !asksSubjects(p) || collapsed.includes(p.id))
         .map((p) => p.id);
       expect(collapsed).toEqual(expected);
     },
@@ -158,19 +150,17 @@ describe('turn plan parity with the recorded run', () => {
         }),
       );
       expect([id, built.type], `${id} request type`).toEqual([id, request.type]);
-      expect([id, built.maxTokens], `${id} cap`).toEqual([id, expectedCap(request)]);
+      expect([id, built.maxTokens], `${id} cap`).toEqual([id, expectedCap(id, request)]);
       expect([id, built.silent], `${id} silent flag`).toEqual([id, request.silent]);
       expect([id, built.attachTurnId ?? null], `${id} attached turn`).toEqual([id, request.attachTurnId]);
       const template = templateById[id];
       if (template) {
         assertRendersTemplate(built.systemPrompt, template);
-        // The recorded text prompt has no owner blocks; only its shared tail is matched.
-        const recorded = id === 'statUpdates' ? sharedStatTail(template) : id === 'storyboard' ? recordedStoryboard(template) : template;
-        assertRendersTemplate(request.systemPrompt, recorded);
+        assertRendersTemplate(request.systemPrompt, recordedTemplate(id, template));
       }
       // Messages the fixture holds every input for.
       if (!pass.fanOut && id !== 'storyboard') {
-        expect(built.messages, `${id} messages`).toEqual(request.messages);
+        expect(built.messages, `${id} messages`).toEqual(expectedMessages(id, request.messages));
         compared.push(id);
       }
     }

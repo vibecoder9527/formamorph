@@ -113,9 +113,11 @@ describe('multi-axis variants (Stats: content × format)', () => {
     expect(variantLabelForToken('<STATS DESCRIPTION>')).toBeNull();
   });
 
-  it('gives Traits a single format axis (shared with Stats)', () => {
+  it('gives Traits a Content axis of Description and Name, plus the shared format axis', () => {
     const TRAITS = variableForToken('<TRAITS DESCRIPTION>')!;
-    expect(variableAxes(TRAITS).map((a) => a.id)).toEqual(['format']);
+    expect(variableAxes(TRAITS).map((a) => a.id)).toEqual(['content', 'format']);
+    expect(variableAxes(TRAITS)[0].options.map((o) => o.id)).toEqual([null, 'name']);
+    expect(variantLabelForToken('<TRAITS DESCRIPTION|name>')).toBe('Name');
     expect(variantLabelForToken('<TRAITS DESCRIPTION|markdown>')).toBe('Markdown');
     expect(variantLabelForToken('<TRAITS DESCRIPTION>')).toBeNull();
   });
@@ -134,7 +136,7 @@ describe('multi-axis variants (Stats: content × format)', () => {
   it('gives Entities a scope axis (Here/Sub/Reachable) plus content, stats and format', () => {
     const ENT = variableForToken('<ENTITIES>')!;
     expect(variableAxes(ENT).map((a) => a.id)).toEqual([
-      'scope', 'withstats', 'withtraits', 'content', 'traits', 'stats', 'range', 'descriptor', 'description', 'format',
+      'scope', 'withstats', 'withtraits', 'content', 'traits', 'stats', 'movement', 'range', 'descriptor', 'description', 'format',
     ]);
     expect(variantLabelForToken('<ENTITIES|reachable.summary.markdown>')).toBe('Reachable, Summary, Markdown');
     expect(variantLabelForToken('<ENTITIES|markdown>')).toBe('Markdown');
@@ -181,11 +183,14 @@ describe('phase 2 registry changes', () => {
     expect(scope.options.map((o) => o.label)).toEqual(['Here', 'In Sub', 'Reachable', 'Known', 'In Scene']);
   });
 
-  it('registers Time as an ordinary affixable context chip', () => {
+  it('registers Time as an affixable chip with a Format pick and an Include Day switch', () => {
     const TIME = variableForToken('<TIME>')!;
     expect(TIME.label).toBe('Time');
     expect(TIME.affixable).toBe(true);
-    expect(variableAxes(TIME)).toHaveLength(0); // one value, no modes
+    const [clock, day] = variableAxes(TIME);
+    expect(clock.options.map((o) => o.label)).toEqual(['Time of Day', '24-Hour', '12-Hour']);
+    expect(day.toggle && day.onByDefault).toBe(true);
+    expect(variantLabelForToken('<TIME|ampm.noday>')).toBe('12-Hour, No Day');
   });
 
   it('has retired the bespoke clause tokens', () => {

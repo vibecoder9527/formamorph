@@ -1,6 +1,6 @@
 import { randomUUID } from '@/lib/uuid';
 import type { Connection, ConnectionLeg, GameLocation, LegKey } from '@/types';
-import { isTwoWay, otherLeg } from '@/lib/locationGraph';
+import { implicitNeighbors, isTwoWay, otherLeg, parentIndex } from '@/lib/locationGraph';
 import { placementIdsIn, remintPlaceholderPlacements } from '@/lib/placeholders';
 
 /**
@@ -95,6 +95,20 @@ export const travelHintFieldKey = (connectionId: string, leg: LegKey): string =>
 /** Whether a find bar field key names a Travel Hint. */
 export const isTravelHintFieldKey = (fieldKey: string): boolean => fieldKey.startsWith(TRAVEL_HINT_KEY);
 
+/** The Connection a find bar Travel Hint key names, or `null` for any other key. */
+export function travelHintConnectionId(fieldKey: string): string | null {
+  if (!isTravelHintFieldKey(fieldKey)) return null;
+  const rest = fieldKey.slice(TRAVEL_HINT_KEY.length);
+  const leg = rest.lastIndexOf(':');
+  return leg > 0 ? rest.slice(0, leg) : null;
+}
+
+/** The Connection a history field identity (`connections/<id>/<part>`) belongs to, or `null`. */
+export function connectionIdOfField(field: string): string | null {
+  const [slice, id] = field.split('/');
+  return slice === 'connections' && id ? id : null;
+}
+
 /** The record's Travel Hints, `a → b` first, blanks left out. */
 export function connectionHints(connection: Connection): string[] {
   return [connection.aToB?.hint, connection.bToA?.hint].filter((hint): hint is string => !!hint);
@@ -133,6 +147,37 @@ export function connectionTargets(
 ): GameLocation[] {
   const taken = new Set(connectionsAt(locationId, connections).map((v) => v.partnerId));
   return locations.filter((l) => l.id !== locationId && !taken.has(l.id));
+}
+
+/** What a free link's other location is to the one being edited. */
+export type FreeLinkRelation = 'parent' | 'child' | 'sibling';
+
+/** One pair the containment tree links for free, seen from a location. */
+export interface FreeLink {
+  partnerId: string;
+  relation: FreeLinkRelation;
+}
+
+const RELATION_ORDER: Record<FreeLinkRelation, number> = { parent: 0, child: 1, sibling: 2 };
+
+/** The implicit neighbors of `locationId` that no Connection covers: its parent, children and siblings,
+ *  in that order. A neighbor id that names no location is left out, since it has no name to show. */
+export function freeLinksAt(
+  locationId: string,
+  locations: readonly GameLocation[],
+  connections: readonly Connection[],
+): FreeLink[] {
+  const index = parentIndex(locations);
+  const known = new Set(locations.map((l) => l.id));
+  const covered = new Set(connectionsAt(locationId, [...connections]).map((v) => v.partnerId));
+  const parentId = index.parentOf.get(locationId);
+  return implicitNeighbors(locationId, index)
+    .filter((id) => id !== locationId && known.has(id) && !covered.has(id))
+    .map((partnerId): FreeLink => ({
+      partnerId,
+      relation: partnerId === parentId ? 'parent' : index.childrenOf.get(locationId)?.includes(partnerId) ? 'child' : 'sibling',
+    }))
+    .sort((x, y) => RELATION_ORDER[x.relation] - RELATION_ORDER[y.relation]);
 }
 
 /** A new Connection out of `fromId`, two-way — the common case needs no follow-up click. */

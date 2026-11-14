@@ -1,6 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { INTRO_FONT_BASE64, INTRO_FONT_FAMILY } from '@/lib/introFont';
 import { useBackStop } from '@/hooks/useBackStop';
+import IndeterminateProgress from '@/components/ui/indeterminate-progress';
+
+/** A frame under this counts as steady; it passes 60 Hz and anything faster. */
+const SETTLE_FRAME_MS = 20;
+/** Steady frames in a row that mean the menu has settled. */
+const SETTLE_FRAMES = 8;
+/** The longest the intro waits for `ready` and steady frames. */
+const SETTLE_MAX_MS = 4000;
+/** How long the hold lasts before the waiting bar shows, so a fast machine never sees it. */
+const WAIT_HINT_MS = 600;
+/** The overlay's opacity ceiling. Below 1, the menu underneath rasterizes while covered, not all at once when the fade starts. */
+const NEVER_OPAQUE = 0.999;
 
 /**
  * First-run welcome animation: a field of gooey blobs popcorns in, magnetizes into place, and merges into
@@ -15,11 +27,22 @@ import { useBackStop } from '@/hooks/useBackStop';
  */
 export function IntroSequence({
   pace = 'cine',
+  ready = true,
   onComplete,
 }: {
   pace?: 'cine' | 'snap';
+  /** False while boot work the intro should not overlap is still running. */
+  ready?: boolean;
   onComplete: () => void;
 }) {
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
+  // The boot bar in index.html was on screen, so this bar takes over from it at once. Read once, then cleared.
+  const [bootWaitShown] = useState(() => {
+    const shown = document.documentElement.dataset.bootWait === 'shown';
+    delete document.documentElement.dataset.bootWait;
+    return shown;
+  });
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLCanvasElement>(null);
   const gooRef = useRef<HTMLCanvasElement>(null);
@@ -27,6 +50,7 @@ export function IntroSequence({
   const kickerRef = useRef<HTMLDivElement>(null);
   const kickerTextRef = useRef<HTMLSpanElement>(null);
   const caretRef = useRef<HTMLSpanElement>(null);
+  const waitRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef(onComplete);
   doneRef.current = onComplete;
 
@@ -41,7 +65,8 @@ export function IntroSequence({
     const kicker = kickerRef.current;
     const kickerText = kickerTextRef.current;
     const caret = caretRef.current;
-    if (!root || !canvas || !gooCanvas || !kicker || !kickerText || !caret) return;
+    const wait = waitRef.current;
+    if (!root || !canvas || !gooCanvas || !kicker || !kickerText || !caret || !wait) return;
     const ctx = canvas.getContext('2d');
     const gooCtx = gooCanvas.getContext('2d');
     if (!ctx || !gooCtx) return;
@@ -229,7 +254,7 @@ export function IntroSequence({
 
       // Fade the whole overlay (opaque backdrop + scattering goo) out on hand-off, so it dissolves smoothly
       // into the real menu underneath instead of popping away when the component unmounts at the end.
-      root.style.opacity = String(1 - easeOut(hz));
+      root.style.opacity = String(Math.min(NEVER_OPAQUE, 1 - easeOut(hz)));
       if (hz > 0 && PACE === 'cine') kicker.style.opacity = String((1 - easeOut(hz)) * 0.7);
 
       const popMs = PACE === 'cine' ? 300 : 140;
@@ -283,6 +308,28 @@ export function IntroSequence({
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let staticTimer = 0;
 
+    // Hold on the backdrop until `ready` and the menu underneath stops costing frames, so boot work doesn't
+    // land inside the animation. Capped, so a slow machine still gets the intro.
+    let settleSince = 0, steady = 0, lastSettle = 0;
+    const settle = (now: number) => {
+      if (cancelled) return;
+      if (!settleSince) {
+        settleSince = now;
+        readColors();
+        background();
+      }
+      steady = readyRef.current && lastSettle && now - lastSettle < SETTLE_FRAME_MS ? steady + 1 : 0;
+      lastSettle = now;
+      if (now - settleSince >= WAIT_HINT_MS) wait.style.opacity = '1';
+      if (steady >= SETTLE_FRAMES || now - settleSince >= SETTLE_MAX_MS) {
+        wait.style.opacity = '0';
+        start = performance.now();
+        rafId = requestAnimationFrame(frame);
+        return;
+      }
+      rafId = requestAnimationFrame(settle);
+    };
+
     // Load the puffy face, then start (canvas sampling needs it ready or it silently falls back to mono).
     const startAfterFont = () => {
       if (cancelled) return;
@@ -294,8 +341,7 @@ export function IntroSequence({
         staticTimer = window.setTimeout(finish, PACE === 'cine' ? 1600 : 900);
         return;
       }
-      start = performance.now();
-      rafId = requestAnimationFrame(frame);
+      rafId = requestAnimationFrame(settle);
     };
     new FontFace(INTRO_FONT_FAMILY, `url(data:font/woff2;base64,${INTRO_FONT_BASE64})`, { weight: '700' })
       .load()
@@ -318,6 +364,7 @@ export function IntroSequence({
     <div
       ref={rootRef}
       className="fixed inset-0 z-[120] overflow-hidden bg-background"
+      style={{ opacity: NEVER_OPAQUE }}
       aria-hidden="true"
     >
       <svg width="0" height="0" className="absolute" aria-hidden="true">
@@ -339,6 +386,14 @@ export function IntroSequence({
         <span ref={caretRef} className="ml-0.5 inline-block animate-pulse text-primary">
           ▌
         </span>
+      </div>
+      <div
+        ref={waitRef}
+        className="pointer-events-none absolute inset-x-0 bottom-[22%] mx-auto flex w-48 flex-col items-center gap-2 transition-opacity duration-300"
+        style={{ opacity: bootWaitShown ? 1 : 0 }}
+      >
+        <span className="text-meta text-muted-foreground">Getting Ready…</span>
+        <IndeterminateProgress />
       </div>
     </div>
   );

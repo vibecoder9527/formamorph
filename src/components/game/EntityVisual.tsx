@@ -13,6 +13,7 @@ import ModelViewer from '@/views/ModelViewer';
 import { SwipeImage } from './SwipeImage';
 import type { Base64Data, EntityVisualKind } from '@/types';
 import { Tip } from '@/components/ui/tooltip';
+import { usePanelEverShown } from '@/lib/panelShown';
 
 /** The button each viewer carries, reading as pressed once this is the visual the entity opens on. */
 const DefaultToggle = ({ active, onClick }: { active: boolean; onClick: () => void }) => (
@@ -49,7 +50,7 @@ const VIEW: Record<EntityVisualKind, { label: string; icon: LucideIcon }> = {
  *
  * Fills its container, so the caller owns the sizing.
  */
-export const EntityVisual = ({ entity, className, images: inPlay, avatar, preference, onPreferenceChange, imageIndex = 0, onImageStep, morphValues }: {
+export const EntityVisual = ({ entity, className, images: inPlay, avatar, preference, onPreferenceChange, imageIndex = 0, onImageStep, morphValues, onMorphNames }: {
   entity: EntityVisualSource;
   /** The images visible in play, in author order. Absent, the authored gallery, rules ignored. */
   images?: readonly Base64Data[];
@@ -62,8 +63,12 @@ export const EntityVisual = ({ entity, className, images: inPlay, avatar, prefer
   onImageStep?: (by: number) => void;
   /** The shape keys the entity's own stats drive on its model, in every viewer this opens. */
   morphValues?: Readonly<Record<string, number>>;
+  /** Called once the model loads, with every shape-key name it carries. */
+  onMorphNames?: (names: string[]) => void;
 }) => {
   const [open, setOpen] = useState<EntityVisualKind | null>(null);
+  // A 3D view loads only once its panel has been on screen.
+  const everShown = usePanelEverShown();
 
   const images = inPlay ?? entityImageData(entity);
   // A held index outlives the gallery it was taken from (an edited world, a reused panel), so clamp it here
@@ -85,13 +90,13 @@ export const EntityVisual = ({ entity, className, images: inPlay, avatar, prefer
   ) : undefined);
   const openChange = (kind: EntityVisualKind) => (next: boolean) => setOpen(next ? kind : null);
   const modelViewer = (viewerClass?: string) => model && (
-    <ModelViewer model={model} modelType={resolveModelType(model)} morphValues={morphValues} className={viewerClass} />
+    <ModelViewer model={model} modelType={resolveModelType(model)} morphValues={morphValues} onMorphNames={onMorphNames} className={viewerClass} />
   );
 
   return (
     <Slot className={className} fill={showing !== 'image'}>
-      {showing === 'avatar' ? avatar
-        : showing === 'model' ? modelViewer()
+      {showing === 'avatar' ? everShown && avatar
+        : showing === 'model' ? everShown && modelViewer()
         : <Picture images={images} index={index} gallery={gallery} name={entity.name} onZoom={() => setOpen('image')} />}
       {others.length > 0 && (
         <div className="absolute top-1 right-1 flex flex-col gap-1">

@@ -24,13 +24,14 @@ The editor has **Undo** and **Redo** buttons. **Edit full screen** opens the edi
 | **Dictionary**, **Length Guidance**, **Markdown Guidance** | **Narration** |
 | **Language** | **Narration** and **Choices**. It carries the **AI Language** setting, and sends nothing for English. |
 | **Active Character Guidance** | **Director** |
-| **Character** | **Character** and **Entity Location**, and the User Message of **Discover Entity** |
+| **Character** | **Character**, and the User Message of **Discover Entity** |
 | **Player Action** | User Messages that send your action |
 | **Narration** | User Messages that send the turn's narration |
-| **Move State**, **Move Options** | The User Message of **Entity Location** |
 | **In Frame** | The User Message of **Scene Tags** |
 | **First Passage**, **Later Material** | The User Message of **Discover Entity** |
 | **Remembered Moments**, **New Moments** | The User Message of **Milestone Select** |
+
+> 💡 **Entity Location** asks about every entity in one request, and the game adds each entity's state and answers after the User Message. An older template's **Move State** and **Move Options** chips send nothing, and its **Character** chip sends "each character listed".
 
 The **Now Message** offers **Location**, **Entities**, **Time** and **Notes**.
 
@@ -54,15 +55,17 @@ The **Now Message** offers **Location**, **Entities**, **Time** and **Notes**.
 | **Scope** | **Location**, **Entities** | Picks which locations or entities the chip lists |
 | **Only With** | **Entities**, **Persona** | Keeps only entities that own **Stats**, **Traits** or either |
 | **Content** | **Location**, **Entities**, **Persona** | Sends **Full** detail, a **Summary**, or the **Name** only |
-| **Include** | **Entities**, **Persona** | Sends each entity's **Traits** and **Stats**, each on or off |
-| **Stat Detail** | **Stats**, **Entities**, **Persona** | Sends **Range**, **Descriptor** and **Description** for each stat. At least one stays checked. |
+| **Content** | **Traits** | Sends each trait's **Description**, or the **Name** only, one per line under its group heading |
+| **Include** | **Entities**, **Persona** | Sends each entity's **Traits** and **Stats**, each on or off. On **Entities**, **Movement** sends whether a character follows the player, waits, or can't leave right now. |
+| **Stat Detail** | **Stats**, **Entities**, **Persona** | Sends **Range**, **Descriptor** and **Description** for each stat. With all three off, the chip sends stat names only. |
 | **Format** | **Stats**, **Traits**, **Location**, **Entities**, **Persona**, **Inventory** | Shapes the text as **Simple**, **Markdown** or **XML** |
 | **Mode** | **Dictionary**, placeholder chips | Picks **Foreground** or **Background** lore. On a placeholder chip, picks **World** or **Unique**. |
 | **Label** | Placeholder chips set to **Unique** | Names the chip |
 | **Header**, **Prepend**, **Append** | Placement fields, below a rule | **Header** starts a section. **Prepend** and **Append** wrap the value. A chip with no value sends none of them. |
 
 - **Include Stats is on by default** for **Here** and **In Scene**. It is off for **In Sub**, **Reachable** and **Known**.
-- **Name content turns off Include and Stat Detail.** **Only With** still works, so the name list holds only the entities that pass.
+- **Name content turns off Traits, Stats and Stat Detail.** **Only With** and **Movement** still work, so the name list holds only the entities that pass.
+- **Movement is on by default.** An entity beside the player reads as following, waiting or staying. One in a nearby place reads as staying when it can't leave right now. A Generic entity gets no tag.
 - **Include Stats off turns off Stat Detail.**
 - **A chip with no picks sends its default text.**
 

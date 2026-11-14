@@ -5,7 +5,32 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('formamorphDesktop', {
   fetch: (req) => ipcRenderer.invoke('net-fetch', req),
+  // Main passes this argument only where it hides the title bar. See windowChrome.cjs.
+  windowOverlay: process.argv.includes('--formamorph-window-overlay'),
+  setWindowSymbolColor: (color) => ipcRenderer.invoke('window-symbol-color', color),
+  isFullScreen: () => ipcRenderer.sendSync('window-is-full-screen'),
+  onFullScreen: (cb) => {
+    // FULL_SCREEN_CHANNEL in windowChrome.cjs; the sandboxed preload can't require it.
+    const handler = (_event, on) => cb(on);
+    ipcRenderer.on('window-full-screen', handler);
+    return () => ipcRenderer.removeListener('window-full-screen', handler);
+  },
+  leaveFullScreen: () => ipcRenderer.invoke('window-leave-full-screen'),
   vramStats: () => ipcRenderer.invoke('vram-stats'),
+  cudaSupport: () => ipcRenderer.invoke('cuda-support'),
+  // The optional CUDA engine build: status, install with pushed progress, cancel (keeps partials), remove, retry after a failure.
+  cuda: {
+    status: () => ipcRenderer.invoke('cuda-status'),
+    install: () => ipcRenderer.invoke('cuda-install'),
+    cancel: () => ipcRenderer.invoke('cuda-cancel'),
+    remove: () => ipcRenderer.invoke('cuda-remove'),
+    retry: () => ipcRenderer.invoke('cuda-retry'),
+    onStatus: (cb) => {
+      const handler = (_event, s) => cb(s);
+      ipcRenderer.on('cuda-status', handler);
+      return () => ipcRenderer.removeListener('cuda-status', handler);
+    },
+  },
   // The ComfyUI server whose Origin check the main process passes for this window; null for none.
   setComfyEndpoint: (url) => ipcRenderer.invoke('comfy-endpoint', url),
   // Local LLM engine: stop/load a GGUF served on a localhost OpenAI endpoint, read its status, learn
@@ -13,6 +38,7 @@ contextBridge.exposeInMainWorld('formamorphDesktop', {
   // ref (`load`), which main resolves inside a searched folder — no arbitrary-path start is exposed.
   llm: {
     stop: () => ipcRenderer.invoke('llm-stop'),
+    restart: () => ipcRenderer.invoke('llm-restart'),
     status: () => ipcRenderer.invoke('llm-status'),
     modelsDir: () => ipcRenderer.invoke('llm-models-dir'),
     onStatus: (cb) => {
@@ -40,7 +66,8 @@ contextBridge.exposeInMainWorld('formamorphDesktop', {
     },
     setOptions: (opts) => ipcRenderer.invoke('llm-set-options', opts),
     setContextOverflow: (policy) => ipcRenderer.invoke('llm-set-context-overflow', policy),
-    listDevices: () => ipcRenderer.invoke('llm-list-devices'),
+    listDevices: (pending) => ipcRenderer.invoke('llm-list-devices', pending),
+    vramClass: (saved) => ipcRenderer.invoke('llm-vram-class', saved),
     download: (opts) => ipcRenderer.invoke('llm-download', opts),
     cancelDownload: () => ipcRenderer.invoke('llm-download-cancel'),
     listPartials: () => ipcRenderer.invoke('llm-list-partials'),
@@ -51,6 +78,29 @@ contextBridge.exposeInMainWorld('formamorphDesktop', {
       ipcRenderer.on('llm-download-progress', handler);
       return () => ipcRenderer.removeListener('llm-download-progress', handler);
     },
+  },
+  // Profile merge: whether the AppData profile waits to merge, its record summaries and records, and the
+  // marker that ends the offer.
+  profileMerge: {
+    offer: () => ipcRenderer.invoke('merge-offer'),
+    summaries: (categories) => ipcRenderer.invoke('merge-summaries', categories),
+    record: (category, id) => ipcRenderer.invoke('merge-record', { category, id }),
+    settings: () => ipcRenderer.invoke('merge-settings'),
+    modelFolder: () => ipcRenderer.invoke('merge-model-folder'),
+    fillModelFolder: (field) => ipcRenderer.invoke('merge-model-folder-fill', field),
+    models: () => ipcRenderer.invoke('merge-models'),
+    moveModel: async (name, onBytes) => {
+      const listener = (_event, bytes) => onBytes?.(bytes);
+      ipcRenderer.on('merge-model-progress', listener);
+      try {
+        await ipcRenderer.invoke('merge-model-move', name);
+      } finally {
+        ipcRenderer.removeListener('merge-model-progress', listener);
+      }
+    },
+    restart: () => ipcRenderer.invoke('merge-restart'),
+    later: () => ipcRenderer.invoke('merge-later'),
+    mark: (state, categories) => ipcRenderer.invoke('merge-mark', { state, categories }),
   },
   // Desktop auto-updater: detection is renderer-side (via the fetch bridge); these drive the per-platform
   // download/apply and stream progress + completion back from the main process.

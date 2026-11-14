@@ -13,6 +13,8 @@ import { parseTurnContent } from '@/lib/turnDigest';
 import { activeOwnedTraitIds } from '@/lib/ownedTraitsInPlay';
 import { INITIAL_SOURCE_TURN_ID, discoveredAsEntities } from '@/lib/runtimeCharacters';
 import { computePresence } from '@/lib/presence';
+import { followerIds } from '@/lib/positionPlay';
+import { runtimePositions } from '@/lib/entityFollowing';
 
 export interface PlayerViewEntity {
   kind: 'entity';
@@ -88,6 +90,8 @@ export interface PlayerViewInput {
   persona: Entity | null;
   /** Resolves placeholder chips the way the player sees them. */
   resolve: (text: string) => string;
+  /** Whether a runtime character is on. `world` arrives already gated; the snapshots' runtime characters do not. */
+  isEntityOn?: (entity: Entity) => boolean;
 }
 
 /** Player text with chips resolved; empty when there is none. */
@@ -133,22 +137,28 @@ function seenAliasesInChain(chain: readonly GameState[], candidates: readonly En
   return seen;
 }
 
-/** The ids of the Met set in cast order, read from the Presence module on `current` and the history up to it. */
-function metIds(input: PlayerViewInput, current: GameState, cast: readonly Entity[], discovered: readonly DiscoveredEntity[]): string[] {
+/** The ids of everyone the player knows by name in cast order, and the unmet ones among them, read from the
+ *  Presence module on `current`. */
+function knownIds(
+  input: PlayerViewInput, current: GameState, cast: readonly Entity[], discovered: readonly DiscoveredEntity[],
+): { known: string[]; unmet: Set<string> } {
   const { world, persona, resolve } = input;
   const worldIds = new Set(world.entities.map((e) => e.id));
   const poolIds = new Set(cast.map((e) => e.id));
   // A record of an authored entity is not a new character: the start rule still decides its Met.
-  const authored = cast.filter((e) => worldIds.has(e.id)).map(({ strangerName, ...e }) => ({
+  const authored = cast.filter((e) => worldIds.has(e.id)).map(({ strangerName, strangerDescription, ...e }) => ({
     ...e, name: resolve(e.name), ...(strangerName?.trim() && { strangerName: resolve(strangerName) }),
+    ...(strangerDescription && { strangerDescription: resolve(strangerDescription) }),
   }));
   const runtime = discovered.filter((d) => !worldIds.has(d.entity.id) && poolIds.has(d.entity.id));
-  return computePresence({
-    entities: authored, runtime: discoveredAsEntities(runtime), positions: current.entityPositions ?? {},
-    followers: current.entityFollowers ?? [], locationId: current.locationId, locations: world.locations,
+  const { known } = computePresence({
+    entities: authored, runtime: discoveredAsEntities(runtime), positions: { ...runtimePositions(runtime), ...current.entityPositions },
+    generics: current.genericStates ?? {},
+    followers: followerIds(current.uniqueStates ?? {}), locationId: current.locationId, locations: world.locations,
     connections: world.connections ?? [], persona, met: current.metEntities ?? [],
     strangerAliases: current.strangerAliases ?? {}, turns: [],
-  }).met.map((p) => p.entity.id);
+  });
+  return { known: known.map((p) => p.entity.id), unmet: new Set(known.filter((p) => !p.met).map((p) => p.entity.id)) };
 }
 
 function viewEntities(input: PlayerViewInput, current: GameState): PlayerViewEntity[] {
@@ -156,7 +166,7 @@ function viewEntities(input: PlayerViewInput, current: GameState): PlayerViewEnt
   const personaId = persona?.id ?? null;
   const worldById = new Map(world.entities.map((e) => [e.id, e]));
   // A deleted character leaves the discovered list, so its met id resolves to nothing.
-  const discovered = current.discoveredEntities ?? [];
+  const discovered = (current.discoveredEntities ?? []).filter((d) => input.isEntityOn?.(d.entity) ?? true);
   const pool = new Map<string, Entity>();
   const texts = new Map<string, string | undefined>();
   for (const entity of world.entities) {
@@ -167,21 +177,24 @@ function viewEntities(input: PlayerViewInput, current: GameState): PlayerViewEnt
     pool.set(record.entity.id, record.entity);
     texts.set(record.entity.id, discoveredText(record, worldById));
   }
-  const metList = metIds(input, current, [...pool.values()], discovered);
-  const met = new Set(metList);
+  const { known: knownList, unmet } = knownIds(input, current, [...pool.values()], discovered);
+  const known = new Set(knownList);
   // An entity known only by an alias shows the alias alone: its player description could name it.
-  const aliases = aliasesInChain(input.chain, [...pool.values()], met);
+  const aliases = aliasesInChain(input.chain, [...pool.values()], known);
   const seenAliases = seenAliasesInChain(input.chain, [...pool.values()]);
 
   const rows: PlayerViewEntity[] = [];
   const seen = new Set<string>(personaId ? [personaId] : []);
+  // An unmet entity the player knows by name shows its Stranger Description.
+  const playerText = (entity: Entity) => (unmet.has(entity.id) ? entity.strangerDescription
+    : texts.has(entity.id) ? texts.get(entity.id) : entity.playerDescription);
   const add = (entity: Entity) => {
     if (seen.has(entity.id)) return;
     seen.add(entity.id);
     const alias = aliases.get(entity.id);
     const row: PlayerViewEntity = alias !== undefined
       ? { kind: 'entity', id: entity.id, name: alias, description: '', alias: true }
-      : { kind: 'entity', id: entity.id, name: resolve(entity.name), description: textOf(resolve, texts.has(entity.id) ? texts.get(entity.id) : entity.playerDescription) };
+      : { kind: 'entity', id: entity.id, name: resolve(entity.name), description: textOf(resolve, playerText(entity)) };
     const others = (seenAliases.get(entity.id) ?? []).filter((name) => name !== row.name);
     rows.push(others.length ? { ...row, seenAliases: others } : row);
   };
@@ -189,7 +202,7 @@ function viewEntities(input: PlayerViewInput, current: GameState): PlayerViewEnt
   if (persona) {
     rows.push({ kind: 'entity', id: persona.id, name: resolve(persona.name), description: textOf(resolve, persona.playerDescription), player: true });
   }
-  for (const id of [...met, ...aliases.keys()]) {
+  for (const id of [...known, ...aliases.keys()]) {
     const entity = pool.get(id);
     if (entity) add(entity);
   }

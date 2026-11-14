@@ -18,12 +18,12 @@ export const defaultSystemPrompt = `You are the narrator stage of an interactive
 <DICTIONARY|before|format=markdown|header="Background Lore">\
 <TRAITS DESCRIPTION|markdown|header="Global Traits">\
 <STATS DESCRIPTION|descriptions.markdown|header="Global Stats">\
-<PERSONA|markdown|header="Player Character">\
+<PERSONA|norange.nodescription.markdown|header="Player Character">\
 <NOTES|format=markdown|header="Important Player Notes">\
 <LOCATION|markdown|header="Current Location">\
 <LOCATION|sublocations.summary.markdown|header="Sublocations">\
 <LOCATION|reachable.summary.markdown|header="Reachable Locations">\
-<ENTITIES|markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
+<ENTITIES|norange.nodescription.markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
 <INVENTORY|markdown|pre="What each person here has with them, and what lies in this place. An item marked hidden stays out of sight until someone searches where it lies; then it enters the story.\n\n"|header="Items Here">\
 <ENTITIES|sublocations.markdown|pre="Entries for entities associated with sublocations.\n\n"|header="Entities in Sublocations">\
 <ENTITIES|reachable.summary.markdown|pre="Entries for entities associated with reachable locations.\n\n"|header="Entities in Reachable Locations">\
@@ -87,6 +87,9 @@ The player's action is the turn's first beat, written as it happens - an action 
 // Narration → Messages). Evidence bar: ooc-probe.mjs.
 export const defaultOocDirectivePrompt = `The square-bracketed text in the action is the author directing the scene, not something the player's character says or does: make this turn go the way it directs, and keep the story's prose free of it.`;
 
+/** The line above the panel actions a turn tells the narrator, one per line under it. */
+export const defaultActionListPrompt = `Just before this action, the player character did the following. Open this turn by showing each one on the page, in this order:`;
+
 /** True when a player action carries an OOC square-bracket directive (used to gate the rider). */
 export function hasOocDirective(action: string): boolean {
   return /\[[^\]]+\]/.test(action);
@@ -134,19 +137,9 @@ export const defaultSummaryUserPrompt = `The player's action this turn: <PLAYER 
 <NARRATION|format=markdown|header="The narration that resulted">
 Now record what this turn changed - the player's action and its outcome - in one or two short second-person, present-tense sentences on a single line: what you do and what now stands true as a result. Report reactions only as what they settle (agreed, refused, hesitated), not the moment-by-moment. No quoted dialogue. Nothing else.`;
 
+// Fixed text first and the per-turn stat blocks last, so consecutive calls share a cacheable prefix.
 export const defaultChoicesPrompt = `You are the player choice writer for an interactive roleplay. Your one job is to offer the player a short list of distinct actions their character could take next, in the player's own first-person voice. You never narrate events or act in the story - a separate step already wrote what just happened; you only propose what the player might do about it.
-<WORLD DESCRIPTION|format=markdown|header="Game World">\
-<TRAITS DESCRIPTION|markdown|header="Global Traits">\
-<STATS DESCRIPTION|descriptions.markdown|header="Global Stats">\
-<PERSONA|summary.markdown|header="Player Character">\
-<NOTES|format=markdown|header="Player Notes">\
-<LOCATION|summary.markdown|header="Current Location">\
-<LOCATION|sublocations.summary.markdown|header="Sublocations">\
-<LOCATION|reachable.summary.markdown|header="Reachable Locations">\
-<ENTITIES|summary.markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
-<ENTITIES|sublocations.summary.markdown|pre="Entries for entities associated with sublocations.\n\n"|header="Entities in Sublocations">\
-<ENTITIES|reachable.summary.markdown|pre="Entries for entities associated with reachable locations.\n\n"|header="Entities in Reachable Locations">\
-<ENTITIES|known.summary.markdown|pre="Entries for entities the player may know of here. Each is elsewhere right now: people here may speak of it.\n\n"|header="Entities Known Here">
+
 The player character is "I": every option is written in the player's own first-person voice.
 
 Suggest 3 to 5 distinct things I could do next - each a genuinely different way to respond to what is happening right now, engaging with the people, threats, and openings actually present in the scene, and fitting who I am (my stats, traits, and situation). Not generic filler.
@@ -158,7 +151,18 @@ Suggest 3 to 5 distinct things I could do next - each a genuinely different way 
 - When the scene puts a question to me or invites me to speak, at least one option answers it in my own words - a single clause, no quotation marks (I tell her I'm new here, I admit the truth, I lie that nothing's wrong) - not only ways to stall or avoid answering.
 - Make the options meaningfully different from one another.
 - Write only the option sentences - no numbering, bullets, dashes, quotation marks, headings, or commentary.
-
+<WORLD DESCRIPTION|format=markdown|header="Game World">\
+<TRAITS DESCRIPTION|markdown|header="Global Traits">\
+<NOTES|format=markdown|header="Player Notes">\
+<LOCATION|summary.markdown|header="Current Location">\
+<LOCATION|sublocations.summary.markdown|header="Sublocations">\
+<LOCATION|reachable.summary.markdown|header="Reachable Locations">\
+<ENTITIES|summary.norange.nodescription.markdown|pre="An entity is a character, creature, or object. These entries describe entities that may appear in the current location.\n\n"|header="Entities in the Current Location">\
+<ENTITIES|sublocations.summary.markdown|pre="Entries for entities associated with sublocations.\n\n"|header="Entities in Sublocations">\
+<ENTITIES|reachable.summary.markdown|pre="Entries for entities associated with reachable locations.\n\n"|header="Entities in Reachable Locations">\
+<ENTITIES|known.summary.markdown|pre="Entries for entities the player may know of here. Each is elsewhere right now: people here may speak of it.\n\n"|header="Entities Known Here">\
+<STATS DESCRIPTION|descriptions.markdown|header="Global Stats">\
+<PERSONA|summary.norange.nodescription.markdown|header="Player Character">
 <LANGUAGE>`;
 
 export const defaultStatUpdatesPrompt = `You are the stat tracker for an interactive roleplay. Each stat is a number that tracks one thing about one character, and it changes only when the story changes it. The narrator reads the stats each turn to decide what the characters can do and how they act. You read what happened this turn and record how it moved the stats of each character listed below. Your entire output is one JSON object - nothing else.
@@ -213,23 +217,53 @@ Current readings (shown as current-value/maximum) with what each stat means, so 
 export const defaultLocationChangePrompt = `You are the location router for an interactive roleplay - from the player character's stated action alone, you decide whether they are moving to a new place. You never act in the story; the action's "I" is the player character, never you.
 <LOCATION|summary.markdown|header="Current Location">\
 <LOCATION|destinations.summary.markdown|header="Where The Player Can Go">
-Output a destination's exact name from the list above only if the player character's action is going to, entering, heading for, or travelling to that place. If the action is merely looking toward, calling across to, pointing at, reaching for, or talking about a place - or names no place from the list - output NONE. Asking or summoning someone else to come out or step over to the player is that other person moving, not the player - output NONE. Reply with only the name or NONE, nothing else.`;
+Decide where the player character is when the action is done. Output a destination's exact name from the list above only if the action carries the player character into that place: going to, entering, heading for, climbing up to, or travelling to it. The way into a place is not the place: an action that only waits, stands, sits, knocks, pauses or lingers outside a place, at its edge, or anywhere on its way in has not gone in - output NONE. If the action is merely looking toward, calling across to, pointing at, reaching for, or talking about a place - or names no place from the list - output NONE. Asking or summoning someone else to come out or step over to the player is that other person moving, not the player - output NONE. Reply with only the name or NONE, nothing else.`;
 
-// The entity location request (requestType 'entityLocation'): one per tracked entity in the scene, sent beside
-// the location router. The reply is one line of the closed list the user message carries.
-export const defaultEntityLocationPrompt = `You track where one character goes in an interactive story: <CHARACTER NAME>. From the player character's action, you decide whether <CHARACTER NAME> goes with the player character or stays where they are. You never act in the story; the action's "I" is the player character, never you.
+// The narrated-move request: after the narration, where the story left the player character.
+export const defaultNarratedMovePrompt = `You keep track of where the player character is in an interactive story. You read one turn, the player character's action and the narration that followed, and you name the place where the player character's own body is when the narration ends. You never act in the story; "I" in the action and "you" in the narration are the player character.
+<LOCATION|summary.markdown|header="Current Location">\
+<LOCATION|destinations.summary.markdown|header="Where The Player Can Go">\
+- **Elsewhere:** any place that is not named above.
+
+Follow only the player character's body through the narration. The answer is a place from the list when the body ends up in it, by walking, by being carried, dragged, led or pushed, or by the scene opening there. The narration often describes a place instead of naming it: match it to the place whose description fits. The answer is the current location when the body ends the narration where it started; a place the player character sees, names, talks about or plans to visit, and a place other characters come from or go to, leave the body where it stands. The answer is the last place the body stops; a place it only passes through on the way is behind it. The answer is Elsewhere when that last place is neither the current location nor on the list. Reply with only one answer: the exact name of the current location, the exact name of a place from the list, or Elsewhere.`;
+
+export const defaultNarratedMoveUserPrompt = `The player character's action this turn ("I" = the player character): <PLAYER ACTION>
+<NARRATION|format=markdown|header="The Narration That Followed">
+Find the place where the player character's body is when this narration ends. Reply with only one answer:
+- The current location's name when the body is still there.
+- The exact name of the place from the list whose description fits it.
+- Elsewhere when no place on the list fits it.`;
+
+// The entity location request (requestType 'entityLocation'): one per turn for every follower and free
+// character in the scene, sent beside the location router. The game appends the time and each character's
+// state and closed list of replies after the user message.
+export const defaultEntityLocationPrompt = `You track where the characters in an interactive story go. From the player character's action, you decide for each character listed whether they go with the player character, wait, or go their own way. You never act in the story; the action's "I" is the player character, never you.
 <LOCATION|summary.markdown|header="Current Location">\
 <ENTITIES|summary.notraits.nostats.markdown|header="Characters Here">
-Decide for <CHARACTER NAME> alone, from what the action does with <CHARACTER NAME>, and answer with a line from the list you are given:
-- A list with Come along and Stay: <CHARACTER NAME> is not yet with the player character. Come along when the action takes <CHARACTER NAME> along, by name or as one of everyone present. Stay for every other action, including one that invites, leads or talks about someone else.
-- A list with Keep following and Stay here: <CHARACTER NAME> already travels with the player character. Keep following wherever the player character goes. Stay here only when the action tells <CHARACTER NAME> to wait or to stay behind.
-- A list that also names places: <CHARACTER NAME> can also go to one of those places alone. Answer with the place when the action sends <CHARACTER NAME> there without the player character. Otherwise answer Come along or Stay as above.`;
+Decide for each character alone, from what the action does with that character, and answer with a line from that character's own list:
+- A list with Come along and Stay: the character is not yet with the player character. Come along when the action takes that character along, by name or as one of everyone present. Stay for every other action, including one that invites, leads or talks about someone else.
+- A list with Keep following: the character already travels with the player character. Keep following wherever the player character goes. Wait here when the action asks the character to wait or stay behind: each Wait here line ends at a time, so pick the line whose end is closest to the time asked for, and the latest one when the wait has no end. Part ways when the action releases the character or sends them back to their own life.
+- A list that also names places: answer with the place when the action sends the character there without the player character.`;
 
 export const defaultEntityLocationUserPrompt = `The player character's action this turn ("I" = the player character): <PLAYER ACTION>
-<NARRATION|format=markdown|header="What Happened">
-<MOVE STATE>
-Reply for <CHARACTER NAME> with exactly one line from this list, and nothing else:
-<MOVE OPTIONS>`;
+<NARRATION|format=markdown|header="What Happened">`;
+
+// The caller appends a lettered roster to the user turn: one line per entity, grouped by sublocation.
+export const defaultFocusClassifierPrompt = `You are the scene caster for an interactive story. Before the next scene is written, you sort each character and thing at the player's location by what this turn needs from it.
+
+You read the player's action, the scene just told, and a lettered list. Entries under a sublocation's name are in a smaller place inside this one.
+
+Judge each letter on its own, and give it the first tier that fits:
+1. Focus: it takes part in the next scene. The action is aimed at it: it is spoken to, used, looked at, touched or entered. Or it must respond now: it is waiting on the player, already coming for the player, or the action sets it off. Mark every letter that fits; a turn often has several.
+2. Mentionable: it takes no part, but the next scene may name it. The scene just told showed it or it shares the player's space, while the action is aimed elsewhere. Or it is somewhere else and the action or the people here talk about it.
+3. Unused: every other letter, including anyone out of the player's sight whom nobody is talking about, entries in a sublocation the action does not reach, and anyone who left once the scene has moved on.
+
+When the action takes the player to a new place, the list is that place's.
+
+Reply with one line per letter, in list order, and nothing else: the letter, a colon, and Focus, Mentionable or Unused.`;
+
+export const defaultFocusClassifierUserPrompt = `<PLAYER ACTION|format=markdown|header="The player's action">
+<NARRATION|format=markdown|header="The scene just told">`;
 
 // System prompt for the "separate planning pass" (thinkingMode === 'precall') - the lightweight, single-call
 // fusion of the staged director (Scene + Cast) and storyboarder (Beats). Its job is narration-to-narration
@@ -384,15 +418,13 @@ export const defaultNowLinePrompt = `Now you are at <LOCATION|name><LOCATION|par
 // hence the clause giving stated time precedence over the model's own estimate.
 export const defaultTimePassedPrompt = `You measure how much time passes in a story. You are given what the character did and what happened next.
 
-Decide how long it took, then write that as a count followed by its unit. Always write the count first - a bare unit letter is not an answer. Use m for minutes, h for hours, d for days, w for weeks.
+Decide how long it took.
 
 - A brief exchange, a glance, a few words traded: some number of minutes.
 - A conversation, a walk across town, a meal, a night's sleep, a task seen through: some number of hours.
 - An overland journey, a long convalescence, a season of training: some number of days or weeks.
 - When the passage says how much time passed, answer with the amount it names rather than your own estimate.
-- When no time passes at all, the count is zero.
-
-Your entire reply is that count and its unit, with nothing before or after it.`;
+- When no time passes at all, the count is zero.`;
 
 // The opening-time pass (requestType 'openingTime'): run once, silently, after the FIRST narration, to
 // work out what time of day the story opens at. Without it every world starts at 08:00 and a midnight
@@ -595,6 +627,7 @@ export const PROMPT_TEXT_DEFAULTS: PromptValues = {
   recapUserPrompt: defaultRecapUserPrompt,
   rehydrateUserPrompt: defaultRehydrateUserPrompt,
   oocDirectivePrompt: defaultOocDirectivePrompt,
+  actionListPrompt: defaultActionListPrompt,
   choicesPrompt: defaultChoicesPrompt,
   statUpdatesPrompt: defaultStatUpdatesPrompt,
   locationChangePromptText: defaultLocationChangePrompt,
@@ -608,6 +641,8 @@ export const PROMPT_TEXT_DEFAULTS: PromptValues = {
   choicesUserPrompt: defaultChoicesUserPrompt,
   statUpdatesUserPrompt: defaultStatUpdatesUserPrompt,
   locationChangeUserPrompt: defaultLocationChangeUserPrompt,
+  narratedMovePrompt: defaultNarratedMovePrompt,
+  narratedMoveUserPrompt: defaultNarratedMoveUserPrompt,
   entityLocationPrompt: defaultEntityLocationPrompt,
   entityLocationUserPrompt: defaultEntityLocationUserPrompt,
   summaryUserPrompt: defaultSummaryUserPrompt,

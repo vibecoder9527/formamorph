@@ -2,15 +2,300 @@
 
 All notable changes to Formamorph. This fork's first line is **2.0.0** — a full TypeScript rebuild of the upstream JavaScript app ([FieryLionite's Formamorph](https://fierylion.itch.io/formamorph), ~v1.2) — with feature parity as the baseline plus new features on top.
 
-> ✅ **3.0.0 – 3.6.0 are released** (collapsed below). Releases 2.0.0 – 2.19.x are in [Changelog-v2](Changelog-v2). New work lands under **🚧 In Progress** — an unnumbered section, so changes accumulate without pinning a version. When a batch earns a release its section is marked **Released** and collapsed, and a fresh In Progress opens. `package.json` reads **3.6.0** — the latest released version.
+> ✅ **3.0.0 – 3.7.0 are released** (collapsed below). Releases 2.0.0 – 2.19.x are in [Changelog-v2](Changelog-v2). New work lands under **🚧 In Progress** — an unnumbered section, so changes accumulate without pinning a version. When a batch earns a release its section is marked **Released** and collapsed, and a fresh In Progress opens. `package.json` reads **3.7.0** — the latest released version.
 
-Each release groups changes as **Major** / **Minor**, then **Added** / **Removed** / **Fixed**, and within those by audience: 👤 user-facing · 🛠️ developer tooling · ⚙️ backend. Where two or more changes touch the same feature, they sit together under that feature's name.
+Each release groups changes as **Major** / **Minor**, then **Added** / **Removed** / **Fixed**, and within those by audience: 👤 user-facing · 🛠️ developer tooling · ⚙️ backend. Where two or more additions touch the same feature, they sit together under that feature's name. Fixes sit under the part of the app they touch, such as **In Game** or **World Editor**.
 
 ---
 
 ## 🚧 In Progress
 
-_Unreleased — new work accumulates here until it earns a version bump. The next batch will pin its own version; `package.json` reads **3.6.0** (just released below)._
+_Unreleased — new work accumulates here until it earns a version bump. The next batch will pin its own version; `package.json` reads **3.7.0** (just released below)._
+
+### Minor Changes
+
+#### ➕ Added
+
+- **👤 User-facing**
+  - **World Options:**
+    - **Worlds can offer World Options at new game.** Authors add choices, switches and number sliders on the new Options tab; the player sets them above the traits, and choices and switches pin placeholder text.
+    - **Players can change a World Option during play on a new World Options tab.** It lists the Options the author allows to change. A change applies at once and **Undo** reverses it.
+    - **Authors can switch an entity on and off during a game with its new Enabled rows.** Set them on the entity's Presence tab. While off, it's hidden from the player and the AI, and its stats, scripts and routine pause until it returns.
+    - **Traits and images can require a World Option, and scripts can change one.** A Requires row checks a Choice value, On or Off, or a Number. Scripts read and write `options`, and the Test Bench lets you pick each value.
+    - **Authors can switch a location and the locations inside it on and off during a game with Enabled rows.** Set them on the location's Presence tab. While off, it's gone from the map, the list and the AI, and no new game starts there.
+    - **Authors can lock a location with Unlocked rows, so the player can't travel in until a row holds.** Set them on the location's Presence tab. The map and the list show a lock and the reason. The AI never moves the player in; a script still can.
+  - **Entity Routines:**
+    - **World files keep each entity's Starts and Can Also Go inside a Routine.** A world from 3.7.0 opens with one Routine per entity and plays as before.
+    - **An entity's routine row can be Away, taking it off the map and out of every scene for those hours.** Its stats and scripts keep running, and the AI still knows of it where Known In says. Saves can now hold a Generic entity at no place.
+    - **An entity's Presence tab in the World Editor can hold several Routines, each with its own starts, schedule and Requires.** Add, rename, reorder and delete them in a list above the starts. Library updates list each Routine's changes.
+    - **An entity switches routine in play when the world changes.** The first routine whose Requires holds applies. Each routine keeps the start it picked at new game, and saves now keep every routine's start. A follower parts ways when the new routine can't reach the player.
+- **🛠️ Developer tooling**
+  - **A mention-tag probe measures whether the narrator can mark each name, pronoun, and description of a character inline.** It compares two tag shapes and a user-turn reminder against untagged narration, scoring coverage, wrong pronouns, and broken tags.
+
+#### 🔧 Fixed
+
+- **👤 User-facing**
+  - **In Game:**
+    - **A stat change at Start or Before that renames an entity now reaches the AI on that turn.** Before, the AI read the old name and Stranger Name until the next turn.
+
+---
+
+<details>
+<summary><strong>✅ 3.7.0 — Released 2026-11-12</strong> — entities keep daily routines — a Since Last Turn tray with undo — stats and traits change your Avatar — an Openings tab and Connections tab in the World Editor (click to expand)</summary>
+
+### Minor Changes
+
+#### ➕ Added
+
+- **👤 User-facing**
+  - **Since Last Turn:**
+    - **A tray above the action box lists what you do in the Inventory tab between turns.** Undo the newest action to put the game back as it was, the item's scripts and effects included. Repeats share one row.
+    - **Stat edits you make in the Stats tab list in the Since Last Turn tray.** Each shows the old and new value. It starts hidden from the AI, and you can show it or undo it.
+    - **When you send, the AI hears what Since Last Turn lists, so the story reacts to those actions.** Hidden rows stay with you. Send works with an empty action box, and each page keeps its list under your action.
+    - **Trait switches, map travel and persona changes list in the tray above the action box.** Undo puts the game back as it was. Turning, traveling or switching straight back clears the row. These controls wait while a turn runs.
+    - **Saves keep the Since Last Turn tray, so a loaded game shows the same rows and can still undo them.** Hidden rows stay hidden. Manual saves and autosaves both keep it.
+    - **What you do in the Inventory tab is not repeated when the story describes it.** A second use you type still counts when the story describes both. A hidden row never blocks the same action typed in the box.
+    - **Regenerating a turn keeps the actions its Since Last Turn tray listed, and the tray comes back.** Your action returns to the box. Hide or undo rows, then press Send. Regenerate Stats keeps those actions too.
+    - **The Since Last Turn tray comes back when a turn fails or you stop it before the story appears.** Send again and the AI hears its rows once.
+  - **Website:**
+    - **The formamorph.ai pages use a violet-to-rose accent and the same Formamorph wordmark as the game's title screen.** The home, privacy, sign-in and community pages share it in light and dark.
+    - **The formamorph.ai home page plays an example turn on a real game screen, then tours six features.** An action types in, the story appears word by word, Faith and Renown change, and a map lands in the inventory. A tour below shows six features and sweeps through the color themes. Reduced motion holds everything still.
+  - **Avatar Look Bindings:**
+    - **Avatar customization and the model library show Head Features sliders for a model's face and hair shapes.** A slider such as Ear Shape runs from 0 to 1 and moves the face and the hair together. Expression and lip-sync shapes stay hidden.
+    - **Aurelia, the default Avatar in release builds, now has Ear Shape, Tusks, Fox Ears and Fox Tail sliders.** Worlds can set them from traits, such as Fox Ears and Fox Tail for a Kitsune.
+    - **A stat can now bind to an Avatar's Head Features, such as Ear Shape.** The stat's Sliders list, on its new Appearance tab, splits each model into Body Sliders and Head Features.
+    - **In the World Editor, a stat can now grow or shrink each Avatar slider by its own Change By amount.** Several stats can share one slider, and their changes add up. An amount of 1 keeps the look worlds have today.
+    - **In the World Editor, a trait can now set an Avatar slider while active, such as an Elf's Ear Shape.** Stats still add on top, and the player's own setting returns when the trait ends. Body, Sliders and Colors sit on the trait's new Appearance tab.
+    - **In the World Editor, stats can now shift an Avatar's skin, eye or hair color, and traits can set one.** A stat blends toward its target as it rises, from the player's own color. Face and body skin each shift from their own tone.
+    - **Avatar Customization now locks the sliders and colors that a trait you checked sets.** A note names the trait. Your own values come back when you uncheck it.
+  - **Openings Tab:**
+    - **The World Editor's Overview tab puts Custom Prompts on a tab of its own.** In Advanced mode, the right column has Details and Custom Prompts tabs. Custom Prompts lists Narration, Choices and Stats with a checkbox each and shows which are Custom.
+    - **Openings have their own World Editor tab, after Overview.** In Advanced mode, it lists This World and each location and entity with openings, nested as on their own tabs. Select one to edit its openings, or search their text.
+    - **The Openings tab's + gives a location or entity its first opening.** Pick Location or Entity, then find it in its folders or inside other locations. It's listed and selected with one blank opening.
+    - **In the World Editor, Find and undo now open the Openings tab on the opening's owner.** The Overview tab's right column keeps Details and Custom Prompts. Help's Take Me There for openings lands on the Openings tab too.
+    - **On the Openings tab, a parent row folds its rows away, and Collapse All folds every parent at once.** A search still shows its matches. In a world with several starts, an Others chance shows a dash.
+  - **Formamorph AI:**
+    - **Set up your AI offers Formamorph AI first on AMD, Intel and integrated GPUs, and on computers without a GPU.** It reads the GPU the built-in engine uses. A card with 8 GB of memory or less still counts.
+    - **After 10 turns on the built-in engine with little GPU memory, a card offers Formamorph AI once.** It sits under the story and compares Formamorph AI with the model on your computer. Not Now hides it for good.
+  - **Connections:**
+    - **In the World Editor's Locations Canvas, a Connection can now be Nearby or Far.** The AI hears about entities one Nearby link away, and nothing across a Far one. Travel still works. Far links draw dotted on the Canvas and the Map. Nearby Through Connections is gone.
+    - **The World Editor's location panel has a Connections tab, with one folding row per Connection.** Each row starts closed and shows the direction, the other location and the distance. Open it to edit Travel, Distance and the Travel Hints. A Connection you add opens.
+    - **In the World Editor, a Connection's Travel and Distance choices now have labels, on its location and on the Canvas.** On a location, Travel reads Both Ways, To There or To Here. Nearby and Far each show a line, and the ⓘ explains them.
+    - **The World Editor's Connections tab now lists a location's links with no Connection under Automatic Links.** The closed group shows its parent, children and siblings. Select **+** on a row to make it a two-way, Nearby Connection.
+  - **Entity Presence Tab:**
+    - **An entity's Presence tab in the World Editor sets where it starts and its daily routine.** Each start shows its chance. Rows stay at, wander or patrol locations by time of day or by hour, and a lock keeps the entity from being called over.
+    - **In the World Editor, an entity is Unique or Generic, and a Generic one gets a routine per start.** A Generic entity, such as a crowd or a herd, begins at every start at the same time. Start chances, locks and Can Also Go are for Unique entities.
+    - **An entity's Presence tab shows the day as a bar of colored bands above the sentences.** Drag a band's ends to change its time, drag the band itself to move it, click a band to find its row, or click free time to fill it.
+    - **An entity's Presence tab in the World Editor sets Known In under its routine.** Choose Nearby, Nowhere or Picked Locations. For Picked Locations, add and remove locations in the tab or by clicking on the full-screen Locations Canvas.
+    - **The full-screen Locations Canvas draws an entity's routine when you pick it.** Each location takes its action's color, and a bar on it shows when the entity is there. A Patrol draws arrows in order. Select a row to see only its locations, with Wander chances and Patrol stop numbers.
+    - **The full-screen Locations Canvas shows a key for the colors and marks of an entity's routine or Known In locations.** It lists only what is on screen, and it folds to its title.
+    - **Select a routine row on the full-screen Locations Canvas to edit its locations by clicking or dragging.** A line over the map says what a click or a drag does. With no row selected, a click adds the location to Can Also Go or removes it.
+    - **The full-screen Locations Canvas now shows and edits a Generic entity's routine, one start at a time.** A ring marks where its other starts begin. With no row selected, a click adds a start or removes the starts there.
+    - **The full-screen Locations Canvas now shows where a Nearby entity can be known.** Its routine locations are marked, and the locations one Nearby link away are marked lighter. Far links stay unmarked.
+    - **In the World Editor, undo and redo of a routine edit open that entity's Presence tab again.** You land where you made the change, even from another section.
+    - **World files now save a Unique or Generic entity's places as its routine alone, with no location list.** Formamorph 3.6.2 and older open such a world but show those entities nowhere. The Custom Persona keeps its list.
+  - **Presence Tab:**
+    - **Select an entity on a location's Presence tab to edit its routine and Known In under the list.** The tab lists each entity that can be there and why. The Locations Canvas beside the panel shows the selected entity's routine. Click another location, and the entity stays selected where it can be too.
+    - **A location's Presence tab adds and removes entities from its list.** Choose a Unique or Generic entity under **Add an entity here**. Remove a Generic entity with the button on its row. Known Here rows now remove with an icon button.
+    - **A location's Presence tab marks the routine parts that name it.** A pin shows on each Start, routine row and Can Also Go entry for this location, and the editor opens on the first Start with a pin.
+    - **Undo and redo of an edit made under a location's Presence list bring you back to that entity there.** The location and the Presence tab open, and the entity is selected. Undo an added entity, and the tab stays with no one selected.
+  - **Routines:**
+    - **In game, entities now move about while you are elsewhere and stay put while you are with them.** Opened worlds keep their cast where it was. An entity listed at several locations at once can no longer send one copy along with you.
+    - **In the World Editor, an entity's Presence tab can start it at the Player's Starting Location, beside you each game.** A Unique entity there can follow you from the first turn. Its routine can use any location.
+    - **In play, a follower can now wait for a set time or part ways with you.** Ask one to wait, and they stay about an hour, to the end of this part of the day, or to the end of the next. Then they return to their routine, or at once if you part ways.
+    - **In game, the AI now reads which characters follow you, wait for you, or can't leave right now.** It's the Entities chip's Movement option, on by default in every prompt. Turn it off in Chip Options.
+    - **In play, asking one entity to come along now leaves the other entities here where they are.** The game asks about all of them in one request per turn, not one request each.
+    - **In older worlds, an entity with pronouns listed at several locations now wanders between them, one at a time.** So it isn't always where you look. An entity at every location follows you. One with no pronouns or "it/its", such as a monster, becomes Generic. Change it on its Presence tab.
+    - **In the bundled worlds, named people with several locations now keep one place at a time, on a daily routine.** Coach Daizen and Rin Hayama patrol the school, and Emberwatch's captain takes the evening watch. Crowds such as the Swarm still fill every place.
+    - **Scripts can read an entity's kind, routine and Known In, and how far and which way each exit goes.** Check `kind` to skip a Generic entity before `move`. `action` reads stay, wander or patrol, and `held` says the narration called it over or a script moved it, so it is off its routine.
+    - **A library update now brings an entity's routine to each world that links it.** Starts, rows and Can Also Go land on that world's locations. A location with no match there is left out. **View Changes** lists the routine first, because the update replaces your own routine edits.
+    - **The Test Bench now warns when a routine row names a location its start can't reach.** Such a location is left off the Presence tab, so the warning is where you find the row.
+    - **The help pages now explain entities that keep a daily routine, follow you or wait.** The Glossary defines the routine terms. The Entity Movement setting now says one request covers every entity.
+  - **Collapse All:**
+    - **The World Editor's Locations list can close every group of sub-locations at once.** Select **Collapse all locations**, right of the filter box, and again to open them all. Groups stay closed when you switch tabs, until you close the World Editor.
+    - **The Entities, Stats, Traits, Placeholders, Dictionary and Scripts lists can close every group at once.** Select **Collapse all**, right of the filter box, and again to open them all. Each list keeps its groups closed until you close the World Editor.
+    - **The character and dictionary editors in your library can close every group at once.** Select **Collapse all**, right of the filter box, and again to open them all. Groups stay closed until you close the editor.
+  - **Avatar Pick Rules:**
+    - **You can delete your last Avatar, and the bundled Avatar is your starting Default.** A new install marks it as your Default Avatar. An update marks it once, when you had none.
+    - **In the World Editor, an entity set to User's Default now lists your Default Avatar's sliders and colors.** A library Avatar you deleted lists your default instead. With no Avatar and no 3D model, the Appearance tab asks you to pick one.
+    - **In the World Editor, a world stat or trait now lists only the Avatars its players can have.** It lists each playable persona's Avatar once. A bound slider the list lacks stays on the row.
+  - **Appearance Preview:**
+    - **Every slider and color in Avatar Customization and the model details panel has its own Undo button.** It puts the control back to the model's own value and is disabled while the control is unchanged.
+    - **Color pickers can take a color from anywhere on the screen.** A **Pick From Screen** button shows only where the system allows it. In Avatar controls, the Avatar holds still during the pick.
+    - **Traits and stats that change your Avatar now show an Avatar icon.** It shows in trait selection, on the Traits tab and on the Stats tab. Hover it to see which sliders or colors change.
+    - **In the World Editor, a trait's Appearance tab has a Preview that shows the trait on its Avatar.** Preview sits at the bottom left of the panel. Drag sliders and pick colors there, then Save writes them to the trait's rows. One Undo takes the whole change back.
+    - **A trait Preview in a world with several playable Avatars has an Avatar menu to switch between them.** Your unsaved changes stay when you switch. Save writes the changes you made on every Avatar.
+    - **In the World Editor, a stat's Appearance tab has a Preview of the stat's look at Max on its Avatar.** A scrubber shows the look from Min to Max. Save writes each slider's Change By and each Target Color.
+    - **In the World Editor, a linked stat now has Edit Blueprint, and a linked trait no longer has Link To….** Edit Blueprint and Reset to Blueprint sit at the bottom right of the panel.
+  - **Map Strangers:**
+    - **The Map counts entities you haven't met, under the name you've heard nearby and as unknowns elsewhere.** A box's count splits into named entries and unknowns marked ?. An entity with no heard name stays unknown everywhere. The tip lists names, then unknowns.
+    - **Each entity has an On Map setting, under Placement, that sets how the Map shows it.** Choose Always, Once Met, When Nearby or Never. Once Met applies only to an entity with a Stranger Name. Entity cards carry it.
+    - **Bundled worlds hide hazards on the Map and show roaming threats only nearby.** Hazards use Never. Wandering threats use When Nearby.
+  - **Persona Start Locations:**
+    - **A Persona-Only entity and the Custom Persona show one Start Locations field on their Presence tab.** Pick where the player can start as that persona. Changing an entity's Persona keeps its places, and undo brings the routine back.
+    - **Enter World offers a persona's Start Locations.** Pick a Persona-Only entity, or None or a library persona in a world with a Custom Persona, and its places join Starting Location with the first one selected.
+  - **Prompts:**
+    - **The Traits chip can send Global Trait names without their descriptions.** In Chip Options, set Content to Name. Names list one per line under their group headings.
+    - **Stat chips can send stat names only.** In Chip Options, uncheck Range, Descriptor and Description on the Stats, Persona and Entities chips. Owned stats then read as one line, `stats: Nerve, Patience`, or one per line under their stat groups.
+  - **In the World Editor, an entity with only a Stranger Description now starts as a stranger.** In play, you see its Name and that description until you meet it. Stranger Name now sits beside Name, and Stranger Description under Player-Facing Description. Items' Unidentified fields match, and each field has its own help button.
+  - **Choices cost less on Formamorph AI in worlds with many stats.** The choices prompt now keeps its fixed parts first and the stat lines last, so the AI reuses more of it each turn. Choice quality held in testing.
+  - **In the World Editor, Formaquestion now reads each entity's routine and each location's Connections.** It sees kinds, starts, rows, Can Also Go, Travel, Distance, hints and who can be at a place.
+  - **The Open Chat world now joins your Worlds once your library holds an entity.** It stays after that, even when you delete every entity. Installs that already have Open Chat keep it.
+  - **Your account settings now say when email to your address bounced or was marked as spam.** The game and formamorph.ai both show it, with the fix: save a different address, or ask in Feedback if the address is correct. A verification link for that address says so as well.
+  - **The Time prompt chip can now send a 24-hour or 12-hour clock, like "19:00" or "7:00 PM".** Pick it under Format in Chip Options. Turn off Include Day to send the time without "Day 3". Prompts send the time of day until you change it.
+- **🛠️ Developer tooling**
+  - **`pov-rewrite-probe.mjs` measures whether the character and diary passes mix up the player's acts with their own.** It compares the player's words as typed, with today's note, and with "I" or "you" rewritten to the persona name.
+  - **`movement-tag-probe.cli.ts` measures whether the narrator keeps a character with a strict shift where they belong.** It compares the Entities chip with and without its Movement tags on take-along, neighbor and ordinary turns.
+
+#### 🔧 Fixed
+
+- **👤 User-facing**
+  - **Avatars:**
+    - **The Skin Color picker now tints an Avatar's body and face to the same tone.** Before, an Avatar with dark clothing on the body, such as Aki, could get a pale yellow body.
+    - **Avatar hair, eye, skin and clothing colors now open the app's own color picker.** You can type a hex color there. Before, these rows opened the browser's picker, which did not match the theme.
+    - **An entity set to User's Default no longer brings back an Avatar you deleted.** With no default, it shows another Avatar in your library. With an empty library, it shows none.
+    - **A new game with no Avatars in your library no longer asks you to customize one.** The Avatar step is skipped. When a persona's library Avatar is gone, you pick another one.
+  - **In Game:**
+    - **Items the story gives or takes now reach an entity it calls by an Alias or a Stranger Name.** Before, an entity named by a title, such as "The Captain", got none of the items the story gave it by its first name.
+    - **Each part of the day now starts on a whole hour, such as Midday at 11:00.** Before, some started a few minutes early or late, so a Time of Day requirement or a script could miss an hour you expected it to cover.
+    - **A character the story calls over from one Nearby link away now joins the scene.** That includes the place around yours and the other end of a Connection. Their item changes land that turn. Nobody comes across a Far link.
+    - **The story no longer moves you to a nearby place when you stay where you are.** Before, a place whose name held a nearby place's name, such as "Academy Dorms" next to "Academy", could send you to that nearby place on a turn where you never moved.
+    - **A turn that fails now puts your action and images back in the action box.** Before, an endpoint error emptied the box, so a failed first turn lost the opening text.
+    - **With Measured Clock on, a scene that runs until a time of day now ends the clock at that time.** Sleeping until dawn costs nine hours from 21:00 and four from 02:00. Where the endpoint allows it, the AI also answers in a fixed form, so a short conversation rarely jumps the clock an hour.
+    - **The narrator and the choices no longer read stat numbers for you or the characters around you, only their descriptors.** This applies to the built-in prompt presets and the Open Chat world. Your own presets and other worlds' own prompts keep their text.
+  - **World Editor:**
+    - **Templates, hover cards and the Time of Day picker now say "time of day" instead of "daypart".** The templates are now Time of Day Modifier and Placeholder by Time of Day. Scripts still read `clock.daypart`.
+    - **The Sliders list on an entity's stat now shows the entity's Avatar sliders.** An entity with only an Avatar can bind its Body Sliders and Head Features.
+    - **The Test Bench no longer counts the Custom Persona as an entity at a location.** The persona is the player. A location with only the persona now gets the warning that it has no entities.
+    - **An entity you link to a matching library item now reads Linked, even when its locations differ.** Each world keeps its own locations for an entity.
+  - **In game, Formaquestion's code test places a character where it stands now.** A character a script moved no longer reads as still at its listed places.
+  - **A world's written openings now always draw, even in a world that had them switched off.** The world file no longer stores an openings on/off setting.
+  - **The Sign In and Create Account pages on formamorph.ai now ask the Adult Content Ahead question first.** Before, a new account saw it only after the Privacy Policy. Your answer saves to the account you sign in to or create.
+  - **A text or image endpoint typed without `http://`, such as `127.0.0.1:1234`, now reaches your server.** Before, the browser version sent it to formamorph.ai and showed an "Unexpected token '<'" error. An image server that answers with a web page now says so.
+  - **The color picker in Settings now keeps up with a drag.** Before, every small move saved the color and redrew the screen, so the picker fell behind the pointer.
+- **🛠️ Developer tooling**
+  - **The affected-test gate now runs the tests that import a deleted file.** Vitest can't follow an import to a file that is gone, so the gate adds each file that imports it or matches it through `import.meta.glob`.
+
+</details>
+
+---
+
+<details>
+<summary><strong>✅ 3.6.2 — Released 2026-11-08</strong> — the built-in engine loads models on Linux and macOS again (click to expand)</summary>
+
+### Minor Changes
+
+#### ➕ Added
+
+- **🛠️ Developer tooling**
+  - **The dev router starts a new game in any bundled world with `fixture=bundled-<world id>`.** Page one is the world's first Opening Narration, so release screenshots show real art and text without a model.
+
+#### 🔧 Fixed
+
+- **👤 User-facing**
+  - **The built-in engine loads models again in the Linux and macOS desktop apps.** In 3.6.1, every Load stopped with "The llama.cpp pin file is missing from this build."
+
+</details>
+
+---
+
+<details>
+<summary><strong>✅ 3.6.1 — Released 2026-11-08</strong> — Edge To Edge Window on Windows — the CUDA engine for NVIDIA cards — collapsible game panels — Merge Your Other Data — the story moves you up to three steps (click to expand)</summary>
+
+### Minor Changes
+
+#### ➕ Added
+
+- **👤 User-facing**
+  - **Edge To Edge Window:**
+    - **The Windows desktop app now fills the whole window, with its minimize, maximize and close buttons over the content.** Drag the window by the empty parts of the header. Every screen's top row now lines up at one height, on the web too, and toasts start below it. The window stops shrinking at 800×600.
+    - **The game's panels reach the top, with Save, Load and Settings as direct buttons.** Back and Music move to the left panel's top row. Edit World, AI Context and Send Feedback move to a `...` menu.
+    - **The main menu has Load Game and Settings buttons, and the Settings Data tab has Back Up and Restore buttons.** A narrow window folds the action buttons, Load Game and Settings into one **More Actions** menu at the right. On mobile they stay in the menu at the left. The World Editor's search centers whenever both sides have room.
+    - **The Windows desktop app's window buttons stay readable over bright world art, and fade behind popups.** A soft shade sits behind them in game. They return to full color once every popup closes.
+    - **The Entity View slides open and shut in game.** Its arrow turns as the section moves, and the tabs below follow. With reduced motion, it changes at once.
+    - **Full screen in the Windows desktop app uses the whole width, with Exit Full Screen in More Actions.** The layout matches the browser. **F11** still works.
+  - **CUDA Engine:**
+    - **On Windows with an NVIDIA card, the Local Model panel can download NVIDIA's CUDA version of the engine.** The CUDA row shows the size, progress and **Cancel**, and resumes a stopped download. A card or driver that can't run it shows why. **Remove** frees the space, even after support ends.
+    - **After an app update, CUDA downloads its new files in the background.** The engine uses Vulkan until they're installed. **Cancel** stops it until you choose **Download** or **Resume**. Once the engine stops, CUDA files from other versions are deleted, except the newest of them.
+    - **With CUDA downloaded, the built-in engine runs on CUDA from its next start.** A **Backend** setting beside **GPU Device** picks Auto, Vulkan or CUDA. A model running on Vulkan when CUDA finishes offers **Restart on CUDA**.
+    - **The main menu offers the CUDA engine once, the first time the engine starts on an NVIDIA card.** **Download** starts the install and **Not Now** closes the card. It waits while a dialog is open. The CUDA row stays in Local Model either way.
+    - **When CUDA can't load a model, the engine loads it on Vulkan and says so in the Local Model panel.** **View Details** shows why. Auto then stays on Vulkan until a driver or app update, or until you click **Retry CUDA**.
+    - **With Backend on Auto, setting GPU Device to your integrated graphics keeps the engine on Vulkan.** The Local Model panel says why. Pick your NVIDIA card in **GPU Device** to use CUDA.
+  - **Game Panels:**
+    - **In game on desktop, each side panel collapses to a rail of labeled tab icons.** Use the thin strip on the panel's inner edge to collapse it or dock it again. Each device remembers its choice, and the story stays centered at a comfortable reading width.
+    - **In game on desktop, a collapsed panel's rail icons open their tab in a drawer over the story.** Click the icon again, press Escape, or click elsewhere to close it. The strip on the drawer's edge docks the panel on that tab.
+    - **Take Me There and tutorial steps into a collapsed side panel open that tab's drawer.** A request for a tab on a docked right panel now selects the tab too.
+    - **In game on desktop, pick how wide the story is in its ⋯ menu.** Full Width and Full Height fill the space a collapsed panel leaves, and Reading Width keeps it centered. Each device remembers its choice.
+    - **In game on desktop, a dot on the collapsed Stats, Traits or Inventory icon shows that tab changed.** The dot stays until you open that tab.
+    - **In game on mobile, swipe left or right to move between Story, Game and Status.** The panel and the tab highlight follow your finger, and a quick flick is enough. A tap on a tab slides across too.
+  - **Merge Your Other Data:**
+    - **Windows now tells you when you start Formamorph from the file inside the app folder.** A message box shows the main Formamorph.exe path and offers Show in Folder, then the game opens.
+    - **On Windows, the main menu offers to merge worlds, saves, entities and dictionaries left from starts outside the app folder.** Where both copies hold an item, the newer one stays. Choose **Merge**, **Not Now** or **Don't Merge**. A stopped merge is offered again.
+    - **On Windows, the merge brings over your settings, sign-in and chosen model folder.** A setting you already have stays. Restart Formamorph when the merge asks, to use the settings that came over.
+    - **On Windows, the merge brings over Avatars, stat templates and Mascot images left in the AppData profile.** The newer Avatar stays. Stat templates and Mascot images you already have stay as they are.
+    - **The merge moves your downloaded local models.** Models in the other copy's folder move beside the main exe, smallest first. A model you already have stays.
+  - **Scene Presence:**
+    - **An entity joins the scene when the narration uses its full Stranger Name.** One word of the Stranger Name never counts on its own.
+    - **An entity the narration names in a location just inside yours now joins your scene.** Its Movement decides, for a location inside yours or beside it. Stays Put never comes, and Moves Between Its Locations comes only into its own locations.
+    - **With Move Automatically on, the game moves you when the narration ends with you somewhere new, the opening included.** Followers come along, and an entity told to stay stays. Without it, the **Move to…?** offer reads the narration too.
+    - **When the narration takes you somewhere the game can't follow, you stay where you are.** With Move Automatically on, you and your followers stay. Without it, no **Move to…?** offer appears.
+    - **In play, the story can now move you up to three steps away in one turn.** "Walk to town and step into the store" puts you in the store, with your followers. A place four or more steps away, or back through a one-way Connection, leaves you where you are.
+  - **Library:**
+    - **The Entities library has one Personas button in place of the All and Personas switch.** Turn it on to show only your personas, and off to show everyone.
+    - **Right-click an entity or dictionary in the library and choose Duplicate to make a copy.** The copy stays in the same group as the original. A duplicated world now stays in its group too.
+  - **Stats Panel:**
+    - **In game, point at the day and time of day above the Stats panel to see the exact clock time.** For example, *Day 3, evening* shows *Day 3, 19:15*.
+    - **The Regenerate Stats button in the game's Stats panel now names the endpoint it sends to.** It matches the other regenerate buttons.
+  - **A Getting Ready bar shows whenever Formamorph takes a moment to start, and before the first launch's welcome animation.** On a fast computer it never appears.
+  - **An entity's Relationships field in the World Editor has a `?` with a worked example.** It shows which way a row reads, so *son* beside Tom on Mara means Tom is Mara's son.
+  - **The Supporters list in Credits and on the Supporters page shows names in a grid under each tier's badge.** The grid fits as many columns as there is room for. Point at a name to see how long that person has supported.
+  - **Settings and Formaquestion Settings tabs now have icons, and on mobile a Sections list replaces the dropdown.** On a wide screen the highlight slides to the tab you pick. On mobile, tap **Sections** to see every tab in groups, as in the World Editor.
+  - **Community Creations places up to three well-liked worlds with few downloads on page 1 of the Worlds tab.** Each one carries a **Hidden Gem** badge, and the picks change every 12 hours. Turn them off with the **Hidden Gems** checkbox at the end of the filter row.
+  - **The app tells the Formamorph server once a day that it was opened, with a Settings switch to stop it.** The counts show how many players return and on which platforms. The server keeps a scrambled ID, never play, worlds or account. Turn off **Daily Check-In** under **Settings → Data → Privacy**.
+- **🛠️ Developer tooling**
+  - **The llama.cpp pin now holds the CUDA 13.5 asset digests.** `npm run llama-server:bump -- <tag>` writes them, and the desktop build fails when the release lacks an asset or a digest differs.
+  - **Enter World and help answer tests now mount their panels instead of the menu or window, halving their time.** 76 of 89 tests moved with coverage held. Age gate tests stay on the menu.
+  - **`scripts/selectionReplay.mjs` scores affected-test selection with injected bugs.** It replays landings on their older tests and samples mutants, then reports misses, precision and an upper bound on the miss rate.
+  - **Six World Editor tabs' tests now mount the panel, not the whole editor, and take half the worker time.** 124 of 177 test rows moved with coverage held. The tabs are Entities, Dictionary, Placeholders, Locations, Overview and Tools.
+  - **Game view tests for bundled saves and the Demo AI card now take under half the worker time.** Every bundled save loads and settles in `GameplayContext.bundledSaves.test.tsx`, and five cases still play a turn in the view.
+  - **Test files now spend about 14% less time importing and 30% less in setup.** Node-environment tests skip Testing Library. The date field's calendar loads when a pointer or focus reaches its button.
+  - **The Focus Classifier probe scores entity tiers and trimmed narration against hand labels.** It reports Focus recall, tier match, parse failures and tokens saved, and compares full and trimmed rosters on continuity.
+  - **`npm run title-card -- --layout cover` captures a 1260x1000 itch.io cover image.** It uses the title card's wordmark and app shots, with the model on the right.
+
+#### ➖ Removed
+
+- **👤 User-facing**
+  - **The language box no longer sits above the game's Stats panel.** Set the language the AI writes in with **AI Language** in **Settings** → **Display**.
+- **🛠️ Developer tooling**
+  - **Rename guards and parity tests for released changes no longer run in the gates.** 122 tests go, with three always-run entries, and coverage held on every module that stays.
+
+#### 🔧 Fixed
+
+- **👤 User-facing**
+  - **In Game:**
+    - **The game's last choices and a script's question no longer hide behind the status strip.** You can always scroll the last row clear of it. A script's question stays in view as text appears, and the strip shows **Waiting for your answer…** until you answer.
+    - **A script's `inScene` now matches In Scene on the Entities tab.** An entity also listed at your new location no longer reads true after you move.
+    - **An avatar now loads in game without freezing the page for a second or more.**
+    - **An avatar with an image that can't load now still loads.** It shows without that one image instead of failing.
+    - **Waiting at a place's door, steps or ladder no longer moves you inside it.** You move once your action goes in. Calling across to a place, pointing at it or waving someone over from it also keeps you where you are.
+    - **Placeholder pins on an entity's own stat bands now apply in play.** They apply in every text, whoever the player plays. An entity's trait pins now reach every text too, not only its own. A Blueprint stat's band pins each owner's own copy.
+  - **Desktop App:**
+    - **The welcome animation at first launch no longer stutters in the desktop app.** Your local model now loads after it ends, and it starts once the main menu behind it has loaded.
+    - **Update & Restart in the Windows desktop app now works when you start Formamorph from a taskbar pin or shortcut.** Formamorph opens through its main `Formamorph.exe`, so your saves and models stay in its folder.
+    - **The update window now says whether checking, downloading or installing failed.**
+  - **Library:**
+    - **One save, entity, dictionary or avatar with a missing or damaged file no longer empties its list.** The others keep loading, and Backup & Restore can still back them up.
+    - **A world your library can't read now shows one notice with a way to fix it.** Review lists each damaged world, and you can restore, download again or remove it. Your other worlds keep loading, including when a world's stored file is missing.
+  - **Popup titles, their icons and the close button now line up on one line.** Controls in the title row, such as the Simple and Advanced select in **Settings**, line up too.
+  - **Picking a level on the Formamorph AI levels screen no longer stutters the first time.** Morphie's look for every level loads while you read, most visibly on mobile.
+  - **Windows and popups on Android no longer sit under the status bar or the gesture bar.** This fixes the World Editor, full-screen editors, Edit Text, bottom sheets and windows that fill the screen. Popups stay clear when the keyboard opens.
+  - **Editing a big world in the World Editor no longer freezes the page for seconds after each change.** The Test Bench checks your world in the background again.
+- **🛠️ Developer tooling**
+  - **Items tab tests now mount the panel, not the whole World Editor, and take half the worker time.** 82 of 88 tests moved with coverage held. `src/test/panelBench.tsx` is the helper for the next batches.
+  - **Media, Stats and Traits tab tests now mount the panel, not the World Editor, and use half the test time.** 159 tests moved with coverage held; the editor view keeps the cross-tab cases.
+  - **The location router probe now shows the model the destination list again.** It renders headed location chips, runs the cloud endpoint without a profile, and compares two prompt versions in one batch. New cases cover waiting at a doorway.
+
+</details>
 
 ---
 
@@ -48,28 +333,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### ➕ Added
 
 - **👤 User-facing**
-  - **Inventory:**
-    - **The Inventory tab lists items lying at your location, and the story can reveal hidden items.** They show in a card named for the location. Hidden items stay out of every panel. Entity dialogs list what the entity wears.
-    - **The Inventory tab can pick up the items lying at your location.** Pick Up works on Bound items too, and on a stack it asks how many.
-    - **The Inventory tab draws what you wear on a figure, above Carried.** An item that takes two slots shows in both boxes. Select a filled box for Use and Unequip, or an empty one for its slot's name.
-    - **After each turn, the story updates your inventory: items picked up, given, used, equipped or found.** Names the world lacks become plain usable items. The stat changes never count an item's own effect twice. An item you carry stays one item when the story mentions it again, and an item someone hands you leaves their inventory.
-    - **Items the story makes up now get a short description, shown in the Inventory tab and sent to the narrator.** An item keeps the first description it gets. The description tells what the item is and how it looks, not where it lies.
-    - **Requirement Rows can require an item.** Traits and image rules can check that an owner has an item, owned or equipped, with Not.
-    - **Requirement Rows can require an item's State word and whether it is identified.** Both combine with Not. A lantern can grant Darkvision only while it is "lit".
-    - **Emberwatch now has 35 items: starting gear for each hero, cold iron, remedies, grave goods and the broken crown.** Search the keep and the barrow for hidden finds, some unidentified. Lay both crown halves on the king's bier to end the Wight. The heroes and cast start wearing their gear.
-  - **Formaquestion:**
-    - **Formaquestion Settings gain a Read the World switch and two world rules prompts.** The switch is on by default. Custom presets can edit the **Editor World** and **Game World** prompts. Older preset files still import.
-    - **In the World Editor, Formaquestion answers about your open world as well as the guide.** It reads your unsaved edits. Each world source under an answer opens its item in the editor.
-    - **In game, Formaquestion answers about the story so far and the characters, places, items and lore you have met.** It never reads AI descriptions, diaries, hidden stats or the entries of characters you haven't met. Sources show as plain names.
-    - **In game, Formaquestion Tools and the code test see only what you have met.** They read player descriptions and visible stats, never AI descriptions, diaries, hidden stats or unmet characters and places.
-    - **With an AI Language set, Formaquestion keeps names from your world as the world writes them.** This works even after you clear the world rules prompts.
-    - **Formaquestion's new Sort Questions setting sends small talk, how-tos, code and world questions only what each needs.** It's off by default; turn it on in Formaquestion Settings → General, and pick a small model under Sorting Endpoint.
-    - **Formaquestion Tools now choose which kinds of question get them.** Pick the kinds in Sorted As; new Tools go to How-to, Code and Your world.
-    - **In the World Editor, Formaquestion can draft entities as cards, and Add puts one in your open world.** Turn on **Creation** in Formaquestion Settings → **General**, then ask for an entity. Placeholders in the draft arrive as chips. Undo removes it.
-    - **With Sort Questions and Creation on, Formaquestion drafts entities from your world's names, description and two sample entities.** Off the World Editor, your mascot tells you to ask there. Pick a **Creating Endpoint** and edit the **Creating** prompt in Formaquestion Settings.
-  - **Supporter Flair:**
-    - **Supporter Flair now covers a third Patreon tier.** The new tier gets its own badge and ring color in the app, and lists first on the Supporters page.
-    - **Supporter badges, the Supporters page and the account page show each tier's Patreon name.** A tier with no known name shows Member.
   - **Formamorph AI:**
     - **Formamorph AI shows your allowance, warns you twice, and offers one click back when it runs out.** Settings shows the percent used, about how many turns are left and the reset time. A new Supporter device switches to it once.
     - **The Formamorph AI section on your formamorph.ai account page shows your allowance.** It shows your Patreon support, percent used, about how many turns are left and the reset time.
@@ -83,9 +346,16 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **Scene images, diaries and character descriptions on Formamorph AI start a new turn when a turn's time runs out.** Background requests pause when you've used this week's allowance, and the allowance display says so.
     - **Formamorph AI has the same sampler sliders and Max Output as other endpoints in Settings.** They start on the model's recommended values. Max Output goes up to the server's limit, and Reset to Defaults brings the starting values back.
     - **When a Formamorph AI call fails before any reply text, the server tries it once more.** You don't have to send the action again.
-  - **Main Menu:**
-    - **The Main Menu's library tabs show every label when they fit, and fold to icons when they don't.** With less room only the selected tab keeps its label, then icons alone show. A highlight slides to each new pick. Hover an icon to see its name.
-    - **The Main Menu top bar folds library tabs first, then action buttons, then event badges, when space runs out.** Nothing overlaps or shrinks out of view. Event badges fold into one chip with a count, which lists them.
+  - **Formaquestion:**
+    - **Formaquestion Settings gain a Read the World switch and two world rules prompts.** The switch is on by default. Custom presets can edit the **Editor World** and **Game World** prompts. Older preset files still import.
+    - **In the World Editor, Formaquestion answers about your open world as well as the guide.** It reads your unsaved edits. Each world source under an answer opens its item in the editor.
+    - **In game, Formaquestion answers about the story so far and the characters, places, items and lore you have met.** It never reads AI descriptions, diaries, hidden stats or the entries of characters you haven't met. Sources show as plain names.
+    - **In game, Formaquestion Tools and the code test see only what you have met.** They read player descriptions and visible stats, never AI descriptions, diaries, hidden stats or unmet characters and places.
+    - **With an AI Language set, Formaquestion keeps names from your world as the world writes them.** This works even after you clear the world rules prompts.
+    - **Formaquestion's new Sort Questions setting sends small talk, how-tos, code and world questions only what each needs.** It's off by default; turn it on in Formaquestion Settings → General, and pick a small model under Sorting Endpoint.
+    - **Formaquestion Tools now choose which kinds of question get them.** Pick the kinds in Sorted As; new Tools go to How-to, Code and Your world.
+    - **In the World Editor, Formaquestion can draft entities as cards, and Add puts one in your open world.** Turn on **Creation** in Formaquestion Settings → **General**, then ask for an entity. Placeholders in the draft arrive as chips. Undo removes it.
+    - **With Sort Questions and Creation on, Formaquestion drafts entities from your world's names, description and two sample entities.** Off the World Editor, your mascot tells you to ask there. Pick a **Creating Endpoint** and edit the **Creating** prompt in Formaquestion Settings.
   - **Scene Presence:**
     - **World Editor entities have a Stranger Name and a Stranger Description, in Advanced mode.** The player sees them in place of the Name and the Player-Facing Description until they meet the entity.
     - **The narrator calls a stranger by its Stranger Name until you meet it.** You meet it when the narration uses its Name. The narrator doesn't use the stranger's first name before then.
@@ -96,30 +366,15 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **The Map and the Help window show only the entities you've met.** An entity with no Stranger Name shows from the start. An entity at several locations shows at each one.
     - **Scripts can read whether the player has met an entity, and can make the player meet it.** Read `entities.<Entity>.met`, or call `entities.<Entity>.meet()`. `met` never turns false.
     - **The Test Bench's opening preview and the AI Context show a stranger under its Stranger Name.** The true name stays beside it, as in the first turn of play.
-  - **Items:**
-    - **Items in the World Editor can equip into either of several slots, or all of them.** A dagger fits either hand, and a greatsword takes both. In the Inventory tab, Equip lets you pick the slot.
-    - **Scripts can name a slot when they equip, and a starting item can name its slot.** Call `copy.equip("Off Hand")`. An item that takes both hands reads under each hand in `body`. In a placement, pick a slot for an Equipped item that fits several.
-    - **When the story puts an item in a certain slot, your Inventory shows it equipped in that slot.** The AI sees every slot an item fits, such as either hand for a dagger or both for a greatsword.
-  - **Body Layouts:**
-    - **A Custom Image Backdrop has an Opacity slider.** Fade a bright image in the Body Layout editor and on the Inventory figure. It starts at 100%.
-    - **Item icons show on the Inventory figure, Inventory rows, the entity popup's Equipped list and the item popup.** Each icon comes from the item's name, then its slot. Item images show in the item popup.
-    - **The Inventory panel lists equipped items beside the figure, each with a one-click Unequip button.** Each row shows the item's icon, name and slots. Select a row to open the item's details. A figure wider than tall sits above the list.
-    - **An item's Icon field in the World Editor picks what the Inventory tab shows for it.** Auto gives an icon from the name. Search the grid for a specific icon, or pick None to show the item's image.
-  - **Currencies:**
-    - **World authors can back a Currency with items, such as Copper, Silver and Gold.** An item priced in it has one Value field per Currency item, and players read "1 Gold, 5 Copper".
-    - **The Inventory tab lists your money, and the AI reads each item's worth and how much money each entity has.** Items and stats both show. Hidden and unidentified items don't count.
-    - **Deleting a Currency's stat, one of its items or the Currency updates everything that used it.** A confirm names the Currency or the item count, and item prices stay.
-    - **Scripts can read what an entity holds in a Currency and pay with it.** `currencies.Gold.balance(persona)` and `pay` follow the game's rules: exact change, and a refusal the script can read.
-    - **Players can type a purchase or sale, and the money and the item move together when the turn ends.** A price the story states counts. Without one, the item costs its Value. A trade the buyer can't afford moves nothing.
-    - **Emberwatch now pays in Copper, Silver and Gold coins, and its Gold stat is gone.** Each hero starts with a purse to spend at the keep's shops. Rogues and Halflings start with extra coins. A script's `give` or `pay` to a Custom Persona reaches a library persona.
-  - **Credits:**
-    - **The Main Menu footer now has a Credits line that opens a Credits window.** It names Jake James, FieryLionite, the item icon artists and, on desktop, llama.cpp.
-    - **The Credits window has a Supporters tab that lists the game's Patreon supporters.** It shows once you've accepted the adult content warning. Select a name to open that profile.
-    - **The Credits window has a Licenses tab that lists the license text of everything the game ships with.** Select an entry to read it, or type in Filter by Name. It works offline.
-  - **Text to Speech:**
-    - **American Text to Speech voices now pronounce fantasy words such as wyvern and place names such as Emberwatch correctly.** They also read numbers and abbreviations aloud.
-    - **British Text to Speech voices now pronounce fantasy words such as wyvern and place names such as Emberwatch correctly.** They keep their British pronunciation.
-    - **American Text to Speech voices now say words such as read, lead, and wound to fit their sentence.** "She read it" and "I will read it" now sound different.
+  - **Inventory:**
+    - **The Inventory tab lists items lying at your location, and the story can reveal hidden items.** They show in a card named for the location. Hidden items stay out of every panel. Entity dialogs list what the entity wears.
+    - **The Inventory tab can pick up the items lying at your location.** Pick Up works on Bound items too, and on a stack it asks how many.
+    - **The Inventory tab draws what you wear on a figure, above Carried.** An item that takes two slots shows in both boxes. Select a filled box for Use and Unequip, or an empty one for its slot's name.
+    - **After each turn, the story updates your inventory: items picked up, given, used, equipped or found.** Names the world lacks become plain usable items. The stat changes never count an item's own effect twice. An item you carry stays one item when the story mentions it again, and an item someone hands you leaves their inventory.
+    - **Items the story makes up now get a short description, shown in the Inventory tab and sent to the narrator.** An item keeps the first description it gets. The description tells what the item is and how it looks, not where it lies.
+    - **Requirement Rows can require an item.** Traits and image rules can check that an owner has an item, owned or equipped, with Not.
+    - **Requirement Rows can require an item's State word and whether it is identified.** Both combine with Not. A lantern can grant Darkvision only while it is "lit".
+    - **Emberwatch now has 35 items: starting gear for each hero, cold iron, remedies, grave goods and the broken crown.** Search the keep and the barrow for hidden finds, some unidentified. Lay both crown halves on the king's bier to end the Wight. The heroes and cast start wearing their gear.
   - **First-Time Flow:**
     - **A new player can start Emberwatch with one click after the intro.** Play Emberwatch skips the Enter World steps. Browse Worlds leaves you on the main menu.
     - **After five turns on the Demo AI, a card under the story offers a look at the Formamorph AI levels.** See Levels opens a full-screen scene and Not Now closes the card for good. The Demo AI dialog's See Levels opens the scene after that.
@@ -128,18 +383,49 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **Support on Patreon in the Levels scene opens a checklist that takes you to Formamorph AI.** It covers sign-in, your pledge, linking Patreon and switching. Each step shows when it's done, and Finish Later keeps your progress.
     - **Formamorph AI in AI settings shows Morphie and the three levels when you can't use it yet.** A fire changes with the level you pick. See Levels opens the scene, and Support on Patreon opens the checklist.
     - **Every Formamorph AI offer leads with sharper narration and no setup.** The levels screen says higher levels add more turns each week, then more room for large worlds. It also says your pledge helps fund updates.
+  - **Currencies:**
+    - **World authors can back a Currency with items, such as Copper, Silver and Gold.** An item priced in it has one Value field per Currency item, and players read "1 Gold, 5 Copper".
+    - **The Inventory tab lists your money, and the AI reads each item's worth and how much money each entity has.** Items and stats both show. Hidden and unidentified items don't count.
+    - **Deleting a Currency's stat, one of its items or the Currency updates everything that used it.** A confirm names the Currency or the item count, and item prices stay.
+    - **Scripts can read what an entity holds in a Currency and pay with it.** `currencies.Gold.balance(persona)` and `pay` follow the game's rules: exact change, and a refusal the script can read.
+    - **Players can type a purchase or sale, and the money and the item move together when the turn ends.** A price the story states counts. Without one, the item costs its Value. A trade the buyer can't afford moves nothing.
+    - **Emberwatch now pays in Copper, Silver and Gold coins, and its Gold stat is gone.** Each hero starts with a purse to spend at the keep's shops. Rogues and Halflings start with extra coins. A script's `give` or `pay` to a Custom Persona reaches a library persona.
+  - **Body Layouts:**
+    - **A Custom Image Backdrop has an Opacity slider.** Fade a bright image in the Body Layout editor and on the Inventory figure. It starts at 100%.
+    - **Item icons show on the Inventory figure, Inventory rows, the entity popup's Equipped list and the item popup.** Each icon comes from the item's name, then its slot. Item images show in the item popup.
+    - **The Inventory panel lists equipped items beside the figure, each with a one-click Unequip button.** Each row shows the item's icon, name and slots. Select a row to open the item's details. A figure wider than tall sits above the list.
+    - **An item's Icon field in the World Editor picks what the Inventory tab shows for it.** Auto gives an icon from the name. Search the grid for a specific icon, or pick None to show the item's image.
   - **Listing Comment Links:**
     - **Listing comments in Community Creations show `@name`, `#123` and pasted listing links as chips.** Old comments show them too, and a new or edited comment shows them at once. On the website, author and commenter names now open their profile pages.
     - **Typing @ or # in a listing comment lists matching players and threads.** Pick one to insert `@name` or `#12`. It works when you write a comment and when you edit one.
     - **Clicking a thread link in a listing comment opens that thread in the Feedback window.** Bug threads open too. **Back** closes the window and returns you to the listing.
     - **Preview in listing and feedback comment boxes shows `@name`, `#123` and pasted listing links as chips.** Check a link before you post. If the lookup fails, **Preview** shows your text as written.
+  - **Items:**
+    - **Items in the World Editor can equip into either of several slots, or all of them.** A dagger fits either hand, and a greatsword takes both. In the Inventory tab, Equip lets you pick the slot.
+    - **Scripts can name a slot when they equip, and a starting item can name its slot.** Call `copy.equip("Off Hand")`. An item that takes both hands reads under each hand in `body`. In a placement, pick a slot for an Equipped item that fits several.
+    - **When the story puts an item in a certain slot, your Inventory shows it equipped in that slot.** The AI sees every slot an item fits, such as either hand for a dagger or both for a greatsword.
+  - **Credits:**
+    - **The Main Menu footer now has a Credits line that opens a Credits window.** It names Jake James, FieryLionite, the item icon artists and, on desktop, llama.cpp.
+    - **The Credits window has a Supporters tab that lists the game's Patreon supporters.** It shows once you've accepted the adult content warning. Select a name to open that profile.
+    - **The Credits window has a Licenses tab that lists the license text of everything the game ships with.** Select an entry to read it, or type in Filter by Name. It works offline.
+  - **Text to Speech:**
+    - **American Text to Speech voices now pronounce fantasy words such as wyvern and place names such as Emberwatch correctly.** They also read numbers and abbreviations aloud.
+    - **British Text to Speech voices now pronounce fantasy words such as wyvern and place names such as Emberwatch correctly.** They keep their British pronunciation.
+    - **American Text to Speech voices now say words such as read, lead, and wound to fit their sentence.** "She read it" and "I will read it" now sound different.
+  - **Avatars:**
+    - **New installs now start with Aurelia as the bundled Avatar.** If you already play, your current Avatars stay in your library.
+    - **The Avatar library now includes Praline on the desktop, web and Android builds.** If you already play, she joins your library and your default stays the same. Sugarscape now shows a Player Avatar dropdown when you start a new game.
+    - **A build with no bundled Avatar shows an empty state in the Avatar library and Avatar Customization.** Each has an Import Avatar button for a .vrm file, and you can finish customizing with no Avatar.
+  - **Supporter Flair:**
+    - **Supporter Flair now covers a third Patreon tier.** The new tier gets its own badge and ring color in the app, and lists first on the Supporters page.
+    - **Supporter badges, the Supporters page and the account page show each tier's Patreon name.** A tier with no known name shows Member.
+  - **Main Menu:**
+    - **The Main Menu's library tabs show every label when they fit, and fold to icons when they don't.** With less room only the selected tab keeps its label, then icons alone show. A highlight slides to each new pick. Hover an icon to see its name.
+    - **The Main Menu top bar folds library tabs first, then action buttons, then event badges, when space runs out.** Nothing overlaps or shrinks out of view. Event badges fold into one chip with a count, which lists them.
   - **Tabs in editors and game side panels show every label, then only the selected tab's, then icons as room shrinks.** Each strip folds by its own width, not the window's, so no label gets cut off. Hover an icon to see its name.
   - **AI Context now shows how fast each AI request ran, how long it took, and whether it reached Max Output.** Each request also shows its prompt name and the samplers it sent, with icons in place of repeated labels. Hover a value to see its full name.
   - **The game's Send and Stop buttons are now narrower on larger screens, leaving more room to type.**
   - **The entity popup shows the picture beside the text on large screens.** The text scrolls on its own, so long descriptions and Equipped have more room. Smaller screens keep the picture above the text.
-  - **New installs now start with Aurelia as the bundled Avatar.** If you already play, your current Avatars stay in your library.
-  - **The Avatar library now includes Praline on the desktop, web and Android builds.** If you already play, she joins your library and your default stays the same. Sugarscape now shows a Player Avatar dropdown when you start a new game.
-  - **A build with no bundled Avatar shows an empty state in the Avatar library and Avatar Customization.** Each has an Import Avatar button for a .vrm file, and you can finish customizing with no Avatar.
   - **Your first game on the Demo AI opens straight into the story, with a short line instead of a dialog.** The Demo AI badge still opens the longer explanation.
 - **🛠️ Developer tooling**
   - **Inventory:**
@@ -169,49 +455,54 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **In Game:**
+    - **Entities set to Moves Between Its Locations now walk between those locations and come along with you into them.** Before, they stayed where the new game placed them.
+    - **The Entities tab now highlights the selected entity, and its rows work from the keyboard.** The first click selects any entity you've met, even one with no art, and the next opens its details.
+    - **A world with a stat-pass Tool now sends one stat request per turn, not two.** The stat tracker may list only the stats that moved. Before, that reply was thrown away and asked for again, which could drop a real change.
+    - **The Entities tab now clears when you move to a new place, and keeps your followers.** The last room's people no longer stay listed until the next narration.
+    - **Text to Speech now reads a world's written first page, not "Hello World" or text from your last game.**
+    - **Loading, exporting or deleting a save, and loading the Text to Speech model, now show an error when they fail.** View Details shows the cause.
+    - **Reset All My Changes in the Memories dialog no longer deletes the memories you wrote.** It clears your edits, deletions and pins only.
+    - **Two scripts that run in the same moment no longer draw the same random numbers.** Every script run now gets its own `Math.random` seed, not only Tools.
+    - **Scripts now skip dictionary entries that have no name, and entities or places whose name is only spaces.** Before, all unnamed entries shared one blank name, so a script reached only one of them. A name of only spaces now counts as blank.
+    - **A world whose only choice is its Custom Persona opens Enter World instead of skipping it.** You can type your **Name** and **Description** before the game starts.
+    - **A failed autosave now says why, and a full disk now reports the failed save.** The message says when the storage is full. Other failures show their cause under View Details.
+    - **A World Tool that switches a trait now runs once, and that trait's When a Trait Switches scripts run.** Before, the Tool's script ran twice, so its stat changes counted twice, and an On Call Tool skipped those scripts.
+    - **A persona you play no longer runs its scripts before the other characters.** Scripts now run in the order the Scripts tab lists them, whoever plays.
+  - **World Editor:**
+    - **The Scripts tab now lists scripts where they run.** A Blueprint script is one row that runs for all its owners together. Timings follow the order of a turn.
+    - **A damaged WebP image no longer freezes Formamorph during Optimize Images.**
+    - **Optimize Images now keeps the Map Background images it re-encoded.** Before, only the thumbnail came back, and one undo now reverts the map with the rest.
+    - **The World Editor's Search World now finds text on the Items, Scripts and Tools tabs.** A match opens its item, script or Tool, and Replace works there too. Replace skips a Tool name another Tool uses, and the notice says why. Simple mode leaves out item scripts.
+    - **The entity Avatar dropdown now shows in Simple mode.** You can assign an Avatar you upload in the Media tab without switching to Advanced mode.
+    - **The World Editor marks Others openings that can never draw with a Never Draws badge and no draw chance.** This covers the Custom Persona and Persona-Only entities. Other rows' chances, the Openings checkbox and its hint no longer count them. The entity's Openings tab says only Self openings draw.
+    - **The 🔗 marker on a World Editor row now reads Link pending save until you save the world.** Before, only the footer button showed it, and the row always read Linked.
+  - **Avatars:**
+    - **An Avatar's Generated thumbnail now has a white background.** Before, the background was see-through. A thumbnail generated earlier keeps its old look.
+    - **An Avatar's Generated thumbnail now shows a close-up of the head.** Tall ears and hats no longer pull the view back to the waist. A thumbnail generated earlier keeps its old view.
+    - **Skin color now looks the same on Body and Face.** Body no longer comes out paler than Face for the same skin color, on models with dark areas in the Body texture.
+    - **Avatar color pickers now open on the color the model shows.** Before, some models opened the picker on a brighter color, and touching it changed their look.
+    - **Avatar color pickers now keep the model's shadow colors on skin and clothing.** Before, any picked color flattened those shadows. Colors you already saved now show them too.
   - **Test Bench:**
     - **Testing As now picks a persona instead of a trait.** It starts on the persona a new game would, and it replaces the Persona pick on the Opening tab. Picking a persona moves **at** to its start until you pick a location yourself.
     - **The tabs now have icons and a sliding highlight.** When the panel is narrow, they fold down to the selected tab's label, then to icons.
+    - **Closing the World Editor while the Test Bench is still checking a large world no longer freezes Formamorph.** The check stops when the editor closes.
+    - **The Test Bench Opening tab no longer shows the "at" location pick.** Opening starts at its own Starting Location pick, so the unused pick is gone.
   - **Community Creations:**
     - **Mascot cards in Community Creations now use tall art beside the text, like Avatars and entities.** The listing details show the tall art too.
     - **Avatars with added license restrictions can't be published.** A model that limits sexual, violent, political, hateful, credited or commercial use is refused, and the Model Library lists each reason.
-  - **The Scripts tab now lists scripts where they run.** A Blueprint script is one row that runs for all its owners together. Timings follow the order of a turn.
-  - **Entities set to Moves Between Its Locations now walk between those locations and come along with you into them.** Before, they stayed where the new game placed them.
-  - **The Entities tab now highlights the selected entity, and its rows work from the keyboard.** The first click selects any entity you've met, even one with no art, and the next opens its details.
-  - **A world with a stat-pass Tool now sends one stat request per turn, not two.** The stat tracker may list only the stats that moved. Before, that reply was thrown away and asked for again, which could drop a real change.
-  - **The Entities tab now clears when you move to a new place, and keeps your followers.** The last room's people no longer stay listed until the next narration.
-  - **Closing the World Editor while the Test Bench is still checking a large world no longer freezes Formamorph.** The check stops when the editor closes.
-  - **A damaged WebP image no longer freezes Formamorph during Optimize Images.**
+    - **Prompt presets and Mascots downloaded from formamorph.ai now import into the app.** A preset saves as a `.preset.json` share file, and a Mascot saves as its card image.
+    - **A failed publish or a too-short password now shows the reason the server gives.** Before, both showed a generic "Failed" line. Several reasons show together on one line.
+  - **Library:**
+    - **Dragging a tile onto another tile now gives the new Group its own name.** A drop names it *New Group*, then *New Group 2*, and so on. Rename also refuses a name another Group has, and a red line says why.
+    - **Importing an entity card keeps each opening set to Self.** Before, every Self opening came back as an Others opening.
+    - **World tiles on the Main Menu now appear faster each time it opens.** The bundled worlds load only when one is new or has changed.
+    - **A failed world, dictionary, entity, save or player avatar import now names the file and says why.** With several failed files the count stays, and **View Details** lists each one. Declining a duplicate avatar is no longer a failure.
+  - **Desktop App:**
+    - **The update dialog no longer says "You're up to date" while an update downloads.** It names the version, keeps the new-version notes marker, and offers Close instead of Check for updates.
+    - **On a Mac, Download now returns the version number to Update Available once the .dmg opens in your browser.** The update dialog says the download opened in your browser, with no stuck progress bar.
   - **Formaquestion's replies no longer stop short or come back empty after your mascot changes her face.** Some models, such as the default cloud model, started thinking again after the face change and ran out of room for the reply. AI Context still lists the face change, struck through, since the model no longer sees it.
-  - **Text to Speech now reads a world's written first page, not "Hello World" or text from your last game.**
-  - **Loading, exporting or deleting a save, and loading the Text to Speech model, now show an error when they fail.** View Details shows the cause.
   - **Help text across Formamorph now says what each control does, in plain words.** The rewrite covers Settings, the World Editor, the game screen, Community, Formaquestion and the help topics. Scene Images points at the turn's More menu, Face Fix lists SD2, and confirm buttons name their action.
-  - **The update dialog no longer says "You're up to date" while an update downloads.** It names the version, keeps the new-version notes marker, and offers Close instead of Check for updates.
-  - **Reset All My Changes in the Memories dialog no longer deletes the memories you wrote.** It clears your edits, deletions and pins only.
-  - **Dragging a tile onto another tile now gives the new Group its own name.** A drop names it *New Group*, then *New Group 2*, and so on. Rename also refuses a name another Group has, and a red line says why.
-  - **On a Mac, Download now returns the version number to Update Available once the .dmg opens in your browser.** The update dialog says the download opened in your browser, with no stuck progress bar.
-  - **Prompt presets and Mascots downloaded from formamorph.ai now import into the app.** A preset saves as a `.preset.json` share file, and a Mascot saves as its card image.
-  - **Optimize Images now keeps the Map Background images it re-encoded.** Before, only the thumbnail came back, and one undo now reverts the map with the rest.
-  - **Importing an entity card keeps each opening set to Self.** Before, every Self opening came back as an Others opening.
-  - **The World Editor's Search World now finds text on the Items, Scripts and Tools tabs.** A match opens its item, script or Tool, and Replace works there too. Replace skips a Tool name another Tool uses, and the notice says why. Simple mode leaves out item scripts.
-  - **The entity Avatar dropdown now shows in Simple mode.** You can assign an Avatar you upload in the Media tab without switching to Advanced mode.
-  - **The World Editor marks Others openings that can never draw with a Never Draws badge and no draw chance.** This covers the Custom Persona and Persona-Only entities. Other rows' chances, the Openings checkbox and its hint no longer count them. The entity's Openings tab says only Self openings draw.
-  - **The 🔗 marker on a World Editor row now reads Link pending save until you save the world.** Before, only the footer button showed it, and the row always read Linked.
-  - **Two scripts that run in the same moment no longer draw the same random numbers.** Every script run now gets its own `Math.random` seed, not only Tools.
-  - **Scripts now skip dictionary entries that have no name, and entities or places whose name is only spaces.** Before, all unnamed entries shared one blank name, so a script reached only one of them. A name of only spaces now counts as blank.
-  - **The Test Bench Opening tab no longer shows the "at" location pick.** Opening starts at its own Starting Location pick, so the unused pick is gone.
-  - **A world whose only choice is its Custom Persona opens Enter World instead of skipping it.** You can type your **Name** and **Description** before the game starts.
-  - **World tiles on the Main Menu now appear faster each time it opens.** The bundled worlds load only when one is new or has changed.
-  - **A failed publish or a too-short password now shows the reason the server gives.** Before, both showed a generic "Failed" line. Several reasons show together on one line.
-  - **A failed autosave now says why, and a full disk now reports the failed save.** The message says when the storage is full. Other failures show their cause under View Details.
-  - **A failed world, dictionary, entity, save or player avatar import now names the file and says why.** With several failed files the count stays, and **View Details** lists each one. Declining a duplicate avatar is no longer a failure.
-  - **An Avatar's Generated thumbnail now has a white background.** Before, the background was see-through. A thumbnail generated earlier keeps its old look.
-  - **An Avatar's Generated thumbnail now shows a close-up of the head.** Tall ears and hats no longer pull the view back to the waist. A thumbnail generated earlier keeps its old view.
-  - **Skin color now looks the same on Body and Face.** Body no longer comes out paler than Face for the same skin color, on models with dark areas in the Body texture.
-  - **Avatar color pickers now open on the color the model shows.** Before, some models opened the picker on a brighter color, and touching it changed their look.
-  - **Avatar color pickers now keep the model's shadow colors on skin and clothing.** Before, any picked color flattened those shadows. Colors you already saved now show them too.
-  - **A World Tool that switches a trait now runs once, and that trait's When a Trait Switches scripts run.** Before, the Tool's script ran twice, so its stat changes counted twice, and an On Call Tool skipped those scripts.
-  - **A persona you play no longer runs its scripts before the other characters.** Scripts now run in the order the Scripts tab lists them, whoever plays.
 - **🛠️ Developer tooling**
   - **CI tests run through the logged runner, and every timeout rerun leaves a record.** A timeout beside an unhandled error stays red, and pinned commits live in one list that CI fetches.
   - **The third-party notices file now lists what every build ships, and a build fails when it is out of date.** `npm run gen-notices` rewrites the package list. The account site ships the file and links it from its footer.
@@ -275,40 +566,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### ➕ Added
 
 - **👤 User-facing**
-  - **Entity Avatars:**
-    - **A world holds several Avatars in its Media tab, and each world entity picks one in its Avatar dropdown.** Upload or copy one from your library, then rename, replace, download or delete it. A delete names the entities that use it.
-    - **Mark one library Avatar as your default from its tile menu, and User's Default shows it.** The tile gets a **Default** badge. With no default, User's Default shows the bundled Avatar.
-    - **Library entities pick an Avatar from your Avatar library, and a library persona shows it while you play.** Adding one to a world copies its Avatar into the world once. Deleting a library Avatar names the library entities that use it, and they show no Avatar.
-    - **Enter World shows the avatar step when the persona you pick has an Avatar.** The button switches between **Continue to Avatar** and **Start Game** as you change persona. You pick a library Avatar only under User's Default, starting on your default.
-    - **In play, one entity view shows each entity's Avatar, 3D model or image, and replaces the separate Avatar tab.** It shows the Avatar first, then the model, then the image, unless you pick another with **Display by Default**. Select an entity to see it. On mobile, the **View** tab holds it.
-    - **Exported character cards and published entities carry the entity's Avatar, and importing one adds it to your Avatar library.** Importing the same Avatar twice keeps one copy. Publish counts the Avatar toward the 25 MB entity limit before upload.
-    - **The World Editor's Import Entity adds a card's Avatar to your library only when you confirm the import.** Cancel the import, and your Avatar library stays as it was.
-    - **A library entity's Avatar dropdown shows Missing Avatar when its Avatar isn't on this device, as the link review does.** Pick another option to replace it.
-    - **Each Avatar in the World Overview has a Preview button that shows it in 3D, with Export.** Export saves the file under the Avatar's name. History names the Avatar you add, rename or delete.
-  - **Local Model:**
-    - **Unified KV Cache is on by default, so parallel requests share one context.** Turn it off in **Advanced** to give every request the full Context Size.
-    - **K Cache Type, V Cache Type and KV Cache in RAM give you more control over the context's memory.** Q8_0 or Q4_0 shrink the context. KV Cache in RAM moves it out of VRAM, but replies get much slower. Find them in **Advanced**.
-    - **Local vision models see the images in your story when their projector sits beside the model.** Recommended vision models download theirs with them and show a **Vision** badge. A text-only model still drops images.
-    - **Context Overflow chooses what happens when a story is longer than Context Size.** Truncate Middle keeps the system prompt and your first message. Rolling Window keeps the system prompt and drops the oldest messages. Stop at Limit shows an error. Find it in **Advanced**.
-    - **World Tools work on the desktop engine, and the model reads each Tool's result before it answers.** Context Overflow keeps the current Tool round whole and drops an older round only as a unit.
-  - **Media Tab:**
-    - **The World Editor's new Media tab shows every image, sound, 3D Model and Avatar in the world, with sizes.** Cards sit in sections that follow your groups and locations, and an entity's images stack into one card. Entity and Avatar cards are tall; other cards are wide. Select a card to preview, download or go to it.
-    - **The Media tab header shows Publish Size and lets you group, sort and filter the gallery.** Group by type, show the largest files first, or filter to linked, embedded, rule-bearing or over-budget images. An over-limit world's warning now opens this tab.
-    - **The Media tab's panel replaces or removes a sound, 3D Model, background, thumbnail or cover image.** A replaced file keeps its slot, and each change undoes in one step.
-    - **Optimize Images moves into the World Editor's Media tab header in both modes, and now shrinks dictionary cover images.** The app bar no longer has the button. Sizes and the meter update when a run ends.
-    - **An entity's or location's image opens one Media tab panel with its gallery, and the framed image's actions sit below.** Reorder, generate, replace, download or remove images there. Each image also gets its Visibility rule editor, and an entity's links to its Avatar.
-    - **The Media tab's No Images filter lists entities, locations, the thumbnail and the Map Background with no image.** Select a blank card to add its first image. Dictionaries without a cover image stay out.
-    - **Trait requirements and image Visibility rules can check the time of day, such as evening or night.** Pick **Time of Day**, then turn on the dayparts. The game checks once per turn, after the turn's time passes.
-    - **In the World Editor, a location's background is now a gallery, and each image can take a Visibility rule.** In play the backdrop shows the first visible image. A condition with no owner reads your persona. Older worlds load with their background first.
-    - **The Locations canvas can show a Map Background image, and the in-game Map draws it behind the locations.** Right-click the canvas to set it, then drag, resize and fade it under Adjust Background. In the Media tab, add more map images with Visibility rules so the map changes in play.
-  - **Request Status Strip:**
-    - **The request status strip shows a small animated icon for each request, such as a compass for Plan.** The icon holds still when your system's reduced-motion setting is on.
-    - **The request status strip shows a quill for Narration, a forking path for Choices, and masks for Cast and Motivation.** Between turns, memory and diary passes show a book. The Thinking header shows a thought cloud in place of its pulsing dot.
-    - **The request status strip shows how long the turn has run, after 3 seconds.** The timer counts the whole turn, not each request. Background passes show no timer.
-  - **Placeholders:**
-    - **An entity's Pronouns field now takes placeholder chips.** Type `{` or drag a chip in. The AI and play-time scripts read the pronouns the entity's own placeholders resolve to.
-    - **A connection's Travel Hints now take placeholder chips in the World Editor.** Linked hints share one roll both ways. Unlink them, and each direction rolls on its own. The editor's map shows the values in braces.
-    - **An entity's Relationship labels now take placeholder chips.** Type `{` or drag a chip in. Each label resolves with the entity's own placeholders, even when its line prints on the persona's block.
   - **Scripts:**
     - **Scripts can now read the hour and minute of the story clock, with `clock.hour` and `clock.minute`.** `clock.previous` has both for the start of the turn. They match the clock in the panel, and trait gates change daypart on the same minute. Hover cards and the Variable menu list them.
     - **Scripts can now read the player's action and the turn number, with `turn.action` and `turn.number`.** The number matches each memory's turn, and undo and re-roll rewind it. Between turns, the action is empty. Test Code reads a sample action.
@@ -321,25 +578,57 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **In a world whose After the AI scripts use `turn`, choices show once those scripts finish.** The scripted list shows once and never changes after it appears. Other worlds show choices as soon as the narration settles.
     - **Re-generate Choices now runs a world's After the AI scripts again, so a choice a script removed stays removed.** Only their choice edits apply. A `player` call shows nothing on that run, and the new list shows once the scripts finish.
     - **The script editor now underlines a write to `clock`, `location` or `notes`, which a run ignores.** It also underlines a `push`, `splice` or other in-place edit of `turn.choices` outside After the AI. `location.move` and `clock.advance` stay valid.
+  - **Entity Avatars:**
+    - **A world holds several Avatars in its Media tab, and each world entity picks one in its Avatar dropdown.** Upload or copy one from your library, then rename, replace, download or delete it. A delete names the entities that use it.
+    - **Mark one library Avatar as your default from its tile menu, and User's Default shows it.** The tile gets a **Default** badge. With no default, User's Default shows the bundled Avatar.
+    - **Library entities pick an Avatar from your Avatar library, and a library persona shows it while you play.** Adding one to a world copies its Avatar into the world once. Deleting a library Avatar names the library entities that use it, and they show no Avatar.
+    - **Enter World shows the avatar step when the persona you pick has an Avatar.** The button switches between **Continue to Avatar** and **Start Game** as you change persona. You pick a library Avatar only under User's Default, starting on your default.
+    - **In play, one entity view shows each entity's Avatar, 3D model or image, and replaces the separate Avatar tab.** It shows the Avatar first, then the model, then the image, unless you pick another with **Display by Default**. Select an entity to see it. On mobile, the **View** tab holds it.
+    - **Exported character cards and published entities carry the entity's Avatar, and importing one adds it to your Avatar library.** Importing the same Avatar twice keeps one copy. Publish counts the Avatar toward the 25 MB entity limit before upload.
+    - **The World Editor's Import Entity adds a card's Avatar to your library only when you confirm the import.** Cancel the import, and your Avatar library stays as it was.
+    - **A library entity's Avatar dropdown shows Missing Avatar when its Avatar isn't on this device, as the link review does.** Pick another option to replace it.
+    - **Each Avatar in the World Overview has a Preview button that shows it in 3D, with Export.** Export saves the file under the Avatar's name. History names the Avatar you add, rename or delete.
+  - **Media Tab:**
+    - **The World Editor's new Media tab shows every image, sound, 3D Model and Avatar in the world, with sizes.** Cards sit in sections that follow your groups and locations, and an entity's images stack into one card. Entity and Avatar cards are tall; other cards are wide. Select a card to preview, download or go to it.
+    - **The Media tab header shows Publish Size and lets you group, sort and filter the gallery.** Group by type, show the largest files first, or filter to linked, embedded, rule-bearing or over-budget images. An over-limit world's warning now opens this tab.
+    - **The Media tab's panel replaces or removes a sound, 3D Model, background, thumbnail or cover image.** A replaced file keeps its slot, and each change undoes in one step.
+    - **Optimize Images moves into the World Editor's Media tab header in both modes, and now shrinks dictionary cover images.** The app bar no longer has the button. Sizes and the meter update when a run ends.
+    - **An entity's or location's image opens one Media tab panel with its gallery, and the framed image's actions sit below.** Reorder, generate, replace, download or remove images there. Each image also gets its Visibility rule editor, and an entity's links to its Avatar.
+    - **The Media tab's No Images filter lists entities, locations, the thumbnail and the Map Background with no image.** Select a blank card to add its first image. Dictionaries without a cover image stay out.
+    - **Trait requirements and image Visibility rules can check the time of day, such as evening or night.** Pick **Time of Day**, then turn on the dayparts. The game checks once per turn, after the turn's time passes.
+    - **In the World Editor, a location's background is now a gallery, and each image can take a Visibility rule.** In play the backdrop shows the first visible image. A condition with no owner reads your persona. Older worlds load with their background first.
+    - **The Locations canvas can show a Map Background image, and the in-game Map draws it behind the locations.** Right-click the canvas to set it, then drag, resize and fade it under Adjust Background. In the Media tab, add more map images with Visibility rules so the map changes in play.
+  - **Local Model:**
+    - **Unified KV Cache is on by default, so parallel requests share one context.** Turn it off in **Advanced** to give every request the full Context Size.
+    - **K Cache Type, V Cache Type and KV Cache in RAM give you more control over the context's memory.** Q8_0 or Q4_0 shrink the context. KV Cache in RAM moves it out of VRAM, but replies get much slower. Find them in **Advanced**.
+    - **Local vision models see the images in your story when their projector sits beside the model.** Recommended vision models download theirs with them and show a **Vision** badge. A text-only model still drops images.
+    - **Context Overflow chooses what happens when a story is longer than Context Size.** Truncate Middle keeps the system prompt and your first message. Rolling Window keeps the system prompt and drops the oldest messages. Stop at Limit shows an error. Find it in **Advanced**.
+    - **World Tools work on the desktop engine, and the model reads each Tool's result before it answers.** Context Overflow keeps the current Tool round whole and drops an older round only as a unit.
   - **Feedback Questions:**
-    - **Feedback has a Questions tab, where you ask the community, reply and vote on questions you share.** It opens on everyone's unanswered questions, most voted first. **Ask a Question** opens the form. Staff can move a thread between bug, suggestion and question.
+    - **Feedback has a Questions tab, where you ask the community, reply and vote on questions you share.** It opens on everyone's unanswered questions, most voted first. **Ask a Question** opens the form.
     - **While you type a question's title, the Feedback dialog lists Similar Questions.** Select one to read it, vote and reply in the dialog. **Back** returns to your draft.
-    - **The asker or staff can mark one reply as a question's answer, and the thread pins it under the question.** The reply keeps an **Accepted** mark in place. Clearing it reopens the question.
+    - **The asker can mark one reply as a question's answer, and the thread pins it under the question.** The reply keeps an **Accepted** mark in place. Clearing it reopens the question.
     - **Each Formaquestion answer has an Ask the Community button, which opens a new question titled with what you asked.** If you have an unsent draft, the dialog asks before it replaces it.
   - **Listing Review:**
-    - **Your listings show a Pending Review or Resubmitted badge while a mod reviews them.** After you publish, a message says when your listing went to review. The badges show on the card, the details window and your profile's creations.
-    - **Mods review new listings in the Admin Panel's new Moderation tab, which holds Reports and Review.** Each queue shows its count. Open an item to see it, download it, and approve or reject it. A rejection opens the message to the author.
-    - **Admins trust an author in the Users tab and switch Listing Review on in the Server tab.** Trusted authors skip review. Moderation has a third segment, Auto-Approved, that lists their recent uploads and opens each listing.
-    - **A live listing with an update waiting for review shows Update Pending, and you can compare or discard the update.** Mods see the changed fields side by side, both thumbnails and the changelog edits. A changelog entry you add to a live listing shows as Pending until a mod approves it.
-  - **Usernames:**
-    - **New usernames are 3–20 letters, numbers, spaces, `_` or `-` on the game's Register dialog and website's Create Account page.** Both show the rule under the field, trim the ends and join double spaces. A space and `_` count as the same character, so "That username is taken" shows for "Jake_James" when "Jake James" exists.
-    - **An account whose username breaks the rule chooses a new name in a rename dialog after login.** The field suggests a free name. Select Later to keep playing; likes, comments and publishing stay locked until you rename.
-    - **The website asks an account with a rule-breaking username to choose a new name.** Sign-in and any refused action open the **Choose a New Username** page. Select Later to leave it; account actions stay locked until you rename.
+    - **Your listings show a Pending Review or Resubmitted badge while they wait for review.** After you publish, a message says when your listing went to review. The badges show on the card, the details window and your profile's creations.
+    - **A live listing with an update waiting for review shows Update Pending, and you can compare or discard the update.** A changelog entry you add to a live listing shows as Pending until it is approved.
   - **Feedback Links:**
     - **Every feedback thread shows its number, and #23 or a pasted thread address in a post shows as a chip.** The chip shows the thread's type, title and status, and opens it in the app or on formamorph.ai. A thread you can't read shows as **Unavailable thread**. Text in code stays plain.
     - **A listing address in a feedback post now shows as a chip with its image, title and kind.** Select it to open the listing. A hidden or deleted listing shows as **Unavailable listing**.
     - **Typing @username in a feedback post shows the player as a chip that opens their profile.** On suggestions and questions it also badges them. Type `_` for a space in a name. A name with no account shows as **Unknown user**. A post over your mention limit is refused.
     - **Typing @ or # in a feedback post suggests players or threads to link.** Players in the thread come first. Pick one with the arrow keys and Enter, or select it. Text in code gets no suggestions.
+  - **Request Status Strip:**
+    - **The request status strip shows a small animated icon for each request, such as a compass for Plan.** The icon holds still when your system's reduced-motion setting is on.
+    - **The request status strip shows a quill for Narration, a forking path for Choices, and masks for Cast and Motivation.** Between turns, memory and diary passes show a book. The Thinking header shows a thought cloud in place of its pulsing dot.
+    - **The request status strip shows how long the turn has run, after 3 seconds.** The timer counts the whole turn, not each request. Background passes show no timer.
+  - **Placeholders:**
+    - **An entity's Pronouns field now takes placeholder chips.** Type `{` or drag a chip in. The AI and play-time scripts read the pronouns the entity's own placeholders resolve to.
+    - **A connection's Travel Hints now take placeholder chips in the World Editor.** Linked hints share one roll both ways. Unlink them, and each direction rolls on its own. The editor's map shows the values in braces.
+    - **An entity's Relationship labels now take placeholder chips.** Type `{` or drag a chip in. Each label resolves with the entity's own placeholders, even when its line prints on the persona's block.
+  - **Usernames:**
+    - **New usernames are 3–20 letters, numbers, spaces, `_` or `-` on the game's Register dialog and website's Create Account page.** Both show the rule under the field, trim the ends and join double spaces. A space and `_` count as the same character, so "That username is taken" shows for "Jake_James" when "Jake James" exists.
+    - **An account whose username breaks the rule chooses a new name in a rename dialog after login.** The field suggests a free name. Select Later to keep playing; likes, comments and publishing stay locked until you rename.
+    - **The website asks an account with a rule-breaking username to choose a new name.** Sign-in and any refused action open the **Choose a New Username** page. Select Later to leave it; account actions stay locked until you rename.
   - **Website Feedback:**
     - **The Suggestions and Questions boards are now readable on formamorph.ai/feedback.** No account is needed to read. Sign in to vote or reply. Each thread has its own link.
     - **Signed-in visitors can vote, reply and edit their own posts on formamorph.ai/feedback.** A failed vote, reply or delete shows its message under the control.
@@ -370,26 +659,30 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **World Editor:**
+    - **The code editor's Variable menu lists groups first, then fields, then verbs.** Timing groups such as Narration and Player now sit right after This Stat or This Trait.
+    - **Editing a stat's or trait's script on the Scripts tab no longer slows down per keystroke and crashes the editor.** Each edit nested the script's stat and owner inside the script, and the next edit nested that again. A long edit ran the browser out of memory.
+    - **Test Code on a linked stat now routes writes through `owner.stats` to the stat itself, as play does.** The stat panel and the Scripts tab now give one report for one script. A Blueprint trait's script cards and Find All Uses now list the entities that link it.
+    - **One drag of a World Editor slider or color picker now undoes in one step.** A drag that started while another field had focus used to split into many undo steps.
+    - **The Test Bench's AI Context tab now reads each entity's text with that entity's own traits and placeholders.** Descriptions, pronouns and relationship labels show what play shows, and Character Name shows the entity's name. A location's pins still win, as in play.
+    - **The Test Bench now accepts an entity whose images cover every pick of a required group.** A group with a minimum and maximum of one always has one pick, so one image always shows. Rows that pair picks of two such groups count too.
+  - **In Game:**
+    - **Indented lists and paragraphs in narration and model thoughts now show as text, not as code blocks.** A model that indented its outline by four spaces got a code box. Fenced code still shows as code.
+    - **Choices now stream word by word at the end of a turn in long stories, instead of appearing at once.** Long stories re-read the whole history on each narration sentence and choice word, which froze the screen. A row that still shows late keeps its pace.
+    - **The turn's action row now slides open after the narration finishes, and the choices stream in after it.** Before, the row appeared mid-stream and pushed the choices down, and numbered choices showed all at once. **Continue the Story** now comes last.
+    - **The request status strip floats over the bottom of the narration, so the Pager and the action box stay still.** It works the same in Pages and Chat. A fade keeps the label readable over the text.
+  - **Desktop App:**
+    - **Turning off Flash Attention in the Local Model panel now turns it off when the model loads.** A box you unchecked before stays unchecked. A quantized V Cache Type needs Flash Attention on.
+    - **The bundled model's out-of-VRAM error names your Context Size and Parallel Requests settings.** It said "sequences" before and gave no next step. Now it tells you which setting to lower.
+    - **The desktop app now connects to ComfyUI without the `--enable-cors-header` flag.** Before, ComfyUI refused the app unless you added it. In the browser, **How to Set Up** now shows the flag with the app's address, so other websites can't send ComfyUI work.
   - **World Tools:**
     - **A world Tool on the narration or choices prompt no longer puts the model's planning into the story or choices.** Gemma models sometimes write a thought block first when a Tool is offered. It now shows as reasoning, and a thought that runs out of room retries without Tools.
     - **A world Tool offered to the stat pass now gets called.** The stat reply's strict format blocked every call. The Tool round now runs first, and the reply still follows the format.
-  - **The code editor's Variable menu lists groups first, then fields, then verbs.** Timing groups such as Narration and Player now sit right after This Stat or This Trait.
-  - **Turning off Flash Attention in the Local Model panel now turns it off when the model loads.** A box you unchecked before stays unchecked. A quantized V Cache Type needs Flash Attention on.
-  - **The bundled model's out-of-VRAM error names your Context Size and Parallel Requests settings.** It said "sequences" before and gave no next step. Now it tells you which setting to lower.
-  - **Editing a stat's or trait's script on the Scripts tab no longer slows down per keystroke and crashes the editor.** Each edit nested the script's stat and owner inside the script, and the next edit nested that again. A long edit ran the browser out of memory.
+  - **Settings:**
+    - **Unchecking Native Reasoning under Settings → Output now turns reasoning off on every prompt.** Before, only prompts set to Global followed it, so planning prompts kept reasoning at Low. Each prompt keeps its own setting for when you check it again.
+    - **Settings copy reads one way on every tab, and four labels drop their asides.** Context Window, Portrait Size, Landscape Size and Workflow now name the field, and the unit or format moves into the line beside it. Section hints and notes follow the same shape as row descriptions.
   - **The Hidden list in Community Creations now scrolls, so you can unhide one world from a long list.** With many hidden worlds, the list grew past the screen and you couldn't reach most of them.
-  - **Indented lists and paragraphs in narration and model thoughts now show as text, not as code blocks.** A model that indented its outline by four spaces got a code box. Fenced code still shows as code.
-  - **Unchecking Native Reasoning under Settings → Output now turns reasoning off on every prompt.** Before, only prompts set to Global followed it, so planning prompts kept reasoning at Low. Each prompt keeps its own setting for when you check it again.
-  - **Test Code on a linked stat now routes writes through `owner.stats` to the stat itself, as play does.** The stat panel and the Scripts tab now give one report for one script. A Blueprint trait's script cards and Find All Uses now list the entities that link it.
-  - **Choices now stream word by word at the end of a turn in long stories, instead of appearing at once.** Long stories re-read the whole history on each narration sentence and choice word, which froze the screen. A row that still shows late keeps its pace.
-  - **The turn's action row now slides open after the narration finishes, and the choices stream in after it.** Before, the row appeared mid-stream and pushed the choices down, and numbered choices showed all at once. **Continue the Story** now comes last.
-  - **The request status strip floats over the bottom of the narration, so the Pager and the action box stay still.** It works the same in Pages and Chat. A fade keeps the label readable over the text.
-  - **One drag of a World Editor slider or color picker now undoes in one step.** A drag that started while another field had focus used to split into many undo steps.
-  - **The Test Bench's AI Context tab now reads each entity's text with that entity's own traits and placeholders.** Descriptions, pronouns and relationship labels show what play shows, and Character Name shows the entity's name. A location's pins still win, as in play.
-  - **The Test Bench now accepts an entity whose images cover every pick of a required group.** A group with a minimum and maximum of one always has one pick, so one image always shows. Rows that pair picks of two such groups count too.
-  - **Settings copy reads one way on every tab, and four labels drop their asides.** Context Window, Portrait Size, Landscape Size and Workflow now name the field, and the unit or format moves into the line beside it. Section hints and notes follow the same shape as row descriptions.
-  - **The desktop app now connects to ComfyUI without the `--enable-cors-header` flag.** Before, ComfyUI refused the app unless you added it. In the browser, **How to Set Up** now shows the flag with the app's address, so other websites can't send ComfyUI work.
-  - **In the Feedback dialog and Admin Panel, a list that fails to load says so and offers Try Again.** It no longer shows the message for an empty list.
+  - **In the Feedback dialog, a list that fails to load says so and offers Try Again.** It no longer shows the message for an empty list.
 - **🛠️ Developer tooling**
   - **`tool-spill-probe.cli.ts` replays captured world requests with a Tool offered or withheld.** It counts reasoning spills, Tool calls and usable replies per arm. On the cloud model, stat-pass calls went from 0 of 20 to 20 of 20.
   - **`npm test` passes on a busy machine and lists slow tests with how much load slowed each.** Timeouts now catch only hangs. Delay checks run on a fake clock, and speed checks compare sizes instead of timing a budget. A file that only timed out reruns alone once.
@@ -426,12 +719,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### ➕ Added
 
 - **👤 User-facing**
-  - **NovelAI Character Prompts:**
-    - **On NovelAI V4 and later, a `|` in an image prompt now starts a separate character prompt.** The first part describes the whole image. Other providers read a ` | ` with spaces as a comma, and NovelAI V3 keeps its own Prompt Mixing.
-    - **Scene images on NovelAI V4 and later now send each entity as its own prompt, so their looks don't mix.** The scene tag line under the image shows each entity's part after a `|`. Edit one part to change only that entity.
-  - **You Pill:**
-    - **Your persona now carries a You pill after its name in the side panel, the Traits tab and Enter World.** It replaces the "(You)" text and the colored "You" word, including in the Stats panel picker.
-    - **A requirement on your persona's traits now reads your persona's name with the You pill.** In the World Editor, the owner list and the condition read **Persona** instead of **You**. Worlds and saves don't change.
   - **Scripts:**
     - **Scripts can now read every location and who stands at each one.** `locations.<Location>.present` lists the entities there, the persona first. `location` has the same fields. Each entity reads its `location`, `following`, `description`, `summary` and `aliases`.
     - **Scripts can now read the story's memories as the Memory panel lists them, with `memories`.** Each memory has its turn, story time, daypart, text and pins. `memory.add` and `memory.pin` are now `memories.add` and `memories.pin`, and worlds are rewritten when they load.
@@ -444,12 +731,19 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **The Variable menu now lists each group's fields first and its calls last.** Entities, memories, **Clock**, **Location** and placeholders keep each set in its old order, so `move` or `pin` sits at the bottom.
     - **The Variable menu now shows each row's type, and marks the rows that scripts can only read.** A lock marks a read-only row. A call shows its form, such as `(line) => void`. The menu is wider.
     - **The Scripts Guide and the Tools guide now document the new script names and how old Tool scripts move.** Read the locations, memories and dictionary entries sections. Help answers from the new text.
+  - **NovelAI Character Prompts:**
+    - **On NovelAI V4 and later, a `|` in an image prompt now starts a separate character prompt.** The first part describes the whole image. Other providers read a ` | ` with spaces as a comma, and NovelAI V3 keeps its own Prompt Mixing.
+    - **Scene images on NovelAI V4 and later now send each entity as its own prompt, so their looks don't mix.** The scene tag line under the image shows each entity's part after a `|`. Edit one part to change only that entity.
+  - **You Pill:**
+    - **Your persona now carries a You pill after its name in the side panel, the Traits tab and Enter World.** It replaces the "(You)" text and the colored "You" word, including in the Stats panel picker.
+    - **A requirement on your persona's traits now reads your persona's name with the You pill.** In the World Editor, the owner list and the condition read **Persona** instead of **You**. Worlds and saves don't change.
+  - **Library:**
+    - **A new tile in your library now pulses once, the first time it is on screen.** It shows a world you just downloaded or made. Tiles you already had don't pulse after the update.
+    - **A downloaded world's library tile now shows its image optimizing, and the world opens once that finishes.** You can't delete it until then either. The world's card in Community Creations shows the same bar.
   - **The Stats tab in the game's side panel now lays out stats the way the Traits tab lays out traits.** Each owner's stats sit in a card that folds. Groups show as headings, with ungrouped stats first.
   - **The Player Name chip is now called Persona Name in the World Editor and the wiki.** Type `{{user}}` or search "player name" to find it. It still reads "you" or "the player" with no persona.
   - **A world persona's Locations are now where you can start as it, and its Starting Location dropdown is gone.** Enter World lists each of them beside the world's starting locations. It picks the first that is a starting location, else the first listed. A world that named a start loads without it.
   - **Image presets can now keep weights and NovelAI syntax in your entity and location tags.** Turn off **Clean Up Tags** in the image preset. Scene images and AI-generated tags then keep `{tag}`, `1.5::tag ::` and `source#hug` as written.
-  - **A new tile in your library now pulses once, the first time it is on screen.** It shows a world you just downloaded or made. Tiles you already had don't pulse after the update.
-  - **A downloaded world's library tile now shows its image optimizing, and the world opens once that finishes.** You can't delete it until then either. The world's card in Community Creations shows the same bar.
 - **🛠️ Developer tooling**
   - **A new probe measures the entity location request against the player's location request on the Emberwatch cast.** It reports reply accuracy, false and missed moves, and how long the fan-out adds to the stage.
   - **The relationship probe measures whether narration uses an absent relative without placing them in the scene.** It runs an A/B, relationship off vs on, on the shipped prompts.
@@ -462,27 +756,31 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **In Game:**
+    - **The token-limit error now names the prompt that failed.** Error Details show it on a Prompt line. For a prompt with a Max Output setting, they also tell you to raise it.
+    - **The status bar now names the request a turn is still waiting on.** After choices land, it shows the memory or diary pass that is still running.
+    - **In the Chat layout, you can pick a choice as soon as choices land.** The pick fills your action. You can send it when the turn finishes.
+    - **Narration now bolds only loud words, and thinking models spend less of each turn's thinking on formatting.** The Markdown Guidance chip now has one form. Prompts that used Definitions keep working.
+    - **A stat now opens at its authored value everywhere, and an authored zero stays zero.** Play, the Test Bench, Test Code, the trait picker, code cards, new Link Base Values and older saves agree. No change shows on turn one. A value outside the range opens at the nearest edge.
+    - **The Stats panel picker now lists an absent entity only once the story has named it.** Absent entities you haven't met no longer show as Unknown.
+  - **Settings:**
+    - **On NanoGPT, Native Reasoning now knows which models think and which strengths they take.** Short prompts such as Choices give a thinking model room and no longer fail with "The model reached its token limit before it wrote an answer."
+    - **Summaries and Diary now ship with Native Reasoning off, so turns finish sooner on a thinking model.** Prompts you already set keep your setting.
+    - **The Default preset's narration prompt is shorter and states each rule once.** It no longer repeats the ban on option menus at the end, or asks for concise prose next to the length setting.
+    - **The default prompts now call their entity sections Entities and tell the AI what each section holds.** A Known Here entity reads as elsewhere right now. People in the scene may speak of it.
   - **Scripts:**
     - **A script asks the player for typed text with `player.input`, renamed from `player.askText`.** Worlds and Tools that call the old name load with the new one.
     - **A trait you toggle keeps the memory, pinned memory and diary lines its When a Trait Switches script writes.** They land on the latest turn, and a rewind past that turn removes them.
     - **Script and Tool script hover cards now read in one voice.** Card lines open with their subject, the Variable menu's **Owner** line matches its card, and each memory and entity field is one sentence.
-  - **The Test Bench's Openings preview now names the persona you pick, or says no persona under None.** Code cards mark an entity you can play as **Persona: Playable**. The author-note ⓘ line in Settings says "your persona".
-  - **On NanoGPT, Native Reasoning now knows which models think and which strengths they take.** Short prompts such as Choices give a thinking model room and no longer fail with "The model reached its token limit before it wrote an answer."
-  - **The token-limit error now names the prompt that failed.** Error Details show it on a Prompt line. For a prompt with a Max Output setting, they also tell you to raise it.
-  - **Summaries and Diary now ship with Native Reasoning off, so turns finish sooner on a thinking model.** Prompts you already set keep your setting.
-  - **The status bar now names the request a turn is still waiting on.** After choices land, it shows the memory or diary pass that is still running.
-  - **In the Chat layout, you can pick a choice as soon as choices land.** The pick fills your action. You can send it when the turn finishes.
-  - **Narration now bolds only loud words, and thinking models spend less of each turn's thinking on formatting.** The Markdown Guidance chip now has one form. Prompts that used Definitions keep working.
-  - **The Default preset's narration prompt is shorter and states each rule once.** It no longer repeats the ban on option menus at the end, or asks for concise prose next to the length setting.
-  - **The default prompts now call their entity sections Entities and tell the AI what each section holds.** A Known Here entity reads as elsewhere right now. People in the scene may speak of it.
-  - **A stat now opens at its authored value everywhere, and an authored zero stays zero.** Play, the Test Bench, Test Code, the trait picker, code cards, new Link Base Values and older saves agree. No change shows on turn one. A value outside the range opens at the nearest edge.
-  - **Test Code and the Test Bench now check a Script against the same turn-one world as play.** They read `clock` by timing and a switched-off stat as off. Test Code's `entities` holds a new game's cast, without persona-only entities. An unknown `diary` name warns. A trait Script whose entity is gone reads `self` as not held.
+  - **World Editor:**
+    - **The Test Bench's Openings preview now names the persona you pick, or says no persona under None.** Code cards mark an entity you can play as **Persona: Playable**. The author-note ⓘ line in Settings says "your persona".
+    - **Test Code and the Test Bench now check a Script against the same turn-one world as play.** They read `clock` by timing and a switched-off stat as off. Test Code's `entities` holds a new game's cast, without persona-only entities. An unknown `diary` name warns. A trait Script whose entity is gone reads `self` as not held.
+  - **Library:**
+    - **A new item in your library now lands after your last tile, not in a gap between your tiles.** It goes right of the last tile on the bottom row, or starts a new row when that row is full. Every tile you placed stays where it was.
+    - **A downloaded world now shows in your library even when you close Community Creations before the download finishes.** You no longer have to reopen Community Creations to see it.
   - **Error Details and bug reports now show a server's HTML error page as one line: its title and Ray ID.** A report from **Report Bug** keeps its details in a code block, so markup in them shows as written.
-  - **The Stats panel picker now lists an absent entity only once the story has named it.** Absent entities you haven't met no longer show as Unknown.
   - **Close buttons on dialogs and panels are now easier to tap on mobile.** A dialog's close button takes a 44-pixel tap area, and every close icon is a little larger. Nothing else moves.
   - **Full-screen fields, panels, the Locations map and the Guide now exit from one button in the top-right corner.** The button sits in the same place as a dialog's close button and has the same 44-pixel tap area.
-  - **A new item in your library now lands after your last tile, not in a gap between your tiles.** It goes right of the last tile on the bottom row, or starts a new row when that row is full. Every tile you placed stays where it was.
-  - **A downloaded world now shows in your library even when you close Community Creations before the download finishes.** You no longer have to reopen Community Creations to see it.
 
 </details>
 
@@ -496,9 +794,10 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **In Game:**
+    - **Edit Stats in the Stats panel now edits every visible stat, entity and persona stats included.** It now works in a world whose only visible stats belong to entities. Your edit doesn't count as the turn's change.
+    - **Autosave and the save list no longer crash on a save the browser can't read.** The unreadable save stays stored but doesn't show, and your other saves load and autosave as usual.
   - **The Test Bench no longer flags a Blueprint trait whose requirement reads a Blueprint stat its entities hold.** It checks each entity that links the trait, and names one that lacks the stat.
-  - **Edit Stats in the Stats panel now edits every visible stat, entity and persona stats included.** It now works in a world whose only visible stats belong to entities. Your edit doesn't count as the turn's change.
-  - **Autosave and the save list no longer crash on a save the browser can't read.** The unreadable save stays stored but doesn't show, and your other saves load and autosave as usual.
   - **Native Reasoning and Tools now match the model LM Studio or llama.cpp has loaded when you use `default`.** Switching back to a model reuses its answer with no request. Both rows get Recheck and name the model they describe.
 - **⚙️ Backend**
   - **The built-in engine updates to node-llama-cpp 3.22.2 with llama.cpp v0.7.0.** The update brings two llama.cpp releases of Vulkan fixes, including a fix for device start-up.
@@ -532,18 +831,16 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **A World Tool's Script box has a Templates button that lists starter code for the Tool's timing.** A parameter input picks one of the Tool's Parameters, or its **New** row adds the Parameter the template reads. Save, export and import your own World Tool templates beside your stat templates.
     - **Code templates can now pick an entity's or persona's stats, and an entity stat's trait inputs list its own traits.** In your own templates, `{{s:stat(who)}}` lists the stats of the entity picked in `who`, and `{{s:stat(persona)}}` lists persona stats. Owner traits show first, under **Owner**.
     - **A world script's box now has a Templates button with eight starter templates.** They set the opening location, advance time, pin memories and diary lines, and replace words. Save, export and import your own beside the others. A new location input picks one of the world's locations.
-  - **Timed Suspensions:**
-    - **In the Admin Panel's Users tab, Suspend asks for a length and the table shows when each suspension ends.** Pick 3 to 30 days or **Until Lifted**. **Suspend** also works on a suspended account.
-    - **A suspended account's profile now shows its end date, and the Audit Log shows suspensions that end on their own.** Filter the log by **Suspension expired**. Each Suspended entry shows the end that staff chose.
 - **🛠️ Developer tooling**
   - **The During AI Output run takes a Narration Stream listener that drops a retracted round's writes.** A sentence run still in progress at the retract leaves no write either. Output triggers build on this seam.
 
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **World Editor:**
+    - **Test Code now reads the clock as play does in every timing but After the AI.** At Game Start, During AI Output and When a Trait Switches read a zero `clock.deltaHours`. Test Code ran them as a one-hour turn, so it could show a change that play never makes.
+    - **Test Code now reads an entity's `type` and `pronouns` as authored.** A script that read them in Test Code got empty text. Play read them correctly.
   - **On a llama.cpp server, a prompt's Reasoning Budget slider now sets how long it thinks.** The budget is a percent of Max Output, as on other servers. Before, a model whose template had no strengths was stuck at Model Default's room.
-  - **Test Code now reads the clock as play does in every timing but After the AI.** At Game Start, During AI Output and When a Trait Switches read a zero `clock.deltaHours`. Test Code ran them as a one-hour turn, so it could show a change that play never makes.
-  - **Test Code now reads an entity's `type` and `pronouns` as authored.** A script that read them in Test Code got empty text. Play read them correctly.
 
 </details>
 
@@ -580,9 +877,10 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
   - **Image Generation:**
     - **ComfyUI's Model row shows the model a workflow loads itself.** A workflow without `%ckpt%` ignores the Model setting, so the row shows its own model file, grayed out.
     - **ComfyUI's File Name setting sets the folders and name for each saved image.** By default, images go in `formamorph/<world>/`, named for their entity, location or turn. A `/` in the pattern makes a folder. A custom workflow needs `%prefix%` in its save node.
+  - **Endpoints:**
+    - **Buttons and menu items that send an AI request now show which endpoint gets it.** **Send** and the World Editor's generate buttons show it in their tooltip. **Re-generate Narration**, **Re-generate Stats**, **Re-generate Choices** and **Write Scene Tags** show it as a second line in the More and right-click menus.
+    - **Each text endpoint has Extra Parameters: a JSON object added to every request sent to it.** A field the app sets for a request wins. You can't set `model`, `messages`, `stream`, `tools`, `tool_choice`, `response_format`, `n` or `stop`. If the text has an error, requests go out without it.
   - **A setting, Strip Links And Images, sends past narration without markdown links and images.** It's under Settings → Display → Narration in Advanced mode, and on by default. A link becomes its text and an image goes. It covers the last story, memory summaries, diary entries and recall results.
-  - **Buttons and menu items that send an AI request now show which endpoint gets it.** **Send** and the World Editor's generate buttons show it in their tooltip. **Re-generate Narration**, **Re-generate Stats**, **Re-generate Choices** and **Write Scene Tags** show it as a second line in the More and right-click menus.
-  - **Each text endpoint has Extra Parameters: a JSON object added to every request sent to it.** A field the app sets for a request wins. You can't set `model`, `messages`, `stream`, `tools`, `tool_choice`, `response_format`, `n` or `stop`. If the text has an error, requests go out without it.
   - **A prompt's Native Reasoning now shows its Thinking Room beside the strength, such as "Low · 1,024 tok".** The readout updates when you change the strength. With Max Output off, it replaces the Reasoning Budget slider and its note.
   - **A disabled stat now reads "Off" and dims on the Stats tab and on its rows in the Scripts tab.** The marker shows in the world and entity stat trees.
 - **🛠️ Developer tooling**
@@ -596,29 +894,32 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **World Editor:**
+    - **Duplicating a location from the filtered list now gives the copy its own Unique chip rolls.** The copy no longer shares the source's values, the same as in the tree.
+    - **A library entity with two links to one stat now uses the same link in the editor and in play.** Play keeps the link higher in the stat tree, and adding the entity to a world now keeps that one too.
+    - **Deleting an entity, trait, location or placeholder group keeps your item order.** The group's items take its place in the list.
+    - **Arrange on the location canvas no longer freezes on a world whose locations hold each other in a loop.** Every walk up the location, group and placeholder trees now stops at a loop.
+    - **Undo no longer empties a name field that loaded after you opened it.** Chip name fields now treat a late-arriving value as the starting text, not as an edit.
+    - **Pressing Enter while a keyboard suggestion is open no longer saves a chip you are still editing.** Editing a chip on Android now finishes the word first, like the tag field.
+    - **Stat code templates load again after a failed first open.** The template list now retries the database on the next use instead of staying empty until you reload.
+    - **Load World in the editor now accepts the same file twice.** Player avatar uploads, event images and profile images reset the same way.
   - **Native Reasoning:**
     - **Models that always reason now have room to answer small prompts like Location Change.** Each strength gives a fixed Thinking Room, from Minimal at 128 tokens to Max at 16,384. Max Output limits only the answer, so turning it off no longer shrinks the room.
     - **With Max Output off, models that take a thinking budget now get the strength's Thinking Room as that budget.** Before, no budget went out, so the model could think without a limit.
     - **On a llama.cpp server, a looping thought now stops at the Thinking Room and the model writes its answer.** Switching Native Reasoning off now stops thinking for every llama.cpp model.
     - **A thought that uses its whole Thinking Room now says so in the error.** Error Details list the room and its strength beside `max_tokens`.
+  - **In Game:**
+    - **World music or ambient sound your browser can't play now stays silent instead of showing an error.** This covers a new game, a loaded save and a move to a new location.
+    - **Story export now leaves out turns that can't be read, so no error text lands in your story.** The history size estimate also counts turns saved in a looser format.
+    - **Editing narration now updates the turn's entities and the Entities tab, and discovers new ones.** A name that only appears in dialogue no longer counts as present. A new name you write in becomes an entity.
+  - **Community Creations:**
+    - **Signed out, the app no longer sends a login token with community requests.** Every community service now shows the server's own error text. The world list and comment list used to hide it.
+    - **Login now shows the server's reason when it refuses you.** A login or password change that gets an error page shows "Login failed" or its own fallback, not a parse error.
   - **ComfyUI with an empty Model now uses the first checkpoint the server lists.** It used to send an empty checkpoint name, which ComfyUI rejects. The Model placeholder says which one is used.
-  - **World music or ambient sound your browser can't play now stays silent instead of showing an error.** This covers a new game, a loaded save and a move to a new location.
   - **The world library now opens when one stored world can't be read.** An unreadable world stopped the library's one-time update, with the error "Cannot read properties of null", on every launch. The update now skips that world.
-  - **Duplicating a location from the filtered list now gives the copy its own Unique chip rolls.** The copy no longer shares the source's values, the same as in the tree.
-  - **Signed out, the app no longer sends a login token with community requests.** Every community service now shows the server's own error text. The world list and comment list used to hide it.
-  - **Login now shows the server's reason when it refuses you.** A login or password change that gets an error page shows "Login failed" or its own fallback, not a parse error.
-  - **Story export now leaves out turns that can't be read, so no error text lands in your story.** The history size estimate also counts turns saved in a looser format.
-  - **A library entity with two links to one stat now uses the same link in the editor and in play.** Play keeps the link higher in the stat tree, and adding the entity to a world now keeps that one too.
   - **Formaquestion's code test function is now named `test_script`, and its description and code rider say "script."** They said "stat code" before.
-  - **Deleting an entity, trait, location or placeholder group keeps your item order.** The group's items take its place in the list.
-  - **Arrange on the location canvas no longer freezes on a world whose locations hold each other in a loop.** Every walk up the location, group and placeholder trees now stops at a loop.
   - **A stuck semantic search no longer hangs Help or the Test Bench.** Every embedding call now gives up after a set time and leaves no timer running.
-  - **Undo no longer empties a name field that loaded after you opened it.** Chip name fields now treat a late-arriving value as the starting text, not as an edit.
   - **A failed share-code copy shows an error, Copy Paths resets, and Community sorts server dates as UTC.** Listings keep their order in every time zone.
-  - **Pressing Enter while a keyboard suggestion is open no longer saves a chip you are still editing.** Editing a chip on Android now finishes the word first, like the tag field.
-  - **Stat code templates load again after a failed first open.** The template list now retries the database on the next use instead of staying empty until you reload.
-  - **Load World in the editor now accepts the same file twice.** Player avatar uploads, event images and profile images reset the same way.
-  - **Editing narration now updates the turn's entities and the Entities tab, and discovers new ones.** A name that only appears in dialogue no longer counts as present. A new name you write in becomes an entity.
 - **🛠️ Developer tooling**
   - **Tests run on half the hardware threads, and the ticket test gate retries a `findBy` or `waitFor` that gave up.** One fork per thread ran the 5-second tests at 4.6 s idle, so a peer's load timed them out. The retry alone still fails on a real miss.
 
@@ -681,6 +982,11 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **The AI's notes now list your persona's own stats inside its block, and your world's global stats under Global Stats.** The **Persona** chip gains a **Stats** toggle. The choices prompt now reads your persona's summary, with its traits and stats.
     - **Under Staged thinking, each character now plans its turn with its own stats in view.** Its planning request lists its stats after its background, as the narration sees them. It still never sees your stats.
     - **The Test Bench's AI Context tab now lists a Persona block, before Stats and Traits.** It shows your Custom Persona entity's traits and stats as the AI reads them. A world with no Custom Persona entity shows it empty.
+  - **Visibility Rules:**
+    - **Each gallery image now has a cog that sets its Visibility rule.** A badge marks an image with a rule, and a "Shown while" line reads it under the framed image. The primary image warns that it ignores its rule outside play.
+    - **An entity's image in play now follows its Visibility rules as the story changes.** The panel, zoom viewer and persona row show the first visible image and page through visible images only. A past turn shows that turn's images.
+    - **Test Bench warns when a Visibility rule names something missing or every image of an entity can hide.** It also warns on a percent of a stat with no range. Two images with opposite conditions, such as Health < 20% and Health >= 20%, never both hide.
+    - **The wiki and help window now explain Visibility rules and stat Conditions.** Ask how to show a portrait only when hurt. Take Me There opens the entity's Profile tab and a trait's Availability tab.
   - **Stat Code:**
     - **A stat code bound write sets the number, and traits and the AI move it from there.** A code bound no longer hides trait changes. Deleting the code keeps the bounds. Saves keep the bounds they show.
     - **A new Dice Roll With Consequences template rolls a d20, pins a placeholder, and changes two other stats.** Find it in the **Templates** menu of the **After the AI** box. A 1 halves one stat and a 20 adds 1 to another.
@@ -689,11 +995,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **The Availability tab can gate a trait on a stat, such as Rage >= 80.** Pick a stat from the **Requires** picker, then pick the operator from a list and set the number and Raw or %. **Not** flips it.
     - **Stat-gated traits turn off and return in play as their stat crosses the threshold.** Each turn reads the stats once, after AI changes, regen and stat code land. A trait's own effects never flip it back that turn. Hand switch-offs stay off.
     - **Test Bench warns when a trait requires a stat it changes, or a percent of a stat with no range.** A Condition on a stat its owner lacks shows as an unresolved requirement.
-  - **Visibility Rules:**
-    - **Each gallery image now has a cog that sets its Visibility rule.** A badge marks an image with a rule, and a "Shown while" line reads it under the framed image. The primary image warns that it ignores its rule outside play.
-    - **An entity's image in play now follows its Visibility rules as the story changes.** The panel, zoom viewer and persona row show the first visible image and page through visible images only. A past turn shows that turn's images.
-    - **Test Bench warns when a Visibility rule names something missing or every image of an entity can hide.** It also warns on a percent of a stat with no range. Two images with opposite conditions, such as Health < 20% and Health >= 20%, never both hide.
-    - **The wiki and help window now explain Visibility rules and stat Conditions.** Ask how to show a portrait only when hurt. Take Me There opens the entity's Profile tab and a trait's Availability tab.
   - **The World Editor now says Owner, not Bearer, for the entity or dictionary that holds a trait, stat or placeholder.** The picker says **Same Owner**, and hover cards show one Owners row. World files save a requirement's owner under `owner`; files with `bearer` still load. Apps from v3.1 and v3.2 misread these requirements until they update.
   - **Selecting a placed chip now opens Chip Options, a dialog that shows what the AI reads as you pick.** Entities and Persona chips gain **Only With**, **Include** and **Stat Detail** rows, and a filter icon when Only With is on. Those picks show as raw text in older versions.
   - **The AI now updates your stats with fewer wrong-direction and made-up changes.** It answers with a change for every stat, 0 included. An endpoint that can't take that format gets the old reply style, and the AI context viewer notes it.
@@ -728,20 +1029,22 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
-  - **A new turn no longer shows the previous turn's thought while it waits for its own.** The thought panel clears when you send an action, re-generate or rewind, and fills again as the new reasoning streams. Each saved turn keeps its own thought. A loaded save or a new game starts with none.
+  - **In Game:**
+    - **A new turn no longer shows the previous turn's thought while it waits for its own.** The thought panel clears when you send an action, re-generate or rewind, and fills again as the new reasoning streams. Each saved turn keeps its own thought. A loaded save or a new game starts with none.
+    - **The in-game Map no longer shows Connection travel hints, only the lines.** Hints often hold clues or spoilers about a route. The World Editor canvas still shows them.
+    - **Loading a save in game no longer shows stat changes from the turn before the load.** Your stats and every entity's stats start with no change shown.
+    - **Regenerate Memory and a character's Regenerate wait for background passes, with a spinner you can cancel.** Each button waits its turn instead of staying unavailable or racing a pass. Leaving the game or loading a save also stops them.
+    - **A prompt routed to an endpoint now uses that endpoint's detected context window in game.** Before, it could fall back to 10,750 tokens while Settings showed the right size. A server you start after Formamorph is now found within two minutes.
+  - **World Editor:**
+    - **A dictionary entry's Whole Words checkbox now works with Regex keywords.** `wands?` no longer matches inside *wander*. Letters with accents now count as part of a word, so *caf* no longer matches inside *café*. Imported SillyTavern regex entries with whole words on now match whole words only.
+    - **The World Editor refuses a drag into Blueprints while something still reads the trait or stat.** That is a requirement, a stat change or toggle, or stat code. A note names the reader.
+    - **The World Editor's Auto Save setting is now Autosave, the name the game's saves use.** The Save menu, Settings, the unsaved-changes prompt and the Guide all say **Autosave** and **Autosave Pause**.
+    - **Code completion now lists members after chains with spaces or `?.`, and nothing in comments.** `stats . Health .` and `scene?.location.` list their members.
+    - **Escape in a code box inside a dialog now closes only the completion list.** The next Escape closes the dialog, as before.
   - **The placeholder and tag suggestion lists of an editor field no longer cover the help window.** A click where a list and the help window overlap now reaches the help window.
   - **Compare shows a changed line as the old line over the new one, marking only the words that differ.** Both lines are faintly tinted and the reworded words are solid. A line rewritten from scratch is tinted whole, and its replacement starts on a line of its own.
-  - **The in-game Map no longer shows Connection travel hints, only the lines.** Hints often hold clues or spoilers about a route. The World Editor canvas still shows them.
-  - **Loading a save in game no longer shows stat changes from the turn before the load.** Your stats and every entity's stats start with no change shown.
-  - **A dictionary entry's Whole Words checkbox now works with Regex keywords.** `wands?` no longer matches inside *wander*. Letters with accents now count as part of a word, so *caf* no longer matches inside *café*. Imported SillyTavern regex entries with whole words on now match whole words only.
-  - **The World Editor refuses a drag into Blueprints while something still reads the trait or stat.** That is a requirement, a stat change or toggle, or stat code. A note names the reader.
   - **A click or Escape in the help window no longer closes a menu, popover, list or dialog below it.** A menu inside the help window still closes when you click elsewhere in it.
-  - **Regenerate Memory and a character's Regenerate wait for background passes, with a spinner you can cancel.** Each button waits its turn instead of staying unavailable or racing a pass. Leaving the game or loading a save also stops them.
   - **An image request that can't reach the image server now names the server and what to check.** The toast's Fix Connection link opens that server's setup guide. Before, it showed only "Failed to fetch". A dropped connection while ComfyUI draws no longer stops the image.
-  - **The World Editor's Auto Save setting is now Autosave, the name the game's saves use.** The Save menu, Settings, the unsaved-changes prompt and the Guide all say **Autosave** and **Autosave Pause**.
-  - **Code completion now lists members after chains with spaces or `?.`, and nothing in comments.** `stats . Health .` and `scene?.location.` list their members.
-  - **Escape in a code box inside a dialog now closes only the completion list.** The next Escape closes the dialog, as before.
-  - **A prompt routed to an endpoint now uses that endpoint's detected context window in game.** Before, it could fall back to 10,750 tokens while Settings showed the right size. A server you start after Formamorph is now found within two minutes.
   - **Community Creations thumbnails now show in browsers that can't cache them, such as Safari.** When the thumbnail cache fails, the image loads straight from the server. Before, the card showed its placeholder.
 - **⚙️ Backend**
   - **Background Pass Queue:**
@@ -765,7 +1068,7 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
   - **History:**
     - **The World Editor has undo, redo and a History list for your world's edits.** Press Ctrl+Z, or open History in the app bar to jump to any earlier point.
     - **Undo in the World Editor returns you to the tab where you made the edit.** An edit made on another tab's record, such as a location's entities, opens that tab with the same record selected.
-    - **Undo in the World Editor returns you to the sub-tab or view where you made the edit.** An edit on the Openings sub-tab, an entity tab, or the Locations list or canvas opens that same sub-tab or view. An Overview edit with no prompt panel open closes the panel.
+    - **Undo in the World Editor returns you to the sub-tab or view where you made the edit.** An edit on an Overview or entity tab, or in the Locations list or canvas, opens that same tab or view.
     - **Undo and redo in the World Editor restore every location you had selected on the canvas.** Locations that no longer exist drop out of the selection.
     - **Undo and redo in the World Editor scroll to the text field you edited and pulse it.** It pulses on every press, even when you're already on the field. Keyboard focus stays where it was. With reduced motion, the field shows a still ring.
     - **Typing in a different field, tab or selection starts a new undo step in the World Editor.** Undo then takes you back to the field you edited. Typing in one field joins into one step.
@@ -783,8 +1086,9 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **A requirement can require a trait to be off: flip its chip to Not.** The lock line reads "not Paladin". Picking an excluded trait turns the other off with the banner, and dropping the pick brings it back.
     - **The Availability tab shows Mode, Starts and In Game as three rows with one rule sentence.** **Automatic** is the new name of Always On. Starts and In Game dim under Automatic and Hidden. **Requires** adds a world trait at once when only You can hold it.
     - **Test Bench flags requirements that loop through Not and rows that can never hold.** A loop such as "A requires B, B requires not A" is an error. "Paladin and not Paladin" is a warning. Two traits that exclude each other pass.
-  - **Ctrl+S saves the world in the World Editor.** On a Mac, use Cmd+S. It works while you type in a field, and the **Save** tooltip shows it.
-  - **Ctrl+B and Ctrl+I make text bold or italic in fields with a formatting toolbar.** On a Mac, use Cmd+B and Cmd+I. Press the key again to remove the formatting. The **Bold** and **Italic** tooltips show the shortcut.
+  - **Keyboard Shortcuts:**
+    - **Ctrl+S saves the world in the World Editor.** On a Mac, use Cmd+S. It works while you type in a field, and the **Save** tooltip shows it.
+    - **Ctrl+B and Ctrl+I make text bold or italic in fields with a formatting toolbar.** On a Mac, use Cmd+B and Cmd+I. Press the key again to remove the formatting. The **Bold** and **Italic** tooltips show the shortcut.
   - **Choices stream in word by word, one choice after another, once the narration finishes.** They use your narration reveal effects and pace. A choice's row appears with its first word. Choices you page back to show at once.
 - **🛠️ Developer tooling**
   - **Trailer:**
@@ -802,21 +1106,22 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
-  - **Narration:**
-    - **Paging away from narration that is still fading in, then back, now shows all the text that has arrived.** It no longer fades in again from the start. Text the AI writes after you return fades in as usual.
-    - **Fade-in narration now keeps an even pace with slow models.** The first sentence is timed from the stream, so no long pause follows it, and the last sentences no longer speed up.
-    - **The narration card now grows with the words as they fade in.** It no longer shows blank lines ahead of the text.
   - **Tooltips:**
     - **A tooltip now closes when you scroll.** It no longer stays on screen after its control moves. Scrolling a page, list, panel or scrollbar, or scrolling by keyboard, closes it. It opens again on the next hover or focus.
     - **A tooltip now closes when you press, right-click or start a drag.** None opens while you hold a mouse button, so dragging across the library board or the Trait Tree opens none.
     - **A tooltip now closes when focus moves elsewhere, the window loses focus or the tab is hidden.** Tabbing to another control still opens that control's tooltip.
     - **The Copied bubble on a help code block now closes when you scroll, press, right-click or start a drag.** It no longer floats in place when its button scrolls away. Each copy shows it again.
-  - **Exit Without Saving in the in-game World Editor now drops the edits you made since the last save.** After Auto Save saved the world, the prompt says so.
+  - **World Editor:**
+    - **Exit Without Saving in the in-game World Editor now drops the edits you made since the last save.** After Auto Save saved the world, the prompt says so.
+    - **Test Bench now names the right requirements when a linked trait's default starts unselected.** The message names the entity, quotes the link's rows and opens the link.
+    - **The markdown Preview now shows every edit inside a list, a quote or a multi-line paragraph.** Formatting and text changes in a list item, for example, now show at once instead of keeping the old text.
+    - **Player Name and Character Name chips line up with other chips, and the Values tab shows what they become.** Values shows each one locked, as Preview reads it, instead of an empty box that broke the line. The chips carry a pencil icon, so they no longer look like AI generate buttons.
+  - **Narration:**
+    - **Paging away from narration that is still fading in, then back, now shows all the text that has arrived.** It no longer fades in again from the start. Text the AI writes after you return fades in as usual.
+    - **Fade-in narration now keeps an even pace with slow models.** The first sentence is timed from the stream, so no long pause follows it, and the last sentences no longer speed up.
+    - **The narration card now grows with the words as they fade in.** It no longer shows blank lines ahead of the text.
   - **The app and the wiki now say In Game for the time after a game starts.** The trait toggle, the Authoring Tour pane and the Entities page use the same term.
-  - **Test Bench now names the right requirements when a linked trait's default starts unselected.** The message names the entity, quotes the link's rows and opens the link.
-  - **The markdown Preview now shows every edit inside a list, a quote or a multi-line paragraph.** Formatting and text changes in a list item, for example, now show at once instead of keeping the old text.
-  - **Player Name and Character Name chips line up with other chips, and the Values tab shows what they become.** Values shows each one locked, as Preview reads it, instead of an empty box that broke the line. The chips carry a pencil icon, so they no longer look like AI generate buttons.
-  - **A supporter's profile image sits centered in its ring in comments and notifications.** The image no longer covers the bottom of the ring. Supporter and staff badges are the same height on every screen.
+  - **A supporter's profile image sits centered in its ring in comments and notifications.** The image no longer covers the bottom of the ring. Supporter badges are the same height on every screen.
   - **A toast's close button and View Details link now work while a dialog is open.** Before, a click went through the toast to the dialog behind it.
   - **The Open External Link confirm on a markdown link now works over a dialog.** Its buttons take your click, Esc closes only the confirm, and focus goes back to the link. It now matches the app's other confirms.
   - **The ring that undo and Take Me There draw around a field shows in full at a scroll area's edge.** The ring follows the field as it scrolls.
@@ -867,9 +1172,10 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### ➕ Added
 
 - **👤 User-facing**
-  - **A crash of the whole app now shows a recovery screen with Copy Error Details, Export World and Reload.** Export World appears when you have unsaved edits. A toast with View Details now shows unhandled errors.
+  - **Crash Recovery:**
+    - **A crash of the whole app now shows a recovery screen with Copy Error Details, Export World and Reload.** Export World appears when you have unsaved edits. A toast with View Details now shows unhandled errors.
+    - **A crash in one World Editor panel shows a card there, and the rest of the editor keeps working.** Your unsaved edits stay. **Try Again** remounts the panel, and **View Details** opens the error with Copy and Report Bug.
   - **A placeholder's panel in the World Editor splits into Details and Pins tabs.** The Pins tab lists every pin aimed at the placeholder. It needs Advanced mode. The tab you pick stays open as you select other placeholders.
-  - **A crash in one World Editor panel shows a card there, and the rest of the editor keeps working.** Your unsaved edits stay. **Try Again** remounts the panel, and **View Details** opens the error with Copy and Report Bug.
   - **The World Editor's list boxes now read Filter, such as Filter Stats and Filter Entities.** Typing still narrows the list, and the **+** button still adds the typed name.
   - **On Entities and Dictionary, the + menu now holds Add From Library and Import.** The footer's Add Entity and Add Dictionary buttons are gone. The + is a menu in Simple mode too.
   - **On mobile, the World Editor's footer now fits on one row, and a selected item's detail fills the full height.** Save is an icon in the bottom-right corner, next to the world actions. Overview shows Export World once.
@@ -880,27 +1186,29 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **World Editor:**
+    - **The Locations Canvas opens fast on large worlds, and shows dashed travel arrows only for the hovered or selected locations.** Click a dashed arrow to author a Connection. Arrows hide while you drag. A selected location keeps its arrows on touch screens.
+    - **A failed world save always shows an error, and full storage shows the space left with an Export World button.** Saves never hang. Save & Exit in play and the Authoring Tour show the same message. Linked library items change only after the world saves.
+    - **Editor lists on large worlds draw only the rows on screen and redraw only the rows that change.** Typing a name and dragging a row in the Entities, Locations, Traits and Placeholders lists stay responsive with hundreds of rows. A drag starts without a pause and still scrolls to any row. The lists look and work as before.
+    - **Dragging a location on the Locations Canvas checks drop targets faster on large worlds.** The canvas no longer rechecks every location's ancestry on each pointer move, and group frames redraw only when the drop target changes.
+    - **The World Editor uses far less memory on large worlds while you edit and save.** It no longer keeps extra copies of the world to track unsaved edits. Saving a large world also finishes faster.
+    - **The location and persona pickers stay quick while you type in a large world.** The Connect To, Starting Location and Starts On lists redraw only the items that changed. They look and work as before.
+    - **Opening and typing in the World Editor stay responsive on large worlds.** The Test Bench checks the world in the background, and its badge shows a count once the first check ends.
+    - **The Test Bench checks pin conflicts quickly on placeholders pinned from hundreds of sources.** The check and the conflict note under each pin read a placeholder's pins once. They report the same conflicts and winners.
+    - **A trait or location that pins hundreds of placeholders opens its Pins tab faster.** Each pin's picker builds its list only when you open it, and an edit updates only the pin you changed. Pins look and work as before.
+    - **A placeholder's Placeholder Pins section opens quickly with dozens of pins.** Each pin's source list loads when you open or focus it. The lists look and work as before.
+  - **In Game:**
+    - **The Map shows travel arrows from your location, and from the one you hover on a desktop.** Arrows draw on the Map again. The Map renders only the boxes in view.
+    - **A picked choice in Chat stays filled, and a hovered choice shows only a light tint.** Keyboard focus looks like hover with a ring.
   - **The Main Menu lists your worlds without loading each one in full.** Large libraries open faster and use less memory. Your library updates itself once; older Formamorph builds can't open it afterward.
-  - **The Locations Canvas opens fast on large worlds, and shows dashed travel arrows only for the hovered or selected locations.** Click a dashed arrow to author a Connection. Arrows hide while you drag. A selected location keeps its arrows on touch screens.
-  - **The Map shows travel arrows from your location, and from the one you hover on a desktop.** Arrows draw on the Map again. The Map renders only the boxes in view.
   - **The desktop app recovers from a crashed or frozen window, and Android gives the app more memory.** The desktop app shows a message, then reloads. When the window hangs, you can wait or reload.
-  - **A failed world save always shows an error, and full storage shows the space left with an Export World button.** Saves never hang. Save & Exit in play and the Authoring Tour show the same message. Linked library items change only after the world saves.
-  - **Editor lists on large worlds draw only the rows on screen and redraw only the rows that change.** Typing a name and dragging a row in the Entities, Locations, Traits and Placeholders lists stay responsive with hundreds of rows. A drag starts without a pause and still scrolls to any row. The lists look and work as before.
-  - **Dragging a location on the Locations Canvas checks drop targets faster on large worlds.** The canvas no longer rechecks every location's ancestry on each pointer move, and group frames redraw only when the drop target changes.
-  - **The World Editor uses far less memory on large worlds while you edit and save.** It no longer keeps extra copies of the world to track unsaved edits. Saving a large world also finishes faster.
-  - **The location and persona pickers stay quick while you type in a large world.** The Connect To, Starting Location and Starts On lists redraw only the items that changed. They look and work as before.
   - **Importing a large world and publishing one no longer freeze the app.** The Main Menu reads and upgrades the world file in the background, and Publish builds its upload there too. Messages stay the same.
-  - **Opening and typing in the World Editor stay responsive on large worlds.** The Test Bench checks the world in the background, and its badge shows a count once the first check ends.
   - **On the Mascot tab of Formaquestion Settings, a dragged overlay stays inside its layer and drops in place.** It no longer jumps back to its old slot and slides to the new one.
-  - **The Test Bench checks pin conflicts quickly on placeholders pinned from hundreds of sources.** The check and the conflict note under each pin read a placeholder's pins once. They report the same conflicts and winners.
-  - **A trait or location that pins hundreds of placeholders opens its Pins tab faster.** Each pin's picker builds its list only when you open it, and an edit updates only the pin you changed. Pins look and work as before.
   - **The selected tool in Settings and the selected code template now stand out from the hovered one.** Both lists fill the selected row with the primary color.
   - **Dialogs no longer open with an outline around the close button.** The ring still shows when you reach the button with the keyboard.
   - **The selected section in the World Editor and Community Creations side menus now stands out from the hovered one.** The selected section takes the primary color. Hover keeps the softer accent color. Enter World categories and the mobile Sections bar match.
   - **A list row's delete button now turns red on hover.** It applies to World Editor lists, library lists and Formaquestion Mascot lists. A selected row shows a red chip.
   - **Each world element type now shows the same icon on every screen.** Traits, entities, stats, worlds, Blueprints, Personas and Avatars no longer change icon between the editor, the game panels and the library.
-  - **A picked choice in Chat stays filled, and a hovered choice shows only a light tint.** Keyboard focus looks like hover with a ring.
-  - **A placeholder's Placeholder Pins section opens quickly with dozens of pins.** Each pin's source list loads when you open or focus it. The lists look and work as before.
   - **Right-click menus inside a window, like the Locations Canvas menu, now highlight the row you hover.** The arrow keys move through the rows again.
 - **🛠️ Developer tooling**
   - **The multi-select and the endpoint badge cancel their updates at unmount, so the full test suite exits 0.** The pin picker test, which opens four heavy pickers, has its own 20-second limit.
@@ -958,12 +1266,12 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **The text endpoint preset in Settings → AI Endpoints and on the Formaquestion Endpoint tab shows whether its server answers.** The badge reads Checking…, Reachable, Didn't answer or Not checked, and **Recheck** tests again. The check asks for the server's model list and never sends a prompt, so it costs nothing.
     - **The image preset in Settings → AI Endpoints → Image and the Generate image dialog shows whether its server answers.** ComfyUI, InvokeAI and Automatic1111 / Forge are checked in every build, and OpenAI-compatible servers in the desktop app. The check never generates an image or costs credits.
   - **Bugs and Suggestions:**
-    - **Bug and Suggestion lists in the Admin Panel and the Feedback dialog have a search bar for titles and descriptions.** The list searches when you stop typing, or at once when you press Enter. **Clear Search** shows the full list again. The search stays when you open a thread and go back.
-    - **Bug and Suggestion lists in the Admin Panel and the Feedback dialog sort by Oldest and Recently Active.** Recently Active puts the thread with the latest reply or status change first. Suggestions add Most Voted. The Feedback dialog shows Sort in every list.
+    - **Bug and Suggestion lists in the Feedback dialog have a search bar for titles and descriptions.** The list searches when you stop typing, or at once when you press Enter. **Clear Search** shows the full list again. The search stays when you open a thread and go back.
+    - **Bug and Suggestion lists in the Feedback dialog sort by Oldest and Recently Active.** Recently Active puts the thread with the latest reply or status change first. Suggestions add Most Voted. The Feedback dialog shows Sort in every list.
     - **Bug and Suggestion lists show search and the main filters on one row, and the rest under a Filters button.** A badge on **Filters** counts the filters you changed. **Reset Filters** returns every filter to its default and keeps your search.
   - **Patreon Supporters:**
     - **`formamorph.ai/account` and your profile's Settings tab have a Patreon section to link Patreon and show Supporter Flair.** The section shows your tier and how long you've supported. Clear **Show Supporter Flair** to hide your flair. **Unlink** asks first and removes the flair at once.
-    - **A supporter's name shows a Supporter or Supporter+ badge, the tier color and a ring around their Profile Image.** It shows on community cards, listing details, comments, feedback, notifications and profiles. Point at the badge to see how long they've supported. Staff keep their staff badge only.
+    - **A supporter's name shows a Supporter or Supporter+ badge, the tier color and a ring around their Profile Image.** It shows on community cards, listing details, comments, feedback, notifications and profiles. Point at the badge to see how long they've supported.
     - **`formamorph.ai/supporters` lists the Patreon supporters who linked their account and kept Supporter Flair on.** Supporter+ names come first, and the longest-standing supporter leads each section. Each name links to the profile. The landing page footer and the account page link to it.
   - **On the World Editor's Locations tab, List and Canvas are icons with tooltips at the end of the search row.**
   - **In Backup & Restore, each save shows the name of its world at the right of its row.** Point at the row to see the full name when it is too long to fit.
@@ -997,31 +1305,33 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
+  - **Settings:**
+    - **The Continue the Story ⓘ help in Settings says the button puts its text in the action box to send.**
+    - **Settings now reads the Context Window from a llama.cpp server.** Each detected value stays with its endpoint and model.
+    - **In Settings → Endpoints → Text, Reset AI Endpoint sits in the tab's footer, so you see it without scrolling.** The help and status lines on the Text and Image tabs are clearer. The Max Output checkbox reads **Override Endpoint Limit**. The **Negative Prompt** field shows example tags.
+    - **Turning off Enable Image Generation keeps the Image tab in place and shows "Image generation is off".** The settings stay hidden and keep their values. The preset list and its buttons turn off too, and only **Enable Image Generation** stays usable.
+  - **Bugs and Suggestions:**
+    - **Every Bugs and Suggestions list opens on the threads that still need work.** Bugs open on Unresolved and Suggestions on Still Open. The Feedback dialog has a new **Status** filter, so **All statuses** brings closed threads back.
+    - **In Bugs and Suggestions, Back from a thread returns to the page and scroll position you opened it from.** When the page no longer exists, the list shows the last page. Before, Back always returned to page 1.
+  - **World Editor:**
+    - **The World Editor opens a world file that has no `id` field.** Before, loading such a file blanked the whole app.
+    - **In a chip's pop-out, the Label, Header, Prepend and Append fields keep the cursor where you type.** They keep every key you press.
+    - **In a trait's Requires field, the Add Requirement list keeps each name readable when its group path is long.** A path of three or more parts shows only its first and last, as in "Lore › … › Deep". Point at the row to see the full path.
+  - **In Game:**
+    - **Placeholders in the library entities and dictionaries you add at Enter World now show their values in the story.** Before, their chips read empty in narration. Each value is rolled once and stays the same for the whole playthrough, after a save and a reload too.
+    - **Stat code now reads the played persona's traits correctly, through `persona.traits`.** `traits` lists only the world's own traits. `persona.traits['Scarred'].enabled = false` switches the persona's trait off. `persona.name` gives the persona's name. The code editor completes the persona trait names.
+    - **Scene images now draw the persona you play.** The tag pass lists the persona with the other people in the picture and uses the persona's Image Tags. The planner decides when the player is in the picture; with planning off, the persona is always drawn.
   - **Backup & Restore:**
     - **Backup & Restore saves and restores a library backup of any size.** Restore reads one item at a time in the background, so the app keeps responding. It skips an item that already exists unless you choose to overwrite it.
     - **Backup & Restore stays inside its window when an item has a long name.** A long name shortens with "…", and the list uses the app's thin scroll bar.
-  - **Bugs and Suggestions:**
-    - **Every Bugs and Suggestions list opens on the threads that still need work.** Bugs open on Unresolved and Suggestions on Still Open. The Feedback dialog has a new **Status** filter, so **All statuses** brings closed threads back.
-    - **In the Admin Panel's Bugs and Suggestions queues, Unresolved and Still Open show every matching thread on every page.** The queue asks the server once for all the statuses, and the page count is exact. Before, the queue sent one request for each status, and a page could come back short with a warning.
-    - **In Bugs and Suggestions, Back from a thread returns to the page and scroll position you opened it from.** This works in the Feedback dialog and in the Admin Panel queues. When the page no longer exists, for example after triage moved the thread out, the list shows the last page. Before, Back always returned to page 1.
   - **Prompts:**
     - **The Persona chip sends the active traits of the persona you play inside the persona's block.** It does this as the Entities chip does for each entity. Full content lists each trait's AI-Facing Description under its name, and Summary gives one "traits:" line of names.
     - **When the Location, Entities or Persona chip sends an authored AI Summary, the AI reads it under "summary", not "description".** This applies in every format. A chip set to Summary still sends the full description, under "description", when no summary is written.
   - **The built-in engine loads on the GPU you pick in GPU Device on a machine with an integrated GPU.** The engine looks up each card's real device number before it loads. If it gets another card, the load stops with a message that names both. The engine updates to node-llama-cpp 3.22.1 with llama.cpp v0.5.0.
-  - **The World Editor opens a world file that has no `id` field.** Before, loading such a file blanked the whole app.
-  - **In a chip's pop-out, the Label, Header, Prepend and Append fields keep the cursor where you type.** They keep every key you press.
-  - **The Continue the Story ⓘ help in Settings says the button puts its text in the action box to send.**
   - **The wiki's World Format page lists every world file field, with steps to add a stat, trait or entity.** It shows the chip form for hand-written text and which older fields still load. It covers placeholders, Blueprints, links, persona marks and openings on locations.
-  - **Settings now reads the Context Window from a llama.cpp server.** Each detected value stays with its endpoint and model.
-  - **In Settings → Endpoints → Text, Reset AI Endpoint sits in the tab's footer, so you see it without scrolling.** The help and status lines on the Text and Image tabs are clearer. The Max Output checkbox reads **Override Endpoint Limit**. The **Negative Prompt** field shows example tags.
-  - **Turning off Enable Image Generation keeps the Image tab in place and shows "Image generation is off".** The settings stay hidden and keep their values. The preset list and its buttons turn off too, and only **Enable Image Generation** stays usable.
-  - **Placeholders in the library entities and dictionaries you add at Enter World now show their values in the story.** Before, their chips read empty in narration. Each value is rolled once and stays the same for the whole playthrough, after a save and a reload too.
-  - **Stat code now reads the played persona's traits correctly, through `persona.traits`.** `traits` lists only the world's own traits. `persona.traits['Scarred'].enabled = false` switches the persona's trait off. `persona.name` gives the persona's name. The code editor completes the persona trait names.
   - **A search in a multi-pick list shows its matches when you type over the old search.** This works in lists such as a location's entities.
-  - **In a trait's Requires field, the Add Requirement list keeps each name readable when its group path is long.** A path of three or more parts shows only its first and last, as in "Lore › … › Deep". Point at the row to see the full path.
   - **Semantic Memory, Semantic Lore, Scene Recall and Diary Recall load the files that run their model from the app.** Before, each load downloaded these files, about 21 MB, from cdn.jsdelivr.net, even with the model already downloaded.
   - **Long dialogs keep their title and buttons on screen, and only the content between them scrolls.** This covers the adult content check, the policy prompts, **Send Feedback**, **Edit This Report**, event announcements and **Custom Code Execution**. These dialogs use the app's thin scroll bar.
-  - **Scene images now draw the persona you play.** The tag pass lists the persona with the other people in the picture and uses the persona's Image Tags. The planner decides when the player is in the picture; with planning off, the persona is always drawn.
   - **The app and the formamorph.ai account pages open in your theme from the first frame.** This covers your color preset, and your saved theme on the account pages.
 - **🛠️ Developer tooling**
   - **The Enter World tests in `MainMenu.entry.test.tsx` finish inside Vitest's 5-second limit during a full `npm test` run.** `EnterWorldFlow` holds the setup choices, so a pick renders only the setup dialog. A test fails when a pick renders the whole main menu again.
@@ -1039,7 +1349,7 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### ➕ Added
 
 - **👤 User-facing**
-  - **In Community Creations and on profiles, a contest entry shows its like count as a dash until staff announce the winners.** A tooltip says when the likes will show. The heart still likes and unlikes the entry. The author and staff see the number, with a tooltip that says only they see it. A sort by likes puts hidden entries with the entries that have no likes.
+  - **In Community Creations and on profiles, a contest entry shows its like count as a dash until the winners are announced.** A tooltip says when the likes will show. The heart still likes and unlikes the entry. The author sees the number, with a tooltip that says only they see it. A sort by likes puts hidden entries with the entries that have no likes.
   - **A profile lists the author's work in two columns, most recently updated first, in the game and on formamorph.ai.** Phones show one column. The profile window is wider and has less empty space around its content. A line sets Prompts apart from the other kinds, as in Community Creations. The list opens on the kind of work the author updated last.
   - **Turn on Image Attachments in Settings → Output to attach up to 4 images to an action, and the AI gets them with your text.** An attach button beside the action box opens a file picker. You can also paste an image into the box or drop image files on it. The images wait above the box, where you can remove one, and leave with the action when you send it. Each prompt has an **Include Attachments** option on its **Options** tab. **Narration** has it on, and every other prompt has it off. The option travels in a shared preset. An image over 1568 px on its long side is shrunk to that size, and every image is sent as JPEG. Your past actions show their images, and a click opens the image viewer. **Re-generate Narration** sends the turn's images again, and with the setting off it sends none but keeps them. **Edit** on an action keeps its images and lets you remove one. A model that can't read images returns its error in the usual error toast. The bundled local engine can't read images, so it runs the turn on text and shows one warning per session. A save keeps the images, so a loaded save shows them again, on any machine.
 - **🛠️ Developer tooling**
@@ -1051,8 +1361,7 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
   - **Community Creations:**
     - **Community Creations shows its window at once when you open it again, and the cards fill in after.** Before, the window waited for every card to draw, which took over a second on a slow device. Scroll, search, and **Back** stay responsive while the cards draw. When the latest catalog arrives, only the cards that changed draw again. Tooltips now share one popup, so every screen with many tooltips draws faster, not only this one.
     - **In Community Creations, press Tab to reach a card's name, then Enter or Space to open its details window.** Before, a card opened only with a pointer. Clicking the card works as before, and the like, download and hide buttons do not open the card.
-    - **In Community Creations, a contest's entries stay shuffled while the contest is judged, and sort by likes only after staff announce the winners.** Before, judging put the most-liked entries first, which gave away the like order. The winners still lead once announced.
-    - **For staff, a scheduled contest stays off the Contest tab in Community Creations until it starts.** Before, it showed there as being judged. It still shows under **Scheduled** in the Events tab.
+    - **In Community Creations, a contest's entries stay shuffled while the contest is judged, and sort by likes only after the winners are announced.** Before, judging put the most-liked entries first, which gave away the like order. The winners still lead once announced.
     - **A listing's details window always shows the Changelog | Comments switch, so the right column no longer jumps when the window opens.** **Changelog** stays dimmed until the listing has entries. On your own listing it works at once, so you can start a changelog. The window reads the entry and comment counts from the catalog, so **Changelog** works at once when the listing has entries, and the comment count shows while the comments load. Gray rows hold the place of the comments, and a listing with no comments shows its empty message at once. A tab you press while the window loads stays selected when the listing details arrive. **Linked Content** and **Compatible Worlds** now sit at the end of the left column, so when they arrive they push nothing above them.
     - **A listing's details window in Community Creations fills in sooner: a listing you opened before shows its details at once, and a card you rest on starts to load before you open it.** The latest details replace the ones kept from before when they arrive. If the server doesn't answer, the details you saw last stay on screen. A listing deleted or hidden since your last visit doesn't show them. Signing in, signing out or switching accounts never shows you details kept for someone else. Declining the age gate clears them with the rest of the Community Creations data on your device. Keyboard focus that rests in a card loads it too. Moving across cards loads nothing, and touch never loads ahead.
     - **On formamorph.ai, declining the adult-content warning clears the Community Creations catalog, images and listing details saved on that device.** The same happens while the warning is unanswered. Before, only the game cleared them, so a reader who declined on the site kept them.
@@ -1060,7 +1369,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **The World Editor's Overview tab has a ? help button, and the wiki's Overview, Openings, Stats, Entities, Locations and Dictionary pages now match the editor.** Each page starts with numbered steps for common tasks. Before, the Entities page said `{{char}}` imports as plain text. The Stats page named chip options that don't exist, and it said Regen adds once per turn. The Dictionary help said to separate keywords with commas. The **?** help for entities, aliases, locations, location pins, stats and the dictionary now links to its section of the page.
     - **The wiki's Traits, Placeholders and Personas for Authors pages now match the World Editor, and each now has numbered steps for common tasks.** Before, the Traits page put **Requires** on the wrong tab, put **Link To…** on the wrong tab, and named a **Begin** button that doesn't exist. The **?** help for traits, stat changes, stat availability, placeholder pins and placeholders now links to its section of the page.
     - **The ? help in the Memories dialog, the in-game Entities tab, a stat's Code tab and the linked-content dialogs now matches the app.** **Learn more** opens the matching section of the wiki page. The Memories help names each button by its tooltip. The Entities help says you can also remove an entity you added under **Library Additions**. The stat code help says `traits` holds the world's own trait list, not traits an entity owns. The wiki pages for Memory, Entities, Personas, Connect Your Own AI, Install on Android, Text Formatting, the Stat Code Guide and Linked Content gain numbered "How to…" steps and now match the app.
-  - **For staff, a profile window shows only the list for the selected tab, Creations or Likes.** Before, the Likes list stayed on screen under Creations after you switched back.
   - **Image generation with a blank Endpoint on A1111, ComfyUI or InvokeAI calls `http://localhost` on that server's port.** Before, it called `127.0.0.1`, which fails for a server that listens only on IPv6.
   - **In the World Editor, the buttons that write a summary, image tags or the other description work on models that think before they answer.** Before, a thinking model such as DeepSeek V4 Flash on Novita used up the reply on thinking, and the button failed with "Empty summary response." The buttons now switch thinking off on every endpoint that allows it. They also use your endpoint's sampler and Max Output settings, like the prompts in play.
 - **🛠️ Developer tooling**
@@ -1088,8 +1396,9 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
 #### 🔧 Fixed
 
 - **👤 User-facing**
-  - **In the Traits tab, dragging a top-level trait or group onto an entity moves it to that entity in Basic and Advanced alike.** Before, Advanced tried to link it, and the Custom Persona entity refused it because the player already had it.
-  - **The Test Bench's pinned placeholder check reads traits an entity owns.** Before, it read only the world's top-level and Blueprints traits.
+  - **World Editor:**
+    - **In the Traits tab, dragging a top-level trait or group onto an entity moves it to that entity in Basic and Advanced alike.** Before, Advanced tried to link it, and the Custom Persona entity refused it because the player already had it.
+    - **The Test Bench's pinned placeholder check reads traits an entity owns.** Before, it read only the world's top-level and Blueprints traits.
   - **A new game as None applies the Custom Persona entity's stat traits.** Their Stat Changes now land at the start and show in the Enter World preview. Before, the stats they turned on opened at their authored value.
   - **On Novita, DeepSeek V3.1 and later and GLM 4.5 and later stop thinking on prompts with Native Reasoning off.** Short passes such as Location Change and Time Passed no longer fail with "The model reached its token limit before it wrote an answer." Each request sends Novita's `enable_thinking: false`.
   - **Tables in narration and world descriptions wrap only between words.** A narrow column no longer splits a short word such as a name across lines.
@@ -1173,6 +1482,12 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **A SillyTavern card you import keeps `{{char}}` as a Character Name chip.** It works in the entity's AI-Facing Description and openings, so a rename reaches its text. The card's lorebook still names the character as plain text. Entities you imported before keep their text.
     - **In an entity's fields, the Preview tab shows a Character Name chip as the entity's current name.** It works in the World Editor, the world's Openings tab and your library. With no name yet, the chip shows its label.
     - **A placeholder you make from an entity's opening joins that entity's placeholders, like one made from its descriptions.**
+  - **Trait Modes:**
+    - **A trait group in the World Editor sets how many of its traits the player can pick.** **Pick Count** replaces **Exclusive** with **Any**, **Exactly One**, **Up to One** or **Custom**. At Enter World, a group short of its minimum keeps **Start game** disabled. In play, you can't switch off a trait that leaves its group short.
+    - **A trait in the World Editor can be Always On, so it's active whenever its requirements hold.** The **Mode** control on the trait's Availability tab picks **Optional** or **Always On**. The player can never switch it. A curse can require a cursed item: pick the item and the curse arrives.
+    - **A trait in the World Editor can be Hidden: it works like Always On, but the player never sees it.** The AI reads it, and its stat changes apply. Enter World, the in-game Traits tab, the turn log and the banner never name it. The Prompt viewer and the Test Bench show it.
+    - **A trait link can set its own Mode, so one entity has a trait Always On while another picks it.** Open a linked trait and use **Mode** on its Availability tab. The link reads the original's Mode until you change it, and **Reset** puts it back.
+    - **The Test Bench catches trait group pick counts that a player can't meet.** Errors flag defaults below the minimum, a minimum too few traits can unlock, and a minimum above the maximum. A warning flags more defaults than the maximum. The rule "Trait Group Multiple Defaults" is now "Trait Group Defaults Over Max".
   - **Trait Requirements:**
     - **A trait in the World Editor has an Availability tab with its checkboxes and a new Requires field.** **Add Requirement** picks another trait, any trait in a group, or a persona to play as. Requirements show as chips joined by "or". A requirement whose target is gone turns red.
     - **The Enter World trait step locks a trait until one of its requirements is picked.** A locked trait shows a lock and a line such as "Requires Paladin or Knight". Removing a requirement turns off the traits that need it, along the chain. A banner says what turned off and why.
@@ -1182,11 +1497,21 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **Your library shows Morph art for an entity or Avatar with no picture.** Each one gets its own picture: its first letter made of goo, on a color picked from the entity. The same entity always gets the same picture. It follows your **Font** setting and your theme.
     - **A character card exported from an entity with no picture shows Morph art.** It replaces the initials on a flat color. Cards you already exported keep their initials.
     - **Community Creations shows Morph art for an entity or Avatar published without a picture.** It replaces the purple silhouette on the card, the details window and the author's profile. An entity you download shows the same picture in your library.
-  - **A trait group in the World Editor sets how many of its traits the player can pick.** **Pick Count** replaces **Exclusive** with **Any**, **Exactly One**, **Up to One** or **Custom**. At Enter World, a group short of its minimum keeps **Start game** disabled. In play, you can't switch off a trait that leaves its group short.
-  - **A trait in the World Editor can be Always On, so it's active whenever its requirements hold.** The **Mode** control on the trait's Availability tab picks **Optional** or **Always On**. The player can never switch it. A curse can require a cursed item: pick the item and the curse arrives.
-  - **A trait in the World Editor can be Hidden: it works like Always On, but the player never sees it.** The AI reads it, and its stat changes apply. Enter World, the in-game Traits tab, the turn log and the banner never name it. The Prompt viewer and the Test Bench show it.
-  - **A trait link can set its own Mode, so one entity has a trait Always On while another picks it.** Open a linked trait and use **Mode** on its Availability tab. The link reads the original's Mode until you change it, and **Reset** puts it back.
-  - **The Test Bench catches trait group pick counts that a player can't meet.** Errors flag defaults below the minimum, a minimum too few traits can unlock, and a minimum above the maximum. A warning flags more defaults than the maximum. The rule "Trait Group Multiple Defaults" is now "Trait Group Defaults Over Max".
+  - **Avatars:**
+    - **The library's Avatars tab has a Detailed view, and each tab remembers its own view.** An Avatar's card text names the authors its file credits.
+    - **An Avatar card's menu lets you pick its thumbnail: the image from the file, or a generated portrait.** Right-click an Avatar and pick **From File** or **Generated** under **Thumbnail**. **Generated** draws a head-and-shoulders portrait. Your next publish sends the image you picked. The Avatar file doesn't change.
+    - **An Avatar's details start collapsed, and its Export and Publish buttons share one row.** The 3D preview gets the room. Open **Details** to read the author, format, size and license. **Export** and **Publish** sit side by side at equal width.
+  - **World Editor Search:**
+    - **The World Editor's Traits search finds each entity's own traits and Links, not only the world's traits.** An entity's trait or Link shows the entity's name first, such as "Ash › Tamed". Click a row to open its trait or Link.
+    - **The World Editor's Placeholders search lists every matching placeholder: the world's, each entity's and each book's.** An entity's or book's placeholder shows its owner's name first, such as "Molly › Eyes". Each row has the same **Duplicate** and **Delete** buttons as its tree row.
+    - **The World Editor's Dictionary tab and the library dictionary editor search their entries.** The list shows the matching books and entries flat, each entry with its book's name first. Each row keeps its tree buttons. In the library editor, **Add entry** names the new entry from the text.
+  - **Placeholders Tab:**
+    - **In the World Editor, an entity's or book's Placeholders tab has a search box and a + button.** **+** adds a placeholder named from the text. Select a row, and its details slide in over the list. A blueprint copy opens its copy editor.
+    - **In the library entity and dictionary editors, the Placeholders tab has a search box and a + button.** **+** adds a placeholder named from the text. In an entity, a blueprint copy opens over the blueprint the entity carries, so you never change the blueprint.
+    - **In the library entity and dictionary editors, the placeholder palette sits at the top of the right pane.** It shows on the Traits, Placeholders and Dictionary tabs, whether or not anything is selected. Click a chip to put the placeholder into the field you are editing.
+  - **Publishing:**
+    - **Community Creations refuses the default Avatar.** When you publish it from the **Avatars** tab, a message tells you to upload your own VRM. A copy under a new name is refused too, because the check reads the file's bytes.
+    - **Publish World refuses a bundled world you haven't edited.** The publish dialog doesn't open, and a message tells you to edit the world first. Save an edit to the world's text, and it publishes as before. A world you made always publishes.
   - **Emberwatch joins the bundled worlds: a high-fantasy frontier keep built as an example RPG race-and-class system.** Build a character from a **Race** and a **Class**, or play **Albus** the Human Paladin or **Sylvie Thornwhistle** the Elf Rogue. Its readme ends with **How this world is built**, which names the world's example of each authoring feature.
   - **A world persona can name its own starting location, and Enter World selects it when you pick that persona.** In Advanced, a persona has a **Starting Location** dropdown in the World Editor. Enter World's persona picker shows "Starts at Old Road" under it. You can still change the location.
   - **The World Editor's Overview tab splits Persona Choice into Allowed Personas and Starts On.** **Allowed Personas** is **Any** or **World Only**, which offers no library personas. **Starts On** picks the persona a new player starts on. Worlds you made with Persona Choice load with the same behavior.
@@ -1195,22 +1520,11 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
   - **On mobile, a detail panel's back button is an arrow in the panel's own header.** The arrow leads the panel's tab strip, or its first row. Point at it to see the list it returns to. The placeholder strip above a panel starts collapsed on mobile.
   - **A world that placed in a contest wears its place as a gold, silver or bronze chip.** It shows on the community card, the library card and both details views. In Community Creations, clicking it opens that contest's tab.
   - **Community Creations and the library's Detailed view show entities and Avatars as wide cards with a tall image.** The tall image shows a face in full. The details window shows the image tall too, with the author, counts, dates, tags and download button beside it.
-  - **The library's Avatars tab has a Detailed view, and each tab remembers its own view.** An Avatar's card text names the authors its file credits.
   - **Your persona always heads the in-game Entities tab, marked (You).** It shows in every scene and opens like any other entity: its picture in the side view, or its card.
   - **AI Context shows each request's raw reasoning in its own section.** **Raw Reasoning** sits between **Raw Input** and **Raw Output**, on the turn it was generated. Search finds text in it, and the export includes it. The thinking is never sent back in later turns.
   - **The Test Bench's Triggers tab says when an entry missed only because of Case-Sensitive.** An entry with **Case-Sensitive** on that finds its keyword in another case reads, for example, “bell” appears only as “Bell”. The entry still doesn't activate.
-  - **Community Creations refuses the default Avatar.** When you publish it from the **Avatars** tab, a message tells you to upload your own VRM. A copy under a new name is refused too, because the check reads the file's bytes.
-  - **Publish World refuses a bundled world you haven't edited.** The publish dialog doesn't open, and a message tells you to edit the world first. Save an edit to the world's text, and it publishes as before. A world you made always publishes.
   - **In the World Editor, each Connection direction has its own Travel Hint, and the AI reads the one you travel.** A two-way Connection shows two boxes, **To** and **From** the other location. A link toggle beside them makes the top hint apply to both directions. Worlds you already have keep each hint in both directions.
-  - **The World Editor's Traits search finds each entity's own traits and Links, not only the world's traits.** An entity's trait or Link shows the entity's name first, such as "Ash › Tamed". Click a row to open its trait or Link.
-  - **The World Editor's Placeholders search lists every matching placeholder: the world's, each entity's and each book's.** An entity's or book's placeholder shows its owner's name first, such as "Molly › Eyes". Each row has the same **Duplicate** and **Delete** buttons as its tree row.
-  - **The World Editor's Dictionary tab and the library dictionary editor search their entries.** The list shows the matching books and entries flat, each entry with its book's name first. Each row keeps its tree buttons. In the library editor, **Add entry** names the new entry from the text.
-  - **In the World Editor, an entity's or book's Placeholders tab has a search box and a + button.** **+** adds a placeholder named from the text. Select a row, and its details slide in over the list. A blueprint copy opens its copy editor.
-  - **In the library entity and dictionary editors, the Placeholders tab has a search box and a + button.** **+** adds a placeholder named from the text. In an entity, a blueprint copy opens over the blueprint the entity carries, so you never change the blueprint.
-  - **In the library entity and dictionary editors, the placeholder palette sits at the top of the right pane.** It shows on the Traits, Placeholders and Dictionary tabs, whether or not anything is selected. Click a chip to put the placeholder into the field you are editing.
   - **Each World Editor tab keeps its own selection.** Open a trait, go to Stats, and come back to Traits: the trait is still open. A search hit or a Test Bench finding selects its item on its own tab only.
-  - **An Avatar card's menu lets you pick its thumbnail: the image from the file, or a generated portrait.** Right-click an Avatar and pick **From File** or **Generated** under **Thumbnail**. **Generated** draws a head-and-shoulders portrait. Your next publish sends the image you picked. The Avatar file doesn't change.
-  - **An Avatar's details start collapsed, and its Export and Publish buttons share one row.** The 3D preview gets the room. Open **Details** to read the author, format, size and license. **Export** and **Publish** sit side by side at equal width.
 
 - **🛠️ Developer tooling**
   - **Chip Values:**
@@ -1232,7 +1546,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
   - **A Playwright spec walks the whole Authoring Tour as a new author.** `e2e/authoring-tour.spec.ts` makes a world, takes every step, and checks the counter, **Next** and In Play on each. A stub answers the model calls. It runs under `npm run test:e2e` in about 12 seconds.
   - **The request layer runs a tool loop.** It sends Tools only to endpoints and models known to take them, and runs each streamed call through the caller's executor. A Tool's call limit, or the default of 4, ends the loop. A request sends at most 6 rounds.
   - **`npm run fingerprints` writes the list the server uses to refuse bundled worlds and default Avatars.** It fingerprints every git revision of every bundled world, and hashes every revision of both default Avatar files. A fingerprint skips stat code, so migration doesn't change it. A test fails when a bundled world's text is missing.
-  - **Admin Panel → Users shows an administrator each account's email and every account's Privacy Policy answer.** The email sits under the username. The new **Privacy** column reads Accepted, Declined or Not Seen. Other staff roles see no email, and their search and sort don't match on it.
   - **The Grouped Context Actions reference shows the item-action section players see.** Its sample is a persona entity on the production entity card. The Main Menu and the reference build the default-persona item from one component. The guide's rule puts the item's own actions last, with **Delete** last.
 
 #### ➖ Removed
@@ -1258,27 +1571,30 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **An image generation error toast has a View Details link to the full error.** For ComfyUI, it lists each failing node and what's wrong with it. For other providers, it shows the HTTP status and the full reply. **Copy** puts it all on your clipboard, with your Formamorph version, platform and system.
     - **The "Failed to process AI request" toast has a View Details link to your AI server's reason.** **View Details** shows the endpoint, the model, the HTTP status and the server's message, such as "model not found". A key or token in the endpoint URL shows as `[redacted]`.
     - **A failed delete, quarantine or release toast in Community Creations has a View Details link to the failed request.** It shows the route, the HTTP status and the server's full reply. It never includes your sign-in token.
-    - **Error toasts in Feedback, Messages, Backup and the Admin Panel have a View Details link to the full error.** It shows the cause and any failed request with its HTTP status, then your version block. A toast that only asks you to fill in a field has no link.
+    - **Error toasts in Feedback, Messages and Backup have a View Details link to the full error.** It shows the cause and any failed request with its HTTP status, then your version block. A toast that only asks you to fill in a field has no link.
     - **Error toasts in Settings, the library editors and Community Creations listings have a View Details link to the full error.** A failed save, import, comment, like or report shows its cause and any failed request. When several add-on reviews fail at once, it lists each add-on's reason.
     - **Error toasts in play, the World Editor, the library and downloads have a View Details link to the full error.** This covers a failed game save or load, world import, export, download or AI **Generate**. A failed turn whose AI request already has a link keeps its toast short.
     - **Error Details has a Report Bug button that opens a bug report with the error filled in.** **Report Bug** fills the title with the toast's message and the description with the details. It works in the main menu, the World Editor and play. When you're signed out, it asks you to sign in first.
+  - **In Game:**
+    - **A character who introduces themselves in dialogue shows in the Entities tab.** A self-introduction such as "I'm Freya" or "Call me" in a character's own line counts. A new character who introduces themselves joins your cast on sight. Your own introduction never counts.
+    - **The persona picker shows each persona's portrait and player-facing description.** In **Enter World** and **Change Persona**, each persona shows a 2:3 portrait and up to three lines of its description. Square entity thumbnails crop from the top, so they show the face.
+    - **Each character's planning and diary requests read that character's description with its placeholders filled in.** They sent the raw placeholder tokens before. The planning request runs with Staged thinking. Scene pictures built from a character's description fill them in too.
+    - **Drawing a scene again uses the tags you edited.** **Draw again** and **Generate Scene Image** wrote new tags from the narration before, so a redraw after an edit used the old tags and the next one used your edit. Only **Re-roll tags** writes new tags now.
   - **Openings:**
     - **The Player Action | Narration switch on an opening card keeps its selected pill inside the switch.** The pill was taller than the switch and stuck out of it. Every switch of this kind now fills its pill to the height of its track.
     - **Openings is the last tab in the World Editor's entity panel.** It sat before Placeholders.
     - **The add button under an entity's openings in the World Editor names the entity.** It reads "Add Opening to Guide" instead of "Add Opening", so you see where the new opening goes.
-  - **In the World Editor's entity and dictionary panels, the Placeholders tab's editor fills the panel at any window height.** The list scrolls inside the box, with its + button in place. The pushed panel on mobile does the same.
-  - **The Output tab's Native Reasoning row follows your active endpoint, not the prompt selected on the Prompts tab.** Every Global prompt follows that row. The prompt's own **Native Reasoning** control on the Prompts tab follows the endpoint that prompt is pinned to.
-  - **Settings reads each new LM Studio model's reasoning and Tools support, even with the model left as `default`.** Formamorph reads LM Studio's model list again once per session, so a model you load in LM Studio replaces the last model's answers after a reload. The check costs one quick request and sends no test message.
+  - **World Editor:**
+    - **In the World Editor's entity and dictionary panels, the Placeholders tab's editor fills the panel at any window height.** The list scrolls inside the box, with its + button in place. The pushed panel on mobile does the same.
+    - **A stat's default descriptors follow its name when you rename it.** Renaming a stat rewrites each "New Stat is low" style descriptor you haven't edited. A descriptor you wrote yourself stays as written. Stats already saved with the old text don't change.
+    - **The World Editor's detail panel and the library's entity and dictionary editors keep their tab strip still while fields scroll.** It stays on the stat, entity, location, trait and dictionary panels, with the placeholder palette.
+  - **Settings:**
+    - **The Output tab's Native Reasoning row follows your active endpoint, not the prompt selected on the Prompts tab.** Every Global prompt follows that row. The prompt's own **Native Reasoning** control on the Prompts tab follows the endpoint that prompt is pinned to.
+    - **Settings reads each new LM Studio model's reasoning and Tools support, even with the model left as `default`.** Formamorph reads LM Studio's model list again once per session, so a model you load in LM Studio replaces the last model's answers after a reload. The check costs one quick request and sends no test message.
+    - **The Entities chip with Name content lists only who is in the scene in the Choices and re-roll prompts.** That variant read the whole location roster, past the presence filter the other variants respect. Every variant of the chip now comes from one enumerated set, so a new variant cannot miss the filter.
   - **The dark shade behind a card's name fades smoothly into its picture.** The shade had a visible line where it ended and faint stripes over dark pictures. It now eases out over a longer distance on library and Community Creations cards, and eases out on library tiles too.
-  - **A character who introduces themselves in dialogue shows in the Entities tab.** A self-introduction such as "I'm Freya" or "Call me" in a character's own line counts. A new character who introduces themselves joins your cast on sight. Your own introduction never counts.
-  - **The persona picker shows each persona's portrait and player-facing description.** In **Enter World** and **Change Persona**, each persona shows a 2:3 portrait and up to three lines of its description. Square entity thumbnails crop from the top, so they show the face.
-  - **A stat's default descriptors follow its name when you rename it.** Renaming a stat rewrites each "New Stat is low" style descriptor you haven't edited. A descriptor you wrote yourself stays as written. Stats already saved with the old text don't change.
   - **A changelog entry you write while an update uploads reaches the listing.** The publish attaches the entry as it is when the upload finishes. If the entry popup is still open then, the publish waits for **Attach to Update** or **Cancel**.
-  - **The Entities chip with Name content lists only who is in the scene in the Choices and re-roll prompts.** That variant read the whole location roster, past the presence filter the other variants respect. Every variant of the chip now comes from one enumerated set, so a new variant cannot miss the filter.
-  - **Each character's planning and diary requests read that character's description with its placeholders filled in.** They sent the raw placeholder tokens before. The planning request runs with Staged thinking. Scene pictures built from a character's description fill them in too.
-  - **Drawing a scene again uses the tags you edited.** **Draw again** and **Generate Scene Image** wrote new tags from the narration before, so a redraw after an edit used the old tags and the next one used your edit. Only **Re-roll tags** writes new tags now.
   - **A select's value starts at its left edge, however long it is.** A long value starts at the left, like a short one, and is cut off at the right.
-  - **The World Editor's detail panel and the library's entity and dictionary editors keep their tab strip still while fields scroll.** It stays on the stat, entity, location, trait and dictionary panels, with the placeholder palette.
 
 - **🛠️ Developer tooling**
   - **Design System:**
@@ -1451,10 +1767,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
   - **World Editor help reads the way a person writes it.** Field lines, ⓘ tips, empty states, Test Bench notes and help topics start with the verb or speak to you, and use contractions. What each control does is unchanged.
 
 - **🛠️ Developer tooling**
-  - **Anonymous Likes:**
-    - **The Likers dialog counts a listing's Anonymous Likes, groups them by address, and removes them.** The heading shows the account total and the anonymous count. **Audit the likes** shows each Anonymous Like in its shared-address group. Each address has a remove action, and **Remove all Anonymous Likes** clears the rest.
-    - **A claimed Anonymous Like wears a Claimed marker in the Likers dialog.** The original press shows above it.
-    - **The Admin Panel gains a Server tab, where an administrator switches Anonymous Likes off without a deploy.** The tab holds one **Anonymous Likes** box, read from the server. A refused write leaves the box where it was and says why. Likes already given stay counted. Reach it with `#dev?modal=adminPanel&tab=serverSettings`.
   - **Open Chat:**
     - **A narration probe compares the Open Chat world's narration prompt with revision 1 or the built-in one.** `open-chat-probe.mjs` runs under `vite-node` with a card from `open-chat-cards.json`. It scores first-person voice, asterisk actions, name prefixes, reply length and the model leaving the chat. `--no-rider` sends the bare player message.
     - **A choices probe compares the Open Chat world's choices prompt with revision 1 or the built-in one.** `open-chat-choices-probe.mjs` reads each reply through the choices parser. It scores parse success, the player's voice, quotation marks, deed format, choice length and overlap. `--rescore` scores a stored run again and sends nothing.
@@ -1497,11 +1809,6 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **`MarkdownRenderer` gains a `dialogue` prop that picks one of four module-constant plugin arrays.** This keeps Streamdown's per-block memoization intact.
     - **The quote settings write attributes on the document root, so a switch paints without a re-render.** `quoteColor` writes `data-quote-color`, and `quoteItalic` writes `data-quote-italic`. The active mode's custom color lands on the root as `--dialogue-custom`.
 
-#### ➖ Removed
-
-- **👤 User-facing**
-  - **Audit the likes on a listing writes no audit log entry.** Staff run the check often, and each run filled the log with a **Linked accounts viewed** row. Opening **Linked** on an account in Admin Panel → Users is still logged.
-
 #### 🔧 Fixed
 
 - **👤 User-facing**
@@ -1510,19 +1817,19 @@ _Unreleased — new work accumulates here until it earns a version bump. The nex
     - **A chip drag shows its drop caret inside the field on the target line.** Starting a drag doesn't insert a copy at the old caret. Crossing fields clears the previous insertion indicator.
     - **Dragging a chip over its own prepend or append text leaves the chip in place.** No drop target shows.
     - **Blank affix lines show a highlighted ↵ marker in Edit.** The stored text keeps its original line breaks.
+  - **World Editor:**
+    - **A field's Preview keeps a placeholder's drawn value when you re-spell that value on the Placeholders tab.** Every Preview shows the same value with its new spelling, where it used to draw a different one. Removing the value still draws a new one.
+    - **The library editors use only the entity's or dictionary's own placeholders.** Parts of both editors read and changed the placeholders of the last world you opened. Each editor reads and writes only its own item's placeholders. The **Placeholders** tab is the one place to edit them.
+    - **Selected text in a stat code field is readable.** The field tinted a selection with the theme's accent color, which left the text under it hard to read. It now uses a pale tint of your system's selection color, and the selected code keeps its syntax colors.
+    - **Deleting a location in the World Editor removes it from every entity and Connection.** The delete took the location off the list only, and entities and Connections kept its id. The delete clears both, and its sub-locations move up one level. **Exit Without Saving** brings it all back.
+  - **In Game:**
+    - **The narration reveal's Move, Scale and Blur effects stay visible on a fast model.** A fast stream cut each word's animation to a frame or two. **Min fade duration** defaults to 250ms. Set it to **Unlimited** for the old pacing. An install that already ran keeps its stored value.
+    - **An entity that stays in the scene stays in the Entities tab while the next reply streams.** With Thinking set to **Off** or **Inline**, a new reply rebuilt the scene list. The list only gains names while a reply streams, and an entity that left goes when the reply ends.
+    - **The Notes tab warns only when the narration prompt really has no Notes chip.** The warning looked for the bare `<NOTES>` text, so a chip with options showed it anyway. The tab checks the prompt the game sends.
   - **Community Creations:**
     - **A creation's details open with one fade on the website.** Opening a creation on formamorph.ai dimmed the page, cleared it and dimmed it again, so the background flashed twice. The details now open once and stay open.
     - **Community Creations thumbnails stay cached between launches when you are signed in.** The launch check of your adult-content answer emptied the thumbnail caches, so every thumbnail downloaded again. The caches empty only when the warning is unanswered or declined.
-  - **The narration reveal's Move, Scale and Blur effects stay visible on a fast model.** A fast stream cut each word's animation to a frame or two. **Min fade duration** defaults to 250ms. Set it to **Unlimited** for the old pacing. An install that already ran keeps its stored value.
-  - **An entity that stays in the scene stays in the Entities tab while the next reply streams.** With Thinking set to **Off** or **Inline**, a new reply rebuilt the scene list. The list only gains names while a reply streams, and an entity that left goes when the reply ends.
-  - **The audit log reads account deletions and privacy policy resets as sentences.** A deletion request, its cancellation, the erasure and the two privacy policy resets each read as an unrecognized action. All five have their own label and tint in the action filter.
-  - **A field's Preview keeps a placeholder's drawn value when you re-spell that value on the Placeholders tab.** Every Preview shows the same value with its new spelling, where it used to draw a different one. Removing the value still draws a new one.
-  - **The library editors use only the entity's or dictionary's own placeholders.** Parts of both editors read and changed the placeholders of the last world you opened. Each editor reads and writes only its own item's placeholders. The **Placeholders** tab is the one place to edit them.
-  - **The Admin Panel's tabs are reachable on mobile.** Six of eight tab labels were cut off at mobile width. The row becomes a dropdown of the current section wherever the labels don't fit, as Settings does.
-  - **Selected text in a stat code field is readable.** The field tinted a selection with the theme's accent color, which left the text under it hard to read. It now uses a pale tint of your system's selection color, and the selected code keeps its syntax colors.
   - **The Privacy Policy on `formamorph.ai` says what the one in the app says.** The public page had fallen a revision behind. It didn't say that a verified address receives verification and password-reset mail, or name **Resend**, which delivers it. The two texts match in full.
-  - **Deleting a location in the World Editor removes it from every entity and Connection.** The delete took the location off the list only, and entities and Connections kept its id. The delete clears both, and its sub-locations move up one level. **Exit Without Saving** brings it all back.
-  - **The Notes tab warns only when the narration prompt really has no Notes chip.** The warning looked for the bare `<NOTES>` text, so a chip with options showed it anyway. The tab checks the prompt the game sends.
 
 - **🛠️ Developer tooling**
   - **Baseline Harness:**

@@ -41,6 +41,7 @@ import { worldUsesAdvancedFeatures } from '@/lib/editorAdvancedData';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useListSearch } from '@/components/listToolbarHooks';
 import { useListEditor, type ListEditorParts } from '@/components/listEditorHooks';
+import { useTreeCollapseStore } from '@/components/treeCollapse';
 import { useWorldTraitsAdapter } from '../managers/useWorldTraitsAdapter';
 import { useWorldPlaceholdersAdapter } from '../managers/useWorldPlaceholdersAdapter';
 import { Button } from "@/components/ui/button";
@@ -68,7 +69,6 @@ import { TestBench, TestBenchButton } from '@/components/editor/TestBench';
 import { PanelErrorBoundary } from '@/components/PanelErrorBoundary';
 import { BenchPopover } from '@/components/editor/BenchPopover';
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
-import type { FindingSection } from '@/lib/testBench/rules';
 import { CodeCardNavigationContext, type CodeCardNavigation } from '@/lib/codeCardNavigation';
 import type { CodeUse } from '@/lib/codeUses';
 import { clearCodeUseReveal, requestCodeUseReveal } from '@/lib/codeUseReveal';
@@ -82,25 +82,32 @@ import {
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelGroupHandle } from 'react-resizable-panels';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ListDetail } from "@/components/ui/list-detail";
+import { DetailFooter, DetailFooterScope } from "@/components/ui/detail-footer";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useBackStop } from "@/hooks/useBackStop";
 import { useLeavePrompt } from "@/hooks/useLeavePrompt";
-import { toast } from 'react-toastify';
 import { toastError } from '@/lib/linkToast';
 import { ThemedToastContainer } from '@/components/ThemedToastContainer';
 import 'react-toastify/dist/ReactToastify.css';
 import { useWorldStatsAdapter } from '../managers/useWorldStatsAdapter';
 import { useScriptWrites, useWorldScriptsAdapter } from '../managers/useWorldScriptsAdapter';
 import { useWorldToolsAdapter } from '../managers/useWorldToolsAdapter';
+import { useWorldOptionsAdapter } from '../managers/useWorldOptionsAdapter';
 import { CURRENCIES_ID, EQUIPMENT_ID, useWorldItemsAdapter } from '../managers/useWorldItemsAdapter';
 import { ITEM_PANEL_TABS, itemPanelTabsFor, type ItemPanelTab } from './itemPanelTabs';
 import { useWorldEntitiesAdapter } from '../managers/useWorldEntitiesAdapter';
 import { useWorldLocationsAdapter } from '../managers/useWorldLocationsAdapter';
+import { useEntityPick } from '../managers/useEntityPick';
+import { presenceLines } from '@/lib/locationPresenceReasons';
+import type { ConnectionOpen } from '../managers/LocationConnections';
 import { useWorldDictionaryAdapter } from '../managers/useWorldDictionaryAdapter';
 import { useWorldMediaEditor } from '../managers/useWorldMediaEditor';
 import type { OptimizeControl } from '../managers/MediaHeader';
 import { LOCATION_VIEWS, type LocationView } from './locationViews';
-import { NO_OVERVIEW_PANEL, overviewPanelFor, type OverviewPanel } from './overviewPanels';
+import {
+  DEFAULT_OVERVIEW_PLACE, OVERVIEW_PANEL_TABS, overviewPanelTabsFor, overviewPlaceFor, overviewPlaceForField, overviewOriginValue,
+  type OverviewPanelTab, type OverviewPlace,
+} from './overviewPanelTabs';
 import { placeholderPanelTabsFor, type PlaceholderPanelTab } from './placeholderPanelTabs';
 import { ENTITY_PANEL_TABS, entityPanelTabsFor, type EntityPanelTab } from './entityPanelTabs';
 import { LOCATION_PANEL_TABS, locationPanelTabsFor, type LocationPanelTab } from './locationPanelTabs';
@@ -112,6 +119,7 @@ import {
 } from './dictionaryBookPanelTabs';
 import WorldOverviewManager from '../managers/WorldOverviewManager';
 import WorldDetailsManager from '../managers/WorldDetailsManager';
+import { useWorldOpeningsEditor } from '../managers/useWorldOpeningsEditor';
 import PlaceholderPaletteBar from '@/components/prompt/PlaceholderPaletteBar';
 import { ChipInsertTargetProvider } from '@/components/prompt/ChipInsertTarget';
 import { EditorPreviewRollsProvider } from '@/contexts/EditorPreviewRollsContext';
@@ -126,7 +134,7 @@ import AddEntityModal from '@/components/modals/AddEntityModal';
 import ReplaceSourceModal from '@/components/modals/ReplaceSourceModal';
 import { exportEntityCard } from '@/lib/entityFile';
 import { labelPlaceholders } from '@/lib/placementLetters';
-import { hasAuthoredOpenings, openingsEnabled, setOpeningsEnabled } from '@/lib/openings';
+import { resolveOwnerKey, WORLD_OWNER_KEY } from '@/lib/openingsTab';
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { APP_VERSION } from '@/lib/version';
 import type { Entity, Dictionary, World, FocusFieldHint } from '@/types';
@@ -136,9 +144,7 @@ import { useDownscalePrompt } from '@/lib/useDownscalePrompt';
 import { SelectedContentActions } from '@/components/ContentLinkStatus';
 import { useLibraryLinking } from '@/lib/useLibraryLinking';
 import { Tip } from '@/components/ui/tooltip';
-import { authoredChipScene } from '@/lib/chipValues/authoredScene';
-import { buildToolSnapshot } from '@/lib/tools/toolSnapshot';
-import { openingStateOf } from '@/lib/openingState';
+import { editorToolSnapshot } from '@/lib/tools/editorToolSnapshot';
 import { useHelpWorldSource, useWorldIndexWarmup } from '@/lib/formaquestion/helpWorld';
 import type { WorldSource } from '@/lib/formaquestion/helpWorldSource';
 
@@ -164,11 +170,13 @@ export interface EditorExit {
 
 const WorldEditorInner = ({
   onClose, embedded = false, backButton, newWorld = false, inGame = false, startTour: startTourOnOpen = false, onPlay,
-  initialTab, initialBenchTab, initialTarget, requestKey: landingKey, leaveRef, exitRef,
+  initialTab, initialOverviewTab, initialBenchTab, initialTarget, requestKey: landingKey, leaveRef, exitRef,
 }: {
   onClose: () => void;
   /** A tab an outside request selects. */
   initialTab?: string;
+  /** An Overview right-column tab an outside request selects. */
+  initialOverviewTab?: string;
   /** A Test Bench instrument an outside request opens. */
   initialBenchTab?: string;
   /** The route text of the control a Take Me There request opens. */
@@ -213,8 +221,7 @@ const WorldEditorInner = ({
   // A Formaquestion Tool, a World Tool's Try It and the code test read the world as the editor holds it,
   // unsaved edits included.
   const editorToolWorld = useCallback(() => {
-    const world = getWorldData();
-    return buildToolSnapshot(authoredChipScene(world), world.dictionaries ?? [], null, { state: openingStateOf(world), authored: world });
+    return editorToolSnapshot(getWorldData());
   }, [getWorldData]);
   useWorldIndexWarmup(getWorldData);
 
@@ -299,9 +306,14 @@ const WorldEditorInner = ({
   }, [visibleTabs, activeTab]);
   // Which of the Locations tab's two views is showing — the tree, or the canvas of the same locations.
   const [locationView, setLocationView] = useState<LocationView>('list');
-  // The Overview's open custom prompt panel and the Placeholders panel's tab, held here so a history reveal
-  // can return to the one an edit was made on.
-  const [overviewPanel, setOverviewPanel] = useState<OverviewPanel | null>(null);
+  // The Overview's right-column place and the Placeholders panel's tab, held here so a history reveal can
+  // return to the one an edit was made on. Simple mode shows Details; the kept place returns with Advanced.
+  const [overviewPlace, setOverviewPlace] = useState<OverviewPlace>(DEFAULT_OVERVIEW_PLACE);
+  const overviewTabs = useMemo(() => overviewPanelTabsFor(advanced), [advanced]);
+  const shownOverviewPlace = useMemo<OverviewPlace>(
+    () => (overviewTabs.some((t) => t.value === overviewPlace.tab) ? overviewPlace : { ...overviewPlace, tab: 'details' }),
+    [overviewTabs, overviewPlace],
+  );
   const [placeholderTab, setPlaceholderTab] = useState<PlaceholderPanelTab>('details');
   const placeholderTabs = useMemo(() => placeholderPanelTabsFor(advanced, true), [advanced]);
   const shownPlaceholderTab = placeholderTabs.some((t) => t.value === placeholderTab) ? placeholderTab : 'details';
@@ -330,17 +342,10 @@ const WorldEditorInner = ({
   const [locationTab, setLocationTab] = useState<LocationPanelTab>('details');
   const locationTabs = useMemo(() => locationPanelTabsFor(advanced), [advanced]);
   const shownLocationTab = locationTabs.some((t) => t.value === locationTab) ? locationTab : 'details';
-  // The stat panel's own tabs, held here for the same reason. Simple mode leaves it one tab, which the panel
-  // reads as no strip at all.
+  // The stat panel's own tabs, held here for the same reason. Simple mode leaves Details and Appearance.
   const [statTab, setStatTab] = useState<StatPanelTab>('details');
   const statTabs = useMemo(() => statPanelTabsFor(advanced), [advanced]);
   const shownStatTab = statTabs.some((t) => t.value === statTab) ? statTab : 'details';
-  // One tab means no strip, so the author is on Details for real rather than bounced off a tab they can see.
-  // Returning to Advanced opens there, which is where they were, not on the tab the strip last held. This is
-  // where the stat panel parts company with the entity and location ones, whose strips never go away.
-  useEffect(() => {
-    if (statTabs.length === 1) setStatTab('details');
-  }, [statTabs]);
   // The trait panel's own tabs, held here for the same reason. Pins is the only Advanced-only one, so Simple
   // mode keeps a strip of two.
   const [traitTab, setTraitTab] = useState<TraitPanelTab>('details');
@@ -394,6 +399,17 @@ const WorldEditorInner = ({
       setLocationTab(devSubtab as LocationPanelTab);
     }
   }, [devSubtab]);
+  // And over the Overview tab, where the slot names one of the right column's tabs.
+  useEffect(() => {
+    if (import.meta.env.DEV && OVERVIEW_PANEL_TABS.some((t) => t.value === devSubtab)) {
+      setOverviewPlace((held) => ({ ...held, tab: devSubtab as OverviewPanelTab }));
+    }
+  }, [devSubtab]);
+  // A Take Me There request that names a right-column tab.
+  useEffect(() => {
+    const tab = OVERVIEW_PANEL_TABS.find((t) => t.value === initialOverviewTab)?.value;
+    if (tab) setOverviewPlace((held) => ({ ...held, tab }));
+  }, [initialOverviewTab, requestKey]);
   // And over the Stats tab, where the slot names one of the stat panel's own tabs.
   useEffect(() => {
     if (import.meta.env.DEV && STAT_PANEL_TABS.some((t) => t.value === devSubtab)) {
@@ -421,11 +437,19 @@ const WorldEditorInner = ({
   }, [devSubtab]);
   const search = useListSearch();
   const { clear: clearSearch } = search;
+  // Each tab's collapsed tree groups, kept for the visit.
+  const treeCollapse = useTreeCollapseStore();
+  const { requestReveal } = treeCollapse;
   // Each tab keeps its own selection, so leaving a tab and coming back reopens what it showed.
   const [selections, setSelections] = useState<Partial<Record<string, string | null>>>({});
   const select = useCallback((tab: string, id: string | null) => {
     setSelections((held) => (held[tab] === id ? held : { ...held, [tab]: id }));
   }, []);
+  // A selection made from outside the list opens the closed groups above it, even when it is already selected.
+  const selectFromOutside = useCallback((tab: string, id: string) => {
+    select(tab, id);
+    requestReveal(tab);
+  }, [select, requestReveal]);
   // And over the Items tab, where `equipment` and `currencies` open their pinned entries.
   useEffect(() => {
     if (import.meta.env.DEV && devRoute?.tab === 'items' && (devSubtab === EQUIPMENT_ID || devSubtab === CURRENCIES_ID)) select('items', devSubtab);
@@ -534,10 +558,15 @@ const WorldEditorInner = ({
     setActiveTab(match.target.tab);
     // Same reason as a Bench finding's Open: the list filter would hide the row the hit lives on.
     clearSearch();
-    select(match.target.tab, match.target.itemId);
+    if (match.target.itemId) selectFromOutside(match.target.tab, match.target.itemId);
+    else select(match.target.tab, match.target.itemId);
     // A panel that hides some of its fields behind its own tabs (the Readme pair) needs telling which one
     // was asked for; text alone can't reach a field that isn't rendered.
     setFindField({ fieldKey: match.target.fieldKey, itemId: match.target.itemId });
+    // Here, not in the panel: a panel effect would replay the hit each time Overview remounts.
+    if (match.target.tab === 'overview') {
+      setOverviewPlace((held) => overviewPlaceForField(match.target.fieldKey, held.kind) ?? held);
+    }
     const hit = {
       value: match.target.value,
       matchText: match.target.value.slice(match.start, match.end),
@@ -558,7 +587,7 @@ const WorldEditorInner = ({
       // stays wherever it was, with the selected row off screen.
       revealSelectedRow(editorRootRef.current);
     });
-  }, [deferReveal, clearSearch, select]);
+  }, [deferReveal, clearSearch, select, selectFromOutside]);
   useEffect(() => () => {
     if (revealTimerRef.current !== null) clearTimeout(revealTimerRef.current);
     cancelEditorReveals();
@@ -584,13 +613,13 @@ const WorldEditorInner = ({
   // the same way a search hit does. A filter left in the list box would hide the very row being navigated to.
   // `entityTab` is for a caller that means one of the entity panel's own tabs — the Placeholders tab's owner
   // node opens the entity where its placeholders are. A finding names none and keeps the author's tab.
-  const navigateToBenchItem = useCallback((section: FindingSection, itemId: string, entityTab?: EntityPanelTab) => {
+  const navigateToBenchItem = useCallback((section: RevealTab, itemId: string, entityTab?: EntityPanelTab) => {
     setActiveTab(section);
     clearSearch();
-    select(section, itemId);
+    selectFromOutside(section, itemId);
     if (entityTab) setEntityTab(entityTab);
     deferReveal(() => revealSelectedRow(editorRootRef.current));
-  }, [deferReveal, clearSearch, select]);
+  }, [deferReveal, clearSearch, selectFromOutside]);
   // A code card's Open. An entity's own stat or trait opens on the entity's tab with its row selected.
   const openCodeCardItem = useCallback((item: CodeCardItem) => {
     switch (item.kind) {
@@ -694,13 +723,6 @@ const WorldEditorInner = ({
   const addEntityToWorld = (entity: Entity) => {
     const placed = { ...entity, groupId: null, order: entityRootSiblingCount() };
     addEntity(placed);
-    // The copy's openings switch the world's list on, which clears an author's off. The box changes without
-    // the author touching it, so the add says which entity changed it.
-    if (hasAuthoredOpenings(placed) && !openingsEnabled(worldOverview, [...entities, ...locations])) {
-      updateWorldOverview(setOpeningsEnabled(true));
-      const named = labelPlaceholders(placed.name, placeholders, { letters: placementLetters, owners: placeholderOwners });
-      toast.info(`${named || 'This entity'} has openings, so “Openings” is now on.`);
-    }
     select('entities', placed.id);
   };
   const addBookToWorld = (book: Dictionary) => {
@@ -838,7 +860,7 @@ const WorldEditorInner = ({
     const offered = <T extends string>(tabs: readonly { value: T }[], fallback: T): T =>
       tabs.find((t) => t.value === subTab)?.value ?? fallback;
     switch (tab) {
-      case 'overview': setOverviewPanel(overviewPanelFor(subTab)); break;
+      case 'overview': setOverviewPlace((held) => overviewPlaceFor(subTab, held.kind)); break;
       case 'entities': setEntityTab(offered(entityTabs, 'profile')); break;
       case 'items': setItemTab(offered(itemTabs, 'profile')); break;
       case 'locations': setLocationTab(offered(locationTabs, 'details')); break;
@@ -856,9 +878,15 @@ const WorldEditorInner = ({
       }
     }
   }, [entityTabs, locationTabs, statTabs, traitTabs, placeholderTabs, entryTabs, bookTabs]);
-  const { connectionReveal, clearConnectionReveal, selectionReveal, clearSelectionReveal, fieldReveal } = useHistoryReveal({
+  // A folded Connection row has no field to land on, so a reveal into one, or the tour's example, opens it.
+  const [connectionOpen, setConnectionOpen] = useState<ConnectionOpen | null>(null);
+  const clearConnectionOpen = useCallback(() => setConnectionOpen(null), []);
+  const openConnection = useCallback((id: string) => setConnectionOpen({ id }), []);
+  const {
+    connectionReveal, clearConnectionReveal, selectionReveal, clearSelectionReveal, fieldReveal, presenceReveal, clearPresenceReveal,
+  } = useHistoryReveal({
     onMove: historyMoves.onMove, touring, visibleTabs, holds: listHolds, setActiveTab, clearSearch, setLocationView,
-    showSubTab, navigateToItem: navigateToBenchItem,
+    showSubTab, navigateToItem: navigateToBenchItem, showConnectionRow: setConnectionOpen,
   });
   const { place: historyPlace } = historyMoves;
   // Only the canvas selects several locations; the open one leads. The place is published below, once the
@@ -882,7 +910,7 @@ const WorldEditorInner = ({
       clearSearch();
     }
     const itemId = step.item ? readTourRecord(worldId)?.items[step.item] : undefined;
-    if (step.tab && itemId) select(step.tab, itemId);
+    if (step.tab && itemId) selectFromOutside(step.tab, itemId);
     // Mobile's pushed detail covers the list's +, so a step that points at it goes back to the list.
     else if (step.tab && isMobile && step.anchor === 'list-add') select(step.tab, null);
     if (step.tab === 'locations' && step.item) {
@@ -897,15 +925,15 @@ const WorldEditorInner = ({
     }
     if (step.tab === 'dictionary' && step.item) setEntryTab('details');
     deferReveal(() => focusTourField(step.anchor));
-  }, [deferReveal, worldId, clearSearch, select, isMobile]);
+  }, [deferReveal, worldId, clearSearch, select, selectFromOutside, isMobile]);
   const tourApi = useMemo(
     () => ({
-      updateWorldOverview, addLocation, updateLocation, addConnection, updateConnection, addEntity, updateEntity,
-      addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry,
+      updateWorldOverview, addLocation, updateLocation, addConnection, updateConnection, openConnection, addEntity,
+      updateEntity, addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry,
     }),
     [
-      updateWorldOverview, addLocation, updateLocation, addConnection, updateConnection, addEntity, updateEntity,
-      addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry,
+      updateWorldOverview, addLocation, updateLocation, addConnection, updateConnection, openConnection, addEntity,
+      updateEntity, addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry,
     ],
   );
   const tourWorld = useMemo(() => getWorldData(), [getWorldData]);
@@ -985,6 +1013,7 @@ const WorldEditorInner = ({
   const { adapter: traitsAdapter, dialog: removeWorldTraitDialog } = useWorldTraitsAdapter({
     selectedId: selections.traits ?? null,
     onSelect: selectTrait,
+    collapse: treeCollapse.stateFor('traits'),
     navigate: navigateToBenchItem,
     tab: shownTraitTab,
     onTabChange: setTraitTab,
@@ -997,6 +1026,7 @@ const WorldEditorInner = ({
   const placeholdersEditor = useWorldPlaceholdersAdapter({
     selectedId: selections.placeholders ?? null,
     onSelect: selectPlaceholder,
+    collapse: treeCollapse.stateFor('placeholders'),
     tab: shownPlaceholderTab,
     onTabChange: setPlaceholderTab,
     onOpenOwner: (owner) => (owner.kind === 'dictionary'
@@ -1010,16 +1040,19 @@ const WorldEditorInner = ({
   });
   const selectStat = useCallback((id: string | null) => select('stats', id), [select]);
   const { adapter: statsAdapter, dialog: removeWorldStatDialog } = useWorldStatsAdapter({
-    selectedId: selections.stats ?? null, onSelect: selectStat, navigate: navigateToBenchItem, search, tab: shownStatTab,
+    selectedId: selections.stats ?? null, onSelect: selectStat, collapse: treeCollapse.stateFor('stats'), navigate: navigateToBenchItem, search, tab: shownStatTab,
     onTabChange: setStatTab, focusField: findField,
   });
   const statsParts = useListEditor(statsAdapter, { selectedId: selections.stats ?? null, onSelect: selectStat, search });
   const selectScript = useCallback((id: string | null) => select('scripts', id), [select]);
-  const scriptsAdapter = useWorldScriptsAdapter({ selectedId: selections.scripts ?? null, onSelect: selectScript, active: activeTab === 'scripts' });
+  const scriptsAdapter = useWorldScriptsAdapter({ selectedId: selections.scripts ?? null, onSelect: selectScript, collapse: treeCollapse.stateFor('scripts'), active: activeTab === 'scripts' });
   const scriptsParts = useListEditor(scriptsAdapter, { selectedId: selections.scripts ?? null, onSelect: selectScript, search });
   const selectTool = useCallback((id: string | null) => select('tools', id), [select]);
   const toolsAdapter = useWorldToolsAdapter({ selectedId: selections.tools ?? null, onSelect: selectTool, snapshot: editorToolWorld });
   const toolsParts = useListEditor(toolsAdapter, { selectedId: selections.tools ?? null, onSelect: selectTool, search });
+  const selectOption = useCallback((id: string | null) => select('options', id), [select]);
+  const optionsAdapter = useWorldOptionsAdapter({ selectedId: selections.options ?? null, onSelect: selectOption });
+  const optionsParts = useListEditor(optionsAdapter, { selectedId: selections.options ?? null, onSelect: selectOption, search });
   const selectItem = useCallback((id: string | null) => select('items', id), [select]);
   const { adapter: itemsAdapter, dialog: removeItemDialog } = useWorldItemsAdapter({
     selectedId: selections.items ?? null,
@@ -1037,6 +1070,7 @@ const WorldEditorInner = ({
   const entitiesEditor = useWorldEntitiesAdapter({
     selectedId: selections.entities ?? null,
     onSelect: selectEntity,
+    collapse: treeCollapse.stateFor('entities'),
     tab: shownEntityTab,
     onTabChange: setEntityTab,
     traitId: entityTraitId,
@@ -1054,10 +1088,24 @@ const WorldEditorInner = ({
     selectedId: selections.entities ?? null, onSelect: selectEntity, search,
   });
   const selectLocation = useCallback((id: string | null) => select('locations', id), [select]);
+  const presenceLocationId = activeTab === 'locations' && shownLocationTab === 'presence' ? selections.locations ?? null : null;
+  const hasPresenceRow = useCallback(
+    (entityId: string) => !!presenceLocationId
+      && presenceLines(presenceLocationId, entities, { locations, connections }).some((line) => line.entity.id === entityId),
+    [presenceLocationId, entities, locations, connections],
+  );
+  const entityOf = useCallback((entityId: string) => entities.find((e) => e.id === entityId), [entities]);
+  const showLocationCanvas = useCallback(() => setLocationView('canvas'), []);
+  const { entityPick } = useEntityPick({
+    hasPresenceRow, presenceAt: presenceLocationId, entityOf, reveal: presenceReveal, onRevealTaken: clearPresenceReveal,
+    showCanvas: showLocationCanvas,
+  });
   const locationsAdapter = useWorldLocationsAdapter({
+    entityPick,
     selectedId: selections.locations ?? null,
     onSelect: selectLocation,
     search,
+    collapse: treeCollapse.stateFor('locations'),
     view: locationView,
     tab: shownLocationTab,
     onTabChange: setLocationTab,
@@ -1067,6 +1115,9 @@ const WorldEditorInner = ({
     revealSelection: selectionReveal,
     onSelectionRevealed: clearSelectionReveal,
     onCanvasSelection,
+    onOpenEntityRoutine: (id) => navigateToBenchItem('entities', id, 'presence'),
+    connectionOpen,
+    onConnectionOpened: clearConnectionOpen,
   });
   const locationsParts = useListEditor(locationsAdapter, {
     selectedId: selections.locations ?? null, onSelect: selectLocation, search,
@@ -1076,6 +1127,7 @@ const WorldEditorInner = ({
   const dictionaryEditor = useWorldDictionaryAdapter({
     selectedId: selections.dictionary ?? null,
     onSelect: selectDictionaryItem,
+    collapse: treeCollapse.stateFor('dictionary'),
     bookTab: shownBookTab,
     onBookTabChange: setBookTab,
     bookPlaceholderId,
@@ -1107,25 +1159,41 @@ const WorldEditorInner = ({
     publishBytes: bench.publishBytes,
     optimize: { progress: optimizeProgress, onRun: () => { void optimizeImages(); } },
   });
+  const selectOpeningsOwner = useCallback((id: string | null) => select('openings', id), [select]);
+  const openingsParts = useWorldOpeningsEditor({
+    selectedId: selections.openings ?? null,
+    onSelect: selectOpeningsOwner,
+    search,
+    collapse: treeCollapse.stateFor('openings'),
+    defaultToWorld: !isMobile,
+    onOpenEntity: (id) => navigateToBenchItem('entities', id, 'openings'),
+    onOpenLocation: (id) => { navigateToBenchItem('locations', id); setLocationTab('openings'); },
+  });
   // The active tab's List Editor parts, on a tab that runs on it.
   const partsByTab: Partial<Record<string, ListEditorParts>> = {
-    media: mediaParts,
+    media: mediaParts, openings: openingsParts,
     traits: traitsParts, placeholders: placeholdersParts, stats: statsParts,
     entities: entitiesParts, items: itemsParts, locations: locationsParts, dictionary: dictionaryParts, scripts: scriptsParts,
-    tools: toolsParts,
+    tools: toolsParts, options: optionsParts,
   };
   const listEditorParts = partsByTab[activeTab] ?? null;
   const adaptersByTab: Partial<Record<RevealTab, { holds: (id: string) => boolean }>> = {
     traits: traitsAdapter, placeholders: placeholdersEditor.adapter, stats: statsAdapter,
     entities: entitiesEditor.adapter, items: itemsAdapter, locations: locationsAdapter, dictionary: dictionaryEditor.adapter,
     scripts: scriptsAdapter,
-    tools: toolsAdapter, media: { holds: (id) => mediaHolds(getWorldData(), id) },
+    tools: toolsAdapter, options: optionsAdapter, media: { holds: (id) => mediaHolds(getWorldData(), id) },
+    openings: {
+      holds: (id) => {
+        const { locations: held, entities: owners } = getWorldData();
+        return !!resolveOwnerKey(id, held, owners);
+      },
+    },
   };
   listHoldsRef.current = (tab, id) => !!adaptersByTab[tab]?.holds(id);
   // What the author sees on the active tab beyond the tab itself, for a new Step's Origin.
   const bookOpen = !!selections.dictionary && dictionaryEditor.book?.id === selections.dictionary;
   const placeSubTab: Partial<Record<string, string>> = {
-    overview: overviewPanel ?? NO_OVERVIEW_PANEL,
+    overview: overviewOriginValue(shownOverviewPlace),
     entities: shownEntityTab,
     items: shownItemTab,
     locations: shownLocationTab,
@@ -1134,7 +1202,8 @@ const WorldEditorInner = ({
     placeholders: shownPlaceholderTab,
     dictionary: bookOpen ? shownBookTab : shownEntryTab,
   };
-  const placeId = selections[activeTab] ?? undefined;
+  // The Openings tab holds This World while nothing is selected on desktop.
+  const placeId = selections[activeTab] ?? (activeTab === 'openings' && !isMobile ? WORLD_OWNER_KEY : undefined);
   const placeSub = placeSubTab[activeTab];
   const placeView = activeTab === 'locations' ? locationView : undefined;
   // Passive, so a write's layout effect still reads the place from before a tab or focus switch in its commit.
@@ -1156,7 +1225,8 @@ const WorldEditorInner = ({
   }, [historyPlace, activeTab, placeId, placeSub, placeView, locationView, fieldInUse]);
   useEffect(() => () => { historyPlace.current = null; }, [historyPlace]);
   // Tabbed panels keep their strip above a body that scrolls itself, so the pane gives them its height.
-  const detailFills = !!listEditorParts?.fills;
+  // The Overview's right column scrolls inside its own tabs, as a tabbed list panel does.
+  const detailFills = activeTab === 'overview' || !!listEditorParts?.fills;
   // Whose panel the palette covers: the entity, the book (selected itself or through an entry), or the
   // owner of what is open on the Placeholders tab.
   const paletteScopeId =
@@ -1199,10 +1269,9 @@ const WorldEditorInner = ({
         <WorldDetailsManager
           focusField={findField}
           fieldReveal={fieldReveal}
-          panel={overviewPanel}
-          onPanelChange={setOverviewPanel}
-          onOpenEntity={(id) => navigateToBenchItem('entities', id, 'openings')}
-          onOpenLocation={(id) => { navigateToBenchItem('locations', id); setLocationTab('openings'); }}
+          place={shownOverviewPlace}
+          onPlaceChange={setOverviewPlace}
+          tabs={overviewTabs}
         />
       )}
       {listEditorParts?.detail}
@@ -1433,7 +1502,7 @@ const WorldEditorInner = ({
 
   return (
     <CodeCardNavigationContext.Provider value={codeCardNavigation}>
-    <div className={`${embedded ? "h-full" : "app-viewport"} flex flex-col overflow-hidden`}>
+    <div className={`${embedded ? "h-full" : "app-viewport pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"} flex flex-col overflow-hidden`}>
       {!embedded && (
         <ThemedToastContainer
           position="top-right"
@@ -1572,10 +1641,12 @@ const WorldEditorInner = ({
             <Panel id="editor-detail" order={2} minSize={30}>
               <div className="h-full p-3">
                 <Card className="h-full flex flex-col">
-                  <CardContent className="flex-1 min-h-0 p-0">
-                    <div data-detail-fill className="h-full flex flex-col">{detailPanel({ frozen: true, capped: true })}</div>
-                  </CardContent>
-                  {detailFooter}
+                  <DetailFooterScope>
+                    <CardContent className="flex-1 min-h-0 p-0">
+                      <div data-detail-fill className="h-full flex flex-col">{detailPanel({ frozen: true, capped: true })}</div>
+                    </CardContent>
+                    <DetailFooter actions={detailFooter} />
+                  </DetailFooterScope>
                 </Card>
               </div>
             </Panel>

@@ -12,13 +12,14 @@ import { parseDictionaryImport } from '@/lib/dictionaryFile';
 import { readLibraryDetails } from '@/lib/contentAuthor';
 import { contentLinkStatusLine } from '@/lib/contentLink';
 import { isHelpSeen } from '@/lib/helpSeenStore';
-import { withEntityLocations } from '@/lib/entityPresence';
+import { carryMap, placedIn, withCarriedRoutine } from '@/lib/entityPresence';
+import { namedPlacesOf, withMembership } from '@/lib/entityPlaces';
 import { adoptCardVrm, importCharacterFile, type CardVrmFields } from '@/lib/entityFile';
 import { parseJsonText } from '@/lib/jsonFileWorkerUtils';
 import type { LiveWorld } from '@/lib/componentUpdateRun';
 import { useComponentUpdates } from '@/lib/useComponentUpdates';
 import {
-  contentMatchesSource, linkToSource, syncWorldContent, unlink,
+  contentMatchesSource, linkToSource, routinePlacesOf, syncWorldContent, unlink,
   type LibrarySource, type LinkableContent,
 } from '@/lib/linkedContent';
 import {
@@ -182,6 +183,7 @@ export function useLibraryLinking(options: LibraryLinkingOptions) {
     entities: options.entities,
     dictionaries: options.dictionaries,
     placeholders: options.worldPlaceholders,
+    locations: options.locations,
     placeholderGroups: options.placeholderGroups,
     traits: options.traits,
     traitGroups: options.traitGroups,
@@ -220,7 +222,7 @@ export function useLibraryLinking(options: LibraryLinkingOptions) {
     }
     current.setOwnedLibraryIds(sources.filter((source) => source.owned).map((source) => source.id));
     const next = syncWorldContent({
-      entities: current.entities, dictionaries: current.dictionaries, placeholders: current.worldPlaceholders,
+      entities: current.entities, dictionaries: current.dictionaries, locations: current.locations, placeholders: current.worldPlaceholders,
       placeholderGroups: current.placeholderGroups, traits: current.traits, traitGroups: current.traitGroups,
       stats: current.stats, statGroups: current.statGroups,
     }, sources);
@@ -345,11 +347,8 @@ export function useLibraryLinking(options: LibraryLinkingOptions) {
         const kept = dropEntityBlueprintChips(adopted.entity, blueprints);
         dropped += bound.dropped + kept.dropped;
         const { locationRefs = [], ...rest } = kept.entity;
-        const used = Object.fromEntries(locationRefs.flatMap((ref) => {
-          const id = plan.locations[ref.id] ?? ref.id;
-          return placeIds.has(id) ? [[ref.id, id]] : [];
-        }));
-        const placed = adoptOwnedTraits(withEntityLocations(rest as Entity, Object.values(used)), {
+        const used = carryMap(locationRefs, plan.locations, placeIds);
+        const placed = adoptOwnedTraits(placedIn(rest as Entity, used), {
           traits: current.traits, traitGroups: current.traitGroups, entities: [...current.entities, ...added],
           stats: current.stats, statGroups: current.statGroups,
         });
@@ -438,15 +437,21 @@ export function useLibraryLinking(options: LibraryLinkingOptions) {
       updateDictionary({ ...remapBookChips(repair.copy as Dictionary, chipMap), link });
     } else {
       const entity = remapEntityChips(repair.copy as Entity, chipMap);
+      if (entity.kind) {
+        // The routine is the source's, carried afresh, so a repair lands where a new add would.
+        const placeIds = new Set([...current.locations, ...plan.newLocations].map((l) => l.id));
+        updateEntity({ ...withCarriedRoutine(entity, repair.source as Entity, connections, placeIds, entity.kind), link });
+        return;
+      }
       // A location membership the repair re-aimed moves with it; one it did not is left as it stands.
-      const moved = (entity.locations ?? []).map((id) => {
+      const moved = namedPlacesOf(entity).map((id) => {
         const row = flow.rows.find((r) => r.kind === 'location' && held[r.key] === id);
         return row ? plan.locations[row.key] ?? id : id;
       });
       const fresh = flow.rows
         .filter((r) => r.kind === 'location' && !held[r.key] && plan.locations[r.key])
         .map((r) => plan.locations[r.key]);
-      updateEntity({ ...withEntityLocations(entity, [...moved, ...fresh]), link });
+      updateEntity({ ...withMembership(entity, [...moved, ...fresh]), link });
     }
   }, [updateDictionary, updateEntity]);
 
@@ -474,7 +479,7 @@ export function useLibraryLinking(options: LibraryLinkingOptions) {
     if (!item) return;
     const vrm = await loadVrmLookup(liveStore.current);
     if (!mounted.current) return;
-    applyLink(item, pick.source, !contentMatchesSource(item, pick.data, traitWorld, vrm));
+    applyLink(item, pick.source, !contentMatchesSource(item, pick.data, traitWorld, vrm, routinePlacesOf(latest.current.locations)));
   }, [applyLink, linkPickerFor, mounted, traitWorld]);
 
   /**

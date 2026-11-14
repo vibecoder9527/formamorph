@@ -1,9 +1,12 @@
-import type { Connection, Entity, GameLocation, PlayerStat } from "@/types";
-import { statContextRuns, statPlacementOf, type ContextFormat, type StatPieces } from "./statContext";
+import type { Connection, Entity, GameLocation, PersonaRef, PlayerStat } from "@/types";
+import { inCast } from "./owners";
+import { statContextRuns, statPlacementOf, type ContextFormat, type StatPieces, type StatPlacement } from "./statContext";
 import { indentRuns, joinRuns, mark, runs, textOf, type MarkedRun, type MarkedText, type TextOrigin } from "./markedText";
-import { entityIdsAt, entityIdsAtAny, knownHere, knownInOf } from "./entityPresence";
+import { knownHere, knownInOf } from "./entityPresence";
+import { idsAtAny, type PlacesOf } from "./entityPlaces";
 import type { RelationshipLines } from "./entityRelationships";
-import { effectiveDestinations, type LocationLink } from "./locationGraph";
+import { effectiveDestinations, nearbyPlaces, walkableReach, type LocationLink } from "./locationGraph";
+import { placeNameKey } from "./locationMatch";
 import { buildTraitContext, traitsInContextOrder } from "./traitTree";
 import { NONE_PLACEHOLDER } from "./promptFallbacks";
 import { decodeChipKey, decodeVariant, tokenVariant, variableForToken } from "./promptVariables";
@@ -95,7 +98,7 @@ function buildLocationList(
 /**
  * Serialize the current location into the plain-text block the AI prompts inject for
  * `<LOCATION>`. Blank fields are skipped so empty values don't confuse smaller models, and
- * media/editor-only fields are never dumped. Entities are emitted separately by `buildEntityContext`.
+ * media/editor-only fields are never dumped. Entities are emitted separately by `renderEntityRoster`.
  *
  * `preferSummary` makes the location emit its short `aiSummary` (falling back to the full
  * `aiDescription` when no summary is authored) — used by the lightweight precall planning request.
@@ -154,13 +157,20 @@ export type RosterOpts = {
   relationshipLines?: RelationshipLines;
   /** The label each unmet stranger's block prints. None when absent. */
   strangerLabels?: StrangerLabels;
+  /** The Movement tag each Unique entity's block prints. None when absent. */
+  movementLabels?: MovementLabels;
+  /** Leave the Movement tags out. */
+  noMovement?: boolean;
 };
 
 /** Entity id → a stranger's label. */
 export type StrangerLabels = Readonly<Record<string, string>>;
 
+/** Entity id → its Movement tag. */
+export type MovementLabels = Readonly<Record<string, string>>;
+
 /** The known roster's options: `excludeIds` drops whom a higher scope lists; `pulledIds` join it through a relationship. */
-export type KnownRosterOpts = RosterOpts & { excludeIds?: readonly string[]; pulledIds?: readonly string[] };
+export type KnownRosterOpts = RosterOpts & { excludeIds?: readonly string[]; pulledIds?: readonly string[]; persona?: PersonaRef };
 
 const ALL_STAT_PIECES: StatPieces = { values: true, status: true, meaning: true };
 
@@ -183,12 +193,34 @@ export function ownedStatLines(
   return textOf(ownedStatRuns(entity, stats, format, pieces));
 }
 
-/** {@link ownedStatLines} as runs marked as stats lines. */
+/** One indented field line of a roster entry, in `format`. */
+function rosterField(format: ContextFormat) {
+  return (key: string, value: string | number | boolean): string =>
+    format === "xml" ? `  <${key}>${xmlEscape(String(value))}</${key}>\n`
+    : format === "markdown" ? `  - **${key}:** ${value}\n`
+    : `  ${key}: ${value}\n`;
+}
+
+/** Whether any of `stats` sits in one of its owner's stat groups. */
+function anyStatGrouped(stats: readonly PlayerStat[], placement: StatPlacement): boolean {
+  const groupIds = new Set(placement.groups.map((g) => g.id));
+  return stats.some((s) => {
+    const groupId = placement.authored.find((a) => a.id === s.id)?.groupId;
+    return !!groupId && groupIds.has(groupId);
+  });
+}
+
+/** {@link ownedStatLines} as runs marked as stats lines. With every piece off and none of the stats in a
+ *  stat group, the names read inline on one `stats` line, as owned trait names do. */
 function ownedStatRuns(
   entity: Entity, stats: readonly PlayerStat[], format: ContextFormat, pieces: StatPieces = ALL_STAT_PIECES,
 ): MarkedRun[] {
   if (!stats.length) return [];
-  const block = indentRuns(statContextRuns([...stats], pieces, format, statPlacementOf(entity)), "    ");
+  const placement = statPlacementOf(entity);
+  if (!pieces.values && !pieces.status && !pieces.meaning && !anyStatGrouped(stats, placement)) {
+    return mark(["stats"], rosterField(format)("stats", stats.map((s) => s.name).join(", ")));
+  }
+  const block = indentRuns(statContextRuns([...stats], pieces, format, placement), "    ");
   if (format === "xml") return mark(["stats"], "  <stats>\n", block, "\n  </stats>\n");
   return mark(["stats"], `${format === "markdown" ? "  - **stats:**" : "  stats:"}\n`, block, "\n");
 }
@@ -199,8 +231,8 @@ function ownedTraitRuns(
   ids: readonly string[],
   preferSummary: boolean,
   format: ContextFormat,
-  field: (key: string, value: string) => string,
 ): MarkedRun[] {
+  const field = rosterField(format);
   const traits = entity.traits ?? [];
   const groups = entity.traitGroups ?? [];
   const inForce = traitsInContextOrder(ids, traits, groups);
@@ -252,23 +284,28 @@ export function entityRosterRuns(
   entities: Entity[],
   opts: RosterOpts = {},
 ): MarkedRun[] {
-  const { preferSummary = false, format = "simple", nameOnly = false, ownedTraits, ownedStats, noTraits, noStats, statPieces, relationshipLines, strangerLabels } = opts;
+  const {
+    preferSummary = false, format = "simple", nameOnly = false, ownedTraits, ownedStats, noTraits, noStats, statPieces, relationshipLines, strangerLabels,
+    movementLabels, noMovement,
+  } = opts;
+  const movementOf = (id: string) => (noMovement ? undefined : movementLabels?.[id]);
   const entityIds = allIds.filter((id) => passesOnlyWith(id, opts));
   if (nameOnly) {
     const named = entityIds.flatMap((id) => {
       const name = entities.find((e) => e.id === id)?.name;
+      if (!name) return [];
       const label = strangerLabels?.[id];
-      return name ? [mark(["content", ...ownedKinds(id, opts)], label ? `${name} (${label})` : name)] : [];
+      const movement = movementOf(id);
+      const kinds = ["content" as const, ...ownedKinds(id, opts)];
+      if (!movement) return [mark(kinds, label ? `${name} (${label})` : name)];
+      return [mark(kinds, label ? `${name} (${label}; ` : `${name} (`, mark(["movement"], movement), ")")];
     });
     return named.length ? joinRuns(named, ", ") : emptyRosterRuns(opts);
   }
   const md = format === "markdown";
   const xml = format === "xml";
   const head = (name: string) => (md ? `- **${name}**\n` : `${name}\n`);
-  const field = (key: string, value: string | number | boolean) =>
-    xml ? `  <${key}>${xmlEscape(String(value))}</${key}>\n`
-    : md ? `  - **${key}:** ${value}\n`
-    : `  ${key}: ${value}\n`;
+  const field = rosterField(format);
   if (entityIds.length === 0) return emptyRosterRuns(opts);
 
   const output: MarkedRun[] = [];
@@ -288,8 +325,9 @@ export function entityRosterRuns(
     const strangerLine = strangerLabel ? field(xml ? "stranger_name" : "stranger name", strangerLabel) : "";
     const pronouns = entityItem.pronouns?.trim();
     const pronounLine = pronouns ? field("pronouns", pronouns) : "";
+    const movement = movementOf(entityItem.id);
     const ownedLines = runs(
-      noTraits ? "" : ownedTraitRuns(entityItem, ownedTraits?.[entityItem.id] ?? [], preferSummary, format, field),
+      noTraits ? "" : ownedTraitRuns(entityItem, ownedTraits?.[entityItem.id] ?? [], preferSummary, format),
       noStats ? "" : ownedStatRuns(entityItem, ownedStats?.[entityItem.id] ?? [], format, statPieces),
     );
     const fields = runs(
@@ -300,6 +338,7 @@ export function entityRosterRuns(
       appendAllowedFields(entityItem, AI_ENTITY_FIELDS, field),
       (relationshipLines?.[entityItem.id] ?? []).map((line) => field("relationship", line)).join(""),
       ownedLines,
+      movement ? mark(["movement"], field("movement", movement)) : "",
     );
     const block = xml
       ? runs("<entity>\n", field("name", entityItem.name), fields, "</entity>\n")
@@ -309,21 +348,6 @@ export function entityRosterRuns(
 
   // All listed ids failed to resolve to a real entity → treat as empty.
   return output.length ? output : emptyRosterRuns(opts);
-}
-
-/**
- * Serialize the cast belonging to the current location — the `<ENTITIES>` roster. Membership is
- * entity-owned (ADR-0003), so the roster is the inversion of `entities`, in their authored order.
- * Returns the `N/A` placeholder when the location is null or nobody belongs to it. `preferSummary` and
- * `format` mirror `renderEntityRoster`.
- */
-export function buildEntityContext(
-  location: MaybeLocation,
-  entities: Entity[],
-  opts: RosterOpts = {},
-): string {
-  if (!location) return NONE_PLACEHOLDER;
-  return renderEntityRoster(entityIdsAt(location.id, entities), entities, opts);
 }
 
 /**
@@ -346,39 +370,47 @@ export function buildSublocationsContext(
 /** The entities a roster of places they aren't present at may list: those whose Known In is Nearby. */
 const nearbyKnown = (entities: Entity[]) => entities.filter((e) => knownInOf(e) === "nearby");
 
-/** The deduped ids of the Nearby entities across the current location's direct sub-locations. */
-export function sublocationEntityIds(current: MaybeLocation, locations: GameLocation[], entities: Entity[]): string[] {
+/** The deduped ids of the Nearby entities `placesOf` puts in the current location's direct sub-locations. A child
+ *  the location links to by a Far Connection is left out. */
+export function sublocationEntityIds(
+  current: MaybeLocation, locations: GameLocation[], connections: Connection[], entities: Entity[], placesOf: PlacesOf,
+): string[] {
   if (!current) return [];
-  const kids = locations.filter((l) => (l.parentId ?? null) === current.id);
-  return entityIdsAtAny(kids.map((k) => k.id), nearbyKnown(entities));
+  const nearby = new Set(nearbyPlaces(current.id, locations, connections));
+  const kids = locations.filter((l) => (l.parentId ?? null) === current.id && nearby.has(l.id));
+  return idsAtAny(kids.map((k) => k.id), nearbyKnown(entities), placesOf);
 }
 
 /**
  * Serialize the characters/things located in the current location's direct sub-locations for the
  * `<ENTITIES|sublocations>` chip. Gathers + dedupes the children's entity ids and delegates to
- * `buildEntityContext` (a synthetic location holding those ids), so the roster shaping matches the main
+ * `renderEntityRoster`, so the roster shaping matches the main
  * entities section. `excludeIds` drops anyone already shown in a higher-precedence roster (present here) so a
  * character never double-lists across scopes. Returns the `N/A` placeholder when nothing remains.
  */
 export function buildSublocationEntitiesContext(
   current: MaybeLocation,
   locations: GameLocation[],
+  connections: Connection[],
   entities: Entity[],
+  placesOf: PlacesOf,
   opts: RosterOpts & { excludeIds?: string[] } = {},
 ): string {
-  return textOf(sublocationEntityRuns(current, locations, entities, opts));
+  return textOf(sublocationEntityRuns(current, locations, connections, entities, placesOf, opts));
 }
 
 /** {@link buildSublocationEntitiesContext} as marked runs. */
 export function sublocationEntityRuns(
   current: MaybeLocation,
   locations: GameLocation[],
+  connections: Connection[],
   entities: Entity[],
+  placesOf: PlacesOf,
   opts: RosterOpts & { excludeIds?: string[] } = {},
 ): MarkedRun[] {
   if (!current) return runs(NONE_PLACEHOLDER);
   const exclude = new Set(opts.excludeIds ?? []);
-  const ids = sublocationEntityIds(current, locations, entities).filter((id) => !exclude.has(id));
+  const ids = sublocationEntityIds(current, locations, connections, entities, placesOf).filter((id) => !exclude.has(id));
   return entityRosterRuns(ids, entities, opts);
 }
 
@@ -389,6 +421,8 @@ export interface DestinationEntry<L extends LocationLink = GameLocation> {
    *  hintless leg. */
   hint?: string;
   via: "implicit" | "connection";
+  /** The Connection the leg belongs to. Absent for implicit travel. */
+  connection?: Connection;
 }
 
 /** The current location's effective destinations paired with the travel hint each one is reached by, in
@@ -409,19 +443,73 @@ export function navigableDestinationEntries<L extends LocationLink = GameLocatio
       location,
       hint: via.via === "connection" ? via.leg.hint : undefined,
       via: via.via,
+      ...(via.via === "connection" && { connection: via.connection }),
     });
   }
   return entries;
 }
 
+/** One place a move can carry the player to, and the places passed through on the way. */
+export interface WalkableEntry<L extends LocationLink = GameLocation> extends DestinationEntry<L> {
+  moves: number;
+  /** The places passed through, in walk order. Empty for a one-move place. */
+  route: L[];
+}
+
+/** A location with the name a reply matches against. */
+type NamedLink = LocationLink & { name: string };
+
 /**
- * The places the player can move to from the current location — the **local navigable graph** under the
- * effective-navigation rule (ADR-0002): its implicit neighbors (containing location, sub-locations,
- * siblings) for every pair no Connection covers, plus the Connections leaving it. Deduped by id, current
- * excluded. This is the location router's whole world: the only candidates fed to the model and the only
- * names its reply is matched against, which is what makes a one-way link structural — the return trip is
- * never offered rather than verbally forbidden.
+ * The places a router or narrated move can carry the player to: every place up to 3 moves away, nearest
+ * first. A name keeps only its nearest place; the current location counts as nearest, and a tie keeps none,
+ * so an exact reply never names a place the game would have to guess at. `canEnter` is the travel gate: a place it
+ * refuses is neither a destination nor a waypoint (Q3, Q54).
  */
+export function walkableDestinationEntries<L extends NamedLink = GameLocation>(
+  current: NamedLink | null,
+  locations: readonly L[],
+  connections: readonly Connection[],
+  canEnter?: (id: string) => boolean,
+): WalkableEntry<L>[] {
+  if (!current) return [];
+  const byId = new Map(locations.map((l) => [l.id, l]));
+  const entries: WalkableEntry<L>[] = [];
+  for (const step of walkableReach(current.id, locations, connections, canEnter)) {
+    const location = byId.get(step.id);
+    const route = step.route.map((id) => byId.get(id)).filter((l): l is L => !!l);
+    if (!location || route.length !== step.route.length) continue; // a Connection pointing at a deleted location reaches nowhere
+    entries.push({
+      location,
+      route,
+      moves: step.moves,
+      hint: step.moves === 1 && step.via.via === "connection" ? step.via.leg.hint : undefined,
+      via: step.via.via,
+    });
+  }
+  const nearest = new Map<string, number>([[placeNameKey(current.name), 0]]);
+  const tied = new Set<string>();
+  for (const { location, moves } of entries) {
+    const key = placeNameKey(location.name);
+    const best = nearest.get(key);
+    if (best === undefined) nearest.set(key, moves);
+    else if (best === moves) tied.add(key);
+  }
+  return entries.filter(({ location, moves }) => {
+    const key = placeNameKey(location.name);
+    return nearest.get(key) === moves && !tied.has(key);
+  });
+}
+
+/** The names of the entries more than one move away: the ones the router matches only on an exact reply. */
+export const farDestinationNames = (entries: readonly WalkableEntry<NamedLink>[]): string[] =>
+  entries.filter((entry) => entry.moves > 1).map((entry) => entry.location.name);
+
+/** What trails a place's line after `via`: a far place's route, else a one-move Connection's travel hint. */
+export const destinationTail = (entry: WalkableEntry<NamedLink>): string | undefined =>
+  entry.route.length ? entry.route.map((l) => l.name).join(", then ") : entry.hint;
+
+/** The places one move from the current location: its effective destinations (ADR-0002), deduped, current
+ *  excluded. */
 export function navigableDestinations(
   current: MaybeLocation,
   locations: GameLocation[],
@@ -430,22 +518,38 @@ export function navigableDestinations(
   return navigableDestinationEntries(current, locations, connections).map((e) => e.location);
 }
 
+/** The places a router or narrated move can carry the player to: {@link walkableDestinationEntries}' places.
+ *  The router's whole world: the only candidates fed to the model and the only names its reply is matched
+ *  against, which keeps a one-way link structural. */
+export function walkableDestinations(
+  current: MaybeLocation,
+  locations: GameLocation[],
+  connections: Connection[],
+  canEnter?: (id: string) => boolean,
+): GameLocation[] {
+  return walkableDestinationEntries(current, locations, connections, canEnter).map((e) => e.location);
+}
+
 /**
- * Serialize the current location's navigable destinations for the `<LOCATION|destinations>` chip — one line per
- * place (`name: <summary>` / `- **name:** <summary>`), the summary chosen like the other builders. A
- * Connection's travel hint trails its line as `— via <hint>`, so the model knows how the trip is made.
- * Returns `N/A` when the location is null or nothing is reachable.
+ * Serialize the places a move can carry the player to for the `<LOCATION|destinations>` chip — one line per
+ * place (`name: <summary>` / `- **name:** <summary>`), the summary chosen like the other builders. A one-move
+ * Connection's travel hint trails its line as `— via <hint>`; a far place's route trails it the same way, as
+ * the places passed through. Returns `N/A` when the location is null or nothing is reachable.
  */
 export function buildDestinationsContext(
   current: MaybeLocation,
   locations: GameLocation[],
   connections: Connection[],
   opts: { preferSummary?: boolean; format?: ContextFormat; nameOnly?: boolean } = {},
+  canEnter?: (id: string) => boolean,
 ): string {
   if (!current) return NONE_PLACEHOLDER;
-  const entries = navigableDestinationEntries(current, locations, connections);
+  const entries = walkableDestinationEntries(current, locations, connections, canEnter);
   if (entries.length === 0) return NONE_PLACEHOLDER;
-  const hints = new Map(entries.filter((e) => e.hint).map((e) => [e.location.id, e.hint!]));
+  const hints = new Map(entries.flatMap((e) => {
+    const tail = destinationTail(e);
+    return tail ? [[e.location.id, tail] as const] : [];
+  }));
   return buildLocationList(entries.map((e) => e.location), { ...opts, hints });
 }
 
@@ -518,25 +622,24 @@ export function scenePresentHere(names: string[], entities: Entity[], hereIds: s
   });
 }
 
-/** The deduped ids of the Nearby entities across the current location's reachable locations: the parent and
- *  siblings, or its effective destinations when it sets `nearbyUsesConnections`. */
+/** The deduped ids of the Nearby entities `placesOf` puts one Nearby link from the current location. */
 export function reachableEntityIds(
-  current: MaybeLocation, locations: GameLocation[], connections: Connection[], entities: Entity[],
+  current: MaybeLocation, locations: GameLocation[], connections: Connection[], entities: Entity[], placesOf: PlacesOf,
 ): string[] {
   if (!current) return [];
-  const reach = current.nearbyUsesConnections
-    ? [...effectiveDestinations(current.id, locations, connections).keys()]
-    : reachableLocations(current, locations).map((l) => l.id);
-  return entityIdsAtAny(reach, nearbyKnown(entities));
+  return idsAtAny(nearbyPlaces(current.id, locations, connections), nearbyKnown(entities), placesOf);
 }
 
 /** The ids of the entities known at the current location, in cast order: one of each one's Known In picks is
- *  the location or contains it, or it is in `pulledIds`. The Custom Persona is never listed; the played persona
- *  is not in the cast play passes. */
-export function knownEntityIds(current: MaybeLocation, locations: GameLocation[], entities: Entity[], pulledIds: readonly string[] = []): string[] {
-  const known = new Set(current ? knownHere(current.id, locations, entities).map((row) => row.entity.id) : []);
+ *  the location or contains it, or it is in `pulledIds`. Only the cast is listed, as `inCast` reads it under
+ *  `persona`: never the Custom Persona, the played persona or an unpicked Persona-Only entity. */
+export function knownEntityIds(
+  current: MaybeLocation, locations: GameLocation[], entities: Entity[], pulledIds: readonly string[] = [], persona?: PersonaRef,
+): string[] {
+  const cast = entities.filter((e) => inCast(e, persona));
+  const known = new Set(current ? knownHere(current.id, locations, cast).map((row) => row.entity.id) : []);
   const pulled = new Set(pulledIds);
-  return entities.flatMap((e) => (known.has(e.id) || (pulled.has(e.id) && !e.customPersona) ? [e.id] : []));
+  return cast.flatMap((e) => (known.has(e.id) || pulled.has(e.id) ? [e.id] : []));
 }
 
 /**
@@ -562,7 +665,7 @@ export function knownEntityRuns(
   opts: KnownRosterOpts = {},
 ): MarkedRun[] {
   const exclude = new Set(opts.excludeIds ?? []);
-  const ids = knownEntityIds(current, locations, entities, opts.pulledIds).filter((id) => !exclude.has(id));
+  const ids = knownEntityIds(current, locations, entities, opts.pulledIds, opts.persona).filter((id) => !exclude.has(id));
   if (!current && !ids.length) return runs(NONE_PLACEHOLDER);
   return entityRosterRuns(ids, entities, { ...opts, preferSummary: true, noTraits: true, noStats: true });
 }
@@ -586,7 +689,7 @@ export function buildReachableLocationsContext(
 /**
  * Serialize the characters/things in the current location's reachable locations for the
  * `<ENTITIES|reachable>` chip. Gathers + dedupes their entity ids (minus `excludeIds` — anyone shown in a
- * higher-precedence roster, i.e. present here or in a sub-location) and delegates to `buildEntityContext`.
+ * higher-precedence roster, i.e. present here or in a sub-location) and delegates to `renderEntityRoster`.
  * Returns `N/A` when nothing is reachable or no entities remain.
  */
 export function buildReachableEntitiesContext(
@@ -594,9 +697,10 @@ export function buildReachableEntitiesContext(
   locations: GameLocation[],
   connections: Connection[],
   entities: Entity[],
+  placesOf: PlacesOf,
   opts: RosterOpts & { excludeIds?: string[] } = {},
 ): string {
-  return textOf(reachableEntityRuns(current, locations, connections, entities, opts));
+  return textOf(reachableEntityRuns(current, locations, connections, entities, placesOf, opts));
 }
 
 /** {@link buildReachableEntitiesContext} as marked runs. */
@@ -605,11 +709,12 @@ export function reachableEntityRuns(
   locations: GameLocation[],
   connections: Connection[],
   entities: Entity[],
+  placesOf: PlacesOf,
   opts: RosterOpts & { excludeIds?: string[] } = {},
 ): MarkedRun[] {
   if (!current) return runs(NONE_PLACEHOLDER);
   const exclude = new Set(opts.excludeIds ?? []);
-  const ids = reachableEntityIds(current, locations, connections, entities).filter((id) => !exclude.has(id));
+  const ids = reachableEntityIds(current, locations, connections, entities, placesOf).filter((id) => !exclude.has(id));
   return entityRosterRuns(ids, entities, opts);
 }
 
@@ -617,7 +722,7 @@ export function reachableEntityRuns(
  *  `statsOn` is the stored stats-on pick, which the scopes that default to no stats read. */
 export type ContextOpts = {
   preferSummary?: boolean; nameOnly?: boolean; format?: ContextFormat; noStats?: boolean; statsOn?: boolean;
-  onlyWith?: OnlyWith; noTraits?: boolean; statPieces?: StatPieces;
+  onlyWith?: OnlyWith; noTraits?: boolean; statPieces?: StatPieces; noMovement?: boolean;
 };
 
 // What each registry option means to the builders. The ids come from the registry; only their meaning is
@@ -649,14 +754,15 @@ function chipStats(optionId: string | null): ContextOpts {
   return opts;
 }
 
-/** The Only With, Include Traits and Stat Detail picks of the Entities and Persona chips. A stored id is the
- *  Only With pick on, and the Include or Stat Detail piece off. Other chips carry none of these axes. */
+/** The Only With, Include Traits, Movement and Stat Detail picks of the Entities and Persona chips. A stored id
+ *  is the Only With pick on, and the Include or Stat Detail piece off. Other chips carry none of these axes. */
 function chipRoster(selection: Record<string, string | null | undefined>): ContextOpts {
   const onlyWith: OnlyWith = { stats: selection.withstats != null, traits: selection.withtraits != null };
   const pieces: StatPieces = { values: selection.range == null, status: selection.descriptor == null, meaning: selection.description == null };
   return {
     ...(onlyWith.stats || onlyWith.traits ? { onlyWith } : {}),
     ...(selection.traits != null ? { noTraits: true } : {}),
+    ...(selection.movement != null ? { noMovement: true } : {}),
     ...(pieces.values && pieces.status && pieces.meaning ? {} : { statPieces: pieces }),
   };
 }

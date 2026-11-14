@@ -10,6 +10,8 @@ import type { TurnPlanInput, TurnPrompts, TurnSettings } from './turnPlan';
 export const TEST_PROMPTS: TurnPrompts = {
   locationChange: 'ROUTER <WORLD DESCRIPTION>',
   locationChangeUser: 'Action: <PLAYER ACTION>',
+  narratedMove: 'CARRIED <WORLD DESCRIPTION>',
+  narratedMoveUser: 'Carried: <PLAYER ACTION> | <NARRATION>',
   entityLocation: 'MOVER <WORLD DESCRIPTION> for <CHARACTER NAME>',
   entityLocationUser: 'Move: <CHARACTER NAME> | <PLAYER ACTION> | <NARRATION> | <MOVE STATE> | <MOVE OPTIONS>',
   thinking: 'THINK <WORLD DESCRIPTION>',
@@ -19,6 +21,7 @@ export const TEST_PROMPTS: TurnPrompts = {
   storyboard: 'STORYBOARD <WORLD DESCRIPTION>',
   narrationUser: 'Player: <PLAYER ACTION>',
   oocDirective: 'OOC RIDER',
+  actionList: 'ACTION LIST',
   openingCue: OPENING_SCENE_CUE,
   choices: 'CHOICES <WORLD DESCRIPTION> <ENTITIES>',
   choicesUser: 'Choices: <PLAYER ACTION> | <NARRATION>',
@@ -58,7 +61,7 @@ export const TEST_SETTINGS: TurnSettings = {
   describeCharacters: true,
   // The parity capture's world had no items.
   inventoryDue: false,
-  inventoryTextPass: false,
+  inventoryTextPass: false, entityLocationTextPass: false, clockTextPass: false,
   imageAttachments: false,
   promptAttachments: {},
   language: 'English',

@@ -7,7 +7,10 @@ import { inPlayLibrary, inPlayOwners } from './ownedTraitsInPlay';
 import { ownedTraitStatesFrom } from './ownedTraitState';
 import { allPlaceholders, placeholderOwners } from './placeholderHomes';
 import { startsMet } from './presence';
-import { startingLocations } from './startingLocation';
+import { positionedCast } from './entityPresence';
+import { EMPTY_BOOK } from './positionEngine';
+import { openingWorld, placeAll, scriptPlaces } from './positionPlay';
+import { sampleStart } from './startingLocation';
 import { playStatWorld } from './statLinks';
 import type { ResolveText, SandboxState } from './statCodeTurn';
 import type { UnitHome } from './sandboxSnapshot';
@@ -15,27 +18,33 @@ import { atStartValues, statStartValue } from './statDescriptorGeometry';
 import { activeStatEnabled, inAuthoredOrder, traitOrderIndex } from './traitEffects';
 import {
   acquireTrait, applyGlobalRowTraits, applyOwnedStatTraits, entityStatTraitsInForce, gateStatsOf, heldGlobalTraits,
-  seedNewGameStats, statTraitsInForce, type TraitRuntimeState, type TraitWorld,
+  seedNewGameStats, statTraitsInForce, traitGateInput, type TraitRuntimeState, type TraitWorld,
 } from './traitRuntime';
+import type { GateInput } from './traitGates';
+import { daypartAt } from './gameClock';
+import { gatePick } from './inPlayGates';
 import type { PersonaPick } from './persona';
 import { equipRequirement, settleInventory, startingCopies, type NewId } from './inventory';
 import { randomUUID } from './uuid';
 import type { OwnerId } from './scope';
 import { resolveEntityText, type PlaceholderMode } from './placeholders';
 import type {
-  BodyRuntime, Entity, EntityStatValues, PersonaRef, ItemEffectLedger, OwnedTraitPicks, Placeholder, Trait, World,
+  BodyRuntime, Entity, EntityStatValues, PersonaRef, ItemEffectLedger, OwnedTraitPicks, Placeholder, Trait, World, WorldOptionValues,
 } from '@/types';
 
 /** The authored slice the fold reads. An absent slice reads as empty, as an editor's half-built world can be. */
 export type OpeningFoldWorld = Partial<Pick<World,
   'stats' | 'statGroups' | 'traits' | 'traitGroups' | 'entities' | 'entityGroups' | 'placeholders' | 'placeholderGroups' | 'dictionaries' | 'locations'
-  | 'connections' | 'worldOverview' | 'items' | 'placements' | 'slots' | 'bodies' | 'currencies'
+  | 'connections' | 'worldOverview' | 'items' | 'placements' | 'slots' | 'bodies' | 'currencies' | 'options'
 >>;
 
-/** What the player picked at the entry step: the global trait ids and each owner's trait ids. */
+/** What the player picked at the entry step: the global trait ids, each owner's trait ids, and the World
+ *  Option values. */
 export interface OpeningPicks {
   traits: readonly string[];
   owned: OwnedTraitPicks;
+  /** Absent ⇒ each Option's default. */
+  options?: WorldOptionValues;
 }
 
 /** The played persona and the library characters added at the entry step. Absent ⇒ None, no library. */
@@ -72,6 +81,8 @@ export interface OpeningFold {
   itemEffects: { ledger: ItemEffectLedger; log: string[] };
   /** Which Body-setting traits opened on, in order. */
   bodies: BodyRuntime;
+  /** Every owner's traits, stats, items and Options after the setup picks, as the gates read them (Q12). */
+  gate: GateInput;
 }
 
 /** Authored text resolved as turn one would: an unrolled chip draws once, and every text after it reads that roll. */
@@ -96,6 +107,7 @@ export function openingFold(
   // The trait picks read the start as Enter World showed it: equipped, before any requirement check (Q51).
   const traitWorld: TraitWorld = {
     traits, groups: traitGroups, entities, persona: ref, items: world.items ?? [], itemCopies: startingCopies(startWorld, ref, newId),
+    options: world.options ?? [], ...(picks.options ? { optionValues: picks.options } : {}),
     ...inPlayOwners(ownerWorld, ref, library),
   };
 
@@ -126,7 +138,7 @@ export function openingFold(
   const ownedTraits = traitState.ownedTraits ?? {};
 
   const locations = world.locations ?? [];
-  const start = startingLocations(locations)[0] ?? locations[0] ?? null;
+  const start = sampleStart(locations) ?? null;
   // A new game has no met-in-play list yet, so the start rule alone says who the player knows.
   const played = openingPlayedEntity(entities, persona);
   const metIds = [...entities, ...library].filter((e) => startsMet(e, played, locations)).map((e) => e.id);
@@ -152,12 +164,36 @@ export function openingFold(
     ...(world.currencies?.length ? { money: { currencies: world.currencies, placements: world.placements ?? [] } } : {}),
   };
   const startingTraits = [...held.map((trait) => ({ trait, ownerId: null })), ...rows.appliedRows];
-  return { state, entityStats, startingTraits, traitState, itemEffects: { ledger: items.ledger, log: items.log }, bodies: items.bodies };
+  const gate = traitGateInput(traitState, { ...playWorld, daypart: daypartAt(0) });
+  return { state, entityStats, startingTraits, traitState, itemEffects: { ledger: items.ledger, log: items.log }, bodies: items.bodies, gate };
 }
 
 /** The `SandboxState` of turn one. */
 export const openingStateOf = (world: OpeningFoldWorld, picks?: OpeningPicks, persona?: OpeningPersona): SandboxState =>
   openingFold(world, picks, persona).state;
+
+/** The `SandboxState` an authoring run reads: turn one with the cast as `openingBook` places it (Q210). Play never
+ *  reads it, since New Game rolls its own book (Q215). */
+export function authoringStateOf(world: OpeningFoldWorld, picks?: OpeningPicks, persona?: OpeningPersona): SandboxState {
+  const fold = openingFold(world, picks, persona);
+  const { state } = fold;
+  const cast = positionedCast(state.ownerTraits.entities ?? [], persona?.ref);
+  const placed = openingWorld(cast, world.locations ?? [], world.connections ?? [], state.places?.location?.id, gatePick(fold.gate));
+  return { ...state, ...scriptPlaces(placeAll(EMPTY_BOOK, placed), placed) };
+}
+
+/** What a script reads of where the cast stands in a live game. */
+export type LivePlaces = Pick<SandboxState, 'positions' | 'genericPositions' | 'followers' | 'waiting' | 'routineNow'>;
+
+/** A script run's state outside a turn: the live places, or the Sample Placement while nobody is placed (Q10). */
+export function standaloneStateOf(world: OpeningFoldWorld, persona: OpeningPersona | undefined, live: LivePlaces): SandboxState {
+  const placed = Object.keys(live.positions ?? {}).length > 0 || Object.keys(live.genericPositions ?? {}).length > 0;
+  return placed ? liveStateOf(world, persona, live) : authoringStateOf(world, undefined, persona);
+}
+
+/** Turn one's state with the cast where `live` places it, and nowhere else. */
+export const liveStateOf = (world: OpeningFoldWorld, persona: OpeningPersona | undefined, live: LivePlaces): SandboxState =>
+  ({ ...openingStateOf(world, undefined, persona), ...live });
 
 /** `home` with its stats at their opening values, as turn one seeds them (Q8). */
 export function openingHomeOf(home: UnitHome): UnitHome {

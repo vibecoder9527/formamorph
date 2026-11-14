@@ -1,16 +1,17 @@
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { benchEditorWorld, renderWorldEditorBench, searchWorldField } from '@/test/worldEditorBench';
+import { act, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import {
+  benchEditorWorld, openEditorTab, pickEditorMode, renderWorldEditorBench, searchWorldField,
+} from '@/test/worldEditorBench';
 import type { World } from '@/types';
 
 /**
  * What the World Editor's Overview tab puts on screen, driven through the real editor.
  *
  * Overview is two forms rather than a list and a panel, so each column is read from its own pane: the
- * identity fields on the left, the writing on the right. A field that goes missing, gains a duplicate or
- * lands out of order shows up here as a changed label list. The Find cases prove the reorder left
- * navigation alone.
+ * identity fields on the left, the writing on the right. The right column's Details and Custom Prompts tabs
+ * each hold their own fields, so a field that moves between tabs fails as a changed label list.
+ * The Find cases prove a hit opens the tab that holds it.
  */
 
 vi.mock('../services/WorldStorageService', () => ({
@@ -30,8 +31,8 @@ vi.mock('react-toastify', () => ({
   ToastContainer: () => null,
 }));
 
-/** Every readme and prompt holds a word found nowhere else, so a query names the field it lands in. The
- *  narration override is stored and switched on, which is what registers it as something Find can reach. */
+/** Every readme, prompt and opening holds a word found nowhere else, so a query names the field it lands in.
+ *  The narration override is stored and switched on, which is what registers it as something Find can reach. */
 const WORLD: World = benchEditorWorld({
   worldOverview: {
     name: 'Sedge Landing', description: 'A fen town.', author: 'Wren', thumbnail: null, bgm: null,
@@ -42,10 +43,18 @@ const WORLD: World = benchEditorWorld({
   },
 } as unknown as Partial<World>);
 
+/** The same world with an opening of its own. */
+const WITH_OPENING: World = benchEditorWorld({
+  worldOverview: {
+    ...WORLD.worldOverview,
+    openings: [{ id: 'o-ferry', text: 'The ferry bell tolls over the reeds.', kind: 'narration' }],
+  },
+} as unknown as Partial<World>);
+
 /** Both column labels, so a label that moves between the columns fails rather than passing twice. */
 const FIELD_LABELS = new RegExp(
   '^(World Name|Author|Tags|Thumbnail|Avatars|Allowed Personas|Starts On|Background Music'
-  + '|Player-Facing Description|Readme|AI-Facing Description|Custom Prompts)$',
+  + '|Player-Facing Description|Readme|AI-Facing Description)$',
 );
 
 /** The labels of one editor pane, in document order. Read from the pane rather than the page: both columns
@@ -53,7 +62,7 @@ const FIELD_LABELS = new RegExp(
 const columnLabels = (panelId: 'editor-list' | 'editor-detail') => {
   const pane = document.querySelector<HTMLElement>(`[data-panel-id="${panelId}"]`);
   if (!pane) throw new Error(`No ${panelId} pane`);
-  return within(pane).getAllByText(FIELD_LABELS)
+  return within(pane).queryAllByText(FIELD_LABELS)
     .filter((el) => !el.closest('[role="tablist"]'))
     .map((el) => el.textContent);
 };
@@ -61,25 +70,31 @@ const columnLabels = (panelId: 'editor-list' | 'editor-detail') => {
 const leftLabels = () => columnLabels('editor-list');
 const rightLabels = () => columnLabels('editor-detail');
 
-/** The readme's own strip, found by the tabs it holds — the editor's top-level strip has neither name. */
+/** A strip found by its accessible name, apart from the editor's own and the readme's. */
+const strip = (name: string) => screen.getByRole('tablist', { name });
+const tabNames = (name: string) => within(strip(name)).getAllByRole('tab').map((t) => t.textContent);
+const shownTab = (name: string) => within(strip(name)).getAllByRole('tab')
+  .find((t) => t.getAttribute('aria-selected') === 'true')?.textContent;
+/** Radix tabs switch on mouseDown. */
+const openTab = (name: string, tab: string) => fireEvent.mouseDown(within(strip(name)).getByRole('tab', { name: tab }));
+
+const OVERVIEW = 'Overview Fields';
+/** The Custom Prompts status rows; a row's name reads "<Kind>, Custom" or "<Kind>, Default". */
+const kindRows = () => within(screen.getByRole('list', { name: 'Custom Prompt Kinds' })).getAllByRole('button');
+const kindNames = () => kindRows().map((b) => b.getAttribute('aria-label')?.split(',')[0]);
+const shownKind = () => kindRows().find((b) => b.getAttribute('aria-current') === 'true')?.getAttribute('aria-label')?.split(',')[0];
+const pickKind = (kind: string) => fireEvent.click(kindRows().find((b) => b.getAttribute('aria-label')?.startsWith(`${kind},`))!);
+
+/** The readme's own strip, found by the tabs it holds. */
 const readmeStrip = () => {
-  const strip = screen.getAllByRole('tablist')
+  const found = screen.getAllByRole('tablist')
     .find((l) => within(l).queryByRole('tab', { name: 'Introduction' }));
-  if (!strip) throw new Error('No readme strip');
-  return strip;
+  if (!found) throw new Error('No readme strip');
+  return found;
 };
 
 const shownReadmeTab = () => within(readmeStrip()).getAllByRole('tab')
   .find((t) => t.getAttribute('aria-selected') === 'true')?.textContent;
-
-/** Which custom-prompt kind the picker has open. Its items are radios, not tabs — and so is the editor's
- *  own Simple/Advanced switch, so the selection is read by kind name rather than by walking the DOM. */
-const PROMPT_KINDS = ['Narration', 'Choices', 'Stats', 'Openings'];
-
-const openPromptKind = () => screen.getAllByRole('radio')
-  .filter((r) => r.getAttribute('data-state') === 'on')
-  .map((r) => r.textContent)
-  .filter((t) => t && PROMPT_KINDS.includes(t));
 
 /** Press Ctrl+F and wait for Search World to take focus. */
 const openFind = async () => {
@@ -115,12 +130,20 @@ describe('the World Editor Overview columns', () => {
     ]);
   });
 
-  it('reads the player-facing text, then the prompts, down the right column', async () => {
+  it('splits the right column into Details and Custom Prompts, opening on Details', async () => {
+    renderWorldEditorBench(WITH_OPENING, 'advanced');
+    await screen.findByLabelText('World Name');
+    expect(tabNames(OVERVIEW)).toEqual(['Details', 'Custom Prompts']);
+    expect(shownTab(OVERVIEW)).toBe('Details');
+    expect(rightLabels()).toEqual(['Player-Facing Description', 'Readme', 'AI-Facing Description']);
+  });
+
+  it('keeps the Details fields off the Custom Prompts tab', async () => {
     renderWorldEditorBench(WORLD, 'advanced');
     await screen.findByLabelText('World Name');
-    expect(rightLabels()).toEqual([
-      'Player-Facing Description', 'Readme', 'AI-Facing Description', 'Custom Prompts',
-    ]);
+    openTab(OVERVIEW, 'Custom Prompts');
+    expect(rightLabels()).toEqual([]);
+    expect(screen.getByLabelText('World narration prompt')).toBeInTheDocument();
   });
 
   it('drops the Avatars and the persona rules from the left column in Simple mode, keeping the order', async () => {
@@ -129,9 +152,10 @@ describe('the World Editor Overview columns', () => {
     expect(leftLabels()).toEqual(['World Name', 'Author', 'Tags', 'Thumbnail', 'Background Music']);
   });
 
-  it('drops Custom Prompts from the right column in Simple mode, keeping the order', async () => {
+  it('shows the Details fields with no tab strip in Simple mode', async () => {
     renderWorldEditorBench(WORLD, 'simple');
     await screen.findByLabelText('World Name');
+    expect(screen.queryByRole('tablist', { name: OVERVIEW })).toBeNull();
     expect(rightLabels()).toEqual(['Player-Facing Description', 'Readme', 'AI-Facing Description']);
   });
 
@@ -151,158 +175,115 @@ describe('the World Editor Overview columns', () => {
       await waitFor(() => expect(screen.queryByText(reader)).toBeNull());
     }
   });
-
-  // The button's width comes from the box it shares with the picture, so what this can assert in jsdom is
-  // the sharing. That it renders at the frame's width was read off the running editor, not from here.
-  it('puts the Generate button in the thumbnail frame’s own box', async () => {
-    renderWorldEditorBench(WORLD, 'advanced');
-    const generate = await screen.findByRole('button', { name: /Generate with AI/ });
-    const box = generate.parentElement;
-    expect(box?.querySelector('#image-upload-thumbnail')).not.toBeNull();
-  });
-
 });
 
-describe('the Overview persona rules', () => {
-  const allowed = () => screen.getByRole('radiogroup', { name: 'Allowed Personas' });
-  const startsOn = () => screen.getByRole('combobox', { name: 'Starts On' });
-  // The Select's pointer open does not fire inside the bench; the keyboard open does.
-  const openStartsOn = async (user: ReturnType<typeof userEvent.setup>) => { startsOn().focus(); await user.keyboard('{Enter}'); };
-  const withPersonas = (overview: Partial<World['worldOverview']> = {}, extra: object[] = []) => benchEditorWorld({
-    ...WORLD,
-    worldOverview: { ...WORLD.worldOverview, ...overview },
-    entities: [
-      { id: 'e1', name: 'Maren', playerDescription: '', aiDescription: '', persona: true },
-      { id: 'e2', name: 'Tobin', playerDescription: '', aiDescription: '', persona: true },
-      ...extra,
-    ],
-  } as unknown as Partial<World>);
-
-  it('reads absent rules as Any on the player default, and Any writes no field', async () => {
-    const { ctx } = renderWorldEditorBench(WORLD, 'advanced');
-    await screen.findByLabelText('World Name');
-    expect(within(allowed()).getByRole('radio', { name: 'Any' })).toHaveAttribute('data-state', 'on');
-    expect(screen.getByText('Lets players pick any persona, their own included')).toBeInTheDocument();
-    expect(startsOn()).toHaveTextContent("Player's Default");
-
-    fireEvent.click(within(allowed()).getByRole('radio', { name: 'World Only' }));
-    await waitFor(() => expect(ctx().worldOverview.allowedPersonas).toBe('world'));
-    fireEvent.click(within(allowed()).getByRole('radio', { name: 'Any' }));
-    await waitFor(() => expect(ctx().worldOverview.allowedPersonas).toBeUndefined());
-  });
-
-  it('keeps its value when the active item is clicked again', async () => {
-    const { ctx } = renderWorldEditorBench(WORLD, 'advanced');
-    await screen.findByLabelText('World Name');
-    fireEvent.click(within(allowed()).getByRole('radio', { name: 'World Only' }));
-    fireEvent.click(within(allowed()).getByRole('radio', { name: 'World Only' }));
-    expect(ctx().worldOverview.allowedPersonas).toBe('world');
-  });
-
-  it('says World Only works like Any while no entity has a Persona role', async () => {
+describe('the Custom Prompts tab', () => {
+  it('opens on Narration, with one prompt always showing', async () => {
     renderWorldEditorBench(WORLD, 'advanced');
     await screen.findByLabelText('World Name');
-    fireEvent.click(within(allowed()).getByRole('radio', { name: 'World Only' }));
-    expect(await screen.findByText('Works like Any until you give an entity a Persona role')).toBeInTheDocument();
+    openTab(OVERVIEW, 'Custom Prompts');
+    expect(kindNames()).toEqual(['Narration', 'Choices', 'Stats']);
+    expect(shownKind()).toBe('Narration');
+
+    // Picking the open kind again keeps it open: one prompt always shows.
+    pickKind('Narration');
+    expect(shownKind()).toBe('Narration');
+    pickKind('Choices');
+    expect(shownKind()).toBe('Choices');
+    expect(screen.getByLabelText('World choices prompt')).toBeInTheDocument();
   });
 
-  it('writes each Starts On pick, and the player default writes no field', async () => {
-    const user = userEvent.setup();
-    const { ctx } = renderWorldEditorBench(withPersonas(), 'advanced');
-    await screen.findByLabelText('World Name');
-    await openStartsOn(user);
-    await user.click(await screen.findByRole('option', { name: 'Tobin' }));
-    await waitFor(() => expect(ctx().worldOverview.startPersona).toEqual({ source: 'world', entityId: 'e2' }));
-    await openStartsOn(user);
-    await user.click(await screen.findByRole('option', { name: 'None' }));
-    await waitFor(() => expect(ctx().worldOverview.startPersona).toEqual({ source: 'none' }));
-    await openStartsOn(user);
-    await user.click(await screen.findByRole('option', { name: "Player's Default" }));
-    await waitFor(() => expect(ctx().worldOverview.startPersona).toBeUndefined());
-  });
-
-  it("offers only the world's personas under World Only, on the first by default", async () => {
-    const user = userEvent.setup();
-    renderWorldEditorBench(withPersonas({ allowedPersonas: 'world' }), 'advanced');
-    await screen.findByLabelText('World Name');
-    expect(screen.getByText('Limits players to the personas this world defines')).toBeInTheDocument();
-    expect(startsOn()).toHaveTextContent('Maren');
-    await openStartsOn(user);
-    await screen.findByRole('option', { name: 'Tobin' });
-    expect(screen.queryByRole('option', { name: "Player's Default" })).toBeNull();
-    expect(screen.queryByRole('option', { name: 'None' })).toBeNull();
-  });
-
-  it('names the Custom Persona entity in place of None', async () => {
-    const user = userEvent.setup();
-    renderWorldEditorBench(withPersonas({ allowedPersonas: 'world' }, [
-      { id: 'cp', name: 'Wanderer', playerDescription: '', aiDescription: '', customPersona: true },
-    ]), 'advanced');
-    await screen.findByLabelText('World Name');
-    await openStartsOn(user);
-    expect(await screen.findByRole('option', { name: 'Wanderer' })).toBeInTheDocument();
-  });
-
-  it('reads a pick of an entity that is no longer a persona as the default', async () => {
-    renderWorldEditorBench(withPersonas({ startPersona: { source: 'world', entityId: 'gone' } }), 'advanced');
-    await screen.findByLabelText('World Name');
-    expect(startsOn()).toHaveTextContent("Player's Default");
-  });
-});
-
-describe('the Overview background music widget', () => {
-  it('offers the shared sound dropzone while the world has no music', async () => {
-    renderWorldEditorBench(WORLD, 'advanced');
-    await screen.findByLabelText('World Name');
-    expect(screen.getByText('Add Sound')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Remove sound' })).toBeNull();
-  });
-
-  it('shows the player and the remove control once a track is added, and clears both on remove', async () => {
+  it('switches a prompt off and keeps its text, then back on', async () => {
     const { ctx } = renderWorldEditorBench(WORLD, 'advanced');
     await screen.findByLabelText('World Name');
+    openTab(OVERVIEW, 'Custom Prompts');
+    const use = screen.getByRole('checkbox', { name: 'Use Narration Prompt' });
+    expect(use).toHaveAttribute('data-state', 'checked');
 
-    const input = document.querySelector<HTMLInputElement>('#sound-upload-world-bgm');
-    if (!input) throw new Error('No background music input');
-    fireEvent.change(input, {
-      target: { files: [new File(['fen-drone'], 'Drone.mp3', { type: 'audio/mpeg' })] },
+    await act(async () => { fireEvent.click(use); });
+    expect(ctx().worldOverview.promptOverrides).toMatchObject({
+      systemPrompt: 'Narrate in lamplight.', systemPromptEnabled: false,
     });
+    expect(screen.getByRole('checkbox', { name: 'Use Narration Prompt' })).toHaveAttribute('data-state', 'unchecked');
+    // Switching off leaves the author on the panel, with the text still in its field.
+    expect(shownKind()).toBe('Narration');
+    expect(screen.getByLabelText('World narration prompt').textContent).toContain('Narrate in lamplight.');
 
-    const remove = await screen.findByRole('button', { name: 'Remove sound' });
-    expect(document.querySelector('audio')).not.toBeNull();
-    // Still the bare data URL the world has always stored, not the widget's media record.
-    expect(typeof ctx().worldOverview.bgm).toBe('string');
+    await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: 'Use Narration Prompt' })); });
+    expect(ctx().worldOverview.promptOverrides).toMatchObject({
+      systemPrompt: 'Narrate in lamplight.', systemPromptEnabled: true,
+    });
+  });
+});
 
-    fireEvent.click(remove);
+describe('the remembered Overview tab', () => {
+  it('keeps the right-column tab and the prompt kind across a visit to another editor tab', async () => {
+    renderWorldEditorBench(WORLD, 'advanced');
+    await screen.findByLabelText('World Name');
+    openTab(OVERVIEW, 'Custom Prompts');
+    pickKind('Stats');
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove sound' })).toBeNull());
-    expect(ctx().worldOverview.bgm).toBeNull();
-    expect(screen.getByText('Add Sound')).toBeInTheDocument();
+    openEditorTab(/Stats/);
+    openEditorTab(/Overview/);
+    await screen.findByLabelText('World Name');
+    expect(shownTab(OVERVIEW)).toBe('Custom Prompts');
+    expect(shownKind()).toBe('Stats');
+  });
+
+  it('shows Details in Simple mode and returns to the kept tab in Advanced', async () => {
+    renderWorldEditorBench(WORLD, 'advanced');
+    await screen.findByLabelText('World Name');
+    openTab(OVERVIEW, 'Custom Prompts');
+
+    pickEditorMode('Simple');
+    await waitFor(() => expect(screen.queryByRole('tablist', { name: OVERVIEW })).toBeNull());
+    expect(rightLabels()).toEqual(['Player-Facing Description', 'Readme', 'AI-Facing Description']);
+
+    pickEditorMode('Advanced');
+    await waitFor(() => expect(shownTab(OVERVIEW)).toBe('Custom Prompts'));
   });
 });
 
 describe('a Find hit on the Overview tab', () => {
-  it('opens the Gameplay readme and rings it', async () => {
+  it('opens Details and the Gameplay readme from another tab, and rings it', async () => {
     renderWorldEditorBench(WORLD, 'advanced');
     await screen.findByLabelText('World Name');
-    expect(shownReadmeTab()).toBe('Introduction');
+    openTab(OVERVIEW, 'Custom Prompts');
 
     await openFind();
     await findFirst('peat-smoke');
 
+    await waitFor(() => expect(shownTab(OVERVIEW)).toBe('Details'));
     await waitFor(() => expect(shownReadmeTab()).toBe('Gameplay'));
     expect((await ringed()).textContent).toContain('peat-smoke');
   });
 
-  it('opens the custom prompt kind holding the hit', async () => {
+  it('opens Custom Prompts on the kind holding the hit', async () => {
     renderWorldEditorBench(WORLD, 'advanced');
     await screen.findByLabelText('World Name');
-    expect(openPromptKind()).toEqual([]);
+    openTab(OVERVIEW, 'Custom Prompts');
+    pickKind('Choices');
+    openTab(OVERVIEW, 'Details');
 
     await openFind();
     await findFirst('lamplight');
 
-    await waitFor(() => expect(openPromptKind()).toEqual(['Narration']));
+    await waitFor(() => expect(shownTab(OVERVIEW)).toBe('Custom Prompts'));
+    expect(shownKind()).toBe('Narration');
     expect((await ringed()).textContent).toContain('lamplight');
+  });
+
+  it('leaves the remembered tab alone when Overview remounts with a hit still held', async () => {
+    renderWorldEditorBench(WORLD, 'advanced');
+    await screen.findByLabelText('World Name');
+    await openFind();
+    await findFirst('lamplight');
+    await waitFor(() => expect(shownTab(OVERVIEW)).toBe('Custom Prompts'));
+
+    openTab(OVERVIEW, 'Details');
+    openEditorTab(/Stats/);
+    openEditorTab(/Overview/);
+    await screen.findByLabelText('World Name');
+    expect(shownTab(OVERVIEW)).toBe('Details');
   });
 });

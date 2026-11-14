@@ -7,10 +7,14 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VRM, VRMHumanBoneName } from '@pixiv/three-vrm';
-import type { HairTypeDef } from '@/types';
-import { BUNDLED_DEFAULT_URL } from '@/lib/defaultAvatar';
-import { resolveMorphAlias } from '@/lib/bodyMorphs';
-import { medianOpaqueRGB, tintFactors, tintSeedRGB, toByte } from '@/lib/textureMedian';
+import type { ColorChannel, HairTypeDef } from '@/types';
+import { applyMorphInfluences } from '@/lib/modelMorphs';
+import { catalogNames, expressionBoundMorphs, vrmMorphCatalog } from '@/lib/vrmMorphCatalog';
+import { dominantClusterRGB, medianOpaqueRGB, tintFactors, tintSeedRGB, toByte } from '@/lib/textureMedian';
+import { channelMatch } from '@/lib/vrmColorChannels';
+import { blendColor } from '@/lib/oklab';
+import { COLOR_CHANNELS, type ColorPlan } from '@/lib/avatarLook';
+import { usePanelLoopGate } from '@/lib/panelShown';
 
 // VRM/MToon material: the base three Material plus the standard/MToon fields the color code touches.
 type VrmMaterial = THREE.Material & {
@@ -33,6 +37,8 @@ type MorphMesh = THREE.Object3D & {
 export interface VRMCapabilities {
   /** Body-shape/feature morphs present on the `Body` mesh (e.g. 'Belly', 'Breasts', 'Fat', 'B_Pear', …). */
   bodyMorphs: string[];
+  /** Slider keys on other meshes, such as face or hair shapes ('Ear Shape'); facial-rig keys excluded. */
+  headMorphs: string[];
   /** Hair-style keys (from `hairTypes`) whose shapekey mesh exists in the model. */
   hairStyles: string[];
   /** True if a supported hair style also exposes the `LENGTH` morph. */
@@ -50,12 +56,15 @@ export interface VRMViewerHandle {
 }
 
 interface VRMViewerProps {
-  /** Body-mesh morph influences keyed by morph name (Belly/Breasts/Fat/B_Pear/…). Composed by the
-   *  caller from customization choices and stat-driven values; applied to every Body primitive. */
+  /** Morph influences keyed by morph name, body and head keys alike (Belly, Ear Shape, …). Composed by the
+   *  caller from customization choices and stat-driven values; applied to every primitive carrying the key. */
   bodyMorphValues?: Record<string, number>;
   hairColor?: string;
   eyeColor?: string;
   skinColor?: string;
+  /** Each channel's color plan, in place of its `*Color` prop. Applied per material, so separate materials in
+   *  one channel blend from their own colors. */
+  colorPlan?: Readonly<Record<ColorChannel, ColorPlan>>;
   hairTypes?: Record<string, HairTypeDef>;
   /** Absent, every hair mesh keeps the visibility its file gives it. */
   currentHairStyle?: string;
@@ -128,14 +137,45 @@ const mixamoVRMRigMap: Record<string, string> = {
   mixamorigRightToeBase: 'rightToes',
 };
 
+/** Parsed animation files, shared by every viewer: retargeting reads them and never changes them. */
+const fbxCache = new Map<string, Promise<THREE.Group>>();
+function loadFbx(path: string): Promise<THREE.Group> {
+  let pending = fbxCache.get(path);
+  if (!pending) {
+    pending = new FBXLoader().loadAsync(path);
+    // A failed load isn't kept, so a later mount tries again.
+    pending.catch(() => fbxCache.delete(path));
+    fbxCache.set(path, pending);
+  }
+  return pending;
+}
+
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/** Every texture the object's materials use, once each. */
+function texturesOf(root: THREE.Object3D): THREE.Texture[] {
+  const textures = new Set<THREE.Texture>();
+  root.traverse((obj) => {
+    const material = (obj as THREE.Mesh).material;
+    for (const m of Array.isArray(material) ? material : material ? [material] : []) {
+      for (const value of Object.values(m)) if (value instanceof THREE.Texture) textures.add(value);
+      // MToon keeps its maps in uniforms as well.
+      const uniforms = (m as THREE.ShaderMaterial).uniforms;
+      if (uniforms) for (const { value } of Object.values(uniforms)) if (value instanceof THREE.Texture) textures.add(value);
+    }
+  });
+  return [...textures];
+}
+
 const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
   bodyMorphValues,
   hairColor,
   eyeColor,
   skinColor,
+  colorPlan,
   currentHairStyle,
   hairLength,
-  modelUrl = BUNDLED_DEFAULT_URL,
+  modelUrl,
   animationFiles = ['./idle.fbx', './bashful.fbx', './idle_dwarf.fbx'],
   extraColors,
   onCapabilities,
@@ -145,6 +185,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
   // Read live in the render loop so toggling it doesn't tear down/rebuild the scene.
   const pausedRef = useRef(!animate);
   useEffect(() => { pausedRef.current = !animate; }, [animate]);
+  const panelLoop = usePanelLoopGate();
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -160,18 +201,6 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
   const bodyMorphsAppliedRef = useRef<Record<string, number>>({});
 
   const [ready, setReady] = useState(false);
-
-  const findMesh = (meshName: string, gltf: GLTF) => {
-    return gltf.scene.children.find((child) => child.name === meshName);
-  };
-
-  // The morph-target dictionary for a named mesh (matches setMorphTarget's lookup), or null if absent.
-  const getMorphDict = (meshName: string, gltf: GLTF) => {
-    const mesh = findMesh(meshName, gltf);
-    if (!mesh) return null;
-    const child = (mesh.children[0] || mesh) as MorphMesh;
-    return child.morphTargetDictionary || null;
-  };
 
   // --- Color customization: tint skin/hair/eye materials to match the pickers, on the GPU (no per-pixel work). ---
   const hexToRgb = (hex: string) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
@@ -196,18 +225,19 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     return result;
   };
 
-  // Median opaque pixel of a material's texture → normalized [r,g,b] (0..1), cached. Null if it has no texture.
-  const getMedianRGB = (material: VrmMaterial): [number, number, number] | null => {
-    if (material.userData.__medianRGB !== undefined) return material.userData.__medianRGB;
+  // Texture color, cached, null without a texture: a channel material's dominant cluster, an extra's plain median.
+  const getTextureRGB = (material: VrmMaterial, channel: boolean): [number, number, number] | null => {
+    const key = channel ? '__clusterRGB' : '__medianRGB';
+    if (material.userData[key] !== undefined) return material.userData[key];
     const src = getOriginalImageData(material);
-    const median = src ? medianOpaqueRGB(src.data) : null;
-    material.userData.__medianRGB = median;
-    return median;
+    const rgb = src ? (channel ? dominantClusterRGB : medianOpaqueRGB)(src.data) : null;
+    material.userData[key] = rgb;
+    return rgb;
   };
 
-  // A material's untinted color (to seed a picker): texture median under the original color factor, else that factor.
-  const untintedColor = (material: VrmMaterial) => {
-    const median = getMedianRGB(material);
+  // A material's untinted color (to seed a picker): texture color under the original color factor, else that factor.
+  const untintedColor = (material: VrmMaterial, channel: boolean) => {
+    const median = getTextureRGB(material, channel);
     const color: THREE.Color | null | undefined = material.userData.__origColor ?? material.color;
     const factor: [number, number, number] | null = color?.isColor ? [color.r, color.g, color.b] : null;
     const rgb = median ? tintSeedRGB(median, factor ?? [1, 1, 1]) : factor;
@@ -215,10 +245,10 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     return '#' + rgb.map(x => toByte(x).toString(16).padStart(2, '0')).join('');
   };
 
-  // GPU tint (no per-pixel work). Textured material: scale the color factor so the texture's median shifts to
-  // `hex` (result ≈ texture × target/median → matches the picker). Factor-only material (no texture, e.g. some
-  // Blender exports): set the color factor to `hex` directly.
-  const tintByMedian = (material: VrmMaterial, hex: string) => {
+  // GPU tint (no per-pixel work). Textured material: scale the color factor so the texture color shifts to
+  // `hex` (result ≈ texture × target/texture color → matches the picker). Factor-only material (no texture, e.g.
+  // some Blender exports): set the color factor to `hex` directly.
+  const tintMaterial = (material: VrmMaterial, hex: string, channel: boolean) => {
     // Remember the untinted colors once, so a revert can restore them exactly.
     if (material.userData.__origColor === undefined)
       material.userData.__origColor = material.color?.isColor ? material.color.clone() : null;
@@ -228,26 +258,10 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     const origColor: THREE.Color | null = material.userData.__origColor;
     const origShade: THREE.Color | null = material.userData.__origShade;
     const base: [number, number, number] = origColor ? [origColor.r, origColor.g, origColor.b] : [1, 1, 1];
-    const { color, shade } = tintFactors([tr, tg, tb], getMedianRGB(material), base, origShade ? [origShade.r, origShade.g, origShade.b] : base);
+    const { color, shade } = tintFactors([tr, tg, tb], getTextureRGB(material, channel), base, origShade ? [origShade.r, origShade.g, origShade.b] : base);
     if (material.color?.isColor) material.color.setRGB(...color);
     if (material.shadeColorFactor?.isColor) material.shadeColorFactor.setRGB(...shade);
     material.needsUpdate = true;
-  };
-
-  // Whether a material belongs to a customization channel — by material name OR mesh name, so it works across
-  // VRoid (materials like *_SKIN/*_HAIR/EyeIris) and other rigs (meshes named Body/Hair/...). Clothing is excluded
-  // from skin so garments sharing the Body mesh aren't recolored.
-  const clothWords = ['cloth', 'top', 'bottom', 'shoe', 'skirt', 'pant', 'shirt', 'dress', 'jacket', 'sock', 'glove', 'sleeve', 'coat', 'bra', 'accessor'];
-  const channelMatch = (channel: string, matName: string, meshName: string) => {
-    const m = (matName || '').toLowerCase();
-    const mesh = (meshName || '').toLowerCase();
-    if (channel === 'hair') return m.includes('hair') || mesh.includes('hair');
-    if (channel === 'eye') return m.includes('iris') || (m.includes('eye') && !/white|highlight|lash|line|brow/.test(m));
-    if (channel === 'skin') {
-      if (m.includes('hair') || m.includes('eye') || m.includes('iris') || clothWords.some(w => m.includes(w))) return false;
-      return m.includes('skin') || mesh.includes('body') || mesh.includes('skin');
-    }
-    return false;
   };
 
   // Run `fn` on every material in the current VRM that belongs to `channel`.
@@ -262,41 +276,11 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     });
   };
 
-  
-  const setMorphTarget = (meshName: string, morphTargetName: string, value: number, gltf: GLTF) => {
-    if (!gltf.scene) return;
-
-    const node = gltf.scene.children.find((child) => child.name === meshName) ?? findMesh(meshName, gltf);
-    if (!node) return;
-
-    // A multi-material mesh (body skin + each clothing piece) is split by GLTFLoader into one
-    // primitive per material, each a sibling mesh carrying the same body morphs. Apply the influence
-    // to every primitive that exposes the morph so clothing scales with the body (matches v1.2);
-    // setting only the first primitive moved the body alone and clipped the clothes.
-    let applied = false;
-    node.traverse((obj) => {
-      const mesh = obj as MorphMesh;
-      const dict = mesh.morphTargetDictionary;
-      if (!dict || !mesh.morphTargetInfluences) return;
-      // Resolve per primitive: a bound name from an older world/model maps onto this model's alias-mate.
-      const resolved = resolveMorphAlias(morphTargetName, (candidate) => candidate in dict);
-      if (resolved === null) return;
-      mesh.morphTargetInfluences[dict[resolved]] = value;
-      applied = true;
-    });
-    if (!applied) {
-      console.warn(`Morph target "${morphTargetName}" not found under mesh "${meshName}".`);
-    }
-  };
-
-  // Apply the whole body-morph map to the Body mesh, zeroing morphs that were applied last time but
-  // are no longer present (so unbinding a slider relaxes it rather than freezing its last value).
+  // Apply the morph map by name to every primitive carrying each key (body, clothing, face, hair), zeroing
+  // keys applied last time that are gone, so unbinding a slider relaxes it rather than freezing it.
   const applyBodyMorphs = (gltf: GLTF) => {
     const next = bodyMorphValues ?? {};
-    for (const [name, value] of Object.entries(next)) setMorphTarget('Body', name, value, gltf);
-    Object.keys(bodyMorphsAppliedRef.current).forEach((name) => {
-      if (!(name in next)) setMorphTarget('Body', name, 0, gltf);
-    });
+    applyMorphInfluences(gltf.scene, next, bodyMorphsAppliedRef.current);
     bodyMorphsAppliedRef.current = next;
   };
 
@@ -328,9 +312,11 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     if (active && hairLength !== undefined) applyHairLength(active, hairLength);
   };
 
+  const isChannel = (target: string): target is ColorChannel => (COLOR_CHANNELS as readonly string[]).includes(target);
+
   // Apply `fn` to a target's materials: a channel keyword ('hair'|'skin'|'eye') or an exact extra-material name.
   const forEachTargetMaterial = (target: string, fn: (m: VrmMaterial) => void) => {
-    if (target === 'hair' || target === 'skin' || target === 'eye') return forEachChannelMaterial(target, fn);
+    if (isChannel(target)) return forEachChannelMaterial(target, fn);
     vrmRef.current?.scene.traverse((obj) => {
       const mesh = obj as MorphMesh;
       if (!mesh.isMesh || !mesh.material) return;
@@ -339,7 +325,16 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     });
   };
 
-  const tintTarget = (target: string, hex: string) => forEachTargetMaterial(target, (m) => tintByMedian(m, hex));
+  const tintTarget = (target: string, hex: string) => forEachTargetMaterial(target, (m) => tintMaterial(m, hex, isChannel(target)));
+
+  // A channel's plan, per material: each starts from the plan's set color or its own, then blends in OKLab.
+  const applyColorPlan = (channel: ColorChannel, plan: ColorPlan) => {
+    if (!plan) return resetTarget(channel);
+    forEachChannelMaterial(channel, (m) => {
+      const start = plan.set ?? untintedColor(m, true);
+      if (start) tintMaterial(m, blendColor(start, plan.steps), true);
+    });
+  };
 
   // Restore a target's materials to their untinted colors (the "no color" / revert state).
   const resetTarget = (target: string) => forEachTargetMaterial(target, (m) => {
@@ -348,10 +343,10 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     m.needsUpdate = true;
   });
 
-  // Calculated representative color of a target (its first material's median) — for seeding a picker.
+  // Calculated representative color of a target (its first material's untinted color) — for seeding a picker.
   const calcColor = (target: string) => {
     let c: string | null = null;
-    forEachTargetMaterial(target, (m) => { if (!c) c = untintedColor(m); });
+    forEachTargetMaterial(target, (m) => { if (!c) c = untintedColor(m, isChannel(target)); });
     return c;
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- calcColor reads live refs; a stable handle is fine.
@@ -380,6 +375,8 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
       
       const width = mountRef.current.clientWidth;
       const height = mountRef.current.clientHeight;
+      // A stowed or hidden mount has no box; keep the last size until it shows again.
+      if (!width || !height) return;
       const aspectRatio = width / height;
       
       cameraRef.current.aspect = aspectRatio;
@@ -411,6 +408,8 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(30.0, 1, 0.1, 20.0);
     const renderer = new THREE.WebGLRenderer();
+    // The check reads every program's logs on its first draw, a long stall for a VRM's many materials.
+    renderer.debug.checkShaderErrors = import.meta.env.DEV;
     renderer.setClearColor(0x000000, 0);
     mount.appendChild(renderer.domElement);
 
@@ -447,18 +446,20 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     // once all FBX clips land — start the self-rescheduling animation timer chain that cleanup can no
     // longer clear (its clearTimeout already ran while animTimeout was still undefined).
     let cancelled = false;
+    let holdDraw = false;
 
     // Load VRM model
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    // No URL on a build with no bundled default: the scene stays empty.
+    // No URL: no Avatar, so the scene stays empty.
     if (modelUrl) loader.load(
       modelUrl,
-      (gltf) => {
+      (gltf) => { void (async () => {
         if (cancelled) return;
         const vrm: VRM = gltf.userData.vrm;
-
+        // No frame draws until the model's shaders and textures are ready.
+        holdDraw = true;
         scene.add(vrm.scene);
         vrmRef.current = vrm;
         gltfRef.current = gltf;
@@ -480,11 +481,20 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
 
         updateHairStyle(gltf);
 
+        // Compile the shaders off the main thread and upload one texture a frame, so the first draw
+        // doesn't stall the page. This runs after the setup above, which decides the programs drawn.
+        await renderer.compileAsync(scene, camera);
+        for (const texture of texturesOf(vrm.scene)) {
+          if (cancelled) return;
+          renderer.initTexture(texture);
+          await nextFrame();
+        }
+        if (cancelled) return;
+        holdDraw = false;
+
         // Report which customization morphs this model exposes so the UI hides unsupported sliders.
         if (onCapabilities) {
-          const bodyDict = getMorphDict('Body', gltf) || {};
-          const bodyMorphs = Object.keys(bodyDict);
-          const hairMeshes = getHairMeshes(gltf);
+          const catalog = vrmMorphCatalog(gltf.scene, expressionBoundMorphs(vrm));          const hairMeshes = getHairMeshes(gltf);
           const styles = hairMeshes.map(c => c.name);
           const hairLengthSupported = hairMeshes.some((c) => {
             const child = (c.children[0] || c) as MorphMesh;
@@ -493,11 +503,11 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
           // Sample each part's current color from its texture so the pickers start at the model's real colors.
           const sampleColor = (channel: string) => {
             let c: string | null = null;
-            forEachChannelMaterial(channel, (m) => { if (!c) c = untintedColor(m); });
+            forEachChannelMaterial(channel, (m) => { if (!c) c = untintedColor(m, true); });
             return c;
           };
           const colors = { hair: sampleColor('hair') ?? undefined, skin: sampleColor('skin') ?? undefined, eye: sampleColor('eye') ?? undefined };
-          onCapabilities({ bodyMorphs, hairStyles: styles, hairLength: hairLengthSupported, colors, extras: getColorableExtras(gltf) });
+          onCapabilities({ bodyMorphs: catalogNames(catalog, 'body'), headMorphs: catalogNames(catalog, 'head'), hairStyles: styles, hairLength: hairLengthSupported, colors, extras: getColorableExtras(gltf) });
         }
 
         setReady(true);
@@ -506,7 +516,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
 
 
         animationFiles.forEach(file => loadMixamoAnimation(file));
-      },
+      })().catch((error: unknown) => console.error('Error preparing VRM:', error)); },
       (progress) => console.log('Loading model...', 100.0 * (progress.loaded / progress.total), '%'),
       (error) => console.error('Error loading VRM:', error)
     );
@@ -517,8 +527,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     // Load Mixamo animation
     const loadMixamoAnimation = (animationPath: string) => {
       const animationName = (animationPath.split('/').pop() ?? '').split('.')[0]; // Extract name from filename
-      const loader = new FBXLoader();
-      loader.load(animationPath, (asset) => {
+      loadFbx(animationPath).then((asset) => {
         if (cancelled) return;
         const clip = THREE.AnimationClip.findByName(asset.animations, 'mixamo.com');
         
@@ -605,7 +614,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
           startAnimationLoop();
         }
 
-      }, undefined, (error) => console.error(`Error loading ${animationName} animation:`, error));
+      }, (error: unknown) => console.error(`Error loading ${animationName} animation:`, error));
     };
 
     let animTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -640,7 +649,10 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     // Animation loop. Track the RAF id and the pending animation timeout so cleanup can cancel them —
     // otherwise every remount (model swap, layout change) leaks another loop/timer driving a disposed scene.
     let rafId = 0;
+    let asleep = false;
     const renderFrame = () => {
+      // An off-screen panel's viewer stops until the panel shows again.
+      if (!panelLoop.shown.current) { asleep = true; return; }
       rafId = requestAnimationFrame(renderFrame);
       // Always consume the delta (so unpausing doesn't jump); feed 0 while paused to freeze in place.
       const deltaTime = clock.getDelta();
@@ -654,10 +666,18 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
         vrmRef.current.update(dt);
       }
 
-      renderer.render(scene, camera);
+      // Out of sight (a stowed panel), or while the model prepares, the frame isn't drawn.
+      if (!holdDraw && mount.clientWidth && mount.clientHeight) renderer.render(scene, camera);
     };
 
     const clock = new THREE.Clock();
+    panelLoop.wake.current = () => {
+      if (!asleep || cancelled) return;
+      asleep = false;
+      // The time asleep is dropped, so the pose resumes where it stopped.
+      clock.getDelta();
+      renderFrame();
+    };
     renderFrame();
 
      
@@ -672,6 +692,7 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     return () => {
       // Gate any still-in-flight GLTF/FBX callbacks so they can't restart the animation loop post-unmount.
       cancelled = true;
+      panelLoop.wake.current = () => {};
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
       cancelAnimationFrame(rafId);
@@ -734,18 +755,19 @@ const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(({
     }
   }, [bodyMorphValues]);
 
-  // Apply a channel color, or revert it to the model's own when unset (untouched / reverted).
-  useEffect(() => {
-    if (ready) { if (hairColor) tintTarget('hair', hairColor); else resetTarget('hair'); }
-  }, [hairColor, ready]);
-
-  useEffect(() => {
-    if (ready) { if (eyeColor) tintTarget('eye', eyeColor); else resetTarget('eye'); }
-  }, [eyeColor, ready]);
-
-  useEffect(() => {
-    if (ready) { if (skinColor) tintTarget('skin', skinColor); else resetTarget('skin'); }
-  }, [skinColor, ready]);
+  // Apply each channel's plan, or revert it to the model's own colors when it has none. Keyed by content, so a
+  // re-resolved plan that says the same thing doesn't re-tint.
+  const planOf = (channel: ColorChannel, color: string | undefined): ColorPlan =>
+    (colorPlan ? colorPlan[channel] : color ? { set: color, steps: [] } : null);
+  const hairPlan = planOf('hair', hairColor);
+  const eyePlan = planOf('eye', eyeColor);
+  const skinPlan = planOf('skin', skinColor);
+  const hairKey = JSON.stringify(hairPlan);
+  const eyeKey = JSON.stringify(eyePlan);
+  const skinKey = JSON.stringify(skinPlan);
+  useEffect(() => { if (ready) applyColorPlan('hair', hairPlan); }, [hairKey, ready]);
+  useEffect(() => { if (ready) applyColorPlan('eye', eyePlan); }, [eyeKey, ready]);
+  useEffect(() => { if (ready) applyColorPlan('skin', skinPlan); }, [skinKey, ready]);
 
   // Apply / revert extra-material colors (clothing, accessories, …).
   useEffect(() => {

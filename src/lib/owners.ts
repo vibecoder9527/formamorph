@@ -15,6 +15,10 @@ export interface OwnerWorld {
   entities: readonly Entity[];
   /** The authored items an item Condition can name. */
   items?: GateInput['worldItems'];
+  /** The world's Options an Option Condition reads. */
+  options?: GateInput['worldOptions'];
+  /** The Option values gates read. Absent, each Option's default (Q25). */
+  optionValues?: GateInput['optionValues'];
 }
 
 /** One owner's effective tree: its own items plus each link's original and live subtree, in the places the
@@ -56,7 +60,7 @@ const playedId = (persona: PersonaRef | undefined): string | null =>
 
 /** Whether a world entity is in the cast: not the played persona, not the Custom Persona entity, and not a
  *  persona-only entity left unpicked. The persona-only flag reads only with the Persona mark. */
-export function inCast(entity: Entity, persona: PersonaRef | undefined): boolean {
+export function inCast(entity: Pick<Entity, 'id' | 'customPersona' | 'persona' | 'personaOnly'>, persona: PersonaRef | undefined): boolean {
   if (persona?.source === 'world' && persona.entityId === entity.id) return false;
   if (entity.customPersona) return false;
   return !(entity.persona && entity.personaOnly);
@@ -223,6 +227,8 @@ export function resolveOwners(
       persona: persona ?? { source: 'none' },
       originals: { traits: world.traits, groups: world.traitGroups },
       ...(world.items ? { worldItems: world.items } : {}),
+      ...(world.options ? { worldOptions: world.options } : {}),
+      ...(world.optionValues ? { optionValues: world.optionValues } : {}),
     },
   };
 }

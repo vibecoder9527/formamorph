@@ -11,12 +11,14 @@ export const NAV_RAIL_REFERENCE_STORAGE_KEY = 'formamorph.designSystem.navRail';
 /** What each tab's body says, so switching tabs shows a real change rather than an empty box. */
 const BODY: Record<(typeof WORLD_EDITOR_TABS)[number]['value'], string> = {
   overview: 'The world\'s name, card, and AI-facing text.',
+  openings: 'Every owner with openings beside the selected owner\'s openings.',
   media: 'Every image, sound, 3D Model and Avatar in the world.',
   stats: 'The stat list beside the selected stat\'s details.',
   entities: 'The entity tree beside the selected entity\'s details.',
   items: 'The item list beside the selected item\'s details.',
   locations: 'The location tree or the canvas.',
   traits: 'The trait tree beside the selected trait\'s details.',
+  options: 'The World Options list beside the selected Option\'s details.',
   dictionary: 'The dictionaries and their entries.',
   placeholders: 'Every placeholder in the world, by owner.',
   scripts: 'Every script in the world, by timing.',

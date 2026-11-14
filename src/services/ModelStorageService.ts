@@ -1,10 +1,13 @@
 import { randomUUID } from '@/lib/uuid';
-import { promisifyRequest, transactionDone, writeAfterRead } from '@/lib/idb';
+import { getAllReadable, promisifyRequest, readOrNull, transactionDone, writeAfterRead } from '@/lib/idb';
 import { blobHash } from '@/lib/blobHash';
 import { readVrmMeta } from '@/lib/vrmMeta';
 import { optimizeImageDataUrl, IMAGE_CAPS } from '@/lib/imageOptim';
 import { renderVrmThumbnail } from '@/lib/vrmThumbnail';
-import { BUNDLED_AVATARS, BUNDLED_DEFAULT_URL, DEFAULT_AVATAR_ID, LEGACY_DEFAULT_AVATAR_ID, type BundledAvatar } from '@/lib/defaultAvatar';
+import {
+  BUNDLED_AVATARS, DEFAULT_AVATAR_ID, DEFAULT_MARKED_KEY, LEGACY_DEFAULT_AVATAR_ID, readUserDefaultAvatar,
+  setUserDefaultAvatar, type BundledAvatar,
+} from '@/lib/defaultAvatar';
 import { LibraryStore, type StoredRecord } from './LibraryStore';
 import type { AvatarThumbnailSource, ModelMetadata, VrmData, VrmLicense } from '@/types';
 
@@ -118,9 +121,7 @@ class ModelStorageService {
   /** Every stored record, wrapper included — `LibraryStore` only exposes projected metadata or bare payloads. */
   private async allRecords(): Promise<StoredModelRecord[]> {
     await this.store.ensureInitialized();
-    return promisifyRequest<StoredModelRecord[]>(
-      this.store.db!.transaction(['models'], 'readonly').objectStore('models').getAll(),
-    );
+    return getAllReadable<StoredModelRecord>(this.store.db!, 'models');
   }
 
   /**
@@ -141,10 +142,10 @@ class ModelStorageService {
     return present;
   }
 
-  /** One stored record with its wrapper, or null. */
+  /** One stored record with its wrapper, or null when it is absent or can't be read. */
   private async getRecord(id: string): Promise<StoredModelRecord | null> {
     await this.store.ensureInitialized();
-    const record = await promisifyRequest<StoredModelRecord | undefined>(
+    const record = await readOrNull<StoredModelRecord | undefined>(
       this.store.db!.transaction(['models'], 'readonly').objectStore('models').get(id),
     );
     return record ?? null;
@@ -159,10 +160,7 @@ class ModelStorageService {
     this.migration ??= (async () => {
       await this.store.ensureInitialized();
       const db = this.store.db!;
-      const raw = await promisifyRequest<unknown[]>(
-        db.transaction(['models'], 'readonly').objectStore('models').getAll(),
-      );
-      const flat = raw.filter(isFlat);
+      const flat = (await getAllReadable<object>(db, 'models')).filter(isFlat);
       if (flat.length) {
         const write = db.transaction(['models'], 'readwrite').objectStore('models');
         await Promise.all(
@@ -238,6 +236,26 @@ class ModelStorageService {
   async seedBundledAvatars(avatars: readonly BundledAvatar[] = BUNDLED_AVATARS): Promise<void> {
     await this.ensureMigrated();
     for (const avatar of avatars) await this.seedBundledAvatar(avatar);
+    await this.markBundledDefault(avatars);
+  }
+
+  /**
+   * Mark the bundled default as the Default Avatar, once per device, when none is marked (or the marked one is
+   * gone from the library) and the library still holds it. Runs after its seed flag is set, so a failed first seed retries. The done flag keeps a later clear
+   * or change of the Default Avatar from being undone.
+   */
+  private async markBundledDefault(avatars: readonly BundledAvatar[]): Promise<void> {
+    const entry = avatars.find(({ id }) => id === DEFAULT_AVATAR_ID);
+    try {
+      if (!entry || localStorage.getItem(DEFAULT_MARKED_KEY) || !localStorage.getItem(entry.seededKey)) return;
+      const stored = readUserDefaultAvatar();
+      // A stored id the library no longer holds counts as unmarked.
+      const marked = !!stored && !!await this.getRecord(stored);
+      if (!marked && await this.getRecord(entry.id)) setUserDefaultAvatar(entry.id);
+      localStorage.setItem(DEFAULT_MARKED_KEY, '1');
+    } catch (error) {
+      console.error('Failed to mark the bundled Default Avatar:', error);
+    }
   }
 
   private async seedBundledAvatar({ id, url, seededKey, fallbackName }: BundledAvatar): Promise<void> {
@@ -292,12 +310,17 @@ class ModelStorageService {
     const hashed = await Promise.all(records.filter((record) => record.data?.blob).map(async (record) => {
       let hash = record.data.hash;
       if (!hash) {
-        hash = await blobHash(record.data.blob);
+        try {
+          hash = await blobHash(record.data.blob);
+        } catch (error) {
+          console.warn(`Skipped a model whose file can't be read (id ${record.id})`, error);
+          return null;
+        }
         await this.updateDataIfPresent(record.id, { ...record.data, hash });
       }
       return [record.id, { name: record.name, hash }] as const;
     }));
-    return new Map(hashed);
+    return new Map(hashed.filter((entry) => entry !== null));
   }
 
   /** The id of the model holding `blob`'s bytes: an existing record with the same hash, else a new one. */
@@ -456,26 +479,13 @@ class ModelStorageService {
     return this.store.store(model);
   }
 
-  /**
-   * Remove a model from the library by `id`. On a build that holds a bundled default, the last one stays. The rule
-   * is "at least one", not "keep the bundled default": once another model exists, the default is as deletable as
-   * anything else. A build with no bundled default plays without a model, so its library can reach zero.
-   */
+  /** Remove a model from the library by `id`. Any model deletes, the last one included. */
   async deleteModel(id: string): Promise<void> {
     await this.ensureMigrated();
     await this.store.ensureInitialized();
-    // The count, the existence check, and the delete share one readwrite transaction. IndexedDB serializes
-    // transactions over the store, so two concurrent deletes can't both see count > 1 and then both delete —
-    // which a read-then-delete across separate transactions would allow, emptying the library.
-    const store = this.store.db!.transaction(['models'], 'readwrite').objectStore('models');
-    // Requests in one transaction run in order, so the count has its result when the get's arrives.
-    const count = store.count();
-    return writeAfterRead(store.transaction, store.get(id), (record) => {
-      if (BUNDLED_DEFAULT_URL && count.result <= 1 && record) {
-        throw new Error('Cannot delete the last player avatar: the library must always have at least one.');
-      }
-      store.delete(id);
-    });
+    const transaction = this.store.db!.transaction(['models'], 'readwrite');
+    transaction.objectStore('models').delete(id);
+    await transactionDone(transaction);
   }
 }
 

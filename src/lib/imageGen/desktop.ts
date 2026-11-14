@@ -2,9 +2,12 @@
 // `window.formamorphDesktop`; in the plain web build it's absent. Image requests use this bridge when
 // it is present, so a server without CORS still answers. The browser calls that server directly.
 
-import type { LocalCacheType, LocalContextOverflow } from '@/contexts/settingsDefaults';
+import type { LocalCacheType, LocalContextOverflow, LocalEngineBackend } from '@/contexts/settingsDefaults';
 import type { ProjectorSource } from '@/lib/localModels';
+import type { ProfileMergeBridge } from '@/lib/profileMerge/bridge';
 import type { UpdateDownloadResult } from '@/lib/updates/updateBridge';
+import type { VramClass } from '@/lib/vramClass';
+import type { WindowChromeBridge } from '@/lib/windowChromeBridge';
 
 export interface DesktopFetchRequest {
   url: string;
@@ -136,6 +139,8 @@ export interface LocalLlmState {
   /** Our VRAM footprint in MB: the model, KV, compute and output buffers llama-server logged on GPU devices
    *  at load. Null on the CPU backend or with no model. */
   engineVramMB: number | null;
+  /** The Backend setting the current model was started with. */
+  backendSetting: LocalEngineBackend | null;
   /** The backend llama.cpp selected — 'cuda' | 'vulkan' | 'metal' | 'cpu' — or null before one is chosen.
    *  Survives a failed load, so an out-of-VRAM error still says which device it ran on. */
   gpuBackend: string | null;
@@ -160,6 +165,10 @@ export interface LocalLlmState {
   gpuDeviceOptions: string[] | null;
   /** Pid of the llama-server model instance, which holds our VRAM. Null until found after the load. */
   serverPid: number | null;
+  /** True when a failed CUDA load fell back to Vulkan in this start. Null when nothing is loaded. */
+  cudaFallback: boolean | null;
+  /** That CUDA load's error, in setting names. Null without a fallback. */
+  cudaError: string | null;
 }
 
 /** How the engine's pinned device was arrived at. */
@@ -173,7 +182,34 @@ export interface EngineDeviceList {
   devices: string[];
   /** The card Auto would use right now, or null when Auto uses them all. Shown next to "Auto" in the picker. */
   autoPick: string | null;
+  /** The backend the next start runs with the settings asked about, and why it isn't CUDA. Absent off desktop. */
+  choice?: EngineBackendChoice;
 }
+
+/** Why a start runs on Vulkan instead of CUDA: the setting, the install, the machine, or the CUDA build's listing. */
+export type EngineBackendReason = 'setting' | 'not-installed' | 'updating' | 'device-pin' | 'failed-last-time' | 'mixed-gpus' | 'no-cuda-devices' | 'no-nvidia-card' | 'card-too-old' | 'driver-too-old' | 'support-unknown';
+
+export interface EngineBackendChoice {
+  backend: 'cuda' | 'vulkan';
+  reason: EngineBackendReason | null;
+}
+
+/** The settings the engine loads with; a change to any of them reloads a running model. */
+export interface LocalLlmOptions {
+  contextSize: number;
+  gpuLayers: number;
+  flashAttention: boolean;
+  parallelRequests: number;
+  unifiedKvCache: boolean;
+  kCacheType: LocalCacheType;
+  vCacheType: LocalCacheType;
+  kvCacheInRam: boolean;
+  gpuDevice: string;
+  engineBackend: LocalEngineBackend;
+}
+
+/** The Backend and Device settings that decide which device the next engine start uses. */
+export type EngineDeviceSettings = Pick<LocalLlmOptions, 'engineBackend' | 'gpuDevice'>;
 
 /** The device an engine state is pinned to, by name — null when nothing was pinned. Read from the list the
  *  pin was resolved against rather than from what the pinned backend reports, which is filtered. */
@@ -182,12 +218,67 @@ export function pinnedEngineDevice(engine: LocalLlmState): string | null {
   return engine.gpuDeviceOptions?.[engine.gpuDeviceIndex] ?? null;
 }
 
+/** The CUDA support verdict (electron/cudaSupport.cjs). */
+export type CudaSupport =
+  | { supported: true }
+  | {
+      supported: false;
+      reason: 'no-nvidia-card' | 'card-too-old' | 'driver-too-old' | 'support-unknown';
+      cardName?: string | null;
+      /** Driver branch the failing card needs, on `driver-too-old`. */
+      driverFloor?: number;
+    };
+
+/** Why a CUDA install stopped short (electron/cudaInstall.cjs). */
+export type CudaInstallError =
+  | { kind: 'no-space'; neededBytes: number; freeBytes: number }
+  | { kind: 'digest'; asset: string }
+  | { kind: 'failed'; message: string };
+
+/** The CUDA engine build's install status (electron/cudaInstall.cjs). */
+export type CudaStatus = {
+  /** Whether nvidia-smi lists an NVIDIA card. */
+  nvidia: boolean;
+  support: CudaSupport | null;
+  /** Both zips, summed. */
+  downloadBytes: number;
+} & (
+  | { state: 'not-installed' | 'stale'; tag?: string; partialBytes: number; error?: CudaInstallError }
+  | {
+      state: 'downloading'; received: number; total: number; phase: 'download' | 'verify' | 'unpack';
+      /** An older tag's build is installed, so this download replaces it after a pin bump. */
+      replacing?: true;
+    }
+  | {
+      state: 'installed'; tag: string;
+      /** CUDA failed to load on this tag and driver, so Auto uses Vulkan until Retry. */
+      failedLastTime?: true;
+    }
+  | {
+      state: 'unsupported';
+      /** An older tag's CUDA folder is still on disk, so the row offers Remove. */
+      hasFiles?: true;
+    }
+);
+
 declare global {
   interface Window {
-    formamorphDesktop?: {
+    formamorphDesktop?: WindowChromeBridge & {
       fetch: (req: DesktopFetchRequest) => Promise<DesktopFetchResponse>;
       /** Live nvidia-smi VRAM numbers from the main process (same shape as the standalone helper's JSON). */
       vramStats?: () => Promise<unknown>;
+      /** Whether this machine can run the CUDA engine build, from a separate nvidia-smi query. */
+      cudaSupport?: () => Promise<CudaSupport>;
+      /** The optional CUDA engine build. `install` resolves with the final status; progress arrives on `onStatus`. */
+      cuda?: {
+        status: () => Promise<CudaStatus>;
+        install: () => Promise<CudaStatus>;
+        cancel: () => Promise<boolean>;
+        remove: () => Promise<CudaStatus>;
+        /** Forget the CUDA failure; a model running on Vulkan restarts on CUDA. */
+        retry: () => Promise<CudaStatus>;
+        onStatus: (cb: (s: CudaStatus) => void) => () => void;
+      };
       /** Tell the main process which ComfyUI server to remove this window's Origin for; null for none. */
       setComfyEndpoint?: (url: string | null) => Promise<void>;
       /** Local LLM engine: load a GGUF served on a localhost OpenAI endpoint and read its status. */
@@ -220,12 +311,16 @@ declare global {
         cancelMove: () => Promise<boolean>;
         /** Subscribe to move progress; returns an unsubscribe fn. */
         onMoveProgress: (cb: (p: LocalMoveProgress) => void) => () => void;
-        /** Set engine load options (context size / GPU layers / flash attention / GPU device); reloads if changed. */
-        setOptions: (opts: { contextSize: number; gpuLayers: number; flashAttention: boolean; parallelRequests: number; unifiedKvCache: boolean; kCacheType: LocalCacheType; vCacheType: LocalCacheType; kvCacheInRam: boolean; gpuDevice: string }) => Promise<LocalLlmState>;
+        /** Set engine load options; reloads if changed. */
+        setOptions: (opts: LocalLlmOptions) => Promise<LocalLlmState>;
+        /** Stop and start the loaded model again with the current options. */
+        restart: () => Promise<LocalLlmState>;
         /** Set the Context Overflow policy for the next request; no reload. Resolves the policy applied. */
         setContextOverflow: (policy: LocalContextOverflow) => Promise<LocalContextOverflow>;
-        /** Every GPU the engine can pin to, for the device picker. */
-        listDevices: () => Promise<EngineDeviceList>;
+        /** Every GPU the next start's backend can pin to, for the device picker, given unsaved settings. */
+        listDevices: (pending?: EngineDeviceSettings) => Promise<EngineDeviceList>;
+        /** The VRAM class of the device the next start uses with the saved settings. */
+        vramClass: (saved: EngineDeviceSettings) => Promise<VramClass>;
         /** Download a GGUF from Hugging Face, loading it on finish unless autoLoad is false; resolves with
          *  the saved path. */
         download: (opts: LocalDownloadOptions) => Promise<{ path: string }>;
@@ -240,6 +335,8 @@ declare global {
         /** Subscribe to download progress; returns an unsubscribe fn. */
         onDownloadProgress: (cb: (progress: LocalDownloadProgress) => void) => () => void;
       };
+      /** The AppData profile merge (electron/profileMergeSource.cjs). */
+      profileMerge?: ProfileMergeBridge;
       /** Desktop auto-updater bridge (implemented in preload.cjs / electron/updater.cjs). Detection is done
        *  renderer-side via UpdateService; these drive the per-platform download + apply and stream progress. */
       update?: {
@@ -274,6 +371,13 @@ export async function desktopVramStats(): Promise<unknown> {
   const bridge = typeof window !== 'undefined' ? window.formamorphDesktop : undefined;
   if (!bridge?.vramStats) throw new Error('VRAM stats are only available in the Formamorph desktop app.');
   return bridge.vramStats();
+}
+
+/** Whether the CUDA engine build can run here. Throws if not running in the desktop app. */
+export async function desktopCudaSupport(): Promise<CudaSupport> {
+  const bridge = typeof window !== 'undefined' ? window.formamorphDesktop : undefined;
+  if (!bridge?.cudaSupport) throw new Error('CUDA support is only available in the Formamorph desktop app.');
+  return bridge.cudaSupport();
 }
 
 /** POST/GET through the Electron main process (no browser CORS). Throws if not running in the desktop app. */
@@ -353,9 +457,12 @@ export function subscribeLocalMove(cb: (p: LocalMoveProgress) => void): () => vo
   return llm?.onMoveProgress ? llm.onMoveProgress(cb) : () => {};
 }
 
-/** Set engine load options (context size / GPU layers / flash attention / GPU device); reloads if they changed. */
-export const setLocalLlmOptions = (opts: { contextSize: number; gpuLayers: number; flashAttention: boolean; parallelRequests: number; unifiedKvCache: boolean; kCacheType: LocalCacheType; vCacheType: LocalCacheType; kvCacheInRam: boolean; gpuDevice: string }): Promise<LocalLlmState> =>
+/** Set engine load options; reloads if they changed. */
+export const setLocalLlmOptions = (opts: LocalLlmOptions): Promise<LocalLlmState> =>
   requireLlm().setOptions(opts);
+
+/** Start the loaded model again with the current options, so a backend that landed meanwhile takes over. */
+export const restartLocalLlm = (): Promise<LocalLlmState> => requireLlm().restart();
 
 /** Set the engine's Context Overflow policy; it applies to the next request with no reload. */
 export const setLocalLlmContextOverflow = (policy: LocalContextOverflow): Promise<LocalContextOverflow> =>
@@ -363,8 +470,11 @@ export const setLocalLlmContextOverflow = (policy: LocalContextOverflow): Promis
 
 /** Every GPU the engine can pin to. Off desktop, and on a machine whose backend can't enumerate, an empty
  *  list — which the picker states rather than showing an empty dropdown. */
-export const listLocalGpuDevices = (): Promise<EngineDeviceList> =>
-  isLocalLlmAvailable() ? requireLlm().listDevices() : Promise.resolve({ backend: null, devices: [], autoPick: null });
+export const listLocalGpuDevices = (pending?: EngineDeviceSettings): Promise<EngineDeviceList> =>
+  isLocalLlmAvailable() ? requireLlm().listDevices(pending) : Promise.resolve({ backend: null, devices: [], autoPick: null });
+
+/** The shell's VRAM class for the built-in engine's device. Throws off desktop; read it through `readVramClass`. */
+export const desktopVramClass = (saved: EngineDeviceSettings): Promise<VramClass> => requireLlm().vramClass(saved);
 
 /** Download a GGUF from Hugging Face, loading it on finish unless autoLoad is false; resolves with the
  *  saved path. */

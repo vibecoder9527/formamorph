@@ -3,10 +3,12 @@ import {
 } from '@/lib/editorHistory';
 import type { FindingSection } from '@/lib/testBench/rules';
 import { scriptEntryKey } from '@/lib/worldScripts';
-import type { Dictionary, DictionaryEntry } from '@/types';
+import type { PresenceReveal } from '@/lib/entityPicking';
+import type { Dictionary, DictionaryEntry, Entity } from '@/types';
+import { everyStart } from '@/lib/entityKind';
 
 /** The World Editor tabs a Step can reveal. */
-export type RevealTab = FindingSection;
+export type RevealTab = FindingSection | 'openings';
 
 /** Where the editor goes after an undo or redo. */
 export interface RevealTarget {
@@ -25,6 +27,8 @@ export interface RevealTarget {
   view?: string;
   /** The field to pulse, from the Origin. */
   field?: string;
+  /** An entity edit made on a location's Presence tab: the entity to select there, in the mode the Step changed. */
+  presenceEntity?: PresenceReveal;
 }
 
 // Stat updates have no tab, so a Step that only touches them reveals nothing.
@@ -43,6 +47,7 @@ const SLICE_TABS: Partial<Record<SliceName, RevealTab>> = {
   placeholderGroups: 'placeholders',
   scripts: 'scripts',
   tools: 'tools',
+  options: 'options',
 };
 
 const entriesById = (book: Dictionary | undefined) =>
@@ -92,6 +97,28 @@ export function revealTarget(step: Step, world: WorldSlices): RevealTarget | nul
   return null;
 }
 
+/** The mode of a Presence edit: Known In when the Step changed that field, else Routine. */
+function presenceEntityOf(step: Step): PresenceReveal | undefined {
+  const edit = step.edits.find((e) => e.slice === 'entities');
+  if (edit?.slice !== 'entities') return undefined;
+  const [entityId] = touchedIds(edit);
+  if (entityId === undefined) return undefined;
+  const was = edit.before.find((e) => e.id === entityId);
+  const became = edit.after.find((e) => e.id === entityId);
+  // An entity added or removed by the Step changed no field of its own.
+  const changedKnownIn = !!was && !!became && JSON.stringify(was.knownIn) !== JSON.stringify(became.knownIn);
+  const startId = changedKnownIn ? undefined : changedStartId(step, was, became);
+  return { entityId, mode: changedKnownIn ? 'knownIn' : 'locations', ...(startId ? { startId } : {}) };
+}
+
+/** The Start a Step changed: the one its Origin field names, else the first whose data differs. */
+function changedStartId(step: Step, was: Entity | undefined, became: Entity | undefined): string | undefined {
+  const starts = became ? everyStart(became) : was ? everyStart(was) : [];
+  const named = /^starts\/([^/]+)/.exec(step.origin?.field ?? '')?.[1];
+  if (named && starts.some((s) => s.id === named)) return named;
+  return starts.find((s) => JSON.stringify(s) !== JSON.stringify(was && everyStart(was).find((w) => w.id === s.id)))?.id;
+}
+
 /** What the editor shows after the move's commit. */
 export interface RevealPlace {
   /** Whether the editor mode shows the tab. */
@@ -100,8 +127,8 @@ export interface RevealPlace {
   holds(tab: RevealTab, id: string): boolean;
 }
 
-// The Media tab owns no slice: its edits reveal it through their Origin.
-const REVEAL_TABS = new Set<string>([...Object.values(SLICE_TABS), 'media']);
+// The Media and Openings tabs own no slice: their edits reveal them through their Origin.
+const REVEAL_TABS = new Set<string>([...Object.values(SLICE_TABS), 'media', 'openings']);
 const isRevealTab = (tab: string): tab is RevealTab => REVEAL_TABS.has(tab);
 
 /** The Origin's sub-view and field, which belong to whichever target sits on the Origin's tab. */
@@ -135,7 +162,12 @@ function revealStep(step: Step, world: WorldSlices, place: RevealPlace): RevealT
   const standing = origin.ids.filter((id) => place.holds(tab, id));
   // A gone card leaves the gallery, which is what the Media tab shows.
   if (!standing.length) return tab === 'media' ? { tab } : fallback;
-  return { tab, id: standing[0], ...(standing.length > 1 ? { ids: standing } : {}), ...subView(origin) };
+  // An entity edit made on a location's Presence tab returns there and asks for the entity's row (Q31).
+  const presenceEntity = tab === 'locations' && origin.subTab === 'presence' ? presenceEntityOf(step) : undefined;
+  return {
+    tab, id: standing[0], ...(standing.length > 1 ? { ids: standing } : {}), ...subView(origin),
+    ...(presenceEntity ? { presenceEntity } : {}),
+  };
 }
 
 /** Where a move over one or more Steps returns the author: the Step nearest where the cursor lands, else the next one in. */

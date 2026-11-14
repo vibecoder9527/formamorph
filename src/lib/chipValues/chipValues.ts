@@ -1,11 +1,12 @@
 import { buildDictionaryContext } from '../dictionaryUtils';
-import { formatAbsolute } from '../gameClock';
+import { formatStoryTime, type ClockStyle } from '../gameClock';
 import {
   buildDestinationsContext, buildLocationContext, buildParentLocationContext, buildReachableLocationsContext,
   buildSublocationsContext, chipFamilyRuns, chipFamilyValues, chipFormat, entityRosterRuns, hasOnlyWith, ownedStatLines,
   knownEntityIds, knownEntityRuns, reachableEntityIds, reachableEntityRuns, scopedChipRuns, scopedChipValues, sublocationEntityIds, sublocationEntityRuns, type ContextOpts,
 } from '../locationContext';
 import { relatedIds, relationshipCast, relationshipLines } from '../entityRelationships';
+import { movementLabels } from '../movementTag';
 import { slotsInForce } from '../bodies';
 import { balanceOf, type BalanceState } from '../currency';
 import { buildInventoryContext, type InventoryScene } from '../inventoryContext';
@@ -19,7 +20,7 @@ import { statContextRuns, type StatChipPart, type StatPlacement } from '../statC
 import { statKeys } from '../statKeys';
 import { stripMarkdown } from '../stripMarkdown';
 import { buildTraitContext } from '../traitTree';
-import type { Entity, PlayerStat } from '@/types';
+import type { Entity, PersonaRef, PlayerStat } from '@/types';
 import type { ChipScene } from './chipScene';
 
 const WORLD = variableForToken('<WORLD DESCRIPTION>')!;
@@ -32,6 +33,7 @@ const TIME = variableForToken('<TIME>')!;
 const DICTIONARY = variableForToken('<DICTIONARY>')!;
 const ENTITIES = variableForToken('<ENTITIES>')!;
 const INVENTORY = variableForToken('<INVENTORY>')!;
+const TIME_CLOCK_STYLES: Record<string, ClockStyle> = { hours: '24h', ampm: '12h' };
 // A Header is reference text, cased mid-sentence; its title-casing capitalizes the words that lead.
 const NO_PLAYER = PLAYER_NAME.resolve({ before: ' ' }, { kind: 'reference' });
 
@@ -100,7 +102,7 @@ export function chipValues(scene: ChipScene): ValueLookup {
     [WORLD, chipFamilyValues(WORLD.token, () => scene.overview)],
     [STATS, statChipPartValues(scene.persona ? [world] : [world, ...played])],
     [TRAITS, chipFamilyValues(TRAITS.token, (sel) => (
-      buildTraitContext(traitIds, scene.traits, scene.traitGroups, chipFormat(sel.format)) || NONE_PLACEHOLDER
+      buildTraitContext(traitIds, scene.traits, scene.traitGroups, chipFormat(sel.format), sel.content === 'name' ? 'name' : 'description') || NONE_PLACEHOLDER
     ))],
     // The played entities' owned traits and stats render in the persona's block, as a cast member's do.
     // A relationship that touches the played persona prints on its block.
@@ -115,13 +117,15 @@ export function chipValues(scene: ChipScene): ValueLookup {
     })],
     [NOTES, chipFamilyValues(NOTES.token, () => scene.notes || NONE_PLACEHOLDER)],
     // Off or unknown reads as the uniform placeholder, so an affixed placement simply vanishes.
-    [TIME, chipFamilyValues(TIME.token, () => (scene.time ? formatAbsolute(scene.time.elapsed, scene.time.calendar) : NONE_PLACEHOLDER))],
+    [TIME, chipFamilyValues(TIME.token, (sel) => (scene.time
+      ? formatStoryTime(scene.time.elapsed, scene.time.calendar, TIME_CLOCK_STYLES[sel.clock ?? ''] ?? 'daypart', sel.day !== 'noday')
+      : NONE_PLACEHOLDER))],
     [LOCATION, scopedChipValues(LOCATION.token, {
       '': (opts) => buildLocationContext(location, opts),
       sublocations: (opts) => buildSublocationsContext(location, locations, opts),
       parent: (opts) => buildParentLocationContext(location, locations, opts),
       reachable: (opts) => buildReachableLocationsContext(location, locations, opts),
-      destinations: (opts) => buildDestinationsContext(location, locations, connections, opts),
+      destinations: (opts) => buildDestinationsContext(location, locations, connections, opts, scene.canEnter),
     })],
     [ENTITIES, scopedChipRuns(ENTITIES.token, entityScopes(scene, cast))],
     [INVENTORY, chipFamilyValues(INVENTORY.token, (sel) => buildInventoryContext(inventoryScene(scene), chipFormat(sel.format)))],
@@ -187,28 +191,35 @@ const pulledIdsOver = (cast: readonly Entity[], scene: Pick<ChipScene, 'persona'
 
 /** The Entities chip's scope builders over one scene and its relationship ends. */
 function entityScopes(scene: ChipScene, cast = sceneRelationshipCast(scene)): Record<string, (opts: ContextOpts) => MarkedText> {
-  const { location, locations, connections, entities, presentIds, inSceneIds, inSceneNames = [], ownedTraits, ownedStats, strangerLabels } = scene;
+  const { location, locations, connections, entities, presentIds, placesOf, inSceneIds, inSceneNames = [], ownedTraits, ownedStats, strangerLabels } = scene;
   const outer = scene.outerScopeEntities ?? entities;
   // Roster precedence: here > sub-location > reachable > known. A character shows only in the highest scope
   // it belongs to, so the lower scopes drop the ids the higher ones list.
-  const reachableExclude = [...presentIds, ...sublocationEntityIds(location, locations, outer)];
-  const knownExclude = [...reachableExclude, ...reachableEntityIds(location, locations, connections, outer)];
+  const subIds = sublocationEntityIds(location, locations, connections, outer, placesOf);
+  const nearbyIds = [...subIds, ...reachableEntityIds(location, locations, connections, outer, placesOf)];
+  const reachableExclude = [...presentIds, ...subIds];
+  const knownExclude = [...presentIds, ...nearbyIds];
   const pulledIds = pulledIdsOver(cast, scene);
+  const personaRef: PersonaRef | undefined = scene.persona?.source === 'world' ? { source: 'world', entityId: scene.persona.entity.id } : undefined;
   // Each relationship prints once over the chain, and once over In Scene, which no default prompt pairs with it.
   // The Persona block heads both, so a line that touches the persona prints there alone.
   const personaId = scene.persona?.entity.id;
-  const chainLines = relationshipLines(cast, [...knownExclude, ...knownEntityIds(location, locations, outer, pulledIds)], personaId);
+  const chainLines = relationshipLines(cast, [...knownExclude, ...knownEntityIds(location, locations, outer, pulledIds, personaRef)], personaId);
   const inSceneLines = relationshipLines(cast, inSceneIds, personaId);
   // Every scope renders each entity with its owned traits in force. The scene's owned stats go to every
   // scope, since Only With counts them; whether a scope lists them is `noStats`.
-  const roster = (opts: ContextOpts, lines = chainLines) => ({ ...opts, ownedTraits, ownedStats, relationshipLines: lines, strangerLabels });
+  // The Movement tags follow where each Unique entity stands, so every scope reads one map.
+  const movementLabelsHere = scene.movement && movementLabels(scene.movement, presentIds, nearbyIds);
+  const roster = (opts: ContextOpts, lines = chainLines) => ({
+    ...opts, ownedTraits, ownedStats, relationshipLines: lines, strangerLabels, movementLabels: movementLabelsHere,
+  });
   // Here and In Scene list stats unless the chip switches them off; the lower scopes only when it switches them on.
   const lowerOpts = (opts: ContextOpts) => ({ ...roster(opts), noStats: !opts.statsOn });
   return {
     '': (opts) => entityRosterRuns(presentIds, entities, roster(opts)),
-    sublocations: (opts) => sublocationEntityRuns(location, locations, outer, { ...lowerOpts(opts), excludeIds: presentIds }),
-    reachable: (opts) => reachableEntityRuns(location, locations, connections, outer, { ...lowerOpts(opts), excludeIds: reachableExclude }),
-    known: (opts) => knownEntityRuns(location, locations, outer, { ...roster(opts), excludeIds: knownExclude, pulledIds }),
+    sublocations: (opts) => sublocationEntityRuns(location, locations, connections, outer, placesOf, { ...lowerOpts(opts), excludeIds: presentIds }),
+    reachable: (opts) => reachableEntityRuns(location, locations, connections, outer, placesOf, { ...lowerOpts(opts), excludeIds: reachableExclude }),
+    known: (opts) => knownEntityRuns(location, locations, outer, { ...roster(opts), excludeIds: knownExclude, pulledIds, persona: personaRef }),
     inscene: (opts) => {
       const block = entityRosterRuns(inSceneIds, entities, roster(opts, inSceneLines));
       // A name with no entity record owns nothing, so a filter drops it.

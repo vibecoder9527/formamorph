@@ -7,7 +7,7 @@
 // author sets precedence by dragging rows in the editor rather than by learning a rule.
 
 import { buildTree, flattenTree } from './groupTree';
-import type { PlaceholderValue, PlayerStat, Stat, Trait, TraitGroup } from '@/types';
+import type { ColorChannel, PlaceholderValue, PlayerStat, Stat, Trait, TraitGroup } from '@/types';
 
 /** Trait id → its position in the authored tree, depth-first. Ids missing from the world sort last. */
 export function traitOrderIndex(traits: readonly Trait[], groups: readonly TraitGroup[]): Map<string, number> {
@@ -45,8 +45,8 @@ export function refreshChosenTraits(chosen: Trait[], authored: Trait[]): Trait[]
 
 /**
  * Re-read each saved stat's authoring identity from the world, the stat sibling of `refreshChosenTraits`:
- * `scripts`, `name`, `description`, and `type` come from the world by id, so a save started before the
- * author's latest edit still runs the new code on its next turn.
+ * `scripts`, `name`, `description`, `type` and both binding lists come from the world by id, so a save started
+ * before the author's latest edit still runs the new code on its next turn.
  *
  * Every other field — `value`, bounds, `starting`, the AI max delta, the code delta, `enabled`, and the
  * trait-derived base fields — stays the saved stat's own: they are the numbers the playthrough actually
@@ -55,7 +55,7 @@ export function refreshChosenTraits(chosen: Trait[], authored: Trait[]): Trait[]
  */
 export function refreshSavedStats(saved: readonly PlayerStat[], authored: readonly Stat[]): PlayerStat[] {
   const byId = new Map(authored.map((s) => [s.id, s]));
-  return saved.map((stat) => {
+  return refreshSavedBindings(saved, authored).map((stat) => {
     const current = byId.get(stat.id);
     return current
       ? {
@@ -63,6 +63,28 @@ export function refreshSavedStats(saved: readonly PlayerStat[], authored: readon
         name: current.name, description: current.description, type: current.type,
       }
       : stat;
+  });
+}
+
+type StatBindings = Pick<Stat, 'morphBindings' | 'colorBindings'>;
+
+/** `stat`'s bindings as a spread: each list absent when it has none. */
+const withBindingsOf = (stat: StatBindings) => ({
+  ...(stat.morphBindings && { morphBindings: stat.morphBindings }),
+  ...(stat.colorBindings && { colorBindings: stat.colorBindings }),
+});
+
+/** Saved stats with their slider and color bindings re-read from the world by id, which a load runs so a binding
+ *  the author changed reaches a save in progress. A stat the world no longer has keeps its saved bindings. */
+export function refreshSavedBindings<S extends Pick<Stat, 'id'> & StatBindings>(
+  saved: readonly S[], authored: readonly (Pick<Stat, 'id'> & StatBindings)[],
+): S[] {
+  const byId = new Map(authored.map((s) => [s.id, s]));
+  return saved.map((stat) => {
+    const current = byId.get(stat.id);
+    if (!current) return stat;
+    const { morphBindings: _morphs, colorBindings: _colors, ...rest } = stat;
+    return { ...rest, ...withBindingsOf(current) } as S;
   });
 }
 
@@ -196,6 +218,55 @@ export function traitConflicts(
     };
   }
   return { stats };
+}
+
+/** A trait as a note names it. */
+export type TraitName = Pick<Trait, 'id' | 'name'>;
+
+/**
+ * The other traits that can be active with `trait` and pin a slider it pins, by `trait`'s pin name, in tree
+ * order. Two names that land on one model key through `keyOf` count as one slider; a name it maps to null
+ * stands for itself. Pick-one siblings never rival (Q4). A pin with no rival is absent.
+ */
+export function morphPinOverlaps(
+  trait: Trait,
+  traits: readonly Trait[],
+  groups: readonly TraitGroup[],
+  keyOf: (name: string) => string | null = (name) => name,
+): Record<string, TraitName[]> {
+  const pins = trait.morphPins ?? [];
+  if (!pins.length) return {};
+  const order = traitOrderIndex(traits, groups);
+  const impossible = new Set(exclusiveSiblings(trait, traits, groups));
+  const rivals = inAuthoredOrder(traits.filter((t) => t.id !== trait.id && !impossible.has(t.id) && t.morphPins?.length), order);
+  const slider = (name: string) => keyOf(name) ?? name;
+  const out: Record<string, TraitName[]> = {};
+  for (const pin of pins) {
+    const key = slider(pin.name);
+    const others = rivals.filter((t) => t.morphPins!.some((p) => slider(p.name) === key));
+    if (others.length) out[pin.name] = others.map((t) => ({ id: t.id, name: t.name }));
+  }
+  return out;
+}
+
+/** The other traits that can be active with `trait` and set a color it sets, by channel, in tree order. The same
+ *  rival rules as `morphPinOverlaps`. */
+export function colorPinOverlaps(
+  trait: Trait,
+  traits: readonly Trait[],
+  groups: readonly TraitGroup[],
+): Partial<Record<ColorChannel, TraitName[]>> {
+  const pins = trait.colorPins ?? [];
+  if (!pins.length) return {};
+  const order = traitOrderIndex(traits, groups);
+  const impossible = new Set(exclusiveSiblings(trait, traits, groups));
+  const rivals = inAuthoredOrder(traits.filter((t) => t.id !== trait.id && !impossible.has(t.id) && t.colorPins?.length), order);
+  const out: Partial<Record<ColorChannel, TraitName[]>> = {};
+  for (const { channel } of pins) {
+    const others = rivals.filter((t) => t.colorPins!.some((p) => p.channel === channel));
+    if (others.length) out[channel] = others.map((t) => ({ id: t.id, name: t.name }));
+  }
+  return out;
 }
 
 /** One value-list edit that reads as a rename: the text a value held, and what replaced it. */

@@ -10,18 +10,28 @@ import {
 import '@xyflow/react/dist/base.css';
 import {
   AlertTriangle, AlignHorizontalDistributeCenter, AlignStartHorizontal, AlignStartVertical,
-  AlignVerticalDistributeCenter, ArrowLeft, ArrowLeftRight, ArrowRight, CornerDownRight, Grid2x2, ImagePlus,
+  AlignVerticalDistributeCenter, CornerDownRight, Flag, Grid2x2, ImagePlus,
   LayoutGrid, Magnet, Maximize2, Megaphone, Minus, Pencil, Redo2, Spline, SquareCheck, Star,
-  Trash2, Undo2, X,
+  Undo2, X,
 } from 'lucide-react';
 import EntityPickCard, { type PickState } from '@/managers/EntityPickCard';
+import type { EntityPick } from '@/managers/useEntityPick';
 import { pickMarks, togglePick, type PickMark } from '@/lib/entityPicking';
+import { routineView, type RoutineMark, type RoutineSpan } from '@/lib/canvasRoutine';
+import { MINUTES_PER_DAY } from '@/lib/gameClock';
+import { pickKeyEntries, routineKeyEntries } from '@/lib/canvasKey';
+import { KNOWN_NEARBY_MARK, KNOWN_ROUTINE_MARK } from '@/lib/canvasMarks';
+import { CanvasKey } from '@/managers/CanvasKey';
+import type { PlacedActionKind } from '@/lib/routineEditing';
+import {
+  routineDragSources, routineMapClick, routineMapDrag, routineMapStatus, routineShownStatus, type RoutineMapEdit,
+} from '@/lib/routineMapEditing';
+import { CLEARS_ROUTINE_SELECTION, KEEPS_ROUTINE_SELECTION, useRoutineSelection } from '@/lib/routineSelection';
 import { LocationIcon } from '@/lib/elementIcons';
 import { useGameData } from '@/contexts/GameDataContext';
 import FullscreenShell from '@/components/FullscreenShell';
 import { FloatingEdge } from '@/components/FloatingEdge';
-import { toFlowEdge } from '@/lib/canvasEdges';
-import { fieldFrame } from '@/lib/historyField';
+import { routineFlowEdge, toFlowEdge } from '@/lib/canvasEdges';
 import { useCanvasConnectionStyle, useCanvasGridVisible, useCanvasSnap } from '@/lib/canvasPrefs';
 import { CONNECTION_STYLES, isConnectionStyle, type ConnectionStyle } from '@/lib/canvasEdgePath';
 import { useDevRoute } from '@/lib/devRouter';
@@ -36,16 +46,15 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { labelPlaceholders } from '@/lib/placementLetters';
 import { describePlaceholders } from '@/lib/placeholders';
-import type { ConnectionDirection } from '@/lib/connectionEditing';
 import {
   applyCanvasDrops, applyCanvasIntent, beginCanvasDrag, buildLocationCanvas, canvasFocus, CANVAS_GRID,
-  connectIntent, connectionEnds, deleteIntent, directionIntent, directionOf, hintKey, implicitCanvasEdges,
-  nudgeKey, updateIntent, isStationaryClick, leafTarget,
+  connectIntent, hintKey, implicitCanvasEdges,
+  nudgeKey, isStationaryClick, leafTarget,
   LONG_PRESS_MS, multiDropIntents, TOUCH_SLOP, UNNAMED_LOCATION,
   type CanvasDragSession, type CanvasIntent, type CanvasNodeData,
 } from '@/lib/locationCanvas';
-import { connectionLegs } from '@/lib/locationGraph';
-import { TravelHintPair, type TravelHintFocus } from '@/components/editor/TravelHintPair';
+import type { TravelHintFocus } from '@/components/editor/TravelHintPair';
+import { ConnectionInspector } from '@/managers/ConnectionInspector';
 import {
   canvasMenuSections, type CanvasMenuItem, type CanvasMenuSection,
 } from '@/lib/canvasMenu';
@@ -61,7 +70,7 @@ import {
 import { searchLocations, type LocationMatch } from '@/lib/locationSearch';
 import { usePrefersReducedMotion } from '@/lib/usePrefersReducedMotion';
 import { cn } from '@/lib/utils';
-import type { Connection, Entity, GameLocation, LegKey, Placeholder } from '@/types';
+import type { Entity, GameLocation, LegKey } from '@/types';
 import { CanvasControlButton, CanvasControls } from '@/components/CanvasControls';
 import { Tip } from '@/components/ui/tooltip';
 import { MapBackgroundLayer, type MapGesture } from '@/components/MapBackgroundLayer';
@@ -140,10 +149,80 @@ const UNREACHABLE_TITLE = 'No starting location can reach here';
 /** Every location's mark while an entity is picked; null when none is. */
 const PickMarkContext = createContext<Map<string, PickMark> | null>(null);
 
+/** Every location's Routine-view mark while an entity's routine is on show; null otherwise. */
+const RoutineMarkContext = createContext<Map<string, RoutineMark> | null>(null);
+
+const NO_SOURCES: ReadonlySet<string> = new Set();
+
+/** Where a routine drag may start, as `routineDragSources` reads it. */
+const RoutineSourceContext = createContext<ReadonlySet<string>>(NO_SOURCES);
+
+const ROUTINE_RING: Record<PlacedActionKind, string> = {
+  stay: 'bg-routine-stay/20 ring-2 ring-routine-stay',
+  wander: 'bg-routine-wander/20 ring-2 ring-routine-wander',
+  patrol: 'bg-routine-patrol/20 ring-2 ring-routine-patrol',
+};
+const NEUTRAL_RING = 'ring-2 ring-muted-foreground';
+const ROUTINE_BADGE: Record<PlacedActionKind, string> = {
+  stay: 'bg-routine-stay/25 ring-routine-stay', wander: 'bg-routine-wander/25 ring-routine-wander', patrol: 'bg-routine-patrol/25 ring-routine-patrol',
+};
+
+/** How a box draws in the Routine view: its action's color or the neutral ring, the same ring where another Start
+ *  of a Generic entity begins, a dashed outline where it can be led, and a fade where it can never go. */
+const routineClass = (mark: RoutineMark | undefined) => cn(
+  mark?.kind === 'routine' && (mark.tone ? ROUTINE_RING[mark.tone] : NEUTRAL_RING),
+  mark?.kind === 'here' && NEUTRAL_RING,
+  mark?.kind === 'reach' && 'outline-dashed outline-2 outline-offset-2 outline-muted-foreground',
+  mark?.kind === 'faded' && 'opacity-30',
+);
+
+const RoutineIcons = ({ mark }: { mark: RoutineMark | undefined }) => (
+  <>
+    {mark?.begin && <Flag className="h-4 w-4 shrink-0 text-foreground" aria-label="Starts Here" />}
+    {mark?.badge && mark.tone && (
+      <span data-routine-badge className={cn('shrink-0 rounded px-1 text-meta font-medium text-foreground ring-1', ROUTINE_BADGE[mark.tone])}>
+        {mark.badge}
+      </span>
+    )}
+  </>
+);
+
+const SPAN_FILL: Record<RoutineSpan['tone'], string> = {
+  stay: 'bg-routine-stay', wander: 'bg-routine-wander', patrol: 'bg-routine-patrol', free: 'bg-muted-foreground/60',
+};
+const SPAN_NAME: Record<RoutineSpan['tone'], string> = { stay: 'Stay', wander: 'Wander', patrol: 'Patrol', free: 'Free Time' };
+const dayPct = (minute: number) => `${(minute / MINUTES_PER_DAY) * 100}%`;
+
+/** A box's day on a thin Dawn-to-Dawn bar along its foot: colored where the entity can be there. `slim` fits the
+ *  name row of a box that holds others. */
+const RoutineDayBar = ({ mark, slim = false }: { mark: RoutineMark | undefined; slim?: boolean }) => {
+  if (!mark?.spans?.length) return null;
+  const text = mark.spans.map((s) => `${s.time}: ${SPAN_NAME[s.tone]}`).join(', ');
+  return (
+    <Tip tip={text} labelsChild={false}>
+      <span
+        role="img" aria-label={text} data-routine-day
+        className={cn('absolute inset-x-1.5 overflow-hidden rounded-full bg-muted-foreground/20', slim ? 'bottom-px h-1' : 'bottom-1 h-1.5')}
+      >
+        {mark.spans.flatMap((s, i) => s.pieces.map(([from, to]) => (
+          <span key={`${i}-${from}`} className={cn('absolute inset-y-0', SPAN_FILL[s.tone])} style={{ left: dayPct(from), width: dayPct(to - from) }} />
+        )))}
+      </span>
+    </Tip>
+  );
+};
+
+/** The data attributes a test or a dev read finds a box's Routine-view mark by. */
+const routineData = (mark: RoutineMark | undefined) => ({
+  'data-routine-mark': mark?.kind,
+  'data-routine-tone': mark?.tone,
+});
+
 /** How a box draws its pick mark: a solid tint for the entity's locations, a dashed outline over each pick
  *  (a group's box encloses its whole subtree), and a fade for the rest. */
 const pickClass = (mark: PickMark | undefined) => cn(
-  mark?.kind === 'member' && 'bg-primary/20 ring-2 ring-primary',
+  (mark?.kind === 'member' || mark?.kind === 'routine') && KNOWN_ROUTINE_MARK,
+  mark?.kind === 'nearby' && KNOWN_NEARBY_MARK,
   mark?.pick && 'outline-dashed outline-2 outline-offset-2 outline-primary',
   mark?.kind === 'faded' && 'opacity-30',
 );
@@ -156,14 +235,18 @@ const PickIcons = ({ mark }: { mark: PickMark | undefined }) => (
 );
 
 /** The badges a node carries: where a new game may begin, and where a player can never arrive. */
-const NodeBadges = ({ data }: { data: CanvasNodeData }) => (
-  <>
-    {data.isStarting && <Star className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Starting location" />}
-    {data.unreachable && (
-      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" aria-label={UNREACHABLE_TITLE} />
-    )}
-  </>
-);
+const NodeBadges = ({ data }: { data: CanvasNodeData }) => {
+  // The Routine view puts its own Start flag in place of the star.
+  const routine = useContext(RoutineMarkContext) !== null;
+  return (
+    <>
+      {data.isStarting && !routine && <Star className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Starting location" />}
+      {data.unreachable && (
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" aria-label={UNREACHABLE_TITLE} />
+      )}
+    </>
+  );
+};
 
 /**
  * Where a Connection is drawn from and dropped onto. Edges attach to a node's center and are clipped to its
@@ -174,19 +257,24 @@ const NodeBadges = ({ data }: { data: CanvasNodeData }) => (
  * rather than at a dot. A group's cover is its title strip, so the sub-locations inside it stay their own
  * targets.
  */
-const EdgeAnchors = ({ dropHeight }: { dropHeight: string }) => {
+const EdgeAnchors = ({ id, dropHeight }: { id: string; dropHeight: string }) => {
   const drawing = useConnection((c) => c.inProgress);
   // Hidden rather than removed while picking: edges attach to the handles xyflow measured at mount.
-  const picking = useContext(PickMarkContext) !== null;
+  const pickMarksShown = useContext(PickMarkContext) !== null;
+  const routineShown = useContext(RoutineMarkContext) !== null;
+  const picking = pickMarksShown || routineShown;
+  const routineSource = useContext(RoutineSourceContext).has(id);
   return (
     <>
+      {/* No tip in the Routine view: a tip that appears at runtime remounts the grip and the drag never starts. */}
       <Tip tip={picking ? undefined : 'Drag To Connect'}>
         <Handle
           type="source"
           position={Position.Right}
+          data-routine-source={routineSource || undefined}
           className={cn(
             '!h-3 !w-3 !border-2 !border-background !bg-primary opacity-0 transition-opacity',
-            picking ? '!pointer-events-none' : 'group-hover/node:opacity-100',
+            routineSource ? '!h-3.5 !w-3.5 opacity-100' : picking ? '!pointer-events-none' : 'group-hover/node:opacity-100',
           )}
         />
       </Tip>
@@ -214,6 +302,7 @@ const LocationNode = ({ id, data, selected }: NodeProps<LocationNodeType>) => {
   // so before the release is what lets the author bail by moving away.
   const armed = useContext(ArmedLeafContext) === id;
   const mark = useContext(PickMarkContext)?.get(id);
+  const routine = useContext(RoutineMarkContext)?.get(id);
   return (
     // The box already carries its own name; the tip only says it cannot be reached.
     <Tip tip={data.unreachable ? UNREACHABLE_TITLE : undefined} labelsChild={false}>
@@ -221,18 +310,22 @@ const LocationNode = ({ id, data, selected }: NodeProps<LocationNodeType>) => {
         data-drop-target={armed || undefined}
         data-flash={flashing || undefined}
         data-pick-mark={mark?.kind}
+        {...routineData(routine)}
         className={cn(
-          'group/node flex h-full w-full items-center justify-center gap-1.5 rounded-md border bg-card px-3 text-label text-card-foreground',
+          'group/node relative flex h-full w-full items-center justify-center gap-1.5 rounded-md border bg-card px-3 text-label text-card-foreground',
           data.unreachable && 'border-destructive',
           pickClass(mark),
+          routineClass(routine),
           flashing ? flashRing : selected && 'ring-2 ring-ring',
           armed && 'bg-primary/10 ring-2 ring-primary',
         )}
       >
-        <EdgeAnchors dropHeight="!h-full" />
+        <EdgeAnchors id={id} dropHeight="!h-full" />
         <NodeBadges data={data} />
         <span className="truncate">{data.label}</span>
         <PickIcons mark={mark} />
+        <RoutineIcons mark={routine} />
+        <RoutineDayBar mark={routine} />
       </div>
     </Tip>
   );
@@ -245,25 +338,30 @@ const LocationGroupNode = ({ id, data, selected }: NodeProps<LocationNodeType>) 
   const willTakeTheDrop = useContext(DropTargetContext).into.includes(id);
   const flashing = useContext(FlashContext) === id;
   const mark = useContext(PickMarkContext)?.get(id);
+  const routine = useContext(RoutineMarkContext)?.get(id);
   return (
     <Tip tip={data.unreachable ? UNREACHABLE_TITLE : undefined} labelsChild={false}>
       <div
         data-drop-target={willTakeTheDrop || undefined}
         data-flash={flashing || undefined}
         data-pick-mark={mark?.kind}
+        {...routineData(routine)}
         className={cn(
           'group/node h-full w-full rounded-md border bg-muted/40',
           data.unreachable && 'border-destructive',
           pickClass(mark),
+          routineClass(routine),
           flashing ? flashRing : selected && 'ring-2 ring-ring',
           willTakeTheDrop && 'bg-primary/10 ring-2 ring-primary',
         )}
       >
-        <EdgeAnchors dropHeight="!h-9" />
-        <div className="flex items-center gap-1.5 rounded-t-md border-b bg-card px-3 py-1.5 text-label text-card-foreground">
+        <EdgeAnchors id={id} dropHeight="!h-9" />
+        <div className="relative flex items-center gap-1.5 rounded-t-md border-b bg-card px-3 py-1.5 text-label text-card-foreground">
           <NodeBadges data={data} />
           <span className="truncate">{data.label}</span>
           <PickIcons mark={mark} />
+          <RoutineIcons mark={routine} />
+          <RoutineDayBar mark={routine} slim />
         </div>
       </div>
     </Tip>
@@ -298,92 +396,6 @@ const TopLevelDrop = () => {
 
 const nodeTypes = { location: LocationNode, locationGroup: LocationGroupNode };
 const edgeTypes = { floating: FloatingEdge };
-
-/** The three ways a pair's travel can run, worded from the pair's first end so the option an author just
- *  clicked stays where it was. Full names live in the labels; the arrows read against the header. */
-const DIRECTIONS: { value: ConnectionDirection; Icon: typeof ArrowRight; label: (a: string, b: string) => string }[] = [
-  { value: 'two-way', Icon: ArrowLeftRight, label: (a, b) => `Travel both ways between ${a} and ${b}` },
-  { value: 'outgoing', Icon: ArrowRight, label: (a, b) => `Travel one way, ${a} to ${b}` },
-  { value: 'incoming', Icon: ArrowLeft, label: (a, b) => `Travel one way, ${b} to ${a}` },
-];
-
-/**
- * The selected arrow's record, edited in place on the map: which way travel runs, how the narration should
- * describe making the trip, and whether the link exists at all. Every control hands its intent back, so the
- * panel decides nothing about what an edit means.
- */
-const ConnectionInspector = ({ connection, focus, nameOf, onIntent, onClose, placeholders }: {
-  connection: Connection;
-  placeholders: Placeholder[];
-  /** The leg whose arrow was clicked last. */
-  focus: TravelHintFocus | null;
-  nameOf: (id: string) => string;
-  onIntent: (intent: CanvasIntent, typedLeg?: LegKey) => void;
-  onClose: () => void;
-}) => {
-  const [a, b] = connectionEnds(connection);
-  const names = [nameOf(a), nameOf(b)] as const;
-  return (
-    <div className="space-y-2 rounded-md border bg-card p-3 shadow-md">
-      <div className="flex items-center gap-1">
-        <Tip tip={`${names[0]} — ${names[1]}`} labelsChild={false}>
-          <span className="min-w-0 flex-grow truncate text-label">
-            {names[0]} — {names[1]}
-          </span>
-        </Tip>
-        <Tip tip="Delete Connection">
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0"
-            onClick={() => onIntent(deleteIntent(connection))}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </Tip>
-        <Tip tip="Close">
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onClose}>
-            <X className="h-5 w-5" />
-          </Button>
-        </Tip>
-      </div>
-      <ToggleGroup
-        type="single"
-        className="w-full"
-        value={directionOf(connection)}
-        aria-label="Direction of Travel"
-        {...fieldFrame('connections', connection.id, 'direction')}
-        // A single ToggleGroup clears its value when the active item is clicked again; a Connection always
-        // runs some direction, so an empty result is ignored rather than stored.
-        onValueChange={(v) => { if (v) onIntent(directionIntent(connection, v as ConnectionDirection)); }}
-      >
-        {DIRECTIONS.map(({ value, Icon, label }) => (
-          <Tip key={value} tip={label(...names)}>
-            <ToggleGroupItem value={value} className="flex-1">
-              <Icon className="h-4 w-4" />
-            </ToggleGroupItem>
-          </Tip>
-        ))}
-      </ToggleGroup>
-      <TravelHintPair
-        connection={connection}
-        legs={connectionLegs(connection).map(({ key }) => {
-          const [Icon, destination] = key === 'aToB' ? [ArrowRight, names[1]] : [ArrowLeft, names[0]];
-          return {
-            key,
-            label: (
-              <>
-                <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                <span className="min-w-0 truncate">{destination}</span>
-              </>
-            ),
-            name: `Travel Hint to ${destination}`,
-          };
-        })}
-        idPrefix={`canvas-connection-${connection.id}`}
-        placeholders={placeholders}
-        onChange={(next, typedLeg) => onIntent(updateIntent(next), typedLeg)}
-        focus={focus}
-      />
-    </div>
-  );
-};
 
 /**
  * What a right-click was aimed at, which is what the menu is a menu *of*: one location, the whole selection,
@@ -648,8 +660,8 @@ const CanvasToolbar = ({
 }) => (
   // Scrolls sideways rather than spilling off a narrow window: every tool stays reachable at any width, and
   // the row keeps its own height so the search box beneath it has a fixed place to sit. Centered, it keeps
-  // the window's corner button clear on both sides.
-  <Panel position="top-center" className="!m-2 max-w-[calc(100%-4.5rem)] overflow-x-auto">
+  // the window's corner button and the window buttons clear on both sides. Centered on the header line at `md`.
+  <Panel position="top-center" className="!m-2 md:!mt-[5px] max-w-[calc(100%-4.5rem-2*var(--window-buttons-width))] overflow-x-auto">
     <div
       role="toolbar"
       aria-label="Canvas Tools"
@@ -779,23 +791,50 @@ export interface LocationCanvasInputs {
 
 const CanvasInner = ({
   selectedId, onSelect, session, fullscreen, onToggleFullscreen, data, preferences, revealSelection, onSelectionRevealed,
+  entityPick,
 }: {
   selectedId: string | null;
   onSelect: (id: string) => void;
   session: CanvasSession;
   fullscreen: boolean;
   onToggleFullscreen: () => void;
+  entityPick: EntityPick;
 } & Pick<LocationCanvasInputs, 'data' | 'preferences'> & Pick<CanvasReveal, 'revealSelection' | 'onSelectionRevealed'>) => {
   const {
     locations, setLocations, connections, setConnections, placeholders, placementLetters, placeholderOwners,
     entities, updateEntity, worldOverview, updateWorldOverview,
   } = data;
-  // The entity the full-screen canvas picks for. While one is picked, the canvas is a read-only picker.
-  const [pickState, setPickState] = useState<PickState | null>(null);
-  const pickedEntity = fullscreen && pickState ? entities?.find((e) => e.id === pickState.entityId) : undefined;
-  const picking = !!pickedEntity;
+  const { pick: pickState, onPickChange: setPickState } = entityPick;
+  // Full screen picks: the canvas is a read-only picker. Beside the panel it only shows a pick on show.
+  const pickedEntity = pickState && (fullscreen || entityPick.shown)
+    ? entities?.find((e) => e.id === pickState.entityId)
+    : undefined;
+  const picking = fullscreen && !!pickedEntity;
   const pickMode = pickedEntity?.customPersona ? 'locations' : pickState?.mode ?? 'locations';
-  const marks = useMemo(() => (pickedEntity ? pickMarks(pickedEntity, locations) : null), [pickedEntity, locations]);
+  // Routine mode draws the entity's routine in place of the Connections. A custom persona has no routine.
+  const routineEntity = pickedEntity && pickMode === 'locations' && !pickedEntity.customPersona ? pickedEntity : undefined;
+  const routineSelection = useRoutineSelection(routineEntity?.id ?? '');
+  const { routineId: shownRoutineId, startId: routineStartId, rowId: routineRowId } = routineSelection;
+  const routineAt = useMemo(
+    () => ({ routineId: shownRoutineId, startId: routineStartId, rowId: routineRowId }),
+    [shownRoutineId, routineStartId, routineRowId],
+  );
+  const placeGraph = useMemo(() => ({ locations, connections }), [locations, connections]);
+  const routine = useMemo(
+    () => (routineEntity ? routineView(routineEntity, routineAt, placeGraph) : null),
+    [routineEntity, routineAt, placeGraph],
+  );
+  const marks = useMemo(
+    () => (pickedEntity && !routine ? pickMarks(pickedEntity, locations, connections, !!pickState?.pickedPending) : null),
+    [pickedEntity, routine, locations, connections, pickState?.pickedPending],
+  );
+  // Only the full-screen picker edits the routine on the map.
+  const editingRoutine = !!routine && picking;
+  const routineSources = useMemo(
+    () => (routineEntity && editingRoutine ? routineDragSources(routineEntity, routineAt) : NO_SOURCES),
+    [routineEntity, routineAt, editingRoutine],
+  );
+  const routineStatus = routineEntity ? routineMapStatus(routineEntity, routineAt) : null;
   const {
     selectedIdsRef, lastSyncedRef, reportSelection, wake, selectedConnectionId, setSelectedConnectionId,
   } = session;
@@ -899,6 +938,10 @@ const CanvasInner = ({
     (entity: Entity) => labelPlaceholders(entity.name, placeholders, { letters: placementLetters, owners: placeholderOwners }),
     [placeholders, placementLetters, placeholderOwners],
   );
+  // Beside the panel the routine is only shown, so its status names it and offers no edit.
+  const statusLine = routineEntity && !picking
+    ? routineShownStatus(routineEntity, routineAt, entityLabel(routineEntity))
+    : routineStatus;
 
   const findLocations = useCallback(
     (query: string) => searchLocations(locations, query, { resolveName }),
@@ -1038,10 +1081,12 @@ const CanvasInner = ({
   );
 
   const edges = useMemo(
-    () => [...map.edges, ...implicitEdges].map(
-      (edge) => toFlowEdge(edge, connectionStyle, { selected: edge.connectionId === selectedConnectionId }),
-    ),
-    [map, implicitEdges, selectedConnectionId, connectionStyle],
+    () => (routine
+      ? routine.lines.map(routineFlowEdge)
+      : [...map.edges, ...implicitEdges].map(
+        (edge) => toFlowEdge(edge, connectionStyle, { selected: edge.connectionId === selectedConnectionId }),
+      )),
+    [routine, map, implicitEdges, selectedConnectionId, connectionStyle],
   );
 
   // A dashed arrow is a click away from being authored; a solid one opens the record it came from.
@@ -1263,26 +1308,31 @@ const CanvasInner = ({
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [picking]);
+  }, [picking, setPickState]);
+
+  // One Step per map edit of a routine, so each click or drag undoes on its own.
+  const applyRoutineEdit = (edit: RoutineMapEdit) => {
+    if (updateEntity) void history.batch(edit.label, () => updateEntity(edit.entity));
+  };
+  const routineDrag = (from: string, to: string) => (routineEntity
+    ? routineMapDrag(routineEntity, routineAt, from, to, placeGraph)
+    : null);
 
   // A canvas click on a location toggles it for the picked entity. A drag that ends on the box was a pan.
   const togglePicked = (event: React.MouseEvent, locationId: string) => {
     if (!pickedEntity || !updateEntity) return;
     if (!isStationaryClick(pointerDownRef.current, { x: event.clientX, y: event.clientY })) return;
+    if (routineEntity) {
+      const edit = routineMapClick(routineEntity, routineAt, locationId, placeGraph);
+      if (edit) applyRoutineEdit(edit);
+      return;
+    }
     // Keyed by the location, so each click is its own Step rather than a typing run on the entity.
     history.keyNext({
       slice: 'entities', id: pickedEntity.id, field: pickMode === 'knownIn' ? 'knownIn' : 'locations', ids: [locationId],
     });
     updateEntity(togglePick(pickedEntity, pickMode, locationId));
   };
-
-  // DEV dev-router: `pick=<entity id>` (or `<entity id>:knownIn`) picks an entity on the full-screen canvas.
-  const devPick = useDevRoute()?.pick;
-  useEffect(() => {
-    if (!import.meta.env.DEV || !devPick || !fullscreen) return;
-    const [entityId, mode] = devPick.split(':');
-    setPickState({ entityId, mode: mode === 'knownIn' ? 'knownIn' : 'locations' });
-  }, [devPick, fullscreen]);
 
   /**
    * Composing a selection on a touch screen. Shift and Ctrl are what a mouse adds a location to a selection
@@ -1443,6 +1493,8 @@ const CanvasInner = ({
       <ArmedLeafContext.Provider value={armedLeaf}>
       <FlashContext.Provider value={flashId}>
       <PickMarkContext.Provider value={marks}>
+      <RoutineMarkContext.Provider value={routine?.marks ?? null}>
+      <RoutineSourceContext.Provider value={routineSources}>
       <ReactFlow<LocationNodeType, Edge>
         nodes={nodes}
         edges={edges}
@@ -1465,7 +1517,8 @@ const CanvasInner = ({
         // A picker is read-only: no drag, nesting, Connection or selection, and a drag with any button pans.
         // Adjusting the map holds the boxes still the same way, so every left press goes to the map.
         nodesDraggable={!boxesHeld}
-        nodesConnectable={!boxesHeld}
+        // A selected Wander or Patrol row draws from its own places' grips.
+        nodesConnectable={!boxesHeld || routineSources.size > 0}
         elementsSelectable={!boxesHeld}
         edgesFocusable={!picking}
         onNodeMouseEnter={(_, node) => hoverOn(node.id)}
@@ -1487,10 +1540,14 @@ const CanvasInner = ({
         // Snapping applies to the drag itself, so what the author sees land is exactly what is stored.
         snapToGrid={snap}
         snapGrid={[CANVAS_GRID, CANVAS_GRID]}
-        onConnect={({ source, target }) => applyIntent(connectIntent(source, target, connections))}
+        onConnect={({ source, target }) => {
+          if (!editingRoutine) { applyIntent(connectIntent(source, target, connections)); return; }
+          const edit = routineDrag(source, target);
+          if (edit) applyRoutineEdit(edit);
+        }}
         // The same rule the gesture obeys, so a drag onto a pair that already has a record reads as
         // refused while it is being drawn rather than landing and doing nothing.
-        isValidConnection={({ source, target }) => !!connectIntent(source, target, connections)}
+        isValidConnection={({ source, target }) => (editingRoutine ? !!routineDrag(source, target) : !!connectIntent(source, target, connections))}
         connectionLineStyle={{ stroke: 'hsl(var(--primary))', strokeWidth: 2 }}
         deleteKeyCode={null}
         // Under the zoom controls rather than alone in the far corner, where a lone bit of text on open canvas
@@ -1498,7 +1555,10 @@ const CanvasInner = ({
         attributionPosition="bottom-left"
         minZoom={0.2}
         fitView
-        className={cn('h-full w-full', picking && 'canvas-picking', adjustingMap && 'canvas-adjusting')}
+        // Routine lines draw at full strength; the fade is for the Connections behind a pick.
+        className={cn('h-full w-full', pickedEntity && !routine && 'canvas-picking', adjustingMap && 'canvas-adjusting')}
+        // A press or pan on the map keeps the selected routine row.
+        {...{ [KEEPS_ROUTINE_SELECTION]: routine ? '' : undefined }}
       >
         {/* The dots mark the grid's own intersections; hiding it keeps the pane's color and drops the pattern. */}
         <Background className="!bg-background" color={gridVisible ? 'hsl(var(--border))' : 'transparent'} gap={CANVAS_GRID} />
@@ -1520,6 +1580,18 @@ const CanvasInner = ({
           )}
         </CanvasControls>
         <TopLevelDrop />
+        {/* In the toolbar's place, which picking hides. Clear of the entity card on the right. */}
+        {statusLine && (
+          <Panel
+            position="top-center"
+            className={cn('!m-2 md:!mt-[5px] max-md:max-w-[calc(100%-1rem)]', picking ? 'max-w-[min(36rem,calc(100%-30rem))]' : 'max-w-[min(36rem,calc(100%-1rem))]')}
+          >
+            <p data-testid="routine-status" role="status" className="rounded-md border bg-card px-3 py-1.5 text-center text-label shadow-md">
+              {statusLine.row && <strong className="block font-semibold">{statusLine.row}</strong>}
+              {statusLine.text}
+            </p>
+          </Panel>
+        )}
         {/* The window's own orientation aids and power tools. The pane is a view of a map the author can
             already take in; these are for the map that has grown past it. */}
         {fullscreen && !picking && (
@@ -1548,13 +1620,19 @@ const CanvasInner = ({
             onNavigate={(at) => setCenter(at.x, at.y, { duration: reduceMotion ? 0 : 200 })}
           />
         )}
+        {(routine || marks) && (
+          <CanvasKey entries={routine ? routineKeyEntries(routine) : pickKeyEntries(marks ?? new Map())} />
+        )}
         {/* One column on the right: an open Connection above the entity card, so neither covers the other.
             Below the toolbar and the search box on a narrow window. */}
         {((selectedConnection && !picking) || (fullscreen && entities && updateEntity) || shownMapPanel) && (
           <Panel
             position="top-right"
+            // A press on the editor's own blank space clears the selected routine row, as on the Routine tab.
+            {...{ [CLEARS_ROUTINE_SELECTION]: '' }}
             // Full screen drops the column under the window's corner button.
-            className={cn('!m-2 flex max-h-[calc(100%-1rem)] w-72 flex-col gap-2 overflow-y-auto', fullscreen && 'sm:!mt-10 sm:max-h-[calc(100%-3rem)] max-sm:!mt-28 max-sm:max-h-[40%]')}
+            // The Routine editor needs the width of its day strip.
+            className={cn('!m-2 flex max-h-[calc(100%-1rem)] flex-col gap-2 overflow-y-auto', routine && picking ? 'w-[27rem] max-w-[calc(100%-1rem)]' : 'w-72', fullscreen && 'sm:!mt-10 sm:max-h-[calc(100%-3rem)] md:!mt-[calc(var(--header-line)+0.5rem)] md:max-h-[calc(100%-var(--header-line)-1rem)] max-sm:!mt-28 max-sm:max-h-[40%]')}
           >
             {shownMapPanel && worldOverview && (
               <MapBackgroundPanel
@@ -1586,9 +1664,6 @@ const CanvasInner = ({
               <EntityPickCard
                 entities={entities}
                 entityLabel={entityLabel}
-                locationName={nameOf}
-                locations={locations}
-                connections={connections}
                 picking={pickedEntity && pickState ? { ...pickState, mode: pickMode } : null}
                 onPickingChange={setPickState}
                 onChange={updateEntity}
@@ -1597,6 +1672,8 @@ const CanvasInner = ({
           </Panel>
         )}
       </ReactFlow>
+      </RoutineSourceContext.Provider>
+      </RoutineMarkContext.Provider>
       </PickMarkContext.Provider>
       </FlashContext.Provider>
       </ArmedLeafContext.Provider>
@@ -1648,9 +1725,20 @@ interface CanvasReveal {
  *  above it, so a caller with a world of its own provides one. */
 export const LocationCanvasWorkspace = (props: LocationCanvasInputs & CanvasReveal & {
   selectedId: string | null; onSelect: (id: string) => void;
+  /** The host's entity pick. Without one the canvas keeps its own, which nothing beside it shows. */
+  entityPick?: EntityPick;
 }) => {
+  const [ownPick, setOwnPick] = useState<PickState | null>(null);
+  const ownEntityPick = useMemo<EntityPick>(() => ({ pick: ownPick, onPickChange: setOwnPick, shown: false }), [ownPick]);
+  const entityPick = props.entityPick ?? ownEntityPick;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const morph = useMorphFullscreen(hostRef);
+  const onFullscreenChange = entityPick.onFullscreenChange;
+  useEffect(() => {
+    onFullscreenChange?.(morph.contentInOverlay);
+  }, [onFullscreenChange, morph.contentInOverlay]);
+  // A canvas that unmounts in full screen has closed it.
+  useEffect(() => () => onFullscreenChange?.(false), [onFullscreenChange]);
   const selectedIdsRef = useRef<string[]>(props.selectedId ? [props.selectedId] : []);
   const lastSyncedRef = useRef<string | null>(props.selectedId);
   const { revealConnection, onConnectionRevealed } = props;
@@ -1684,6 +1772,15 @@ export const LocationCanvasWorkspace = (props: LocationCanvasInputs & CanvasReve
     inTransitRef.current = true;
     morph.toggle();
   }, [morph]);
+  const { fullscreenRequested, onFullscreenRequestTaken } = entityPick;
+  useEffect(() => {
+    if (!fullscreenRequested) return;
+    inTransitRef.current = true;
+    morph.open();
+    onFullscreenRequestTaken?.();
+    // `morph` changes identity as it opens; only the request opens it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreenRequested, onFullscreenRequestTaken]);
   const windowMorph = useMemo(
     () => ({ ...morph, close: () => { inTransitRef.current = true; morph.close(); } }),
     [morph],
@@ -1705,6 +1802,7 @@ export const LocationCanvasWorkspace = (props: LocationCanvasInputs & CanvasReve
     <ReactFlowProvider>
       <CanvasInner
         {...props}
+        entityPick={entityPick}
         session={session}
         fullscreen={morph.contentInOverlay}
         onToggleFullscreen={toggleFullscreen}
@@ -1734,7 +1832,9 @@ export const LocationCanvasWorkspace = (props: LocationCanvasInputs & CanvasReve
   );
 };
 
-const LocationCanvas = (props: CanvasReveal & { selectedId: string | null; onSelect: (id: string) => void }) => {
+const LocationCanvas = (props: CanvasReveal & {
+  selectedId: string | null; onSelect: (id: string) => void; entityPick?: EntityPick;
+}) => {
   const data = useGameData();
   const snap = useCanvasSnap();
   const grid = useCanvasGridVisible();

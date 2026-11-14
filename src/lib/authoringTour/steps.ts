@@ -20,11 +20,12 @@ import { blankDictionaryEntry } from '@/lib/dictionaryTree';
 import { parseKeywords } from '@/lib/dictionaryUtils';
 import { entityImages } from '@/lib/entityImages';
 import { locationImages } from '@/lib/locationImages';
-import { withEntityLocations } from '@/lib/entityPresence';
+import { namedPlacesOf, presenceOf, withMembership } from '@/lib/entityPlaces';
+import { isGeneric, isUnique, withFirstStartPlace, withGenericStart } from '@/lib/entityKind';
+import { randomUUID } from '@/lib/uuid';
 import { createConnection, legFrom, withHint } from '@/lib/connectionEditing';
 import { connectionLegs, isTwoWay, travelEnds } from '@/lib/locationGraph';
 import { followRename } from '@/lib/statDescriptors';
-import { randomUUID } from '@/lib/uuid';
 import { EDITOR_MODE_TUTORIAL_ID, markTutorialSeen } from '@/lib/tutorials';
 import type { InPlaySpec, ReaderSpec } from './inPlay';
 import { loadTourImage } from './tourImages';
@@ -67,6 +68,8 @@ export interface TourEditApi {
   updateLocation: (location: GameLocation) => void;
   addConnection: (connection: Connection) => void;
   updateConnection: (connection: Connection) => void;
+  /** Opens the Connection's row on the location panel's Connections tab. */
+  openConnection: (id: string) => void;
   addEntity: (entity: Entity) => void;
   updateEntity: (entity: Entity) => void;
   /** Gives the stat its default descriptors, as the world does for every added stat. */
@@ -161,9 +164,17 @@ function patchEntity(api: TourEditApi, world: TourWorld, items: TourItems, patch
   if (entity) api.updateEntity({ ...entity, ...patch });
 }
 
+/** Where the tour entity begins or a routine row takes it: its Presence without Can Also Go. Empty with no tour entity. */
+export function tourEntityPresence(world: TourWorld, items: TourItems): readonly string[] {
+  const entity = tourEntity(world, items);
+  if (!entity) return [];
+  const { places } = presenceOf(entity, { locations: world.locations ?? [], connections: world.connections ?? [] });
+  return places.filter((p) => p.reasons.some((reason) => reason.kind !== 'traversable')).map((p) => p.place);
+}
+
 /** The tour locations the tour entity is in, the first location first. */
 export function tourEntityPlaces(world: TourWorld, items: TourItems): string[] {
-  const at = new Set(tourEntity(world, items)?.locations ?? []);
+  const at = new Set(tourEntityPresence(world, items));
   return (['location', 'secondLocation'] as const)
     .map((item) => liveTourItem(world, items, item))
     .filter((id): id is string => !!id && at.has(id));
@@ -474,15 +485,19 @@ const LOCATION_STEPS: readonly TourStep[] = [
     tab: 'locations',
     anchor: 'location-connections',
     item: 'secondLocation',
-    panelTab: 'presence',
+    panelTab: 'connections',
     title: 'Connection',
     body: 'Connect this place to your first one so players can travel between them. A Travel Hint tells the AI how the trip goes.',
     isComplete: (world, items) => !!tourConnection(world, items),
     useExample: (api, world, items) => {
       const existing = tourConnection(world, items);
-      if (existing) api.updateConnection(withExampleHint(existing));
-      else if (items.location && items.secondLocation) {
-        api.addConnection(withExampleHint(createConnection(items.secondLocation, items.location)));
+      if (existing) {
+        api.updateConnection(withExampleHint(existing));
+        api.openConnection(existing.id);
+      } else if (items.location && items.secondLocation) {
+        const made = withExampleHint(createConnection(items.secondLocation, items.location));
+        api.addConnection(made);
+        api.openConnection(made.id);
       }
     },
     inPlay: {
@@ -528,14 +543,18 @@ const ENTITY_STEPS: readonly TourStep[] = [
     tab: 'entities',
     anchor: 'entity-locations',
     item: 'entity',
-    panelTab: 'profile',
-    title: 'Locations',
-    body: 'Place the entity in one of your locations. The AI reads an entity only at its locations.',
+    panelTab: 'presence',
+    title: 'Presence',
+    body: 'Pick where the entity starts. The AI reads an entity only where it stands.',
     isComplete: (world, items) => tourEntityPlaces(world, items).length > 0,
     useExample: (api, world, items) => {
       const entity = tourEntity(world, items);
       const place = liveTourItem(world, items, 'location');
-      if (entity && place) api.updateEntity(withEntityLocations(entity, [...(entity.locations ?? []), place]));
+      if (!entity || !place) return;
+      // A Unique entity starts there; a Generic entity gains a Start there.
+      api.updateEntity(isUnique(entity) ? withFirstStartPlace(entity, place, randomUUID)
+        : isGeneric(entity) ? withGenericStart(entity, place, randomUUID)
+        : withMembership(entity, [...namedPlacesOf(entity), place]));
     },
     inPlay: {
       sees: 'entityRowAndCard',
@@ -841,6 +860,8 @@ export async function replayTourSteps(world: TourWorld, index: number): Promise<
     updateLocation: (location) => { draft = { ...draft, locations: replace(draft.locations, location) }; },
     addConnection: (connection) => { draft = { ...draft, connections: [...(draft.connections ?? []), connection] }; },
     updateConnection: (connection) => { draft = { ...draft, connections: replace(draft.connections, connection) }; },
+    // A replay draws nothing, so it has no row to open.
+    openConnection: () => {},
     addEntity: (entity) => { draft = { ...draft, entities: [...(draft.entities ?? []), entity] }; },
     updateEntity: (entity) => { draft = { ...draft, entities: replace(draft.entities, entity) }; },
     addStat: (stat) => { draft = { ...draft, stats: [...(draft.stats ?? []), withDefaultDescriptors(stat)] }; },

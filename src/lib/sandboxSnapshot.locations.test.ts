@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { snapshotOf, type SnapshotOptions } from './sandboxSnapshot';
 import { inPlayOwners } from './ownedTraitsInPlay';
 import { openingStateOf } from './openingState';
+import { genericPlaces } from './positionEngine';
 import type { SandboxState } from './statCodeTurn';
 import type { Entity, GameLocation, PersonaRef } from '@/types';
 
@@ -49,6 +50,11 @@ const PRESENT = 'return [locations["Old Mill"].present.map((e) => e.name), locat
 describe('the snapshot’s locations in play', () => {
   it('lists who stands where: the persona first at the player’s place, an unplaced entity at each place it lists', async () => {
     expect(await read(playState(), PRESENT)).toEqual([['Hero', 'Tor', 'Sela'], ['Mira', 'Tor']]);
+  });
+
+  it('lists a Generic entity once at each place its Generic Entity Instances stand, and nowhere else it lists', async () => {
+    const genericPositions = genericPlaces({ tor: { a: { position: 'gate', lastRun: 0 }, b: { position: 'gate', lastRun: 0 } } });
+    expect(await read(playState({ genericPositions }), PRESENT)).toEqual([['Hero', 'Sela'], ['Mira', 'Tor']]);
   });
 
   it('reads each entity’s place and follower state from play', async () => {

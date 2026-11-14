@@ -6,16 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react-toastify', () => ({ toast: { info: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }));
 
 import { toast } from 'react-toastify';
-import WorldStorageService, {
-  LIBRARY_BLOCKED_MESSAGE, UNREADABLE_WORLDS_MESSAGE, type StoredWorldRecord,
-} from '@/services/WorldStorageService';
-import { clearDeletedDefaultWorlds } from '@/lib/defaultWorlds';
+import WorldStorageService, { LIBRARY_BLOCKED_MESSAGE, type StoredWorldRecord } from '@/services/WorldStorageService';
+import { getUnreadableWorlds, resetUnreadableWorlds } from '@/lib/unreadableWorlds';
+import { clearDeletedDefaultWorlds, readDeletedDefaultWorlds } from '@/lib/defaultWorlds';
 import { encodePlaceholderToken } from '@/lib/placeholders';
 import { promisifyRequest } from '@/lib/idb';
 import {
-  WORLD_LIBRARY_DB, WORLD_META_STORE, WORLD_STORE, openWorldLibrary, putWorldRecords, worldMetaOf, type WorldMetaRecord,
+  WORLD_LIBRARY_DB, WORLD_META_STORE, WORLD_STORE, openWorldLibrary, putWorldRecord, putWorldRecords, worldMetaOf, type WorldMetaRecord,
 } from './worldLibrary';
 import { bundledWorlds } from '@/lib/bundledWorldText';
+import { refuseReads } from '@/test/idbRefusal';
 
 /** Open the library database the way a version 1 build did. */
 function openVersion1(): Promise<IDBDatabase> {
@@ -61,6 +61,7 @@ beforeEach(() => {
   WorldStorageService.db = null;
   localStorage.clear();
   clearDeletedDefaultWorlds();
+  resetUnreadableWorlds();
   vi.mocked(toast.info).mockClear();
   vi.mocked(toast.dismiss).mockClear();
   vi.mocked(toast.error).mockClear();
@@ -339,7 +340,192 @@ describe('a library with unreadable rows', () => {
 
     expect((await WorldStorageService.getWorldMetadata()).map((m) => m.id)).toEqual(['b']);
     expect(await WorldStorageService.worldsLinking('lib-1')).toEqual([]);
-    expect(toast.error).toHaveBeenCalledWith(UNREADABLE_WORLDS_MESSAGE, expect.anything());
+    expect(getUnreadableWorlds().map((w) => w.id)).toEqual(['lost']);
+  });
+
+  it('lists the other worlds and rebuilds the row when one metadata file is lost', async () => {
+    await seedLibrary([world('a'), world('b')]);
+    refuseReads({ [WORLD_META_STORE]: ['a'] });
+
+    const meta = await WorldStorageService.getWorldMetadata();
+
+    expect(meta.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(getUnreadableWorlds()).toEqual([]);
+  });
+
+  it('reports a world whose metadata and record files are both lost', async () => {
+    await seedLibrary([world('lost'), world('b')]);
+    refuseReads({ [WORLD_META_STORE]: ['lost'], [WORLD_STORE]: ['lost'] });
+
+    expect((await WorldStorageService.getWorldMetadata()).map((m) => m.id)).toEqual(['b']);
+    expect(getUnreadableWorlds().map((w) => w.id)).toEqual(['lost']);
+  });
+
+  it('rebuilds a healthy world that follows a lost one in the same read', async () => {
+    await seedLibrary([world('a-lost'), world('b-good')], ['a-lost', 'b-good']);
+    refuseReads({ [WORLD_STORE]: ['a-lost'] });
+
+    expect((await WorldStorageService.getWorldMetadata()).map((m) => m.id)).toEqual(['b-good']);
+    expect(getUnreadableWorlds().map((w) => w.id)).toEqual(['a-lost']);
+  });
+
+  /** Run `before` once, just ahead of the first read-write transaction over the metadata store. */
+  function beforeFirstMetaWrite(before: (db: IDBDatabase, open: IDBDatabase['transaction']) => void): void {
+    const open = IDBDatabase.prototype.transaction;
+    let fired = false;
+    vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(function (this: IDBDatabase, names, mode, options) {
+      const stores = typeof names === 'string' ? [names] : [...names];
+      if (!fired && mode === 'readwrite' && stores.includes(WORLD_META_STORE)) {
+        fired = true;
+        before(this, open);
+      }
+      return open.call(this, names, mode, options);
+    });
+  }
+
+  it('keeps a save that lands while missing metadata is rebuilt', async () => {
+    await seedLibrary([world('a')], ['a']);
+    const edited = world('a', { name: 'Edited', dirty: true });
+    // Another save, queued just before the rebuild's write.
+    beforeFirstMetaWrite((db, open) => { putWorldRecord(open.call(db, [WORLD_STORE, WORLD_META_STORE], 'readwrite'), edited); });
+
+    const meta = await WorldStorageService.getWorldMetadata();
+
+    vi.restoreAllMocks();
+    expect(meta.find((m) => m.id === 'a')).toMatchObject({ name: 'Edited', dirty: true });
+    await expectMetaInSync();
+  });
+
+  it('keeps a world that a restore makes readable just before Remove deletes it', async () => {
+    await seedLibrary([world('lost')]);
+    let restored = false;
+    const get = IDBObjectStore.prototype.get;
+    vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function (this: IDBObjectStore, key) {
+      const request = get.call(this, key);
+      if (this.name !== WORLD_STORE || key !== 'lost' || restored) return request;
+      let value: unknown;
+      Object.defineProperty(request, 'result', { get: () => (value === undefined ? undefined : null), set: (next) => { value = next; } });
+      return request;
+    });
+    beforeFirstMetaWrite(() => { restored = true; });
+
+    const removed = await WorldStorageService.removeUnreadableWorld('lost');
+
+    vi.restoreAllMocks();
+    expect(removed).toBe(false);
+    expect((await readStore<StoredWorldRecord>(WORLD_STORE)).map((w) => w.id)).toEqual(['lost']);
+  });
+
+  it('still reports a world that fails to open while the connection closes', async () => {
+    await seedLibrary([world('open', { name: 'Marsh' })]);
+    unreadable(WORLD_STORE, ['open']);
+    const open = IDBDatabase.prototype.transaction;
+    vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(function (this: IDBDatabase, names, mode, options) {
+      if (names === WORLD_META_STORE || (Array.isArray(names) && names.length === 1 && names[0] === WORLD_META_STORE)) {
+        throw new DOMException('The connection is closing', 'InvalidStateError');
+      }
+      return open.call(this, names, mode, options);
+    });
+
+    await expect(WorldStorageService.getWorldData('open')).rejects.toBe('World not found');
+
+    await vi.waitFor(() => expect(getUnreadableWorlds()).toEqual([{ id: 'open', foundOnOpen: true }]));
+  });
+
+  it('stops reporting a world once a later list read finds it healed', async () => {
+    await seedLibrary([world('lost'), world('b')]);
+    const restoreMeta = unreadable(WORLD_META_STORE, ['lost']);
+    const restoreWorld = unreadable(WORLD_STORE, ['lost']);
+    await WorldStorageService.getWorldMetadata();
+    restoreWorld();
+    restoreMeta();
+
+    await WorldStorageService.getWorldMetadata();
+
+    expect(getUnreadableWorlds()).toEqual([]);
+  });
+
+  it('removes an unreadable entry from both stores and leaves the rest', async () => {
+    await seedLibrary([world('lost'), world('b')]);
+    const restoreMeta = unreadable(WORLD_META_STORE, ['lost']);
+    const restoreWorld = unreadable(WORLD_STORE, ['lost']);
+    await WorldStorageService.getWorldMetadata();
+
+    expect(await WorldStorageService.removeUnreadableWorld('lost')).toBe(true);
+
+    restoreWorld();
+    restoreMeta();
+    expect((await readStore<StoredWorldRecord>(WORLD_STORE)).map((w) => w.id)).toEqual(['b']);
+    await expectMetaInSync();
+    expect(getUnreadableWorlds()).toEqual([]);
+  });
+
+  it('removes an entry whose files are lost, and a later list read is clean', async () => {
+    await seedLibrary([world('lost'), world('b')]);
+    refuseReads({ [WORLD_META_STORE]: ['lost'], [WORLD_STORE]: ['lost'] });
+
+    expect(await WorldStorageService.removeUnreadableWorld('lost')).toBe(true);
+
+    vi.restoreAllMocks();
+    expect((await readStore<StoredWorldRecord>(WORLD_STORE)).map((w) => w.id)).toEqual(['b']);
+    await expectMetaInSync();
+  });
+
+  it('keeps a world that reads again when the player asks to remove it', async () => {
+    await seedLibrary([world('healed')]);
+
+    expect(await WorldStorageService.removeUnreadableWorld('healed')).toBe(false);
+
+    expect((await readStore<StoredWorldRecord>(WORLD_STORE)).map((w) => w.id)).toEqual(['healed']);
+    await expectMetaInSync();
+  });
+
+  it('leaves no tombstone, so the seeder restores a removed bundled world', async () => {
+    await seedLibrary([world('rampage', { name: 'BROKEN' })]);
+    const restoreMeta = unreadable(WORLD_META_STORE, ['rampage']);
+    const restoreWorld = unreadable(WORLD_STORE, ['rampage']);
+    await WorldStorageService.removeUnreadableWorld('rampage');
+    restoreWorld();
+    restoreMeta();
+
+    await WorldStorageService.loadDefaultWorlds([{ id: 'rampage', defaultName: 'Rampage' }], bundledWorlds);
+
+    expect(readDeletedDefaultWorlds().has('rampage')).toBe(false);
+    const [stored] = await readStore<StoredWorldRecord>(WORLD_STORE);
+    expect(stored.id).toBe('rampage');
+    expect(stored.name).not.toBe('BROKEN');
+  });
+
+  it('reports a world that fails to open, with what its metadata still says', async () => {
+    await seedLibrary([world('open', { name: 'Marsh', sourceId: 'listing-1' })]);
+    unreadable(WORLD_STORE, ['open']);
+
+    await expect(WorldStorageService.getWorldData('open')).rejects.toBe('World not found');
+
+    await vi.waitFor(() => expect(getUnreadableWorlds()).toEqual([
+      { id: 'open', name: 'Marsh', sourceId: 'listing-1', foundOnOpen: true },
+    ]));
+  });
+
+  it('does not report a world that is simply absent', async () => {
+    await seedLibrary([world('b')]);
+
+    await expect(WorldStorageService.getWorldData('gone')).rejects.toBe('World not found');
+
+    await new Promise((resolve) => { setTimeout(resolve); });
+    expect(getUnreadableWorlds()).toEqual([]);
+  });
+
+  it('clears a world that fails to open once it is stored again', async () => {
+    await seedLibrary([world('open', { name: 'Marsh' })]);
+    const restore = unreadable(WORLD_STORE, ['open']);
+    await expect(WorldStorageService.getWorldData('open')).rejects.toBe('World not found');
+    await vi.waitFor(() => expect(getUnreadableWorlds()).toHaveLength(1));
+    restore();
+
+    await WorldStorageService.storeWorld(world('open', { name: 'Marsh' }));
+
+    expect(getUnreadableWorlds()).toEqual([]);
   });
 
   it.each(['unreadable', 'missing'])('does not reseed a default whose metadata is %s, so its edits survive', async (state) => {

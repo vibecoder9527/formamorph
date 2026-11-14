@@ -8,7 +8,7 @@ import { scoped } from './scope';
 import { startingCopies } from './inventory';
 import type {
   Body, CascadeOffTraitIds, Entity, GameLocation, Item, OwnedTraitPicks, PersonaRef, Placement, Slot, Stat, StatGroup, Trait,
-  TraitGroup,
+  TraitGroup, WorldOption, WorldOptionValues,
 } from '@/types';
 
 /** Choices retained for one visit to Enter World. */
@@ -25,14 +25,16 @@ export interface EntryDraft {
   dictionaryItems: DictionarySelectionItem[];
   persona: PersonaRef;
   traitSection: number;
+  /** The player's World Option picks. An Option missing here starts on its default. */
+  optionValues: WorldOptionValues;
 }
 
 export const emptyEntryDraft = (): EntryDraft => ({
   traitIds: [], ownedTraitIds: {}, cascadeOffTraitIds: {}, locationId: null, locationChosen: false, entityIds: new Set(), dictionaryItems: [],
-  persona: { source: 'none' }, traitSection: 0,
+  persona: { source: 'none' }, traitSection: 0, optionValues: {},
 });
 
-/** The draft after a persona pick: one entity fills one role, and a world persona preselects its location. */
+/** The draft after a persona pick: one entity fills one role, and a persona with start places preselects its location. */
 export function withPersonaPick(draft: EntryDraft, ref: PersonaRef, context: PersonaPickContext): EntryDraft {
   return {
     ...draft,
@@ -62,6 +64,8 @@ export interface EntryTraitWorld {
   slots?: readonly Slot[];
   bodies?: readonly Body[];
   locations?: readonly Pick<GameLocation, 'id'>[];
+  /** The world's Options, which Option Conditions read at the draft's picks (Q43). */
+  options?: readonly WorldOption[];
 }
 
 /** The Item Copies a new game would hold under `persona`, so an item Condition reads the start. The ids only tell copies apart. */
@@ -73,6 +77,7 @@ function seededCopies(world: EntryTraitWorld, persona: PersonaRef) {
 /** The gate input over every present owner under `persona`, without the active sets. */
 const entryGateBase = (world: EntryTraitWorld, persona: PersonaRef): Omit<GateInput, 'active'> => ({
   ...resolveOwners(world, persona, world.library).gate,
+  ...(world.options ? { worldOptions: world.options } : {}),
   stats: startingGateStats(world, world.library),
   reader: 'player',
   ...(world.items ? { worldItems: world.items, itemCopies: seededCopies(world, persona) } : {}),
@@ -85,11 +90,12 @@ export const entryTrees = (world: EntryTraitWorld, persona: PersonaRef): Pick<Ga
   return { global, owners };
 };
 
-/** The gates of the draft's picks: every present owner, under the draft's persona. */
+/** The gates of the draft's picks: every present owner, under the draft's persona and Option values. */
 export const entryGateInput = (
-  world: EntryTraitWorld, draft: Pick<EntryDraft, 'traitIds' | 'ownedTraitIds' | 'persona'>,
+  world: EntryTraitWorld, draft: Pick<EntryDraft, 'traitIds' | 'ownedTraitIds' | 'persona'> & Partial<Pick<EntryDraft, 'optionValues'>>,
 ): GateInput => ({
   ...entryGateBase(world, draft.persona),
+  ...(draft.optionValues ? { optionValues: draft.optionValues } : {}),
   active: scoped(draft.traitIds, draft.ownedTraitIds),
 });
 

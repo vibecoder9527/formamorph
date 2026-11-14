@@ -6,13 +6,19 @@ import { seededCharacterData } from '@/lib/legacyVrm';
 import { playedVrmPick, playVrmContext, resolvePlayedVrm } from '@/lib/vrmResolver';
 import type { ResolvedPersona } from '@/lib/persona';
 
+/** The library's Avatar names by id, in library order. An unreadable library reads as empty. */
+export async function readLibraryNames(): Promise<ReadonlyMap<string, string>> {
+  const models = await ModelStorageService.getModelMetadata().catch(() => []);
+  return new Map(models.map((m) => [m.id, m.name]));
+}
+
 /** The ids in the Avatar library, read once per mount. `undefined` until the read settles. */
 export function useLibraryIds(): ReadonlySet<string> | undefined {
   const [ids, setIds] = useState<ReadonlySet<string>>();
   useEffect(() => {
     let cancelled = false;
-    ModelStorageService.getModelMetadata().catch(() => []).then((models) => {
-      if (!cancelled) setIds(new Set(models.map((m) => m.id)));
+    void readLibraryNames().then((names) => {
+      if (!cancelled) setIds(new Set(names.keys()));
     });
     return () => { cancelled = true; };
   }, []);
@@ -20,11 +26,11 @@ export function useLibraryIds(): ReadonlySet<string> | undefined {
 }
 
 /** An empty library, for a resolve that must not wait on the library read. */
-export const NO_LIBRARY: ReadonlySet<string> = new Set();
+const NO_LIBRARY: ReadonlySet<string> = new Set();
 
 /**
  * After each save load, once the persona has resolved, seed default customization for a save that holds
- * none while its played side shows an Avatar. Whether it shows one never depends on the library list.
+ * none while its played side has an Avatar pick.
  */
 export function useSeedAvatarOnSaveLoad(loads: number, ready: boolean, persona: ResolvedPersona | null): void {
   const { entities, worldOverview } = useGameData();
@@ -36,7 +42,7 @@ export function useSeedAvatarOnSaveLoad(loads: number, ready: boolean, persona: 
     const ctx = playVrmContext({
       persona, entities, overview: worldOverview, characterData, libraryIds: NO_LIBRARY, deviceDefault: undefined,
     });
-    // The pick counts on its own: with no bundled file, an empty library list resolves it to no model.
+    // The pick counts on its own: an empty library list resolves User's Default to no Avatar.
     const seeded = seededCharacterData(characterData, !!resolvePlayedVrm(ctx) || !!playedVrmPick(ctx));
     if (seeded !== characterData) setCharacterData(seeded);
   }, [loads, ready, persona, entities, worldOverview, characterData, setCharacterData]);

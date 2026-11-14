@@ -45,10 +45,10 @@ Without a fixed place, the narrator loses track of the scene. The tavern becomes
 
 **In the panel:**
 
-1. Select one of the two locations, then open its **Presence** tab.
-2. Under **Connections**, pick the other location in **Connect to…**.
-3. Select the **+** button (**Add Connection**). The new Connection is **Two-Way**.
-4. To make it one-way, pick **Outgoing** or **Incoming** on its row.
+1. Select one of the two locations, then open its **Connections** tab.
+2. Pick the other location in **Connect to…**.
+3. Select the **+** button (**Add Connection**). The new Connection travels **Both Ways**, and its row opens.
+4. To make it one-way, pick **To There** or **To Here** under **Travel** on its row.
 5. Optional: write a **Travel Hint**.
 
 **On the canvas:** drag from the handle on the right edge of one box (**Drag To Connect**) onto the other box.
@@ -77,7 +77,7 @@ While the player is at this location, the placeholder reads the pinned value. Se
 ## Nesting is the AI's map, not the player's
 <!-- keywords: trapped, cant leave, restrict movement, lock an area, story never moves, auto travel, fast travel, move prompt, up down sideways -->
 
-> 💡 **The player can always travel anywhere.** The in-game location list and the in-game map offer **every** location in your world. Nesting never limits the player, and no arrangement can trap them.
+> 💡 **The player can travel anywhere that isn't locked.** The in-game location list and the in-game map offer **every** location in your world. Nesting never limits the player, and no arrangement can trap them. Only a [locked](#unlocked) location turns them away.
 
 Nesting decides where **the story** can take the player. When the AI reads an action as movement, it considers only the places connected to the current one:
 
@@ -88,14 +88,24 @@ Nesting decides where **the story** can take the player. When the AI reads an ac
 
 A [Connection](#connections) between two places replaces these rules for that pair.
 
-By default the story offers the move. The player sees a small **Move to _X_?** prompt with **Go** and **Dismiss**.
+🚶 **One turn can cover up to three of these steps.** "Walk down the lane to town and step into the store" can take the player from a farm building to a store three steps away. Each step follows the rules above, so a one-way Connection is never walked backward. A place four or more steps away is out of reach, and the player stays where they are.
+
+The AI gets each place more than one step away with the places on the way: *Store — via Farm Yard, then Town*. When two places in reach share a name, the nearer one counts. When they are equally near, neither does. A place with the same name as the player's current location never counts.
+
+By default the story offers the move. The player sees a small **Move to _X_?** prompt with **Go** and **Dismiss**. The AI reads the action and the scene it led to, so a scene that carries the player somewhere offers that move too.
+
+With **Move Automatically** on in Settings, the game moves the player itself:
+
+- 🚶 **The player's action** moves them before the scene is written, so the scene happens in the new place. A place more than one step away counts only when the AI answers with its name alone. An answer that mentions it in a sentence moves the player nowhere.
+- 📖 **The narration** moves them too. When the action moves them nowhere but the narration ends with them in a connected place, the game moves them there after the narration. This includes the opening narration.
+- 👥 Followers come along either way, and an entity told to stay waits where it is. On a walk of several steps they arrive at the last place. A follower that may not go there stays behind and waits.
 
 Two results to know:
 
 - **A flat list of top-level locations** gives the AI nothing to connect, so it never offers a move. The player then does all the travel. This is a valid design when you choose it on purpose.
 - **A location with no connected place** gets no move step.
 
-When the AI's answer doesn't match a connected place, the game discards it and offers nothing. The story can never send the player to an unconnected place.
+When the AI's answer doesn't match a place in reach, the game discards it and offers nothing. The story can never send the player to a place out of reach.
 
 ## List and Canvas
 <!-- keywords: graph view, node editor, visual diagram, fullscreen, tidy layout, boxes overlap, unreachable marker, right-click menu, flowchart -->
@@ -106,11 +116,21 @@ The **Locations** tab has two views. Switch between them with the **List** and *
 | View | Use it to |
 |---|---|
 | **List** | Edit a location's fields. Drag a location under another to nest it. |
-| **Canvas** | See how the world connects. Drag to nest, draw Connections, set their direction and Travel Hint, and arrange the layout. It marks a location that no starting location can reach. |
+| **Canvas** | See how the world connects. Drag to nest, draw Connections, set their direction, distance and Travel Hint, and arrange the layout. It marks a location that no starting location can reach. |
+
+> 💡 In the List view, **Collapse all locations**, right of the filter box, closes every group of sub-locations. Select it again to open them all. Groups stay closed when you switch tabs, until you close the World Editor. The button is unavailable while you filter, in the Canvas view, and when no location has sub-locations.
 
 **Edit Full Screen** opens the canvas at full size, with undo and redo, search and a minimap. Right-click a box and select **Edit Location** to open its panel.
 
-In full screen, the toolbar and the right-click menus also align, distribute and snap boxes, and set the Connection style. An entity card there sets one entity's **Locations** or **Known In** by selecting boxes.
+In full screen, the toolbar and the right-click menus also align, distribute and snap boxes, and set the Connection style. An entity card there sets one entity's **Routine** or **Known In** by selecting boxes.
+
+With **Known In** set to **Nearby**, the canvas shows where the AI gets the entity's summary:
+
+- 📍 **Can Be Here.** Every location where the entity is listed under **Entities Here**: where it begins, each location a row names that connects to that start, and each **Can Also Go** location.
+- 👂 **Known Here While It Is Nearby.** Every location one **Nearby** link from those. The AI gets its summary there only while the entity stands at the marked neighbor.
+- ⋯ A **Far** link draws dotted, and its other end stays unmarked. See [Nearby and Far](#nearby-and-far).
+
+With **Picked Locations**, the canvas marks the same locations with **Entity Location**, and marks your picks with **Known In**.
 
 Nothing on the canvas moves until you move it or ask for a layout:
 
@@ -147,13 +167,38 @@ Select a location in the list to open its panel. The tab you pick stays open whe
 | Tab | Holds | Mode |
 |---|---|---|
 | **Details** | **Name**, **Starting Location** and the descriptions | Simple and Advanced |
-| **Presence** | **Entities**, **Known Here**, **Connections** and **Nearby Through Connections** | Simple and Advanced |
+| **Presence** | When the location is on ([Enabled](#enabled)), when the player may enter it ([Unlocked](#unlocked)), **Entities Here**, **Add an entity here** and **Known Here** | Simple and Advanced |
+| **Connections** | The location's [Connections](#connections), one row each | Simple and Advanced |
 | **Items** | The location's [Starting Items](World-Editor-Items#starting-items) | Simple and Advanced |
 | **Media** | **Background Image**. In Advanced mode, also **Image Tags** and **Ambient Sound**. | Simple and Advanced |
 | **Pins** | **Placeholder Pins** | Advanced only |
 | **Openings** | The location's own [openings](World-Editor-Openings#location-openings), drawn when a game starts here | Advanced only |
 
 Simple mode also hides **AI-Facing Summary**.
+
+### Enabled
+<!-- keywords: enabled, turn a location off, hide a location, close a district, open later, gate, only exists when -->
+
+**Enabled** decides when the location is on. Add rows of conditions, the same kind a trait's **Requires** uses. The location is on while any row holds. With no rows, it's always on.
+
+- 🙈 **While it's off,** the location and the locations inside it are gone. The player and the AI never see them: not in the list, on the map or in what the AI reads. Connections to them stop working.
+- 🧍 **The player stays put.** If the player is standing in it when it turns off, they keep that location and the locations inside it until they leave. Going deeper keeps only where they stand and what's inside it.
+- 🚪 **Entities with nowhere to be** leave the story. An entity whose every location is off is in no scene, and the AI doesn't read it. Its stats and scripts keep running. An entity with another location on goes there as its routine says.
+- 👤 **A condition with no owner** reads the **persona** the player plays, the same as a [Background Visibility rule](#background-visibility-rules).
+- 🏁 **A new game never starts here** while it's off. See [Starting Location](#starting-location).
+
+### Unlocked
+<!-- keywords: locked, lock a location, barred door, key, gate, can't enter, keep the player out, open later, locked text -->
+
+**Unlocked** decides when the player may enter the location. Add rows of conditions, the same kind a trait's **Requires** uses. The player may enter while any row holds. With no rows, it's never locked.
+
+- 🔒 **While it's locked,** the player still sees it on the list and the map, with a lock. Selecting it does nothing. The locations inside it are locked too.
+- 💬 **The line under it** is the **Locked Text** when you write one. Without it, the player reads what unlocks it, such as *Requires Alcove Open is on*. A hidden World Option never shows there; with nothing else to show, it reads *Locked*. A location inside shows its own **Locked Text**, or else the line of the lock around it.
+- 🤖 **The AI never moves the player in,** and the *Move to …?* bar never offers it. The AI still reads the location and who is inside, so the story can describe the closed door.
+- 🧍 **A player already inside** moves freely within it and can leave.
+- 🗝️ **A script opens it** by setting the [World Option](World-Editor-Options) its rows read. A script's `location.move` moves the player in even while it's locked. See [Scripts](Scripts-Reference#location).
+- 🏁 **A new game never starts here** while it's locked. See [Starting Location](#starting-location).
+- 👤 **A condition with no owner** reads the **persona** the player plays.
 
 ### Media
 
@@ -185,7 +230,7 @@ Example: put a *wounded* backdrop first with the rule *Health < 20%*, and a calm
 | **Player-Facing Description** | Only with scene images on, when **Image Tags** and the **AI-Facing Description** are both blank: the AI turns it into image tags |
 | **Image Tags** | Not to the text AI. Sent to the image generator for [scene images](Image-Generation#scene-images). |
 | Nesting | As the **Sublocations** and **Reachable Locations** blocks, and the parent's name in the default *Now you are at* line |
-| **Travel Hint** | Yes, beside the place it leads to |
+| **Travel Hint** | Yes, beside the place it leads to, when that place is one step away |
 | **Known Here** | Yes, as the **Entities Known Here** block. See [Entities](#entities). |
 | Background image, ambient sound, the starting checkbox | Never |
 
@@ -201,37 +246,127 @@ The default prompt gives the **narrator** the current location in full. It gives
 <!-- keywords: who is here, npcs in room, assign characters, populate, residents, occupants, put npc here -->
 <!-- route: worldEditorLocation.presence -->
 
-The **Entities** picker on the **Presence** tab lists the entities at this location. Each entity stores its own locations, so an edit here changes the entity's **Locations** field. It's the same link, and you can set it from either side.
+**Add an entity here** is under the **Entities Here** list on the **Presence** tab. It puts any Unique or Generic entity at this location. An edit here sets where an entity begins, the same as on its **Presence** tab.
 
-- **Entities Here** gives each entity at this location a **Movement** select. An entity at more than one location also gets a **Presence** switch: **Everywhere Listed** or **One, at Random**.
-- **Known Here** lists entities that aren't at this location but that the entities here may speak of. Their summaries reach the AI anywhere inside this location. Add one with **Make an entity known here**.
-- **Nearby Through Connections** adds entities one Connection away to what the AI receives as nearby. It is on for a new location.
+The select lists each entity that has no row here. The Custom Persona isn't listed. When every entity has a row, the select is not shown.
+
+- A Generic entity gets a new place to begin here, with no rows.
+- A Unique entity gets one more place to begin here, with a weight of 1 and no rows. Its other places stay as they are.
+
+The new entity is selected with its **Routine** open, so you can set it at once. **Undo** takes it back in one step.
+
+A Generic entity that begins here has a 🗑 button at the end of its row. It removes every place the entity begins at here, with their rows. Its other places stay as they are. **Undo** brings them back in one step.
+
+A Generic entity that begins at no other location can't be removed. The button is off, and its tooltip says why. Give the entity another place to begin on its **Presence** tab, then remove it here.
+
+A Unique entity has no remove button. Change its **Routine** to take it out of this location.
+
+**Entities Here** lists every entity that can be at this location, one row each, with its reasons. Reasons that don't fit are cut off at the row's end.
+
+- 🏁 **Begins here.** An entity that begins at **Player's Starting Location** is listed on each Starting Location. With none marked, it's listed on every location.
+- 🔗 **A row's location** is listed only when it connects to the start of that row. Rows of a **Player's Starting Location** start count everywhere.
+- 🧭 **Can Also Go** locations are listed as **can be led here**.
+
+Select a row to edit that entity under the list. It is the same editor as on the entity: **Routine** for its routine and **Known In** for where it is known. One entity is selected at a time. Select the row again, or the ✕ button, to close it. The arrow keys move between rows, and Enter or Space selects one.
+
+- 🗺️ **On the Locations Canvas** beside the panel, the selected entity's routine shows on the map, with the key. The map only shows it. Edit the routine under the list, or in full screen.
+- 📌 **A pin** marks each Start, each routine row and each **Can Also Go** entry that names this location. The editor opens on the first Start with a pin, or on the first Start when none has one. The pins show only here, not on the entity's own **Presence** tab.
+- 📍 **Click another location** to open it. The entity stays selected there when it can be there too, and the editor opens on a Start with a pin.
+- 🎯 **Picked Locations** under **Known In** are picked in full screen. Select **Edit Full Screen** beside the hint to open it on the entity.
+- ↔️ **Full screen** opens on the selected entity. Pick an entity there, and it is selected here when you come back.
+- 📑 **Another tab** closes the entity.
+- ↩️ **Undo and redo** of an edit made under the list return you to this location's **Presence** tab with the entity selected. If the edit changed **Known In**, that opens.
+- ↩️ **Undo of an added entity** leaves the tab open with no one selected.
+
+Select the route icon on a row to open that entity's **Presence** tab.
+
+| Reason | Means |
+|---|---|
+| **Begins here** | The entity begins at this location. A Unique entity with several places to begin gives the chance as a percent. |
+| **Stays here**, **wanders here**, **patrols here** | A routine row uses this location. The reason gives that routine row's time. |
+| **Can be led here** | The Unique entity's **Can Also Go** list names this location. A Unique entity that can go **Anywhere** isn't listed for that reason. A Generic entity is never listed for it. |
+
+An entity with several reasons shows them on one line.
+
+A Generic entity begins at all of its places, so its row shows no chance. It shows each reason once, however many of its places use this location.
+
+- **Known Here** lists entities that aren't at this location but that the entities here may speak of. Their summaries reach the AI anywhere inside this location. Add one with **Make an entity known here**. The 🗑 button on a row removes that entity from the list.
+
+### Who Joins the Scene
+<!-- keywords: npc walks in, character comes over, pulled into scene, joins the player, comes down, comes from next room, wont come, stays at counter -->
+
+When the narration names an entity that stands one **Nearby** link away, that entity comes to the player's location. One link away means one of these places:
+
+- The location the player's location sits **inside**: one level up.
+- A location **beside** the player's: it shares the same parent.
+- A location **directly inside** the player's: one level down. Two levels down is too far.
+- The other end of a **Connection** from the player's location, in either direction.
+
+A **Far** link never brings anyone over, even a nested one. See [Nearby and Far](#nearby-and-far).
+
+The narration must use the entity's full Name, a full alias, or the full **Stranger Name**. A name said only inside dialogue doesn't count.
+
+Only a **Unique** entity comes, and only to a location it may go to. A **Generic** entity never comes over. One that is following the player, or waiting where it was left, doesn't come either. Nor does one in a part of its routine that can't be interrupted.
+
+The entity goes back to its usual places later: when the player leaves, or after a while. Undo the turn, and it goes back at once.
 
 ## Connections
 <!-- keywords: no way back, both directions, trip description, how you get there, return trip wording, arrow labels, trapdoor, shortcut across branches -->
+<!-- route: worldEditorLocation.connections -->
 
 Nesting lets the story move the player between nested places, always in both directions. A **Connection** is a link you make between *any* two locations, at any place in the tree.
 
-The **Connections** section lists every link this location is part of, from this location's point of view:
+The **Connections** tab lists every link this location is part of, from this location's point of view. Each link is one row: an arrow for its **Travel**, the other place, and its **Distance** mark.
 
-| Direction | Means |
+Every row starts closed. Select a row to open it. A Connection you add opens on its own. With two or more rows, **Collapse all connections** above the list closes every open row. When none is open, it reads **Expand all connections** and opens them all.
+
+An open row has three fields: **Travel**, **Distance** and its Travel Hints.
+
+**Travel** sets which way the story can move the player:
+
+| Travel | Means |
 |---|---|
-| **Two-Way** | The story can move the player in both directions. A new Connection starts as this. |
-| **Outgoing** | The story can leave here for the other place. It can never bring the player back. |
-| **Incoming** | The story can arrive here from the other place. It can't go the other way. |
+| **Both Ways** | The story can move the player in both directions. A new Connection starts as this. |
+| **To There** | The story can leave here for the other place. It can never bring the player back. |
+| **To Here** | The story can arrive here from the other place. It can't go the other way. |
+
+On the Canvas, the Travel choices show only arrows. Point at one to see which place it leads from and to.
 
 Pick a place in **Connect to…**, then select the **+** button (**Add Connection**).
+
+### Automatic Links
+
+A location always connects to its parent, its children and its siblings, with no Connection. The **Automatic Links** group under the picker lists them. It starts closed and shows how many there are. A location with none shows no group.
+
+Each row has the other place, and what it is to this location: it contains this one, it is inside this one, or it is beside this one. Travel works both ways, and each link is Nearby.
+
+Select **+** on a row to make it a two-way, Nearby Connection. The new Connection opens in the list above, and the row leaves the group. Delete that Connection and the row comes back.
+
+### Nearby and Far
+
+Every link between two places is **Nearby** or **Far**. The AI receives the entities in Nearby places as nearby. It never hears about the entities across a Far link.
+
+| Distance | Means |
+|---|---|
+| **Nearby** | The AI receives the entities at the other end as nearby. Every nested link and every new Connection is this. |
+| **Far** | The AI gets nothing about the entities at the other end. Travel still works. |
+
+Only places one link away count. A place two links away is never nearby.
+
+To set it, pick **Nearby** or **Far** under **Distance** on the Connection's row in the **Connections** tab, or select the Connection's arrow on the **Canvas**. Both set the same value. Each choice shows a mark: a short line for Nearby, a dotted wave for Far. Select the **ⓘ** beside **Distance** for the full explanation. A Far arrow draws as a dotted line, on the Canvas and on the player's Map.
+
+To make a nested link Far, select its dashed arrow on the Canvas. That turns it into a two-way Connection. Then pick **Far**. Delete the Connection to make the link Nearby again.
 
 ### Travel Hints
 
 A **Travel Hint** is optional, and it goes to the AI: *through the shimmering portal*, *down the rope ladder*. It tells the story how the player makes the trip.
 
-Each direction has its own hint. The AI gets the hint for the direction the player travels. A direction with no hint gets none. The AI never uses the other direction's words.
+Each direction has its own hint. The AI gets the hint for the direction the player travels. A direction with no hint gets none. The AI never uses the other direction's words. A place more than one step away shows the places on the way instead of a hint.
 
 | Connection | Hint boxes |
 |---|---|
-| **Two-Way** | Two boxes, one for each direction. A **link toggle** is to the right of both. |
-| **Outgoing** or **Incoming** | One box. There is no toggle. |
+| **Both Ways** | Two boxes, one for each direction. A **link toggle** is to the right of both. |
+| **To There** or **To Here** | One box. There is no toggle. |
 
 On a location's panel, the boxes read **To** *place* and **From** *place*. On the Canvas, each box shows an arrow and the place it leads to.
 
@@ -275,7 +410,9 @@ The **Starting Location** checkbox marks a place where a new game can start:
 | **One** | Every game starts there |
 | **Several** | The player picks one before they start, or the game picks one at random |
 
-A world persona starts at the first of its own **Locations** that is a starting location, or else at its first location. The start step also lists the persona's locations.
+A Starting Location that is [off](#enabled) or [locked](#unlocked) when the game starts is skipped. If every Starting Location is off or locked, the game starts at the first location that's on and unlocked, in list order.
+
+A world persona starts at the first of its starts that is a starting location, or else at its first start. The start step also lists the locations of its starts. See [Starts](World-Editor-Entities#starts).
 
 ## Delete a location
 <!-- keywords: children afterwards, no confirmation, accidentally removed, npc vanished, undo removal -->

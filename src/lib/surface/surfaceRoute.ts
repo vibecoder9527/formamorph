@@ -58,6 +58,8 @@ const DIALOGS: Record<DevModal, DialogRoute> = {
   adminPanel: { host: 'mainMenu' },
   changelog: { ancestor: 'mainMenu' },
   credits: { ancestor: 'mainMenu' },
+  profileMerge: { ancestor: 'mainMenu' },
+  unreadableWorlds: { ancestor: 'mainMenu' },
   entityEditor: { ancestor: 'mainMenu.entities' },
   dictionaryEditor: { ancestor: 'mainMenu.dictionaries' },
   modelDetails: { ancestor: 'mainMenu.models' },
@@ -81,6 +83,8 @@ const DIALOGS: Record<DevModal, DialogRoute> = {
   codeRename: { ancestor: 'worldEditor' },
   replaceAll: { ancestor: 'worldEditor' },
   deleteWorldAvatar: { ancestor: 'worldEditor.overview' },
+  appearancePreview: { ancestor: 'worldEditorTrait.appearance' },
+  statAppearancePreview: { ancestor: 'worldEditorStat.appearance' },
   savedElsewhere: { ancestor: 'worldEditor' },
   deletedElsewhere: { ancestor: 'worldEditor' },
 
@@ -132,6 +136,7 @@ const LEDGERS: Record<TabKey, LedgerRoute> = {
   worldEditorBench: { parent: 'worldEditor' },
   worldEditorTour: { ancestor: 'worldEditor' },
   worldEditorHistory: { ancestor: 'worldEditor' },
+  worldEditorOverview: { parent: 'worldEditor.overview' },
   worldEditorLocations: { ancestor: 'worldEditor.locations' },
   worldEditorLocation: { ancestor: 'worldEditor.locations' },
   worldEditorEntity: { ancestor: 'worldEditor.entities' },
@@ -159,6 +164,7 @@ const LEDGERS: Record<TabKey, LedgerRoute> = {
 
   formaquestion: { parent: 'formaquestion' },
   formaquestionSettings: { parent: 'formaquestionSettings' },
+  profileMerge: { ancestor: 'mainMenu' },
 };
 
 const KNOWN: ReadonlySet<string> = new Set(SURFACE_IDS);

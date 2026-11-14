@@ -6,7 +6,7 @@ import { readHostedDevice, writeHostedDevice } from '@/lib/hostedAi/hostedAllowa
 import { isHostedChatUrl } from '@/lib/hostedAi/hostedUrls';
 import { PROMPT_TEXT_DEFAULTS } from '../components/game/GamePrompts';
 import { EXPERIMENTAL_PROMPT_VALUES } from '../components/game/ExperimentalPrompts';
-import { DEFAULT_EDITOR_AUTO_SAVE_IDLE_S, clampEditorAutoSaveIdle, DEFAULT_ENDPOINT, DEFAULT_API_TOKEN, DEFAULT_MODEL_NAME, DEFAULT_MAX_TOKENS, DEFAULT_CONTEXT_WINDOW, DEFAULT_LOCAL_CONTEXT_SIZE, DEFAULT_LOCAL_GPU_LAYERS, DEFAULT_LOCAL_FLASH_ATTENTION, DEFAULT_LOCAL_UNIFIED_KV_CACHE, DEFAULT_LOCAL_K_CACHE_TYPE, DEFAULT_LOCAL_V_CACHE_TYPE, DEFAULT_LOCAL_KV_CACHE_IN_RAM, LOCAL_CACHE_TYPES, DEFAULT_LOCAL_CONTEXT_OVERFLOW, LOCAL_CONTEXT_OVERFLOW_POLICIES, DEFAULT_LOCAL_PARALLEL_REQUESTS, DEFAULT_LOCAL_GPU_DEVICE, DEFAULT_LOCAL_AUTO_LOAD, DEFAULT_GEN_TEMPERATURE, DEFAULT_GEN_TOP_P, DEFAULT_GEN_REPETITION_PENALTY, DEFAULT_GEN_TOP_K, DEFAULT_GEN_MIN_P, DEFAULT_THEME_COLOR, BASE_THEME_COLOR, THEME_COLORS, DEFAULT_FONT, DEFAULT_FONT_TUNINGS, FONT_OPTIONS, SYSTEM_FONT_STACK, DEFAULT_NARRATION_FONT, DEFAULT_NARRATION_SCALE, DEFAULT_NARRATION_LINE_HEIGHT, DEFAULT_QUOTE_COLOR, DEFAULT_QUOTE_ITALIC, DEFAULT_QUOTE_COLOR_LIGHT, DEFAULT_QUOTE_COLOR_DARK, NARRATION_FONT_OPTIONS, fontStack, fontSizeAdjust, DEFAULT_UPDATE_CHANNEL, DEFAULT_SCENE_IMAGE_AUTO, DEFAULT_CONTINUE_CHOICE, DEFAULT_IMAGE_ATTACHMENTS, CONTINUE_CHOICE_MODES, DEFAULT_NARRATION_LAYOUT, NARRATION_LAYOUTS, DEFAULT_TOOLS_ENABLED, DEFAULT_EDITOR_AUTO_SAVE, type LocalCacheType, type LocalContextOverflow, type ContinueChoiceMode, type NarrationLayout, type ThemeColor, type FontChoice, type NarrationFont, type UpdateChannel } from './settingsDefaults';
+import { DEFAULT_EDITOR_AUTO_SAVE_IDLE_S, clampEditorAutoSaveIdle, DEFAULT_ENDPOINT, DEFAULT_API_TOKEN, DEFAULT_MODEL_NAME, DEFAULT_MAX_TOKENS, DEFAULT_CONTEXT_WINDOW, DEFAULT_LOCAL_CONTEXT_SIZE, DEFAULT_LOCAL_GPU_LAYERS, DEFAULT_LOCAL_FLASH_ATTENTION, DEFAULT_LOCAL_UNIFIED_KV_CACHE, DEFAULT_LOCAL_K_CACHE_TYPE, DEFAULT_LOCAL_V_CACHE_TYPE, DEFAULT_LOCAL_KV_CACHE_IN_RAM, LOCAL_CACHE_TYPES, DEFAULT_LOCAL_CONTEXT_OVERFLOW, LOCAL_CONTEXT_OVERFLOW_POLICIES, DEFAULT_LOCAL_PARALLEL_REQUESTS, DEFAULT_LOCAL_GPU_DEVICE, DEFAULT_LOCAL_ENGINE_BACKEND, LOCAL_ENGINE_BACKENDS, DEFAULT_LOCAL_AUTO_LOAD, DEFAULT_GEN_TEMPERATURE, DEFAULT_GEN_TOP_P, DEFAULT_GEN_REPETITION_PENALTY, DEFAULT_GEN_TOP_K, DEFAULT_GEN_MIN_P, DEFAULT_THEME_COLOR, BASE_THEME_COLOR, THEME_COLORS, DEFAULT_FONT, DEFAULT_FONT_TUNINGS, FONT_OPTIONS, SYSTEM_FONT_STACK, DEFAULT_NARRATION_FONT, DEFAULT_NARRATION_SCALE, DEFAULT_NARRATION_LINE_HEIGHT, DEFAULT_QUOTE_COLOR, DEFAULT_QUOTE_ITALIC, DEFAULT_QUOTE_COLOR_LIGHT, DEFAULT_QUOTE_COLOR_DARK, NARRATION_FONT_OPTIONS, fontStack, fontSizeAdjust, DEFAULT_UPDATE_CHANNEL, DEFAULT_SCENE_IMAGE_AUTO, DEFAULT_CONTINUE_CHOICE, DEFAULT_IMAGE_ATTACHMENTS, CONTINUE_CHOICE_MODES, DEFAULT_NARRATION_LAYOUT, NARRATION_LAYOUTS, DEFAULT_TOOLS_ENABLED, DEFAULT_EDITOR_AUTO_SAVE, DEFAULT_DAILY_SEND_ENABLED, type LocalCacheType, type LocalContextOverflow, type LocalEngineBackend, type ContinueChoiceMode, type NarrationLayout, type ThemeColor, type FontChoice, type NarrationFont, type UpdateChannel } from './settingsDefaults';
 import { isDesktop, setDesktopComfyEndpoint } from '../lib/imageGen/desktop';
 import { resolveImageEndpoint, type ImageProviderId } from '../lib/imageGen';
 import { useLocalLlmStatus } from '../lib/useLocalLlmStatus';
@@ -466,6 +466,8 @@ function useProvideSettings() {
   const [autosaveSlots, setAutosaveSlots] = usePersistentState<number>(`${APP_ID}_autosaveSlots`, AUTOSAVE_SLOTS, intCodec);
   // The World Editor saves on its own, in both hosts. One preference for every world.
   const [editorAutoSave, setEditorAutoSave] = usePersistentState<boolean>(`${APP_ID}_editorAutoSave`, DEFAULT_EDITOR_AUTO_SAVE, boolCodec);
+  // The Daily Send. Installs that lack the key read the default.
+  const [dailySendEnabled, setDailySendEnabled] = usePersistentState<boolean>(`${APP_ID}_dailySendEnabled`, DEFAULT_DAILY_SEND_ENABLED, boolCodec);
   // Seconds of quiet before the editor autosaves a small change. A stored value outside the slider's range is pulled in.
   const idleCodec = {
     parse: (r: string) => clampEditorAutoSaveIdle(intCodec.parse(r)),
@@ -634,6 +636,12 @@ function useProvideSettings() {
   const [localContextOverflow, setLocalContextOverflow] = usePersistentState<LocalContextOverflow>(`${APP_ID}_localContextOverflow`, DEFAULT_LOCAL_CONTEXT_OVERFLOW, contextOverflowCodec);
   // Which GPU the engine is pinned to, by device name; 'auto' lets the policy pick (see engineDevice.cjs).
   const [localGpuDevice, setLocalGpuDevice] = usePersistentState<string>(`${APP_ID}_localGpuDevice`, DEFAULT_LOCAL_GPU_DEVICE, stringCodec);
+  // Which llama-server build the engine runs: Auto, Vulkan or CUDA (see electron/engineBackend.cjs).
+  const engineBackendCodec = {
+    parse: (r: string): LocalEngineBackend => (LOCAL_ENGINE_BACKENDS.includes(r as LocalEngineBackend) ? (r as LocalEngineBackend) : DEFAULT_LOCAL_ENGINE_BACKEND),
+    serialize: (v: LocalEngineBackend): string => v,
+  };
+  const [localEngineBackend, setLocalEngineBackend] = usePersistentState<LocalEngineBackend>(`${APP_ID}_localEngineBackend`, DEFAULT_LOCAL_ENGINE_BACKEND, engineBackendCodec);
   // Whether a model loads itself — on engine start-up and after a download — or waits for the Load button.
   const [localAutoLoad, setLocalAutoLoad] = usePersistentState<boolean>(`${APP_ID}_localAutoLoad`, DEFAULT_LOCAL_AUTO_LOAD, boolCodec);
   // Whether settings panels reveal their extra advanced rows (persisted; simple rows always show).
@@ -939,9 +947,9 @@ function useProvideSettings() {
 
   const promptValues = useMemo(() => activeValues(effectiveStore, BUILTIN_VALUES), [effectiveStore]);
   const {
-    systemPrompt, narrationUserPrompt, recapUserPrompt, rehydrateUserPrompt, oocDirectivePrompt, choicesPrompt, statUpdatesPrompt, locationChangePromptText, thinkingPrompt, summaryPrompt,
+    systemPrompt, narrationUserPrompt, recapUserPrompt, rehydrateUserPrompt, oocDirectivePrompt, actionListPrompt, choicesPrompt, statUpdatesPrompt, locationChangePromptText, thinkingPrompt, summaryPrompt,
     diaryPrompt, directorPrompt, directorUserPrompt, characterPrompt, storyboardPrompt,
-    choicesUserPrompt, statUpdatesUserPrompt, locationChangeUserPrompt, entityLocationPrompt, entityLocationUserPrompt, summaryUserPrompt, nowLinePrompt, timePassedPrompt, timePassedUserPrompt,
+    choicesUserPrompt, statUpdatesUserPrompt, locationChangeUserPrompt, narratedMovePrompt, narratedMoveUserPrompt, entityLocationPrompt, entityLocationUserPrompt, summaryUserPrompt, nowLinePrompt, timePassedPrompt, timePassedUserPrompt,
     openingTimePrompt, openingTimeUserPrompt, sceneTagsPrompt, sceneTagsUserPrompt, discoverEntityPrompt, discoverEntityUserPrompt,
     milestoneSelectPrompt, milestoneSelectUserPrompt, inventoryPrompt, inventoryUserPrompt,
   } = promptValues;
@@ -950,6 +958,7 @@ function useProvideSettings() {
   const setRecapUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'recapUserPrompt', v));
   const setRehydrateUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'rehydrateUserPrompt', v));
   const setOocDirectivePrompt = (v: string) => editPresetStore((s) => updateValue(s, 'oocDirectivePrompt', v));
+  const setActionListPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'actionListPrompt', v));
   const setChoicesPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'choicesPrompt', v));
   const setStatUpdatesPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'statUpdatesPrompt', v));
   const setLocationChangePromptText = (v: string) => editPresetStore((s) => updateValue(s, 'locationChangePromptText', v));
@@ -963,6 +972,8 @@ function useProvideSettings() {
   const setChoicesUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'choicesUserPrompt', v));
   const setStatUpdatesUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'statUpdatesUserPrompt', v));
   const setLocationChangeUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'locationChangeUserPrompt', v));
+  const setNarratedMovePrompt = (v: string) => editPresetStore((s) => updateValue(s, 'narratedMovePrompt', v));
+  const setNarratedMoveUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'narratedMoveUserPrompt', v));
   const setEntityLocationPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'entityLocationPrompt', v));
   const setEntityLocationUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'entityLocationUserPrompt', v));
   const setSummaryUserPrompt = (v: string) => editPresetStore((s) => updateValue(s, 'summaryUserPrompt', v));
@@ -1548,10 +1559,12 @@ function useProvideSettings() {
   }), []);
 
   // The Demo AI notice follows the narration model; the routing of other kinds has no effect.
-  const narrationIsDemoAI = useMemo(
-    () => isDemoAI(resolvePromptEndpoint('narration', promptEndpoints, textPresetStore, activeEndpointState)),
+  const narrationEndpoint = useMemo(
+    () => resolvePromptEndpoint('narration', promptEndpoints, textPresetStore, activeEndpointState),
     [promptEndpoints, textPresetStore, activeEndpointState],
   );
+  const narrationIsDemoAI = isDemoAI(narrationEndpoint);
+  const narrationIsBuiltInEngine = narrationEndpoint.localEngine;
 
   /**
    * Whether the bundled engine should be running: it's the active endpoint, or some prompt is routed to it.
@@ -1824,6 +1837,8 @@ function useProvideSettings() {
     setAutosaveSlots,
     editorAutoSave,
     setEditorAutoSave,
+    dailySendEnabled,
+    setDailySendEnabled,
     editorAutoSaveIdleSeconds,
     setEditorAutoSaveIdleSeconds,
     characterDiaries,
@@ -1868,6 +1883,7 @@ function useProvideSettings() {
     refreshHostedState,
     switchBackFromHostedAi,
     narrationIsDemoAI,
+    narrationIsBuiltInEngine,
     selectTextEndpointPreset,
     addTextEndpointPreset,
     copyTextEndpointPreset,
@@ -1908,6 +1924,8 @@ function useProvideSettings() {
     setLocalParallelRequests,
     localGpuDevice,
     setLocalGpuDevice,
+    localEngineBackend,
+    setLocalEngineBackend,
     localAutoLoad,
     setLocalAutoLoad,
     advancedMode,
@@ -1942,6 +1960,8 @@ function useProvideSettings() {
     setRehydrateUserPrompt,
     oocDirectivePrompt,
     setOocDirectivePrompt,
+    actionListPrompt,
+    setActionListPrompt,
     choicesPrompt,
     setChoicesPrompt,
     statUpdatesPrompt,
@@ -2020,6 +2040,10 @@ function useProvideSettings() {
     setStatUpdatesUserPrompt,
     locationChangeUserPrompt,
     setLocationChangeUserPrompt,
+    narratedMovePrompt,
+    setNarratedMovePrompt,
+    narratedMoveUserPrompt,
+    setNarratedMoveUserPrompt,
     entityLocationPrompt,
     setEntityLocationPrompt,
     entityLocationUserPrompt,

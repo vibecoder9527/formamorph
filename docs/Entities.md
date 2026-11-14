@@ -12,7 +12,7 @@ During the game, the story counts some entities as present with you. They come f
 
 1. During the game, open the side panel's **Entities** tab. On mobile, the panel opens on **View**; select **Entities** next to it.
 2. Read the list. Your persona is first, marked **You**. **In Scene** lists the entities at your location that took part in the story in the last 3 turns. **Also Here** lists the others.
-3. Look for the footprints icon on an entry. Its tooltip reads **Following you**. That entity follows you. See [Movement](World-Editor-Locations#entities).
+3. Look for the footprints icon on an entry. Its tooltip reads **Following you**. That entity follows you. See [Entities That Move](#entities-that-move).
 4. Select an entry to show it in the entity view. An entry under **In Scene** also shows in the **Stats**, **Traits** and **Inventory** tabs. Select it again to open its details. On mobile, one selection does both. See [The Entity Dialog](How-to-Play#the-entity-dialog).
 
 A stranger shows under the name you know. Its entry opens [The Stranger Dialog](How-to-Play#the-stranger-dialog).
@@ -61,6 +61,17 @@ Only story-invented entities and Library Additions have the button. See [Removin
 | Kept for a new game | Yes | Only with **Remember Additions** | No |
 
 All three kinds show in the **Entities** tab during the game. The story treats them the same way when it decides which entities are present and what you can do next.
+
+## Entities That Move
+<!-- keywords: npc moved, where did they go, not here anymore, daily schedule, companion, follower, come with me, wait here, left behind, footprints icon -->
+<!-- route: gameViewer.entities -->
+
+An entity can keep a daily routine. An entity you meet at the inn in the morning may be at the market by afternoon. As story time passes, each entity moves between the locations of its routine.
+
+- 🚶 **Come along.** When you travel, an entity beside you can come with you. Ask in your action, or let the story decide.
+- ⏸️ **Wait.** An entity can also stay behind and wait where you left it. After a while, it goes back to its routine.
+- 👣 **Followers.** The footprints icon on an entry in the **Entities** tab marks an entity that follows you. Its tooltip reads **Following you**.
+- 🔒 **Busy times.** Some entities can't leave at certain times of day, so they won't come along then.
 
 ## Entities the Story Invents
 <!-- keywords: ai made someone up, improvised npc, auto added names, name detection, why was he skipped, only talked about, random stranger appears, place listed as person, on the fly -->
@@ -143,11 +154,10 @@ At **Start Game**, the game draws one opening. **Quick Start** draws the same wa
 | One or more entities with openings in **Library Additions** | Only the picked entities' Others openings, by weight. They replace the world's openings. |
 | Nothing above | The world's openings, the openings of your starting location, and those of entities at your starting location |
 
-You start on the default opening in three cases:
+You start on the default opening in two cases:
 
 - No source has an opening for your start.
-- The author switched the world's openings list off. This turns off every row above, Self openings and Library Additions included.
-- The world, its entities and its locations have no openings, and your persona brings no Self openings. Openings that only Library Additions bring don't switch the list on.
+- The world, its entities and its locations have no openings, and your persona brings no Self openings. Openings that only Library Additions bring don't count.
 
 When you play an entity as your [persona](Personas#play-a-worlds-own-entity), its Others openings stay out of the draw. Page one never greets you as yourself. Its Self openings, if any, replace every other opening.
 

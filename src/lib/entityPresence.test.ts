@@ -1,213 +1,206 @@
 import { describe, it, expect } from "vitest";
 import {
-  entityIdsAt, entityIdsAtAny, withEntityLocations, setLocationRoster, dropLocationFromEntities,
-  entitiesInPlay, startingPositions, reconcilePositions, positionedCast, movementOptions, withPresence, withMovement,
-  knownInOf, withKnownIn, toggleKnownInPick, knownHere,
+  withStartHere, dropLocationFromEntities, positionedCast, placedIn, carryMap, withCarriedRoutine, presentEntityIds,
+  knownInOf, withKnownIn, toggleKnownInPick, knownHere, type Standings,
 } from "./entityPresence";
 import type { Entity } from "@/types";
+import { idsAt, idsAtAny, namedPlacesOf, positionsIn, presenceOf, withMembership } from "@/lib/entityPlaces";
+import { APP_VERSION, migrateWorld } from "@/lib/version";
+import { startsOf, applyingRoutine, withFirstRoutine, withFirstStarts } from "@/lib/entityKind";
+import { oneRoutine } from "@/test/routines";
 
-const alice: Entity = { id: "alice", name: "Alice", locations: ["bar"] };
-const bartender: Entity = { id: "bar-keep", name: "Bartender", locations: ["bar", "docks"] };
-const gull: Entity = { id: "gull", name: "Gull", locations: ["docks"] };
+/** A Generic entity with one Start per place, no rows. */
+const generic = (id: string, name: string, places: string[]): Entity => ({
+  id, name, kind: "generic", routines: oneRoutine(places.map((place, i) => ({ id: `${id}-${i + 1}`, place, weight: 1, schedule: [] }))),
+});
+/** An entity with no kind that belongs to `places`. */
+const member = (id: string, name: string, places: string[]): Entity => ({ id, name, locations: places });
+const alice = member("alice", "Alice", ["bar"]);
+const bartender = member("bar-keep", "Bartender", ["bar", "docks"]);
+const gull = member("gull", "Gull", ["docks"]);
+/** A Unique entity starting at the bar or the docks, standing at the bar by day and wandering the docks and the
+ *  attic at night, and allowed into the cellar. */
+const sailor: Entity = {
+  id: "sailor", name: "Sailor", kind: "unique",
+  routines: oneRoutine([
+    { id: "s1", place: "bar", weight: 1, schedule: [
+      { id: "day", time: { start: 360, end: 1080 }, action: { kind: "stay", place: "bar" } },
+      { id: "night", time: { start: 1080, end: 360 }, action: { kind: "wander", places: [{ place: "docks", weight: 1 }, { place: "attic", weight: 1 }], idle: 60 } },
+    ] },
+    { id: "s2", place: "docks", weight: 1, schedule: [{ id: "pier", time: "allDay", action: { kind: "patrol", stops: [{ place: "bar", idle: 30 }] } }] },
+  ], ["cellar", "bar"]),
+};
 const ghost: Entity = { id: "ghost", name: "Ghost" }; // placed nowhere
 const cast = [alice, bartender, gull, ghost];
 
-describe("entityIdsAt", () => {
-  it("rosters everyone listing the location, in cast order", () => {
-    expect(entityIdsAt("bar", cast)).toEqual(["alice", "bar-keep"]);
+const NOBODY: Standings = { positions: {}, generics: {} };
+const at = (place: string | null | undefined, entities: Entity[], standings = NOBODY) => idsAt(place, entities, positionsIn(standings));
+
+describe("the rosters with nobody placed", () => {
+  it("roster everyone listing the location, in cast order", () => {
+    expect(at("bar", cast)).toEqual(["alice", "bar-keep"]);
   });
 
-  it("keeps a multi-location entity present at every place it lists", () => {
-    expect(entityIdsAt("docks", cast)).toContain("bar-keep");
-    expect(entityIdsAt("bar", cast)).toContain("bar-keep");
+  it("keep a multi-location entity present at every place it lists", () => {
+    expect(at("docks", cast)).toContain("bar-keep");
+    expect(at("bar", cast)).toContain("bar-keep");
   });
 
-  it("is empty for an unpeopled location, and for no location at all", () => {
-    expect(entityIdsAt("attic", cast)).toEqual([]);
-    expect(entityIdsAt(null, cast)).toEqual([]);
-    expect(entityIdsAt(undefined, cast)).toEqual([]);
-  });
-});
-
-describe("entityIdsAtAny", () => {
-  it("unions the scope and lists a two-place entity once", () => {
-    expect(entityIdsAtAny(["bar", "docks"], cast)).toEqual(["alice", "bar-keep", "gull"]);
+  it("are empty for an unpeopled location, and for no location at all", () => {
+    expect(at("attic", cast)).toEqual([]);
+    expect(at(null, cast)).toEqual([]);
+    expect(at(undefined, cast)).toEqual([]);
   });
 
-  it("is empty for an empty scope", () => {
-    expect(entityIdsAtAny([], cast)).toEqual([]);
+  it("union a scope and list a two-place entity once", () => {
+    expect(idsAtAny(["bar", "docks"], cast, positionsIn(NOBODY))).toEqual(["alice", "bar-keep", "gull"]);
+    expect(idsAtAny([], cast, positionsIn(NOBODY))).toEqual([]);
   });
 });
 
-describe("withEntityLocations", () => {
+describe("withMembership", () => {
   it("dedupes and never mutates the original", () => {
-    const out = withEntityLocations(alice, ["bar", "bar", "docks"]);
+    const out = withMembership(alice, ["bar", "bar", "docks"]);
     expect(out.locations).toEqual(["bar", "docks"]);
     expect(alice.locations).toEqual(["bar"]);
   });
 
   it("drops the field entirely rather than storing an empty array", () => {
-    expect("locations" in withEntityLocations(alice, [])).toBe(false);
+    expect("locations" in withMembership(alice, [])).toBe(false);
   });
 });
 
-describe("setLocationRoster (location-first editing writes through to the entities)", () => {
-  it("adds the location to newcomers and removes it from anyone dropped", () => {
-    const next = setLocationRoster("bar", ["gull"], cast);
-    expect(entityIdsAt("bar", next)).toEqual(["gull"]);
-    // Removing Bartender from the Bar leaves their other membership alone.
-    expect(next.find((e) => e.id === "bar-keep")!.locations).toEqual(["docks"]);
+describe("withStartHere (Add Entity on a location)", () => {
+  it("gives a Generic entity a Start here with weight 1 and no rows", () => {
+    const next = withStartHere(generic("gull", "Gull", ["docks"]), "bar");
+    expect(startsOf(next).map((s) => [s.place, s.weight, s.schedule])).toEqual([["docks", 1, []], ["bar", 1, []]]);
+    expect(next).not.toHaveProperty("locations");
   });
 
-  it("leaves untouched entities by reference, so unrelated editors don't re-render", () => {
-    const next = setLocationRoster("bar", ["alice", "bar-keep"], cast);
-    expect(next[0]).toBe(alice);
-    expect(next[2]).toBe(gull);
-  });
-
-  it("clearing a roster leaves an entity that lives nowhere else with no locations field", () => {
-    const next = setLocationRoster("bar", [], cast);
-    expect("locations" in next.find((e) => e.id === "alice")!).toBe(false);
+  it("gives a Unique entity one more Start here and keeps its other Starts as they are", () => {
+    const next = withStartHere(sailor, "cellar");
+    expect(startsOf(next).slice(0, 2)).toEqual(startsOf(sailor));
+    expect(startsOf(next)).toHaveLength(3);
+    expect(startsOf(next)[2]).toMatchObject({ place: "cellar", weight: 1, schedule: [] });
   });
 });
 
 describe("dropLocationFromEntities", () => {
   it("strips a deleted location from every membership", () => {
     const next = dropLocationFromEntities("bar", cast);
-    expect(entityIdsAt("bar", next)).toEqual([]);
-    expect(entityIdsAt("docks", next)).toEqual(["bar-keep", "gull"]);
+    expect(at("bar", next)).toEqual([]);
+    expect(at("docks", next)).toEqual(["bar-keep", "gull"]);
   });
 
   it("returns the same array when nobody listed the location", () => {
     expect(dropLocationFromEntities("attic", cast)).toBe(cast);
   });
-});
 
-describe("presence rules", () => {
-  const captain: Entity = { id: "cap", name: "Captain", locations: ["bar", "docks"], presence: "random", movement: "between" };
-
-  it("offers no Moves Between to an entity at every listed location", () => {
-    expect(movementOptions(bartender)).toEqual(["free", "stays", "follow"]);
-    expect(movementOptions(captain)).toEqual(["free", "stays", "between", "follow"]);
+  it("drops the place from a Unique entity's Starts, rows and Traversable, with the Start and the row it emptied", () => {
+    const [bar] = dropLocationFromEntities("bar", [sailor]);
+    // Start s1 began at the bar, and s2's only patrol stop was the bar.
+    expect(startsOf(bar)).toEqual([{ id: "s2", place: "docks", weight: 1, schedule: [] }]);
+    expect(applyingRoutine(bar)?.traversable).toEqual(["cellar"]);
+    expect(bar).not.toHaveProperty("locations");
+    const [docks] = dropLocationFromEntities("docks", [sailor]);
+    expect(startsOf(docks).map((s) => s.id)).toEqual(["s1"]);
+    expect(startsOf(docks)[0].schedule[1].action).toEqual({ kind: "wander", places: [{ place: "attic", weight: 1 }], idle: 60 });
+    expect(docks).not.toHaveProperty("locations");
   });
 
-  it("resets Moves Between to Free on a switch to Everywhere Listed", () => {
-    const everywhere = withPresence(captain, undefined);
-    expect("presence" in everywhere).toBe(false);
-    expect("movement" in everywhere).toBe(false);
-    expect(withPresence({ ...captain, movement: "stays" }, undefined).movement).toBe("stays");
-  });
-
-  it("resets Moves Between when a location edit makes an Everywhere entity listed twice", () => {
-    const solo: Entity = { id: "solo", name: "Solo", locations: ["bar"], movement: "between" };
-    expect("movement" in withEntityLocations(solo, ["bar", "docks"])).toBe(false);
-    expect(withEntityLocations(captain, ["bar", "docks", "attic"]).movement).toBe("between");
-  });
-
-  it("stores Free as no field", () => {
-    expect("movement" in withMovement(captain, "free")).toBe(false);
-    expect(withMovement(bartender, "stays").movement).toBe("stays");
+  it("drops a place named only in a Unique entity's Traversable list", () => {
+    const [next] = dropLocationFromEntities("cellar", [sailor]);
+    expect(applyingRoutine(next)?.traversable).toEqual(["bar"]);
+    expect(startsOf(next)).toBe(startsOf(sailor));
   });
 });
 
-describe("entitiesInPlay", () => {
-  it("puts a positioned entity at its position only", () => {
-    const placed = entitiesInPlay(cast, { "bar-keep": "docks" });
-    expect(entityIdsAt("bar", placed)).toEqual(["alice"]);
-    expect(entityIdsAt("docks", placed)).toEqual(["bar-keep", "gull"]);
+describe("placedIn", () => {
+  const herdsman = generic("bar-keep", "Bartender", ["bar", "docks"]);
+  it("carries a Generic entity's Starts through the map, and lists any other entity at the mapped places", () => {
+    expect(startsOf(placedIn(herdsman, { docks: "pier" }))).toEqual([{ id: "bar-keep-2", place: "pier", weight: 1, schedule: [] }]);
+    expect(placedIn(ghost, { a: "pier", b: "bar" }).locations).toEqual(["pier", "bar"]);
   });
 
-  it("keeps an entity without a position at every location it lists", () => {
-    const placed = entitiesInPlay(cast, { gull: "bar" });
-    expect(entityIdsAt("bar", placed)).toEqual(["alice", "bar-keep", "gull"]);
-    expect(entityIdsAt("docks", placed)).toEqual(["bar-keep"]);
+  it("rebuilds a linked copy's routine on repair exactly as a fresh carry of its source", () => {
+    const refs = [{ id: "bar", name: "Bar" }, { id: "docks", name: "Docks" }, { id: "attic", name: "Attic" }, { id: "cellar", name: "Cellar" }];
+    const source: Entity = { ...sailor, locationRefs: refs };
+    const known = new Set(["tavern", "pier", "attic"]);
+    const connections = { bar: "tavern", docks: "pier", "ph-1": "ph-world" };
+    const map = carryMap(refs, connections, known);
+    expect(map).toEqual({ bar: "tavern", docks: "pier", attic: "attic" });
+    const stale: Entity = { ...withFirstRoutine(sailor, (routine) => ({ ...routine, starts: [{ id: "x", place: "gone", weight: 1, schedule: [] }], traversable: "anywhere" })), name: "Old Salt" };
+    const repaired = withCarriedRoutine(stale, source, connections, known, "unique");
+    const fresh = placedIn(source, map);
+    expect(repaired.name).toBe("Old Salt");
+    expect([startsOf(repaired), applyingRoutine(repaired)?.traversable, repaired.locations]).toEqual([startsOf(fresh), applyingRoutine(fresh)?.traversable, fresh.locations]);
   });
 
-  it("returns the same array when nobody has a position", () => {
-    expect(entitiesInPlay(cast, {})).toBe(cast);
+  it("rebuilds a linked Generic copy's Starts from its source on repair, replacing a local Start", () => {
+    const source: Entity = { ...herdsman, locationRefs: [{ id: "bar", name: "Bar" }, { id: "docks", name: "Docks" }] };
+    const local: Entity = withFirstStarts(herdsman, [...startsOf(herdsman), { id: "mine", place: "tavern", weight: 1, schedule: [] }]);
+    const repaired = withCarriedRoutine(local, source, { docks: "pier" }, new Set(["pier", "tavern"]), "generic");
+    expect(startsOf(repaired)).toEqual([{ id: "bar-keep-2", place: "pier", weight: 1, schedule: [] }]);
   });
 
-  it("reads through the multi-location scopes too", () => {
-    expect(entityIdsAtAny(["bar"], entitiesInPlay(cast, { "bar-keep": "docks" }))).toEqual(["alice"]);
+  it("carries a Unique entity's routine, so its Presence names only places of the new world, after a reload too", () => {
+    const world = { version: APP_VERSION, locations: [{ id: "pier", name: "Pier" }, { id: "tavern", name: "Tavern" }], connections: [], entities: [] };
+    const carried = placedIn(sailor, { bar: "tavern", docks: "pier", cellar: "tavern" });
+    const reloaded = migrateWorld(JSON.parse(JSON.stringify({ ...world, entities: [carried] }))).entities[0];
+    for (const entity of [carried, reloaded]) {
+      expect(presenceOf(entity, world).places.map((p) => p.place)).toEqual(["tavern", "pier"]);
+      expect(namedPlacesOf(entity)).toEqual(["tavern", "pier"]);
+    }
+  });
+});
+
+describe("the rosters in play read Position", () => {
+  it("list a Generic entity once at each place its Generic Entity Instances stand, and nowhere else it lists", () => {
+    const generics = { "bar-keep": { "bar-keep-1": { position: "docks", lastRun: 0 }, "bar-keep-2": { position: "docks", lastRun: 0 } } };
+    expect(at("bar", cast, { positions: {}, generics })).toEqual(["alice"]);
+    expect(at("docks", cast, { positions: {}, generics })).toEqual(["bar-keep", "gull"]);
+  });
+
+  it("put a positioned entity at its position only", () => {
+    const standings = { positions: { "bar-keep": "docks" }, generics: {} };
+    expect(at("bar", cast, standings)).toEqual(["alice"]);
+    expect(at("docks", cast, standings)).toEqual(["bar-keep", "gull"]);
+    expect(idsAtAny(["bar"], cast, positionsIn(standings))).toEqual(["alice"]);
+  });
+
+  it("keep an entity without a position at every location it lists", () => {
+    const standings = { positions: { gull: "bar" }, generics: {} };
+    expect(at("bar", cast, standings)).toEqual(["alice", "bar-keep", "gull"]);
+    expect(at("docks", cast, standings)).toEqual(["bar-keep"]);
+  });
+
+  // A list a world stored before kinds owned their routine (Q10).
+  const stale: Entity = { id: "stale", name: "Stale", kind: "unique", routines: oneRoutine([]), locations: ["bar", "docks"] };
+  it("stand an entity with a kind, a stale stored list and no Position nowhere, through every roster", () => {
+    const standings = { positions: { "bar-keep": "docks" }, generics: {} };
+    const withStale = [...cast, stale];
+    for (const place of ["bar", "docks"]) {
+      expect(at(place, withStale, standings)).not.toContain("stale");
+      expect(presentEntityIds(withStale, standings, place)).not.toContain("stale");
+    }
+    expect(idsAtAny(["bar", "docks"], withStale, positionsIn(standings))).not.toContain("stale");
   });
 });
 
-/** A draw that always takes the option at `index` of `of`. */
-const pick = (index: number, of: number) => () => index / of;
-const wanderer: Entity = { id: "wanderer", name: "Wanderer", presence: "random", locations: ["bar", "docks", "attic"] };
-
-describe("startingPositions", () => {
-  it("draws a One entity's start from its locations", () => {
-    expect(startingPositions([...cast, wanderer], ["bar", "docks", "attic"], pick(1, 3))).toEqual({ wanderer: "docks" });
-    expect(startingPositions([...cast, wanderer], ["bar", "docks", "attic"], pick(2, 3))).toEqual({ wanderer: "attic" });
-  });
-
-  it("places a one-location entity with a Movement at that location, and a Free one nowhere", () => {
-    const rooted: Entity = { ...alice, movement: "stays" };
-    expect(startingPositions([rooted, alice], ["bar", "docks"], pick(0, 1))).toEqual({ alice: "bar" });
-  });
-
-  it("gives an Everywhere entity no position, even with a Movement", () => {
-    const rooted: Entity = { ...bartender, movement: "stays" };
-    expect(startingPositions([rooted], ["bar", "docks"], pick(0, 2))).toEqual({});
-  });
-
-  it("draws only from locations the world still has", () => {
-    expect(startingPositions([wanderer], ["attic"], pick(0, 3))).toEqual({ wanderer: "attic" });
-    expect(startingPositions([wanderer], [], pick(0, 3))).toEqual({});
-  });
-});
+const wanderer: Entity = { id: "wanderer", name: "Wanderer", kind: "unique", locations: ["bar"] };
 
 describe("positionedCast", () => {
   const sylvie: Entity = { ...wanderer, id: "sylvie", persona: true };
   const custom: Entity = { ...wanderer, id: "custom", customPersona: true };
 
-  it("leaves out the played world persona and the Custom Persona", () => {
-    const ids = (ref?: Parameters<typeof positionedCast>[1]) => positionedCast([wanderer, sylvie, custom], ref).map((e) => e.id);
+  const only: Entity = { ...wanderer, id: "only", persona: true, personaOnly: true };
+
+  it("leaves out the played world persona, the Custom Persona and an unpicked Persona-Only entity", () => {
+    const ids = (ref?: Parameters<typeof positionedCast>[1]) => positionedCast([wanderer, sylvie, custom, only], ref).map((e) => e.id);
     expect(ids({ source: "world", entityId: "sylvie" })).toEqual(["wanderer"]);
+    expect(ids({ source: "world", entityId: "only" })).toEqual(["wanderer", "sylvie"]);
     expect(ids({ source: "none" })).toEqual(["wanderer", "sylvie"]);
     expect(ids(undefined)).toEqual(["wanderer", "sylvie"]);
-  });
-
-  it("gives the played persona no starting position", () => {
-    expect(startingPositions(positionedCast([sylvie], { source: "world", entityId: "sylvie" }), ["bar"], pick(0, 1))).toEqual({});
-  });
-});
-
-describe("reconcilePositions", () => {
-  const locationIds = ["bar", "docks", "attic"];
-
-  it("keeps a position on a live entity and a live location", () => {
-    expect(reconcilePositions({ wanderer: "attic" }, [wanderer], locationIds, pick(0, 3))).toEqual({ wanderer: "attic" });
-  });
-
-  it("re-places a One entity whose location is gone by the Presence rule", () => {
-    expect(reconcilePositions({ wanderer: "cellar" }, [wanderer], locationIds, pick(1, 3))).toEqual({ wanderer: "docks" });
-  });
-
-  it("places a One entity the save holds no position for", () => {
-    expect(reconcilePositions({}, [wanderer], locationIds, pick(2, 3))).toEqual({ wanderer: "attic" });
-  });
-
-  it("places a one-location entity with a Movement the save holds no position for", () => {
-    expect(reconcilePositions({}, [{ ...gull, movement: "follow" }], locationIds, pick(0, 1))).toEqual({ gull: "docks" });
-  });
-
-  it("drops a stale position of an Everywhere entity, so it is back at every listed location", () => {
-    expect(reconcilePositions({ "bar-keep": "cellar" }, cast, locationIds, pick(0, 3))).toEqual({});
-  });
-
-  it("keeps a valid position of an entity that is no longer One", () => {
-    expect(reconcilePositions({ "bar-keep": "docks" }, cast, locationIds, pick(0, 3))).toEqual({ "bar-keep": "docks" });
-  });
-
-  it("drops the position of a deleted entity", () => {
-    expect(reconcilePositions({ gone: "bar" }, cast, locationIds, pick(0, 3))).toEqual({});
-  });
-
-  it("returns the saved map itself when nothing changes", () => {
-    const saved = { wanderer: "bar" };
-    expect(reconcilePositions(saved, [wanderer], locationIds, pick(0, 3))).toBe(saved);
   });
 });
 

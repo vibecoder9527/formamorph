@@ -14,7 +14,7 @@ An Avatar is a 3D model that an entity can show. It is a VRM file, or a plain `.
 <!-- route: mainMenu.models#import-avatar -->
 
 1. On the main menu, select the **Avatars** tab.
-2. Select **Import Avatar**. On a narrow screen, the button is in the **Menu** button at the top center.
+2. Select **Import Avatar**. On a narrow screen, the button is in the **More Actions** button (`...`) at the top right.
 3. Select one or more `.vrm` or `.glb` files.
 
 The Avatar gets the title in its file, or the file name. A message counts the Avatars it imported.
@@ -52,7 +52,7 @@ See [Avatar Customization](#avatar-customization).
 1. On the **Avatars** tab, right-click the Avatar's tile.
 2. Select **Set as Default Avatar**.
 
-The tile gets a **Default** badge. To go back, right-click the tile and select **Clear Default Avatar**. With no default, **User's Default** shows the bundled Avatar. The default stays on this device. Exports and saves do not carry it as a setting.
+A new install starts with the bundled Avatar as its default. The tile gets a **Default** badge. To go back, right-click the tile and select **Clear Default Avatar**. With no default, **User's Default** shows another Avatar in your library, starting with the one that came with Formamorph. With an empty library, it shows none. The default stays on this device. Exports and saves do not carry it as a setting.
 
 ## How to Check an Avatar's License
 <!-- keywords: allowed, permission, rights, terms of use, copyright, share, redistribute, commercial, credit, vroid hub, legal to upload, who made it, attribution needed, ownership, usage rules, says not shareable, am i allowed -->
@@ -78,7 +78,7 @@ You get the file as you imported it: a `.vrm` file, or `.glb` for a file with no
 <!-- keywords: shape keys, shapekeys, blend shapes, morph targets, custom avatar, slider not showing, key missing, body mesh, wings, horns, tail, transform during play, grow, ctrl+j, join mesh, weight paint, vertex group, ponytail, hair length key, vrm addon, basis, object data properties, part left behind, floating horns -->
 <!-- route: modelDetails -->
 
-Formamorph makes a body slider from each shape key on the object named `Body`. A world's stats can change these sliders. Formamorph reads no other object for body sliders.
+Formamorph makes a body slider from each shape key on the object named `Body`. A world's stats can change these sliders. Formamorph reads no other object for body sliders. A stat can also change a head feature, such as Ear Shape. The stat's list shows these under **Head Features**.
 
 You need the VRM Add-on for Blender. **Shape Keys** and **Vertex Groups** are in the **Object Data Properties** tab, the green triangle.
 
@@ -100,10 +100,12 @@ Keep these rules or the sliders can fail:
 - Don't parent other objects to `Body`.
 - Give every vertex a bone. A vertex with no bone follows the hips, so the part stays behind when the Avatar moves.
 
-To tie a slider to a stat, open a world stat in the World Editor and pick the key in **Body Sliders**. See [World Editor Stats](World-Editor-Stats).
+To tie a slider to a stat, open a world stat in the World Editor and pick the key in **Sliders** on the stat's **Appearance** tab. The list has two groups for each model, **Body Sliders** and **Head Features**. See [World Editor Stats](World-Editor-Stats).
 
-- The stat's Min sets the key to 0, and its Max sets it to 1.
-- Each key belongs to one stat only.
+- Each picked key has a **Change By** number, 1 by default. At the stat's Min, the stat adds nothing to the key. At its Max, it adds the **Change By**.
+- A negative **Change By** makes the key smaller as the stat rises.
+- A number stat above its Max keeps changing the key. A percentage stat stops at 100%.
+- Several stats can change one key. Their changes add up.
 - An entity's own stats list the keys of its 3D model, not its Avatar.
 - The **Initial Body Features** value adds to the stat's value.
 
@@ -126,10 +128,22 @@ Drag the viewer to turn the Avatar. Scroll to zoom.
 | **Animate Avatar** | Plays the idle animations. Clear it to stop the Avatar. |
 | **Hair** | A hair style, when the model has more than one, and **Hair Length** |
 | **Initial Body Features** | One slider for each body shape the model has. The world's stats can change these during the game. |
-| **Colors** | **Hair Color**, **Eye Color** and **Skin Color**. **Revert to original** restores the file's color. |
+| **Colors** | **Hair Color**, **Eye Color** and **Skin Color**. Each color has an **Undo** button that puts back the model's own color. It is disabled while the color is unchanged. |
 | **Other Colors** | Pick a part, such as clothing, and change its color |
 
+Every slider has an **Undo** button beside its name too. It puts the slider back to the model's own value.
+
+A color picker has a **Pick From Screen** button where the app can sample the screen. Click it, then click any pixel on the screen to take that color. The Avatar holds still during the pick, so the color you take stays put. Press Escape to cancel and keep the color you had. The button is hidden where the app cannot sample the screen.
+
 **Colors** always shows. **Hair**, **Initial Body Features** and **Other Colors** show only when the model supports them, so a plain `.glb` file may show few of them or none.
+
+#### Locked Controls
+
+A trait can set a slider or a color. When you checked such a trait on the trait step, that control is locked here. It shows the trait's value and the note **Set by** with the trait's name. You can't change it.
+
+- Your own value stays saved. If you go **Back**, uncheck the trait and return, the control is free and holds the value you picked.
+- Traits that switch on by themselves during the game, and traits from items, do not lock anything here.
+- The customization controls in the library's Avatar details have no world, so nothing is locked there.
 
 ### In the Game
 
@@ -142,6 +156,17 @@ The entity view shows the selected entity's Avatar.
 See [The Game Screen](How-to-Play#the-game-screen).
 
 A world author can tie body sliders to a stat. As the stat changes, the Avatar's shape changes. Your Avatar follows your stats. Each other entity's Avatar follows that entity's stats. The sliders you set in **Initial Body Features** are the start point for your Avatar.
+
+A trait can also set a slider while it is active, such as Ear Shape for an Elf. It replaces your own setting until the trait ends, and stats still add on top. See [Sliders](World-Editor-Traits#sliders).
+
+Stats and traits can change the skin, eye and hair colors too:
+
+- 🎨 A stat shifts a color toward its target as it rises. It starts from the color you picked, or the model's own colors if you picked none.
+- 🧝 A trait sets a color while it is active, such as gray skin for a Drow. Stats then shift on from that color.
+- 🧍 On a model with separate face and body skin, each part shifts from its own color.
+- 🧊 Colors work on Avatars only. An entity's 3D model keeps its colors.
+
+See [the stat fields](World-Editor-Stats#the-fields) and [trait Colors](World-Editor-Traits#colors).
 
 ## The Avatar Details Dialog
 <!-- keywords: model info, metadata, properties, inspect file, vrm version, remove a model, saves using it, right click options -->
@@ -173,9 +198,9 @@ Right-click a tile for **Set as Default Avatar** (or **Clear Default Avatar**), 
 
 ### Deleting an Avatar
 
-**Delete Avatar** asks you to confirm. You can't delete your last Avatar.
+**Delete Avatar** asks you to confirm. You can delete your last Avatar. The bundled Avatar does not come back after you delete it.
 
-- If saves use the Avatar, the dialog names them. Those saves use the Default Avatar after you delete it.
+- If saves use the Avatar, the dialog names them. Those saves use your Default Avatar after you delete it, or the first Avatar in your library. With no Avatars left, they show none.
 - If library entities use the Avatar, the dialog names them too. Those entities show no Avatar after you delete it.
 
 ## The Permissive License
@@ -219,7 +244,7 @@ Select an Avatar's card to rename it, replace its file, download it or delete it
 
 See [World Editor Media](World-Editor-Media).
 
-A library entity whose Avatar isn't in your library on this device reads **Missing Avatar** in its **Avatar** dropdown. In the game it shows the bundled Avatar. Pick another option to replace it.
+A library entity whose Avatar isn't in your library on this device reads **Missing Avatar** in its **Avatar** dropdown. In the game it shows what **User's Default** shows. Pick another option to replace it.
 
 Each entity picks its Avatar in its **Avatar** dropdown, in Simple and Advanced mode:
 

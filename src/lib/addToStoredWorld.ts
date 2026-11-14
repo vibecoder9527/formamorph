@@ -7,10 +7,9 @@
  * one transaction.
  */
 
-import { withEntityLocations } from '@/lib/entityPresence';
+import { carryMap, placedIn } from '@/lib/entityPresence';
 import { linkToSource, type LibrarySource, type LinkableContent } from '@/lib/linkedContent';
 import { kindOf } from '@/lib/librarySources';
-import { hasAuthoredOpenings, openingsEnabled, setOpeningsEnabled } from '@/lib/openings';
 import { adoptBookPlaceholders, adoptEntityPlaceholders } from '@/lib/placeholderHomes';
 import { randomUUID } from '@/lib/uuid';
 import { unresolvedReferences, type ConnectionPlan, type ReferenceRow } from '@/lib/worldReferences';
@@ -111,14 +110,11 @@ export async function addCopyToStoredWorld(
     dropped = bound.dropped + scrubbed.dropped;
     const { locationRefs = [], ...rest } = scrubbed.entity;
     // A membership the world cannot place is dropped rather than left pointing at a location it has not got.
-    const used = Object.fromEntries(locationRefs.flatMap((ref) => {
-      const id = plan.locations[ref.id] ?? ref.id;
-      return known.has(id) ? [[ref.id, id]] : [];
-    }));
+    const used = carryMap(locationRefs, plan.locations, known);
     const connections = { ...adopted.connections, ...used };
     const kept = data.entities ?? [];
     const entity: Entity = {
-      ...adoptOwnedTraits(withEntityLocations(rest as Entity, Object.values(used)), {
+      ...adoptOwnedTraits(placedIn(rest as Entity, used), {
         traits: data.traits ?? [], traitGroups: data.traitGroups ?? [], entities: kept,
         stats: data.stats ?? [], statGroups: data.statGroups ?? [],
       }),
@@ -127,14 +123,8 @@ export async function addCopyToStoredWorld(
         ...(Object.keys(connections).length ? { connections } : {}),
       },
     };
-    // A switched-off list would bench the arriving openings, so the copy switches it back on, exactly as
-    // the World Editor's own add does.
-    const overview = hasAuthoredOpenings(entity) && !openingsEnabled(data.worldOverview, [...kept, entity, ...places])
-      ? { worldOverview: { ...(data.worldOverview as WorldOverview), ...setOpeningsEnabled(true) } }
-      : {};
     return {
       ...data,
-      ...overview,
       entities: [...kept, entity],
       ...(adopted.toAdd.length ? { placeholders: [...shared, ...adopted.toAdd] } : {}),
       ...(plan.newLocations.length ? { locations: places } : {}),

@@ -174,8 +174,9 @@ The list on the left groups the prompts by the job they do. A prompt shows only 
 | **Choices** | Story | Writes your choices for the next turn, after narration | **Choices** is on |
 | **Stat Updates** | Trackers | Reads the turn after narration and records which stats changed | **Stat Updates** is on |
 | **Inventory** | Trackers | Reads the turn after narration and records who gained, lost, moved, equipped, used or found an item | Always |
-| **Location Change** | Trackers | Decides after narration if your action takes you to a new location | **Location Change** is on |
-| **Entity Location** | Trackers | Decides whether each entity here comes with you or stays | **Location Change** and **Entity Movement** are on |
+| **Location Change** | Trackers | Decides before narration if your action takes you to a new location. Sent only with **Move Automatically** on. | **Location Change** is on |
+| **Narrated Move** | Trackers | Decides after narration if the narration ends with you in a new location. With **Move Automatically** on, it runs when your action went nowhere, and the move applies at once. Otherwise it offers the move. When the narration ends somewhere it can't move you to, it answers **Elsewhere**, and you stay where you are. | **Location Change** is on |
+| **Entity Location** | Trackers | Decides, for each entity that follows you and each one here that's free to leave, whether it comes along, keeps following, waits, parts ways, or goes to a nearby place alone. A wait lasts about an hour, to the end of this part of the day, or to the end of the next. One request covers all of them. The game adds the time and each entity's list of answers after the User Message. | **Location Change** and **Entity Movement** are on |
 | **Clock** | Trackers | Measures how much story time the turn took. Runs after narration. | **Measured Clock** is on |
 | **Opening** | Trackers | Reads the opening scene once, at the start, to set the time of day | **Measured Clock** is on |
 | **Summaries** | Memory | Condenses an older turn into one line that the AI can still read later. Runs when a turn is too old to go word for word. | **Memory Summaries** is on |
@@ -195,7 +196,7 @@ Select a prompt to open its **Anatomy**. The rows under the prompt open its othe
 |---|---|---|
 | **Anatomy** | The request this prompt sends, built from your current settings | Every prompt |
 | **System Prompt** | The instructions the AI reads first | Every prompt |
-| **User Message** | The message that asks for the reply, such as your action | **Narration** with **Thinking** set to **Native**, **Choices**, **Stat Updates**, **Inventory**, **Location Change**, **Entity Location**, **Clock**, **Opening**, **Summaries**, **Milestone Select**, **Director**, **Discover Entity**, **Scene Tags** |
+| **User Message** | The message that asks for the reply, such as your action | **Narration** with **Thinking** set to **Native**, **Choices**, **Stat Updates**, **Inventory**, **Location Change**, **Narrated Move**, **Entity Location**, **Clock**, **Opening**, **Summaries**, **Milestone Select**, **Director**, **Discover Entity**, **Scene Tags** |
 | **Messages** | Extra lines in the narration history | **Narration**, while one of its messages is live |
 | **Options** | Per-prompt settings | Every prompt |
 

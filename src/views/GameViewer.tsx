@@ -1,18 +1,23 @@
 import { randomUUID } from "@/lib/uuid";
-import { openingFold, openingPersonaOf, openingStateOf } from '@/lib/openingState';
+import { openingFold, openingPersonaOf, standaloneStateOf } from '@/lib/openingState';
 import {
-  applyInventoryOps, applyInventoryPass, equipRequirement, settleInventory, statEffectItems, traitPicksInPlay, timedEffectViews, type ItemUse, type InventoryOp, type ItemScriptEvent,
+  applyInventoryOps, applyInventoryPass, passOwners, equipRequirement, settleInventory, settleTraitsWithItems, statEffectItems, traitPicksInPlay, timedEffectViews, type ItemUse, type InventoryOp, type ItemScriptEvent,
 } from '@/lib/inventory';
 import { hasCode, isItemTiming } from '@/lib/scripts';
+import { inPlayWorldData, playedEntityIdOf, startLocationIdsOpen, startRoutinePick } from '@/lib/inPlayWorld';
+import { gatePick } from '@/lib/inPlayGates';
 import { runRowKeys } from '@/lib/worldScripts';
 import { playedEntityIds } from '@/lib/scope';
-import type { InventoryPanelSettle } from '@/components/game/useInventoryPanel';
+import type { InventoryPanelSettle, PanelActionList } from '@/components/game/useInventoryPanel';
+import { ActionListTray } from '@/components/game/ActionListTray';
+import { addAction, closeList, listCounts, recordSent, reopenSent, reversalOf, toggleHidden, toldActions, undoNewest, type ActionSnapshot, type ListedAction, type ListedActionFacts, type SentActionList, type SentActionMap, type ToldAction } from '@/lib/actionList';
+import { useNarrationLayout } from '@/lib/useNarrationLayout';
 import { ownerPins, inPlayOwners, laterDiscovered, libraryUnder } from '@/lib/ownedTraitsInPlay';
-import { samePersonaRef } from '@/lib/personaPick';
-import { metRosterByLocation } from '@/lib/metEntities';
+import { personaKey, samePersonaRef } from '@/lib/personaPick';
+import { mapReach, mapRoster } from '@/lib/mapRoster';
 import { usePresence } from '@/lib/usePresence';
 import {
-  IN_SCENE_TURNS, introducedIds, labelsInPlay, metCheck, strangersInPlay, sceneAfterMove, strangerAliasesFromCast, withMet,
+  IN_SCENE_TURNS, hasStrangerFace, introducedIds, labelsInPlay, metCheck, strangersInPlay, sceneAfterMove, strangerAliasesFromCast, withMet,
 } from '@/lib/presence';
 import { libraryBooksInPlay } from '@/lib/dictionarySelection';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, useSyncExternalStore, lazy, Suspense } from "react";
@@ -57,14 +62,20 @@ import { ClearSearchButton } from "@/components/ui/search-field";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Pager } from "@/components/ui/pagination";
-import { Music, SquarePen, Database, ScrollText, ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Search, Eye, EyeOff, DoorOpen } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ArrowLeft, Music, Database, ScrollText, ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Search, Eye, EyeOff, DoorOpen, NotebookText, Gamepad2, HeartPulse } from "lucide-react";
+import { Tabs } from "@/components/ui/tabs";
+import { MobilePanelStage } from "@/components/game/MobilePanelStage";
+import { createSwipeProgress } from "@/lib/swipeProgress";
+import { CollapsingTabsList } from "@/components/ui/collapsing-tabs-list";
+import { Dialog, DialogContent, DialogTitle, dialogTitleRow } from "@/components/ui/dialog";
+import { AI_CONTEXT_DIALOG_SIZE } from "@/components/aiContext/aiContextDialogSize";
+import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tip } from "@/components/ui/tooltip";
 import { Meta } from "@/components/ui/typography";
 import { toast } from "react-toastify";
 import { toastError } from "@/lib/linkToast";
-import { cancelOpenPrompts, noticeHost, scriptPrompts, silentPrompts, type ScriptPromptHost } from "@/lib/scriptPrompts";
+import { cancelOpenPrompts, isNotice, noticeHost, scriptPrompts, silentPrompts, type ScriptPromptHost } from "@/lib/scriptPrompts";
 import { isScriptPromptSample, SCRIPT_PROMPT_SAMPLES } from "@/lib/devScriptPromptSamples";
 import { addTell, latestTurnId, pruneTells, REROLLED_TIMINGS, setTurnTells, turnTells, withoutTimings } from "@/lib/scriptTells";
 import { useScriptPromptListener } from "@/lib/useScriptPromptListener";
@@ -79,6 +90,8 @@ import { drawPoolEntry, drawUnseenOpening, openingOwner, openingPool, type Drawn
 import { drawNewGameOpening } from "@/lib/newGameOpening";
 import { customPersonaEntity } from "@/lib/blueprints";
 import { bodyPickEntities } from "@/lib/bodies";
+import { avatarLookTraits } from "@/lib/avatarLook";
+import { statsInTreeOrder } from "@/lib/statGroupTree";
 import { playedNames, worldEntitiesOf, type PersonaPick } from "@/lib/persona";
 import { resolveWorldPrompt, appliedWorldPrompt, worldPromptChipValues, useWorldPromptOptOut } from "@/lib/worldPrompt";
 import { statTextFor } from "@/lib/statTextPrompts";
@@ -101,7 +114,7 @@ import WorldStorageService from "../services/WorldStorageService";
 import { MenuModal } from "../components/modals/MenuModal";
 import LlmSetupGuide from "../components/modals/LlmSetupGuide";
 import WorldEditor, { type EditorExit } from "./WorldEditor";
-import type { CharacterData, ChatMessage, ChatRole, ImageAttachment, AIRequestType, AITurnResult, GameLocation, MediaAsset, Dictionary, DictionaryEntry, Entity, EntityStatValues, GameState, SaveRecord, World, PlayerStat, Trait, PersonaRef, OwnedTraitPicks, OwnedTraitStates, InventoryOwner, InventoryPassOp, ItemCopy, ItemEffectLedger, RuntimeItem, BodyRuntime, BodyPick } from "@/types";
+import type { CharacterData, ChatMessage, ChatRole, ImageAttachment, AIRequestType, AITurnResult, GameLocation, MediaAsset, Dictionary, DictionaryEntry, Entity, EntityStatValues, GameState, SaveRecord, World, PlayerStat, Trait, PersonaRef, OwnedTraitPicks, OwnedTraitStates, InventoryOwner, InventoryPassOp, ItemCopy, ItemEffectLedger, RuntimeItem, BodyRuntime, BodyPick, WorldOption, WorldOptionValueOf, WorldOptionValues } from "@/types";
 import { UnsavedChangesDialog } from "../components/UnsavedChangesDialog";
 import { estimateHistoryChars, estimateTokens } from "../lib/memoryUtils";
 import { narrationOf, storyText, stripReasoningLive, extractReasoning, extractReasoningLive } from "../lib/aiResponse";
@@ -118,7 +131,11 @@ import {
 } from "../lib/stagedPlanning";
 import { selectRelevantDiary } from "../lib/semanticDiary";
 import { findEntityByCharacterName, materializeDiscoveredEntity, discoveredAsEntities, cleanDiscoveredDescription, pruneDiscoveredToHistory, pickedAtStart, INITIAL_SOURCE_TURN_ID } from "../lib/runtimeCharacters";
-import { entitiesInPlay, entityIdsAt, positionedCast, startingPositions } from "../lib/entityPresence";
+import { positionedCast, presentEntityIds, type Standings } from "../lib/entityPresence";
+import { castCourses, withoutRoutinePlace } from "../lib/entityKind";
+import { placeAll, positionWorld, reseatForOpening, scriptPlaces, withPlayerAt, type PositionWorld } from "../lib/positionPlay";
+import { EMPTY_BOOK } from "../lib/positionEngine";
+import { openingPlacesOf, placementOf } from "../lib/openingPlacement";
 import { selectRegenSource, buildRegenContext } from "../lib/discoveredRegen";
 import { outputReserve } from "../lib/outputLength";
 import { outputCaps, type AiEndpointTarget, type AiSettingsSnapshot } from "../lib/aiRequest/aiRequestSpec";
@@ -135,10 +152,10 @@ import { narrationRevealListener } from "../lib/narrationRevealListener";
 import { getRevealReleased } from "../lib/revealTimingStore";
 import { fanOut } from "../lib/aiRequest/fanOut";
 import { rewriteSentences } from "../lib/aiRequest/narrationRewrite";
-import { parseTurnContent, recentParticipants, collectCharacterDiary, parsedTurnById, turnDiaries, turnMemory } from "../lib/turnDigest";
-import { navigableDestinations } from "../lib/locationContext";
-import { chipValues, entityStatsField, sceneEntityChipValues } from "../lib/chipValues/chipValues";
-import { useLiveChipScene, type SceneWrites } from "../lib/chipValues/liveScene";
+import { pageOneLocationId, pageOneNarration, parseTurnContent, pruneTurnMap, survivingTurnIds, recentParticipants, collectCharacterDiary, parsedTurnById, turnDiaries, turnMemory } from "../lib/turnDigest";
+import { farDestinationNames, walkableDestinationEntries } from "../lib/locationContext";
+import { chipValues, entityStatsField } from "../lib/chipValues/chipValues";
+import { inventoryOwnersIn, sceneRosterValues, useLiveChipScene, type SceneWrites } from "../lib/chipValues/liveScene";
 import { buildToolSnapshot, type ToolScriptSource, type ToolMemorySource } from "../lib/tools/toolSnapshot";
 import { toolCallStatus } from "../lib/tools/toolCallStatus";
 import { snapshotToolExecutor, toolsOfferedTo } from "../lib/tools/toolOffer";
@@ -156,7 +173,7 @@ import { useResolvedWorld } from "@/lib/useResolvedWorld";
 import { useLocationBackdrop, useMapBackdrop } from "@/lib/useLocationBackdrop";
 import { useSeedAvatarOnSaveLoad } from "@/lib/useLibraryAvatars";
 import { usePersonaNotice } from "@/lib/usePersonaNotice";
-import { resolveStartingLocation } from "../lib/startingLocation";
+import { startingLocationIn } from "../lib/startingLocation";
 import { variableForToken, tokenVariant } from "../lib/promptVariables";
 import { renderPromptTemplate } from "../lib/promptTemplate";
 import { layerValues, omitValues, type TokenValues } from "../lib/promptValues";
@@ -182,7 +199,7 @@ import {
 import { describeItemRequest, withItemDescription } from "@/lib/inventory/describe";
 import { BackgroundPassStatus } from "../components/game/BackgroundPassStatus";
 import { RequestStatusRow } from "../components/game/RequestStatusRow";
-import { TOOL_GLYPH, requestLabel, requestStatus } from "../components/game/statusGlyphs/glyphMap";
+import { TOOL_GLYPH, WAITING_FOR_ANSWER_STATUS, requestLabel, requestStatus } from "../components/game/statusGlyphs/glyphMap";
 import { buildNarrationPrompt, type DictionaryDebug } from "../lib/turnPipeline/narrationPrompt";
 import { buildPlannerBand } from "../lib/turnPipeline/plannerBand";
 import { readNarration, selectVisitorAdditions, presentSceneEntities, splitParticipants } from "../lib/turnPipeline/narrationReading";
@@ -193,10 +210,11 @@ import {
   commitEntityMoves, computeTurnCommit, entityMovesOf, withCodeLines, withCodeWrites, type TurnCommit, type TurnCommitContext,
 } from "../lib/turnPipeline/computeTurnCommit";
 import {
-  entityMoveRequests, hasEntityOffer, joinEntityMoves, movedPositions, moveWithPlayer,
-  NO_ENTITY_MOVES, NO_ENTITY_OFFER, peelIntents, peeledCharacters, runtimePositions, turnPeelOff,
-  type EntityMoveOffer, type FollowerState, type PeelOff,
+  entityMoveRequests, hasEntityOffer, joinEntityMoves, moveWithPlayer,
+  NO_ENTITY_MOVES, NO_ENTITY_OFFER, runtimePositions,
+  type EntityMoveOffer, type FollowerState,
 } from "../lib/entityFollowing";
+import { positionsIn } from "../lib/entityPlaces";
 import { classifyTurnError, type TurnErrorKind } from "../lib/turnPipeline/turnErrors";
 import { emptyTurnMaterial, type TurnMaterial, type TurnPassSubject, type TurnPlan, type TurnPlanInput, type TurnPrompts, type TurnSettings } from "../lib/turnPipeline/turnPlan";
 import { parseTurns, buildVerbatimHistory, buildBandedHistory, extractKeywords, type BandCounts } from "../lib/turnBanding";
@@ -205,7 +223,7 @@ import type { PromptJumpTarget } from "../lib/promptJump";
 import {
   markFindHits, markFraction, parseFindTerms, planFindHits, type FindMarked,
 } from "@/lib/findMarks";
-import { buildStamper, daypartAt, hoursByPosition, FLAT_HOURS_PER_TURN } from "../lib/gameClock";
+import { buildStamper, daypartAt, hoursByPosition, FLAT_HOURS_PER_TURN, storyMinute } from "../lib/gameClock";
 import { agedMilestoneCandidates, resolveMilestoneDrop } from "../lib/milestoneMemory";
 import { applyMemoryOverrides, activeNotes } from "../lib/memoryOverrides";
 import { buildMemoryLedger, closedTurns, scriptMemories } from "../lib/memoryView";
@@ -239,7 +257,7 @@ import type { AiRequestRecord } from "@/lib/aiContext/requestRecord";
 import { composeSceneTags, pickSceneCast, stripPlaces, splitTags, type SceneCharacter } from "../lib/sceneTags";
 import { loadDanbooruTags } from "../lib/danbooruTags";
 import { addSceneImage, removeSceneImage, pruneSceneImages, setSceneTags as patchSceneTags, sceneDrawTags } from "../lib/sceneImages";
-import { addToPending, setTurnAttachments, latestTurnAttachments, pruneAttachments } from "../lib/actionAttachments";
+import { addToPending, setTurnAttachments, latestTurnAttachments, pageTurnId, pruneAttachments } from "../lib/actionAttachments";
 import { useImageAttachments } from "../lib/useImageAttachments";
 import { useMountedRef } from "../lib/useMountedRef";
 import { generateImage, buildImageRequest, takesCharacterPrompts } from "../lib/imageGen";
@@ -248,14 +266,13 @@ import { buildImagePrompt } from "../lib/imagePrompt";
 import { downloadBlob } from "../lib/downloadBlob";
 import { rollbackState, regenerateState, canRegenerate, lastTurnAction, markRegeneratedTurn, markPrunedTurns, snapshotPageIndex, placeSnapshot, sliceHistoryToPage, pageAssistantIndex } from "../lib/turnHistory";
 import { useDeferredSnapshot } from "../lib/useDeferredSnapshot";
-import { statMorphMap } from "../lib/bodyMorphs";
 import {
   inAuthoredOrder, refreshChosenTraits, refreshSavedStats, activeStatEnabled, enabledStats,
 } from "../lib/traitEffects";
 import { usePlaceholderSession } from "../contexts/PlaceholderSessionContext";
 import {
   activeTraits as traitsInForce, entityStatTraitsInForce, heldGlobalTraits, globalRowTraits, startingTraitLog,
-  gateStatsOf, statTraitsInForce, switchPersonaStats, switchPlayerTrait, traitNameIn, traitSwitchEvents,
+  gateStatsOf, statTraitsInForce, switchPersonaStats, switchPlayerTrait, traitForceScope, traitNameIn, traitSwitchEvents,
   type GatedTraitResult, type TraitRuntimeState, type TraitWorld,
 } from "../lib/traitRuntime";
 import type { GateStats } from "../lib/traitGates";
@@ -265,6 +282,7 @@ import { useTurnSettle } from "../lib/useTurnSettle";
 import type { TraitCascade } from "../components/game/SetupTraitList";
 import { savedTraits } from "../lib/statCodeTraits";
 import { liveSnapshotOf, type LiveSnapshot } from "../lib/globalSaveFields";
+import { NO_WORLD_OPTION_VALUES, optionPinLists, optionValue, optionValueRef, withOptionWrites } from "../lib/worldOptions";
 import { parseKeywords, locateMatches, type EntryActivation, type MatchHit, type MatchRule } from "../lib/dictionaryUtils";
 import { highlightSegments, HIGHLIGHT_PALETTE, type HighlightRule, type HighlightSegment } from "../lib/highlightUtils";
 import { useIsMobile } from "../lib/useIsMobile";
@@ -274,16 +292,20 @@ import {
   RightPanel,
   type CommandChoices,
 } from "../components/game/GamePanels";
+import { EdgeToggle, EdgeToggleSpacer, GAME_VIEW_CONTAINER, GAME_VIEW_PROPS, NarrationColumn, PanelDrawer, PanelRail, RailAction, SideColumn, useHeaderWidthVar, useSideMotion, type PanelPlacement, type PanelSide } from "@/components/game/PanelRail";
+import { statusSignatures, useChangeDots } from "@/components/game/changeDots";
+import { GAME_LEFT_PANEL_TABS, GAME_RIGHT_PANEL_TABS, LEFT_PANEL_TABS } from "@/components/game/panelTabs";
+import { useGameLeftCollapsed, useGameRightCollapsed, useGameStoryWidth } from "@/lib/gamePanelPrefs";
+import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { LocationBackdrop } from "../components/game/LocationBackdrop";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { MusicOffIcon } from "../components/game/MusicOffIcon";
 import { AiSetupGate } from "../components/AiSetupGate";
 import { DemoAIBadge, DemoAIEntryLine, DemoAINotice, type DemoAINoticeHandle } from "../components/game/DemoAINotice";
 import { useDemoAIEntryLine } from "../components/game/demoAISeen";
-import { countsAsDemoAITurn } from "@/lib/firstTimeFlow";
-import { demoAITurnCount, isDemoAICardSeen, recordDemoAITurn } from "@/lib/firstTimeFlowStore";
-import { StoryCard } from "../components/road/StoryCard";
+import { ENGINE_CARD_COPY, StoryCard } from "../components/road/StoryCard";
 import { openRoadScene } from "../components/road/roadSceneStore";
-import { useStoryCard } from "../components/road/useDemoAIOffer";
+import { useCardTurnCounts, useDemoAIStoryCard, useEngineStoryCard } from "../components/road/useDemoAIOffer";
 import { LikePrompt } from "../components/game/LikePrompt";
 import { useLikePrompt } from "../components/game/useLikePrompt";
 import { useNarrationRescan } from "../components/game/useNarrationRescan";
@@ -295,6 +317,8 @@ interface GameViewerProps {
   initialTraits?: string[];
   /** Entity id → the owned traits picked at the entry step. */
   initialOwnedTraits?: OwnedTraitPicks;
+  /** Option id → the value picked at the entry step. A missing id starts on its default. */
+  initialOptionValues?: WorldOptionValues;
   initialCharacterData: CharacterData | null;
   initialLocationId?: string | null;
   /** Per-playthrough dictionary set chosen at the entry step; null when the step was skipped (falls back
@@ -332,6 +356,8 @@ interface PendingTurn {
   resentAttachments?: ImageAttachment[];
   /** The turn replaces the latest one. */
   regenerate?: boolean;
+  /** A Chat regenerate's sent list, which the resent turn records again (Q55). */
+  resentList?: SentActionList<ActionSnapshot>;
 }
 
 /** What one playthrough remembers about its openings. Session state only, so a save never carries it. */
@@ -374,17 +400,14 @@ const aiChoicesOf = (stored: AITurnResult): string[] => stored.aiChoices ?? stor
 const choicesPatch = (aiChoices: readonly string[], scripted: readonly string[] | undefined): Pick<AITurnResult, "choices" | "aiChoices"> =>
   (scripted ? { choices: [...scripted], aiChoices: [...aiChoices] } : { choices: [...aiChoices], aiChoices: undefined });
 
+/** The book a running turn's scripts read, and the story minute it was placed at. */
+interface ScriptBook {
+  book: FollowerState;
+  now: number;
+}
+
 /** What a Regenerate Choices rerun of the After the AI batch answers: not started, no change, or the scripts' list. */
 type ChoicesRerun = { ran: false } | { ran: true; changed: false } | { ran: true; changed: true; choices: readonly string[] };
-
-/** Page one as stored. */
-const pageOneTurn = (history: readonly ChatMessage[]): AITurnResult | null => {
-  const pageOne = history.find((m) => m.role === "assistant");
-  return pageOne ? parseTurnContent(pageOne.content) : null;
-};
-/** Where page one took place. */
-const pageOneLocationId = (history: readonly ChatMessage[]) => pageOneTurn(history)?.locationId;
-const pageOneNarration = (history: readonly ChatMessage[]) => pageOneTurn(history)?.narration;
 
 /** The pre-turn state a stat re-roll hands stat code, so code reads and switches as the turn it replaces did. */
 type PreTurnCodeState = Pick<
@@ -491,6 +514,14 @@ const DICTIONARY_VARIABLE = variableForToken('<DICTIONARY>')!;
 // A stable empty array for turns with no scene image, so the panel's prop identity doesn't churn.
 const EMPTY_IMAGES: string[] = [];
 
+// The mobile game view's three panels, left to right.
+const MOBILE_PANEL_TABS = [
+  { value: "character", icon: NotebookText, label: "Story" },
+  { value: "game", icon: Gamepad2, label: "Game" },
+  { value: "status", icon: HeartPulse, label: "Status" },
+] as const;
+type MobilePanel = (typeof MOBILE_PANEL_TABS)[number]["value"];
+
 // How many of a character's own recent diary entries to feed into its motivation pass (its memory).
 const DIARY_MEMORY_ENTRIES = 5;
 
@@ -529,6 +560,8 @@ interface TurnScript {
 /** The passes a scripted turn runs; every other one would ask a real endpoint. */
 const SCRIPTED_PASSES = new Set(['narration', 'choices']);
 
+const isQuestionOpen = () => scriptPrompts.pending().some(({ request }) => !isNotice(request));
+
 /** Calls `render` only while mounted, so a closed dialog's body costs the parent's render nothing. */
 function RenderMounted({ render }: { render: () => React.ReactNode }) {
   return <>{render()}</>;
@@ -537,6 +570,7 @@ function RenderMounted({ render }: { render: () => React.ReactNode }) {
 const GameViewer = ({
   initialTraits = [],
   initialOwnedTraits = NO_OWNED_TRAITS,
+  initialOptionValues = NO_WORLD_OPTION_VALUES,
   initialCharacterData,
   initialLocationId = null,
   initialDictionaries = null,
@@ -556,6 +590,7 @@ const GameViewer = ({
     statGroups: authoredStatGroups,
     traits: authoredTraits,
     locations: authoredLocations,
+    connections: authoredConnections,
     dictionaries,
     placeholders: worldPlaceholders,
     placeholderOwners,
@@ -568,6 +603,7 @@ const GameViewer = ({
     bodies: worldBodies,
     placements: worldPlacements,
     currencies: worldCurrencies,
+    options: worldOptions,
     worldOverview,
     worldId,
     worldLoaded,
@@ -575,6 +611,7 @@ const GameViewer = ({
     worldChangedElsewhere,
     loadWorldData,
     getWorldData,
+    playEntities: authoredEntities,
   } = useGameData();
 
   // World README popup — shown once on entry (new game or save load) when the world has README text and
@@ -618,7 +655,6 @@ const GameViewer = ({
     bgmEnabled,
     setBgmEnabled,
     language,
-    setLanguage,
     paragraphLimit,
     markdownOutput,
     // Applied at every seam that sends narration history.
@@ -678,11 +714,14 @@ const GameViewer = ({
     storyboardPrompt,
     narrationUserPrompt,
     oocDirectivePrompt,
+    actionListPrompt,
     recapUserPrompt,
     rehydrateUserPrompt,
     choicesUserPrompt,
     statUpdatesUserPrompt,
     locationChangeUserPrompt,
+    narratedMovePrompt,
+    narratedMoveUserPrompt,
     entityLocationPrompt,
     entityLocationUserPrompt,
     summaryUserPrompt,
@@ -745,10 +784,13 @@ const GameViewer = ({
     resetEntityStats,
     entityPositions,
     setEntityPositions,
-    entityFollowers,
-    setEntityFollowers,
-    carryFollowersTo,
+    uniqueStates,
+    setUniqueStates,
+    genericStates,
+    setGenericStates,
+    currentBook,
     applyFollowerState,
+    placeCast,
     currentFollowers,
     metEntities,
     setMetEntities,
@@ -759,6 +801,8 @@ const GameViewer = ({
     setCodePins,
     loreToggles,
     setLoreToggles,
+    worldOptionValues,
+    setWorldOptionValues,
     itemCopies,
     setItemCopies,
     itemEffects,
@@ -777,6 +821,10 @@ const GameViewer = ({
     setGameTime,
     startHour,
     setStartHour,
+    playerStartLocationId,
+    setPlayerStartLocationId,
+    openingPlacement,
+    setOpeningPlacement,
     calendar,
     logsEndRef,
     setChoices,
@@ -800,10 +848,13 @@ const GameViewer = ({
     viewDisabledTraitIds,
     viewOwnedTraits,
     viewEntityStats,
+    viewBodies,
     viewLocationId,
     gameStates,
     setGameStates,
-    setBodyMorphValues,
+    setPlayerLookStats,
+    setViewEntityStatEnabled,
+    setViewEntityLookTraits,
     playerNotes,
     setPlayerNotes,
     saveGame,
@@ -842,11 +893,17 @@ const GameViewer = ({
     setActionAttachments,
     pendingAttachments,
     setPendingAttachments,
+    actionList,
+    setActionList,
+    revertManualStatEditPage,
+    sentActions,
+    setSentActions,
     scriptTells,
     setScriptTells,
     openingAction: openingTurnAction,
     setOpeningAction: setOpeningTurnAction,
     itemCopies: heldItemCopies,
+    setActiveTab: setRightTab,
   } = useGameplay();
   const {
     show: showStatDeltas, add: addStatDeltas, hold: holdStatDeltas, settle: settleStatDeltas,
@@ -858,10 +915,10 @@ const GameViewer = ({
   // an entity/location/stat/trait/dictionary name is a plain string with no chips left in it. The `raw*`
   // values above stay untouched for roll priming, which has to see the chips it is rolling for.
   const {
-    entities, authoredCast, locations, connections, stats, traits, traitGroups, dictionary, globalStats, viewStats,
+    entities, locations, connections, stats, traits, traitGroups, dictionary, globalStats, viewStats,
     currentLocation, traitOrder, pins, pinsFor, resolvePH, resolveFor, resolveWith, resolveOpening, resolveTraitText,
-    resolveTraitFor, resolveEntityText, resolveEntityFor, playerNames, persona, traitEntities, traitLibrary, codeEntities,
-    presentEntitiesUnder, worldPersonas, customPersona: resolvedCustomPersona,
+    resolveTraitFor, resolveEntityText, resolveEntityFor, entitiesFor, playerNames, persona, traitEntities, traitLibrary, codeEntities,
+    presentEntitiesUnder, worldPersonas, customPersona: resolvedCustomPersona, pinBlueprints, inPlay,
   } = useResolvedWorld();
   usePersonaNotice();
   // The authored slice inventory operations read, with every entity whose Body pick play reads.
@@ -903,12 +960,12 @@ const GameViewer = ({
   const gatedWorld = useCallback(
     (ref: PersonaRef | undefined = personaRef): TraitWorld => ({
       traits: authoredTraits, groups: traitGroups, persona: ref ?? { source: 'none' }, daypart,
-      items: worldItems, itemCopies: heldItemCopies,
+      items: worldItems, itemCopies: heldItemCopies, options: worldOptions, optionValues: worldOptionValues,
       // A persona change reads this before its render, so its entities and library are the ones under `ref`.
       entities: ref === personaRef ? worldEntitiesOf(entities, persona) : presentEntitiesUnder(ref),
       ...inPlayOwners(ownerWorld, ref, libraryUnder(traitLibrary, personaRef, ref)),
     }),
-    [authoredTraits, traitGroups, daypart, worldItems, heldItemCopies, entities, persona, personaRef, ownerWorld, traitLibrary, presentEntitiesUnder],
+    [authoredTraits, traitGroups, daypart, worldItems, heldItemCopies, worldOptions, worldOptionValues, entities, persona, personaRef, ownerWorld, traitLibrary, presentEntitiesUnder],
   );
   /** The gameplay slice the trait runtime reads and rewrites. */
   const traitState = useMemo<TraitRuntimeState>(
@@ -947,18 +1004,29 @@ const GameViewer = ({
   // playthrough behave like authored ones — union them into the AI-pipeline roster, each carrying the
   // location it was invented at, so the location-scoped context rosters it like anyone else.
   // Discovered entities are minted at runtime from AI prose, so their names never carry chips.
+  const discoveredInPlay = useMemo(() => inPlay.discoveredOn(discoveredEntities), [inPlay, discoveredEntities]);
   const allEntities = useMemo(
-    () => [...entities, ...discoveredAsEntities(discoveredEntities)],
-    [entities, discoveredEntities],
+    () => [...entities, ...discoveredAsEntities(discoveredInPlay)],
+    [entities, discoveredInPlay],
+  );
+  // Where the cast stands now, runtime characters included.
+  const liveStandings = useMemo<Standings>(
+    () => ({ positions: { ...runtimePositions(discoveredEntities), ...entityPositions }, generics: genericStates }),
+    [discoveredEntities, entityPositions, genericStates],
   );
   // The names a script's diary lines land under, by entity id.
   const diaryNames = useMemo(
     () => Object.fromEntries([...traitLibrary, ...allEntities].map((entity) => [entity.id, entity.name])),
     [traitLibrary, allEntities],
   );
-  // The Map's live roster: the Met set where each entity stands. A runtime character stands where it was met.
-  const { met: metPresence } = usePresence();
-  const metRoster = useMemo(() => metRosterByLocation(metPresence), [metPresence]);
+  // The Map's live roster: every entity where it stands, named or unknown by what the player has heard.
+  const presence = usePresence();
+  const { byId: presenceById } = presence;
+  const mapReachSet = useMemo(
+    () => mapReach(currentLocation?.id, locations, connections),
+    [currentLocation?.id, locations, connections],
+  );
+  const mapEntities = useMemo(() => mapRoster(presenceById.values(), mapReachSet), [presenceById, mapReachSet]);
   // Everything a capitalized word in the narration might be OTHER than a new character. Feeds the
   // narration name extractor so a place, a stat, a trait, a lore term, a wildcard value or the player
   // never gets promoted to a person. Location names include the whole world, not just here — the
@@ -992,8 +1060,8 @@ const GameViewer = ({
 
   /** Who belongs at `loc` — authored cast plus any discovered/visiting character anchored there. */
   const presentIdsAt = useCallback(
-    (loc: GameLocation | null | undefined): string[] => entityIdsAt(loc?.id, allEntities),
-    [allEntities],
+    (loc: GameLocation | null | undefined): string[] => presentEntityIds(allEntities, liveStandings, loc?.id),
+    [allEntities, liveStandings],
   );
   /** Meets each entity at `loc` that `narration` names. Followers count as here before their move renders. */
   const meetNamed = useCallback((narration: string, loc: GameLocation | null | undefined) => {
@@ -1002,10 +1070,13 @@ const GameViewer = ({
   }, [presentIdsAt, allEntities, currentFollowers, setMetEntities]);
   const metEntitiesRef = useRef(metEntities);
   metEntitiesRef.current = metEntities;
+  // A turn's own cast writes ahead of the render, so its Inventory pass reads this turn's story aliases.
+  const strangerAliasesRef = useRef(strangerAliases);
+  strangerAliasesRef.current = strangerAliases;
   /** The met test for a met-in-play list, with the start rule for the played persona. */
   const metCheckFor = useCallback(
-    (met: readonly string[]) => metCheck(met, persona?.entity ?? null, locations, new Set(discoveredEntities.map((d) => d.entity.id))),
-    [persona, locations, discoveredEntities],
+    (met: readonly string[]) => metCheck(met, persona?.entity ?? null, locations, new Set(discoveredInPlay.map((d) => d.entity.id))),
+    [persona, locations, discoveredInPlay],
   );
   /** The ids of everyone the player has met now: the met-in-play list plus the start rule. */
   const metIdsNow = useCallback((): string[] => {
@@ -1202,6 +1273,11 @@ const GameViewer = ({
   const currentTurnIdRef = useRef(""); // stable id for the in-progress turn, stamped into its assistant JSON
   // The turn a `player.tell` belongs to while a sent turn runs; between turns a tell joins the latest one (Q53).
   const tellTurnRef = useRef<string | null>(null);
+  // The sent turn's live list, sent lists and box contents from before its send, which come back if the turn never lands.
+  const unlandedListRef = useRef<{
+    turnId: string; list: ListedAction<ActionSnapshot>[]; sent: SentActionMap<ActionSnapshot>;
+    box: { text: string; images: ImageAttachment[] } | null;
+  } | null>(null);
   // The prompt host of one run: its tells keep the run's timing (Q54), a toast shows at once, asks go to the line.
   const playPrompts = useCallback((timing: RunTiming): ScriptPromptHost => noticeHost(scriptPrompts, {
     onTell: (text) => {
@@ -1259,6 +1335,7 @@ const GameViewer = ({
   // Filing needs an account, so the in-game entry point is only offered to someone signed in.
   const [showBugReport, setShowBugReport] = useState(false);
   const canReportBug = COMMUNITY_ENABLED && Boolean(AuthService.token);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   // Lend that composer to the account-deletion flow, which stands above this screen and tells a
   // suspended account to ask the team here. The Privacy Policy prompt can raise the flow mid-game, so
@@ -1310,15 +1387,17 @@ const GameViewer = ({
     }
   }, [nextEntry, aiGateOpen, isSettingsOpen, settingsRequestPending]);
 
-  const [demoAITurns, setDemoAITurns] = useState(demoAITurnCount);
-  const storyCard = useStoryCard({
-    turnCount: demoAITurns,
-    settled: totalPages > 0 && !isWaitingForAI && !isRevealingNarration && !isViewingPast,
-  });
+  const cardTurns = useCardTurnCounts();
+  const turnSettled = totalPages > 0 && !isWaitingForAI && !isRevealingNarration && !isViewingPast;
+  const storyCard = useDemoAIStoryCard({ turnCount: cardTurns.demoAI, settled: turnSettled });
+  const engineCard = useEngineStoryCard({ turnCount: cardTurns.engine, settled: turnSettled });
 
   // DEV dev-router: open an in-game modal when the hash asks for it (Menu routes via MenuModal's own
   // devOpenLoad prop below). Tree-shaken in prod.
   const devRoute = useDevRoute();
+  const chatLayout = useNarrationLayout() === "chat";
+  // A send tells the narrator the shown entries from Pages with thinking off (Q10, Q31).
+  const tellsActionList = !chatLayout && thinkingMode === "off";
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     switch (devRoute?.modal) {
@@ -1337,10 +1416,10 @@ const GameViewer = ({
     setSelectedEntity(entities[0].name);
     setIsEntityModalOpen(true);
   }, [devRoute?.modal, entities]);
-  // The stranger popup opens for the first entity with a Stranger Name, else the first entity.
+  // The stranger popup opens for the first entity with a stranger face, else the first entity.
   useEffect(() => {
     if (!import.meta.env.DEV || devRoute?.modal !== 'stranger' || entities.length === 0) return;
-    const stranger = entities.find((e) => e.strangerName?.trim()) ?? entities[0];
+    const stranger = entities.find(hasStrangerFace) ?? entities[0];
     setSelectedStranger({ entityId: stranger.id, label: stranger.strangerName?.trim() || stranger.name });
   }, [devRoute?.modal, entities]);
   // DEV dev-router: boot mid-game from a canned fixture. DevFixtureLoader has loaded the world (so
@@ -1358,9 +1437,9 @@ const GameViewer = ({
       // Seed the fixture as an id-keyed record and load it by that id.
       const id = randomUUID();
       await putSaveRecord({ ...(fx.save as unknown as Record<string, unknown>), id, name: fx.saveName } as unknown as SaveRecord);
-      await loadGame(id, locations, stats, codeEntities.world, worldOverview.vrmStore, worldItems);
+      await loadGame(id, authoredLocations, stats, authoredEntities, worldOverview.vrmStore, worldItems, undefined, authoredConnections, inPlay.isEntityOn);
     })();
-  }, [devRoute?.fixture, locations, stats, codeEntities, loadGame, worldOverview.vrmStore, worldItems]);
+  }, [devRoute?.fixture, authoredLocations, stats, authoredEntities, loadGame, worldOverview.vrmStore, worldItems, authoredConnections, inPlay]);
   const imageAttachments = useImageAttachments();
   const mounted = useMountedRef();
   // DEV dev-router: `attach=sample` stages attached images once the game has a committed turn, through the
@@ -1381,28 +1460,70 @@ const GameViewer = ({
       setActionAttachments((prev) => setTurnAttachments(prev, turnId, pending.slice(2)));
     })();
   }, [devRoute?.attach, fullMessageHistory, mounted, setPendingAttachments, setActionAttachments]);
-  // Images, tells and script pins belong to turns in the history. Between turns, drop the ones whose turn failed, rolled back or
+  // Images, tells, sent lists and script pins belong to turns in the history. Between turns, drop the ones whose turn failed, rolled back or
   // was regenerated. The controller marks a running turn at once: a regenerate starts inside an effect, and
   // its user message can commit before `isWaitingForAI` does.
   useEffect(() => {
     if (isWaitingForAI || abortControllerRef.current) return;
+    // A turn that left no message in history gives its list back, unsent, and the older lists their snapshots.
+    const unlanded = unlandedListRef.current;
+    unlandedListRef.current = null;
+    if (unlanded && !survivingTurnIds(fullMessageHistory).has(unlanded.turnId)) {
+      setActionList(unlanded.list);
+      setSentActions(unlanded.sent);
+      // Anything typed or attached during the wait wins over the unsent turn's own.
+      const box = unlanded.box;
+      if (box) {
+        setPlayerInput((now) => now || box.text);
+        if (box.images.length) setPendingAttachments((now) => (now.length ? now : box.images));
+      }
+    }
     setActionAttachments((prev) => pruneAttachments(prev, fullMessageHistory));
     setScriptTells((prev) => pruneTells(prev, fullMessageHistory));
+    setSentActions((prev) => pruneTurnMap(prev, fullMessageHistory));
     setMemoryNotes((prev) => pruneScriptPins(prev, fullMessageHistory));
-  }, [isWaitingForAI, fullMessageHistory, setActionAttachments, setScriptTells, setMemoryNotes]);
+  }, [isWaitingForAI, fullMessageHistory, setActionAttachments, setScriptTells, setSentActions, setMemoryNotes, setActionList, setPlayerInput, setPendingAttachments]);
   const [isEditingWorld, setIsEditingWorld] = useState(false);
   const [uiHidden, setUiHidden] = useState(false); // hide all panels/buttons to reveal the background image
+  const [leftCollapsed, setLeftCollapsed] = useGameLeftCollapsed();
+  const [rightCollapsed, setRightCollapsed] = useGameRightCollapsed();
+  const [storyWidth, setStoryWidth] = useGameStoryWidth();
+  const reducedMotion = usePrefersReducedMotion();
+  const headerWidthRef = useHeaderWidthVar();
+  const leftMotion = useSideMotion(leftCollapsed, reducedMotion);
+  const rightMotion = useSideMotion(rightCollapsed, reducedMotion);
+  // The side whose drawer is open; its tab is the left panel's tab below, or the right panel's active tab.
+  const [drawerSide, setDrawerSide] = useState<PanelSide | null>(null);
+  const [leftTab, setLeftTab] = useState<string | undefined>(undefined);
+  /** Opens a collapsed side's drawer on one of its tabs, closing the other side's. */
+  const openDrawer = useCallback((side: PanelSide, tab: string) => {
+    if (side === 'left') setLeftTab(tab);
+    else setRightTab(tab);
+    setDrawerSide(side);
+  }, [setRightTab]);
+  const closeDrawer = useCallback(() => setDrawerSide(null), []);
   const [showEditorExitPrompt, setShowEditorExitPrompt] = useState(false);
   const [lastPromptChars, setLastPromptChars] = useState(0);
   const [suggestedLocation, setSuggestedLocation] = useState<GameLocation | null>(null);
   // The entities whose "come along" waits on the offered move: Go brings them, Dismiss drops them.
   const entityOfferRef = useRef<EntityMoveOffer>(NO_ENTITY_OFFER);
-  // The peel-off of the turn that made the offer, so Go creates the follower it promised.
-  const followerPeelRef = useRef<{ peelOff: PeelOff; turnId: string } | undefined>(undefined);
-  /** Where tracked entities and runtime characters stand, and who follows the player. */
-  const liveFollowerState = (): FollowerState => ({
-    positions: { ...runtimePositions(discoveredEntities), ...entityPositions }, followers: entityFollowers,
-  });
+  /** Where tracked entities and runtime characters stand, and their engine state. */
+  const liveFollowerState = (): FollowerState => currentBook();
+  // The story minute the clock reads now.
+  const storyNow = storyMinute(gameTime, calendar);
+  // Every course the engine positions, on its gated Routine; stranded entities run too, minus off places (Q2, Q52).
+  const routines = useMemo(() => {
+    const off = authoredLocations.filter((l) => !inPlay.isLocationOn(l.id)).map((l) => l.id);
+    const cast = positionedCast(codeEntities.world, personaRef);
+    return castCourses(off.length ? cast.map((e) => off.reduce(withoutRoutinePlace, e)) : cast, discoveredInPlay, inPlay.routinePick);
+  }, [authoredLocations, inPlay, codeEntities, personaRef, discoveredInPlay]);
+  // The disabled entities, whose follows end at the next commit (Q9).
+  const { offEntityIds } = inPlay;
+  /** The position engine's view of the world at `now`, with the player at `playerAt`. */
+  const positionWorldAt = useCallback((now: number, playerAt: string | undefined): PositionWorld => ({
+    ...positionWorld(routines, now, playerAt, locations, connections, undefined, playerStartLocationId),
+    ...(offEntityIds.size ? { off: offEntityIds } : {}),
+  }), [routines, locations, connections, playerStartLocationId, offEntityIds]);
   // AI progress feedback: which request is running, its streamed output estimate (null = indeterminate), and
   // whether the player may already type their next action (choices done, background requests still finishing).
   const [aiRequestType, setAiRequestType] = useState<AIRequestType | null>(null);
@@ -1499,7 +1620,9 @@ const GameViewer = ({
     return () => { resize.disconnect(); mutations.disconnect(); };
   }, [isDebugOpen, debugFindTerms, syncDebugTicks]);
   const isMobile = useIsMobile();
-  const [mobilePanel, setMobilePanel] = useState("game");
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("game");
+  // The mobile panel strip's place while it moves; the tab pill follows it.
+  const [mobileSwipe] = useState(createSwipeProgress);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
 
   /**
@@ -1541,6 +1664,8 @@ const GameViewer = ({
     // edits. Narration is rewound by slicing the live flat history to the rolled-back page instead.
     const success = loadGameState(targetState, locations, { keepLiveHistory: true });
     if (!success) return;
+    // The list's snapshots postdate the turn rolled back to.
+    setActionList([]);
     // A render still in flight targets a turn this rollback discards — stop it, or its finished image
     // would land back under the dead turn id (and ride into any opted-in save, invisible and unprunable).
     cancelSceneImage();
@@ -1604,6 +1729,16 @@ const GameViewer = ({
     editorLeave.current = null;
     pending?.cancel();
   }, [worldChangedElsewhere, showEditorExitPrompt]);
+  /** Lands a side panel tab: a collapsed side opens its drawer, a docked right side selects the tab. */
+  const landSideTab = (tab: string | undefined) => {
+    if (!tab) return;
+    if ((GAME_LEFT_PANEL_TABS as readonly string[]).includes(tab)) {
+      if (leftCollapsed) openDrawer('left', tab);
+    } else if ((GAME_RIGHT_PANEL_TABS as readonly string[]).includes(tab)) {
+      if (rightCollapsed) openDrawer('right', tab);
+      else setRightTab(tab);
+    }
+  };
   const openSurfaceHere = (steps: SurfaceSteps) => {
     surfaceNav.land(steps);
     switch (steps.dialog) {
@@ -1611,6 +1746,7 @@ const GameViewer = ({
         if (isMobile && stepTab(steps, 'gameViewer')) setMobilePanel('character');
         // Every game screen target sits in the story panel.
         else if (isMobile && targetRoute(steps)) setMobilePanel('game');
+        else if (!isMobile) landSideTab(stepTab(steps, 'gameViewer'));
         break;
       case 'settings': {
         const landing = settingsLanding(steps);
@@ -1661,15 +1797,22 @@ const GameViewer = ({
   const customPersona = customPersonaEntity(traitEntities);
   /** The rows this playthrough draws from. The picked entities come off the initial-turn seed, so a loaded
    *  save rebuilds the same pool. */
-  const sessionPool = () => openingPool({
-    overview: worldOverview,
-    entities,
-    locations,
-    startingLocationId: openingSessionRef.current.startLocationId ?? pageOneLocationId(fullMessageHistory),
-    picked: pickedAtStart(discoveredEntities),
-    persona,
-    customPersona,
-  });
+  const sessionPool = () => {
+    const startingLocationId = openingSessionRef.current.startLocationId ?? pageOneLocationId(fullMessageHistory);
+    return openingPool({
+      overview: worldOverview,
+      entities,
+      locations,
+      startingLocationId,
+      placesOf: openingPlacesOf(openingPlacement, entities, { locations, connections }, startingLocationId, startRoutinePick(
+        { entities: authoredEntities, locations: authoredLocations, connections: authoredConnections, traits: authoredTraits, traitGroups: worldTraitGroups, stats: worldStats, statGroups: authoredStatGroups, options: worldOptions },
+        personaRef?.source === "world" ? personaRef.entityId : null, worldOptionValues,
+      )),
+      picked: pickedAtStart(discoveredInPlay),
+      persona,
+      customPersona,
+    });
+  };
   // An Opening Narration is page one, never a directive to the narrator, so a session that drew one reads
   // an action row here.
   const openingCue = (): DrawnOpening => {
@@ -1679,7 +1822,7 @@ const GameViewer = ({
   };
   /** A drawn row's text, with its owning entity as the Entity Name. */
   const resolveDrawn = (drawn: DrawnOpening): string => resolveOpening(drawn.opening.text, {
-    owner: openingOwner(drawn.ownerId, [...entities, ...pickedAtStart(discoveredEntities)], persona, customPersona),
+    owner: openingOwner(drawn.ownerId, [...entities, ...pickedAtStart(discoveredInPlay)], persona, customPersona),
   });
   /** The `turn.action` a re-rolled turn reads: history's "START GAME" proxy stands for the opening cue. */
   const rerolledAction = (action: string): string => {
@@ -1730,17 +1873,65 @@ const GameViewer = ({
   const likeAsk = useLikePrompt(worldId ? String(worldId) : null, turnCommitNonce, fullMessageHistory);
   const [pendingTurnNonce, setPendingTurnNonce] = useState(0);
 
+  /** The list the turn on `page` was sent with. */
+  const sentListOf = (page: number) => {
+    const turnId = pageTurnId(fullMessageHistory, page);
+    return turnId ? sentActions[turnId] : undefined;
+  };
+  /** The state a re-roll of the turn on `page` starts from: the state at send, its listed actions applied (Q53). */
+  const preTurnStateOf = (page: number) =>
+    sentListOf(page)?.after?.state ?? regenerateState(gameStates, initialStateRef.current, page);
+
+  /**
+   * Regenerate a turn sent with a list (Q14, Q51): back to the state at send, the list live again and the action
+   * and its images back in the box, waiting for Send. False when the record cannot reopen.
+   */
+  const reopenRegenerate = (page: number, action: string): boolean => {
+    const turnId = pageTurnId(fullMessageHistory, page);
+    const reopened = reopenSent(sentListOf(page));
+    if (!turnId || !reopened || !restoreSendState(reopened.restore)) return false;
+    setActionList(reopened.list);
+    setSentActions(({ [turnId]: _reopened, ...rest }) => rest);
+    setPendingAttachments(latestTurnAttachments(actionAttachments, fullMessageHistory));
+    rewindForReroll(page);
+    setPlayerInput(action);
+    return true;
+  };
+
+  /** Restores a turn's state at send, persona included, keeping the live narration and notes. */
+  const restoreSendState = ({ state, persona: ref }: ActionSnapshot): boolean => {
+    if (!loadGameState(state, locations, { keepLiveHistory: true })) return false;
+    const samePersona = ref && personaRef ? samePersonaRef(ref, personaRef) : !ref && !personaRef;
+    if (!samePersona) setPersonaRef(ref ?? undefined);
+    return true;
+  };
+
+  /** Drops the turn on `page` for a re-roll; the restored state is the caller's. */
+  const rewindForReroll = (page: number) => {
+    // Stop a render aimed at the turn being re-rolled: left running, it would finish into a dead turn id
+    // AND overlap the re-roll's language-model request on the one GPU.
+    cancelSceneImage();
+    rewindHistoryToPage(page - 1);
+    // Mark the current turn's AI-context entry as superseded; the next send appends a fresh one.
+    setDebugTurns((prev) => markRegeneratedTurn(prev));
+  };
+
   /** Regenerate the turn on `page`, which Chat passes as the latest page. */
   const handleRegenerate = (page = currentPage) => {
     if (!canRegenerate(page, totalPages)) return;
+    const action = lastTurnAction(fullMessageHistory);
+    if (page >= 2 && action !== null && !chatLayout && reopenRegenerate(page, action)) return;
+    // Chat has no tray, so its re-roll keeps the listed actions and re-sends at once (Q55).
+    const chatRecord = page >= 2 && chatLayout ? sentListOf(page) : undefined;
+    const chatSent = chatRecord?.after ? chatRecord : undefined;
     // Regenerating the opening turn (page 1) restores the pre-game state, not a gameStates entry. On a
     // loaded save that snapshot was never captured (initialStateRef is only set during a live first turn),
     // so reconstruct a pre-opening baseline from the current state with its history emptied — re-sending
     // START GAME from there re-captures initialStateRef and regenerates the opening.
+    // A list that cannot reopen is dropped with its actions, so nothing applied goes untold.
     const previousState =
       regenerateState(gameStates, initialStateRef.current, page) ??
       (page === 1 ? { ...saveCurrentGameState(), fullMessageHistory: [] } : null);
-    const action = lastTurnAction(fullMessageHistory);
     if (!previousState || action === null) return;
     // Page one draws again, before anything is restored: a pool of one Opening Narration has nothing else
     // to show, so the page stays as it is. The draw is recorded only once the restore has succeeded.
@@ -1750,16 +1941,12 @@ const GameViewer = ({
     if (redraw?.opening.kind === "narration" && redrawText === pageOneNarration(fullMessageHistory)) return;
     // Restore the prior turn's mechanical state but keep the live narration + notes (see handleRollback),
     // rewinding the flat history to just before the turn being re-rolled. The re-send appends a fresh turn.
-    if (!loadGameState(previousState, locations, { keepLiveHistory: true })) return;
-    // Stop a render aimed at the turn being re-rolled: left running, it would finish into a dead turn id
-    // AND overlap the re-roll's language-model request on the one GPU.
-    cancelSceneImage();
-    rewindHistoryToPage(page - 1);
+    if (!(chatSent?.after ? restoreSendState(chatSent.after) : loadGameState(previousState, locations, { keepLiveHistory: true }))) return;
+    setActionList([]);
+    rewindForReroll(page);
     // The notes scratchpad is left alone: regen only targets the latest page, where the live scratchpad is
     // always at least as fresh as the message's frozen notes (a stopped turn freezes none at all —
     // re-seeding from the message here wiped the player's notes).
-    // Mark the current turn's AI-context entry as superseded; sendGameAction appends a fresh one.
-    setDebugTurns((prev) => markRegeneratedTurn(prev));
     // Regenerating the opening (page 1) returns to the not-started state. An Opening Narration then starts
     // the game again on its own; an Opening Action fills the box for the player to edit and submit.
     if (redraw) {
@@ -1781,7 +1968,10 @@ const GameViewer = ({
       );
       return;
     }
-    pendingTurnRef.current = { action, resentAttachments: latestTurnAttachments(actionAttachments, fullMessageHistory), regenerate: true };
+    pendingTurnRef.current = {
+      action, resentAttachments: latestTurnAttachments(actionAttachments, fullMessageHistory), regenerate: true,
+      resentList: chatSent,
+    };
     setPendingTurnNonce((n) => n + 1);
   };
 
@@ -1899,7 +2089,7 @@ const GameViewer = ({
   const rerunChoiceScripts = async (
     prev: AITurnResult, action: string, drawn: readonly string[], page: number,
   ): Promise<ChoicesRerun> => {
-    const preTurnState = regenerateState(gameStates, initialStateRef.current, page);
+    const preTurnState = preTurnStateOf(page);
     if (!preTurnState?.globalStats) return { ran: false };
     const preTurn = liveSnapshotOf(preTurnState);
     const turnHours = prev.timeDelta ?? FLAT_HOURS_PER_TURN;
@@ -1984,7 +2174,7 @@ const GameViewer = ({
   const handleRegenerateStats = (page = currentPage) => {
     const target = partialRegenTarget(page);
     if (!target || !statUpdatesEnabled || requestStatCount === 0) return;
-    const preTurnState = regenerateState(gameStates, initialStateRef.current, page);
+    const preTurnState = preTurnStateOf(page);
     if (!preTurnState?.globalStats) return;
     const preTurn = liveSnapshotOf(preTurnState);
     const { prev, action } = target;
@@ -2046,7 +2236,8 @@ const GameViewer = ({
         // The turn's Inventory pass replays as saved, at the place and presence it landed at (Q53, Q62).
         const turnLocation = locations.find((loc) => loc.id === prev.inventoryLocationId) ?? null;
         const commitTotals = startActionTotals();
-        const landed = landInventoryPass(prev.inventoryOps ?? [], turnLocation, prev.inventoryOwners ?? [], replay.base, {
+        // The saved operations already left out what the turn's Listed Actions did.
+        const { landed } = landInventoryPass(prev.inventoryOps ?? [], turnLocation, prev.inventoryOwners ?? [], replay.base, {
           ...liveItemsRef.current, runtimeItems: preTurnItems.runtimeItems,
         }, commitTotals);
         const base = landed?.state ?? replay.base;
@@ -2277,6 +2468,20 @@ const GameViewer = ({
   const statEnabled = useMemo(() => activeStatEnabled(globalStats, statTraits), [globalStats, statTraits]);
   const activeStats = useMemo(() => enabledStats(globalStats, statEnabled), [globalStats, statEnabled]);
   statEnabledRef.current = statEnabled;
+  // The right rail's dots: changes to what the player's tabs show, made while that tab is out of sight.
+  const statusSigns = useMemo(() => {
+    const played = personaRef ? playedEntityIds(personaRef, traitEntities) : [];
+    return statusSignatures({
+      stats: globalStats, statEnabled, traits: globalTraits, disabledTraitIds,
+      playedTraits: played.map((id) => ownedTraits[id]), copies: itemCopies,
+    });
+  }, [globalStats, statEnabled, globalTraits, disabledTraitIds, personaRef, traitEntities, ownedTraits, itemCopies]);
+  // The tab the open right panel or drawer shows, as the panel reports it.
+  const [shownRightTab, setShownRightTab] = useState<string | null>(null);
+  const { dots: rightDots, rebase: rebaseRightDots } = useChangeDots(statusSigns, {
+    watching: !isMobile && rightCollapsed,
+    shownTab: shownRightTab,
+  });
 
   /** Each entity's stat traits in force under `owned`, the owned trait state they read, in `world`. */
   const entityInForceUnder = useCallback(
@@ -2323,19 +2528,38 @@ const GameViewer = ({
   );
 
   // The same derivation for a paged-back turn, so history shows the stats that were live on that turn.
+  const viewChosenTraits = useMemo(() => refreshChosenTraits(viewTraits, traits), [viewTraits, traits]);
   const viewActiveStats = useMemo(
     () => activeUnderTraits(
-      viewStats, refreshChosenTraits(viewTraits, traits), viewDisabledTraitIds, traitOrder,
+      viewStats, viewChosenTraits, viewDisabledTraitIds, traitOrder,
       globalRowTraits({ ownedTraits: viewOwnedTraits, entityStats: viewEntityStats }, gatedWorld()),
     ).activeStats,
-    [viewStats, viewTraits, viewDisabledTraitIds, viewOwnedTraits, viewEntityStats, traitOrder, traits, gatedWorld],
+    [viewStats, viewChosenTraits, viewDisabledTraitIds, viewOwnedTraits, viewEntityStats, traitOrder, gatedWorld],
   );
+  // Each Avatar's active traits on the turn on screen, in the switch-on order that turn kept.
+  const viewLookTraits = useMemo(() => {
+    const scope = traitForceScope({
+      traits: viewChosenTraits, disabledTraitIds: viewDisabledTraitIds, ownedTraits: viewOwnedTraits, entityStats: viewEntityStats,
+    }, gatedWorld());
+    return avatarLookTraits({ ...scope, global: inAuthoredOrder(scope.global, traitOrder) }, viewBodies.traitsOn ?? []);
+  }, [viewChosenTraits, viewDisabledTraitIds, viewOwnedTraits, viewEntityStats, viewBodies, traitOrder, gatedWorld]);
+
+  // Tree order, which orders color blends.
+  const authoredLookStats = useMemo(() => statsInTreeOrder(authoredStatGroups, stats), [authoredStatGroups, stats]);
+  useEffect(() => {
+    // Authored stats anchor the slider scale, so a max the AI raised grows the slider rather than shrinking it.
+    // The traits in force already chose these stats, so each one is on whatever its authored flag says.
+    const enabled = Object.fromEntries(viewActiveStats.map((s) => [s.id, true]));
+    setPlayerLookStats({ stats: viewActiveStats, authored: authoredLookStats, enabled, traits: viewLookTraits.player });
+  }, [viewActiveStats, authoredLookStats, viewLookTraits, setPlayerLookStats]);
+
+  useEffect(() => { setViewEntityLookTraits(viewLookTraits.owners); }, [viewLookTraits, setViewEntityLookTraits]);
 
   useEffect(() => {
-    // Authored stats anchor the morph scale, so a max the AI raised grows the shape key rather than
-    // shrinking every point below it.
-    setBodyMorphValues(statMorphMap(viewActiveStats, stats));
-  }, [viewActiveStats, stats, setBodyMorphValues]);
+    const inForce = entityInForceUnder(viewOwnedTraits);
+    setViewEntityStatEnabled(Object.fromEntries(Object.entries(viewEntityStats)
+      .map(([id, held]) => [id, activeStatEnabled(held, inForce(id))])));
+  }, [viewEntityStats, viewOwnedTraits, entityInForceUnder, setViewEntityStatEnabled]);
 
   // Ambient audio follows the viewed location (the paged turn's when browsing history, the live one
   // otherwise). Centralizing it here also fixes the load/rollback gap where `loadGameState` set the
@@ -2401,13 +2625,21 @@ const GameViewer = ({
 
   // The world as this turn's passes read it, over what its code wrote and React has not rendered yet, at the
   // time its clock advances reached. Null when code moved nothing, which leaves every pass on the memoized reads.
+  // The stranger labels of an authored cast plus the discovered characters, against the live met list.
+  const strangerLabelsOf = useCallback((cast: Entity[]) => labelsInPlay(
+    [...cast, ...discoveredAsEntities(discoveredInPlay)], metEntities, persona?.entity ?? null, locations,
+    new Set(discoveredInPlay.map((d) => d.entity.id)), strangerAliases,
+  ), [discoveredInPlay, metEntities, persona, locations, strangerAliases]);
+
   const turnCodeView = useCallback((over: TurnCodeState | null, elapsed?: number): SceneWrites | null => {
     if (!over) return elapsed === undefined ? null : { elapsed };
     const overPins = pinsFor(over.codePins ?? {}, {
       traits: over.globalTraits, disabledTraitIds: over.disabledTraitIds, ownedTraits: over.ownedTraits, stats: over.globalStats,
+      entityStats: over.entityStats,
     });
     const resolve = (text: string) => resolveFor(overPins.world, text);
     const held = savedTraits(over, traits);
+    const boxCast = entitiesFor(overPins);
     return {
       ...activeUnderTraits(
         resolveStatNames(over.globalStats, resolve), held.acquired, held.disabledTraitIds, traitOrder,
@@ -2418,9 +2650,11 @@ const GameViewer = ({
       resolve,
       resolveTrait: (trait, text, owner) => resolveTraitFor(overPins, trait, text, owner),
       resolveEntity: (entity, text) => resolveEntityFor(overPins, entity, text),
+      entities: boxCast,
+      strangerLabels: strangerLabelsOf(boxCast),
       ...(elapsed === undefined ? {} : { elapsed }),
     };
-  }, [pinsFor, resolveFor, resolveTraitFor, resolveEntityFor, traits, traitOrder, gatedWorld]);
+  }, [pinsFor, resolveFor, resolveTraitFor, resolveEntityFor, entitiesFor, strangerLabelsOf, traits, traitOrder, gatedWorld]);
 
   // The lore a running turn's prompts read under its code's lore writes; the live entries when they changed none.
   const turnLore = useCallback((over: TurnCodeState | null, view: SceneWrites | null): DictionaryEntry[] => {
@@ -2466,11 +2700,11 @@ const GameViewer = ({
   }, [gatedWorld]);
   // Every roster lists an unmet stranger under its true name with its label beside it. This reads the live
   // met list; the turn start reads its own, as the turn begins.
-  const strangerLabels = useMemo(
-    () => labelsInPlay(
-      allEntities, metEntities, persona?.entity ?? null, locations, new Set(discoveredEntities.map((d) => d.entity.id)), strangerAliases,
-    ),
-    [allEntities, metEntities, persona, locations, discoveredEntities, strangerAliases],
+  const strangerLabels = useMemo(() => strangerLabelsOf(entities), [strangerLabelsOf, entities]);
+  // What the Entities chip's Movement tags read: every Unique entity's routine and follow state, now.
+  const sceneMovement = useMemo(
+    () => ({ routines, uniques: uniqueStates, now: storyNow }),
+    [routines, uniqueStates, storyNow],
   );
   // The playthrough as a Chip Scene: the live adapter. A turn's location and a before box in flight each
   // yield their own scene.
@@ -2492,8 +2726,10 @@ const GameViewer = ({
     location: currentLocation,
     locations,
     connections,
+    canEnter: inPlay.canEnter,
     entities,
     allEntities,
+    standings: liveStandings,
     participants,
     notes: playerNotes,
     time: chipTime,
@@ -2505,6 +2741,7 @@ const GameViewer = ({
     placements: worldPlacements,
     strangerLabels,
     equipment: sceneEquipment,
+    movement: sceneMovement,
   });
 
   const contextValues = useCallback((
@@ -2526,8 +2763,7 @@ const GameViewer = ({
 
   // Scene-roster override for the entity chips: choices and re-roll prompts see only who is in the scene.
   const sceneEntityOverride = useCallback(
-    (sceneLoc: GameLocation | null, sceneEntities: Entity[]): TokenValues =>
-      sceneEntityChipValues(liveScene(sceneLoc), entityIdsAt(sceneLoc?.id, sceneEntities)),
+    (sceneLoc: GameLocation | null, sceneEntities: Entity[]): TokenValues => sceneRosterValues(liveScene(sceneLoc), sceneLoc, sceneEntities),
     [liveScene],
   );
 
@@ -2581,15 +2817,17 @@ const GameViewer = ({
     () => buildToolSnapshot(liveScene(), withLoreToggles(playthroughDictionaries, loreToggles), toolMemorySource(), betweenTurnsScript()),
     [liveScene, playthroughDictionaries, loreToggles, toolMemorySource, betweenTurnsScript],
   );
+  // The authored world minus what the gates turn off, for every in-play reader of `getWorldData`.
+  const getInPlayWorldData = useCallback(() => inPlayWorldData(getWorldData(), inPlay), [getWorldData, inPlay]);
   /** The Player View of the current snapshot, with its chain of the turns up to it. */
   const playerViewReach = useCallback((): PlayerViewReach => {
     const current = saveCurrentGameState();
     const chain = [...gameStates.slice(0, closedTurns(fullMessageHistory)), current];
     const view = buildPlayerView({
-      world: getWorldData(), chain, history: fullMessageHistory, persona: persona?.entity ?? null, resolve: resolvePH,
+      world: getInPlayWorldData(), chain, history: fullMessageHistory, persona: persona?.entity ?? null, resolve: resolvePH, isEntityOn: inPlay.isEntityOn,
     });
     return { view, current };
-  }, [saveCurrentGameState, gameStates, fullMessageHistory, getWorldData, persona, resolvePH]);
+  }, [saveCurrentGameState, gameStates, fullMessageHistory, getInPlayWorldData, persona, resolvePH, inPlay]);
   // A Formaquestion Tool and the code test read the Player View while the game shows (Q20).
   const helpToolWorld = useCallback((fired?: readonly DictionaryEntry[]) => {
     const reach = playerViewReach();
@@ -2600,7 +2838,7 @@ const GameViewer = ({
       memory && playerViewMemory(memory), script && playerViewScript(script, reach, new Set(fired?.map((entry) => entry.id))),
     );
   }, [playerViewReach, toolMemorySource, betweenTurnsScript, liveScene, playthroughDictionaries, loreToggles]);
-  const helpAuthoredWorld = useCallback(() => playerViewWorld(getWorldData(), playerViewReach()), [getWorldData, playerViewReach]);
+  const helpAuthoredWorld = useCallback(() => playerViewWorld(getInPlayWorldData(), playerViewReach()), [getInPlayWorldData, playerViewReach]);
   // The game lean reads the Player View, the story so far as the narration builds it, and the narration's lore (Q9, Q15).
   const helpGameWorld = useCallback((): GameWorldInput => {
     const turns = parseEffectiveTurns(fullMessageHistory);
@@ -2620,6 +2858,8 @@ const GameViewer = ({
   const turnPrompts = (): TurnPrompts => ({
     locationChange: locationChangePromptText || "",
     locationChangeUser: locationChangeUserPrompt,
+    narratedMove: narratedMovePrompt,
+    narratedMoveUser: narratedMoveUserPrompt,
     entityLocation: entityLocationPrompt,
     entityLocationUser: entityLocationUserPrompt,
     thinking: thinkingPrompt,
@@ -2629,6 +2869,7 @@ const GameViewer = ({
     storyboard: storyboardPrompt,
     narrationUser: narrationUserPrompt,
     oocDirective: oocDirectivePrompt,
+    actionList: actionListPrompt,
     // This session's opening, resolved: an old save's history holds the sentinel rather than the text.
     openingCue: resolveDrawn(openingCue()),
     choices: resolvedChoicesPrompt,
@@ -2739,6 +2980,8 @@ const GameViewer = ({
     describeCharacters,
     inventoryDue: worldItems.length > 0 || itemCopies.length > 0 || currenciesSettle(worldCurrencies),
     inventoryTextPass: !schemaAccepted(resolveEndpointForKind("inventory").reasoning),
+    entityLocationTextPass: !schemaAccepted(resolveEndpointForKind("entityLocation").reasoning),
+    clockTextPass: !schemaAccepted(resolveEndpointForKind("timePassed").reasoning),
     imageAttachments,
     promptAttachments,
     language,
@@ -2817,11 +3060,15 @@ const GameViewer = ({
       /** Where tracked entities stood and who followed when the turn began, where the player stood, and what
        *  the turn already applied when its move committed. */
       entityMove: { start: FollowerState; from: string | undefined; applied: FollowerState };
+      /** The narration outside its dialogue, which pulls the characters it names into the final place. */
+      prose: string;
+      /** The shown Listed Actions the turn was sent with, which the Inventory pass must not repeat (Q7). */
+      told: readonly ToldAction[];
     },
   ) => {
     const { signal } = turn;
     // The move offer lands before the reveal is held below — it is the one result that has always
-    // appeared while the narration was still fading. Scoped to the local navigable graph: the router's
+    // appeared while the narration was still fading. Scoped to the places a move can reach: the router's
     // reply named one of these or nothing.
     // A During AI Output move already beats the offer, so it never shows.
     const toolCalls = worldToolTurnRef.current;
@@ -2856,18 +3103,40 @@ const GameViewer = ({
     const afterTriggers = toolCalls?.armed("after") ?? [];
     // The story's item changes land before the stat deltas, which then read their effects (Q53).
     const discovered = commit.discoveries.map((d) => ({ id: d.entity.id, name: d.entity.name }));
-    const { start: moveStart, from: moveFrom } = turn.entityMove;
-    const movedTo = moveFrom ? commitEntityMoves(moveStart, commit, { from: moveFrom, to: turn.location?.id }).state.positions : undefined;
-    // What the pass validates against, which the turn keeps for its re-roll.
-    const inventoryRecord: Pick<AITurnResult, 'inventoryOwners' | 'inventoryLocationId'> = commit.inventoryOps.length ? {
-      inventoryOwners: inventoryOwnersAt(turn.location, discovered, movedTo),
+    const { start: moveStart, from: moveFrom, applied: moveApplied } = turn.entityMove;
+    /** The engine's view at the turn's end, `hours` after it began. */
+    const endWorld = (hours: number) => positionWorldAt(storyMinute(turn.context.gameTime + hours, commit.clock.calendar), moveFrom);
+    /** The book the turn's moves start from: on the opening turn, placed again for the hour it measured. */
+    const startBook = (book: FollowerState, hours: number) => (commit.isOpeningTurn ? reseatForOpening(book, endWorld(hours)) : book);
+    /** `book` with the characters the prose names called over to `location`. */
+    const calledOver = (book: FollowerState, location: GameLocation | null | undefined, world: PositionWorld) =>
+      (location && turn.prose ? selectVisitorAdditions({ prose: turn.prose, entities, allEntities, location, book, world }) : book);
+    /** Where everyone stands for the pass: after the turn's moves, with the characters the prose calls over (Q100). */
+    const ownerPositions = () => {
+      const world = endWorld(commit.turnHours);
+      const moved = moveFrom
+        ? commitEntityMoves(startBook(moveStart, commit.turnHours), commit, { from: moveFrom, to: turn.location?.id }, world).state
+        : undefined;
+      // Without a move the pass reads where everyone stood this turn, so only a pull changes it.
+      const book = moved ?? moveApplied;
+      const pulled = calledOver(book, turn.location, world);
+      return moved || pulled !== book ? pulled : undefined;
+    };
+    const passBook = ownerPositions();
+    const inventoryOwners = commit.inventoryOps.length ? inventoryOwnersAt(turn.location, discovered, passBook) : [];
+    // The After batch and item scripts read the Inventory pass's cast at the minute it was placed for (Q218, Q227, Q234).
+    scriptBookRef.current = { book: passBook ?? moveApplied, now: endWorld(moveFrom ? commit.turnHours : 0).scene.now };
+    const commitTotals = startActionTotals();
+    const { kept: inventoryKept, landed: inventory } = landInventoryPass(
+      commit.inventoryOps, turn.location, inventoryOwners, outputWritten,
+      { ...liveItemsRef.current, runtimeItems }, commitTotals, turn.told,
+    );
+    // What the pass landed and validated against, which the turn keeps for its re-roll.
+    const inventoryRecord: Pick<AITurnResult, 'inventoryOps' | 'inventoryOwners' | 'inventoryLocationId'> = commit.inventoryOps.length ? {
+      inventoryOps: inventoryKept,
+      inventoryOwners,
       ...(turn.location ? { inventoryLocationId: turn.location.id } : {}),
     } : {};
-    const commitTotals = startActionTotals();
-    const inventory = landInventoryPass(
-      commit.inventoryOps, turn.location, inventoryRecord.inventoryOwners ?? [], outputWritten,
-      { ...liveItemsRef.current, runtimeItems }, commitTotals,
-    );
     const outputBase = inventory?.state ?? outputWritten;
 
     // Reset the persistent bar deltas for this turn, then let stat changes + regen below re-fill them. The
@@ -2921,26 +3190,19 @@ const GameViewer = ({
       addLogEntry(`Moved to location: ${codeTarget.name}`);
     }
     const location = codeTarget ?? turn.location;
-    const { start, from, applied } = turn.entityMove;
     const meets = final.codeWrites?.entities?.flatMap((write) => (write.kind === 'meet' ? [write.entity] : []));
     if (meets?.length) setMetEntities((met) => withMet(met, meets));
-    if (from) {
-      const { state, offer } = commitEntityMoves(start, final, { from, to: location?.id });
-      const { peel } = turn.context;
-      const turnId = final.turn.turnId ?? currentTurnIdRef.current;
-      const anyKnown = new Set<string>();
-      if (state !== applied) {
-        applyFollowerState(
-          { followers: state.followers, positions: movedPositions(state.positions, applied.positions) },
-          peeledCharacters(state, peel, anyKnown, turnId),
-        );
-        // Removes peeled followers the final move dropped.
-        const unmade = peeledCharacters(applied, peel, anyKnown, turnId).filter((d) => !state.followers.includes(d.entity.id));
-        if (unmade.length) setDiscoveredEntities((prev) => prev.filter((d) => !unmade.some((gone) => gone.entity.id === d.entity.id)));
-      }
-      entityOfferRef.current = offer;
-      followerPeelRef.current = offer.comeAlong.length && peel ? { peelOff: peel, turnId } : undefined;
-    }
+    // Every Unique entity is placed for the turn's end, after the replies and the code moved who they name.
+    const world = endWorld(final.turnHours);
+    let afterMoves: FollowerState;
+    if (moveFrom) {
+      const moves = commitEntityMoves(startBook(moveStart, final.turnHours), final, { from: moveFrom, to: location?.id }, world);
+      afterMoves = moves.state;
+      entityOfferRef.current = moves.offer;
+    } else afterMoves = placeAll(startBook(moveApplied, final.turnHours), withPlayerAt(world, location?.id));
+    // The characters the prose names join the place where the player ends the turn, after every move.
+    afterMoves = calledOver(afterMoves, location, world);
+    applyFollowerState(afterMoves);
 
     setFullMessageHistory((prev) => {
       const updatedHistory = [...prev];
@@ -2978,13 +3240,15 @@ const GameViewer = ({
     await settleTurn(run?.gateStats ?? null, commitTotals);
     // The pass's item scripts run over the committed turn, and the snapshot holds their writes.
     await runItemEvents(inventory?.events ?? [], commitTotals);
+    // The end-of-turn placement is live for every later run.
+    scriptBookRef.current = null;
     armTurnSnapshot();
-    if (countsAsDemoAITurn({
+    cardTurns.countTurn({
       narrationIsDemoAI: settings.narrationIsDemoAI,
+      narrationIsBuiltInEngine: settings.narrationIsBuiltInEngine,
       isOpeningTurn: commit.isOpeningTurn,
       isNewTurn: turn.isNewTurn,
-      cardSeen: isDemoAICardSeen(),
-    })) setDemoAITurns(recordDemoAITurn());
+    });
     // The turn committed, so the before box's writes stand.
     beforeBoxUndoRef.current = null;
     turnStartItemsRef.current = null;
@@ -3027,8 +3291,10 @@ const GameViewer = ({
    */
   const sendGameAction = async (
     action: string,
-    { writtenNarration, attachments, resentAttachments, regenerate = false, script }: {
+    { writtenNarration, attachments, resentAttachments, resentList, regenerate = false, script }: {
       writtenNarration?: string;
+      /** The re-sent turn's list, recorded in place of the live one. */
+      resentList?: SentActionList<ActionSnapshot>;
       /** This turn replaces the latest one. */
       regenerate?: boolean;
       attachments?: ImageAttachment[];
@@ -3042,10 +3308,18 @@ const GameViewer = ({
     stopCommandPreview(); // a real turn supersedes any command preview
     // On the opening turn, snapshot the pre-game state so page 1 can be regenerated later.
     if (fullMessageHistory.length === 0) initialStateRef.current = saveCurrentGameState();
+    // The state after the list's newest entry, which a regenerate of this turn restores (Q52).
+    const sentState: ActionSnapshot | undefined =
+      resentList?.after ?? (actionList.length ? { state: saveCurrentGameState(), persona: personaRef ?? null } : undefined);
+    const sentEntries = resentList?.entries ?? actionList;
 
-    // Places navigable from here. Nowhere to go means nothing to route: the router's reply is matched
+    // Places a move can reach from here. Nowhere to go means nothing to route: the router's reply is matched
     // against this exact list, so with it empty the call cannot produce a move however the model answers.
-    const destinations = currentLocation ? navigableDestinations(currentLocation, locations, connections) : [];
+    const reach = walkableDestinationEntries(currentLocation, locations, connections, (id) => inPlay.canEnter(currentLocation?.id, id));
+    const destinations = reach.map((entry) => entry.location);
+    // A Chat send tells nothing (Q31) and a scripted turn plays canned narration. The narration pass rides the
+    // entries in the thinking-off lane only (Q10).
+    const told = script || chatLayout ? [] : toldActions(actionList);
     const planInput = {
       action,
       isGameStarted,
@@ -3054,6 +3328,7 @@ const GameViewer = ({
       hasCurrentLocation: !!currentLocation,
       writtenNarration,
       attachments: resentAttachments ?? attachments,
+      toldActions: told,
       settings: script ? { ...turnSettings(), thinkingMode: "off" as const, choicesEnabled: true } : turnSettings(),
       prompts: turnPrompts(),
     };
@@ -3114,24 +3389,27 @@ const GameViewer = ({
     let playerInFrame: boolean | undefined;
     let turnParticipants: string[] = [];
     // Where tracked entities stood and who followed when the turn began; every join this turn starts here.
-    const moveStart = liveFollowerState();
+    // Placed for now, so a character met since the last commit has its engine state before it is asked or pulled.
+    const moveStart = placeAll(liveFollowerState(), positionWorldAt(storyNow, currentLocation?.id));
     const moveFrom = currentLocation?.id;
     let entityIntents = NO_ENTITY_MOVES;
     // The join the narration is written over: followers already beside the player. Null when it moves nobody.
     let turnJoin: FollowerState | null = null;
+    // The narration and its prose outside dialogue, once read; the commit pulls from the prose.
+    let turnNarration = "";
+    let turnProse = "";
+    let placeSettled = false;
     const movingCast = positionedCast(allEntities, personaRef);
-    const peel = turnPeelOff(movingCast, randomUUID);
+    /** The engine's view of the turn: the routines at the turn's start, at `now`. */
+    const turnWorld = (now = storyNow) => positionWorldAt(now, moveFrom);
     // The runtime characters the scene list names, the only ones asked unless they already follow.
-    const runtimeInScene = new Set(discoveredEntities
+    const runtimeInScene = new Set(discoveredInPlay
       .filter((d) => participants.some((name) => sameCharacterName(name, d.entity.name)))
       .map((d) => d.entity.id));
     /** Each entity the turn asks whether it moves, with the replies it is offered. */
     const moveSubjects = (): TurnPassSubject[] => entityMoveRequests(
-      movingCast, authoredCast, moveStart, moveFrom, locations, connections, { runtime: discoveredEntities, inScene: runtimeInScene },
+      movingCast, entities, moveStart, moveFrom, turnWorld(), locations, connections, { runtime: discoveredInPlay, inScene: runtimeInScene },
     );
-    /** The characters `join` peels off, born this turn. */
-    const peeledBy = (join: FollowerState) =>
-      peeledCharacters(join, peel, new Set(discoveredEntities.map((d) => d.entity.id)), currentTurnIdRef.current);
 
     const reportFailure = (error: unknown) =>
       reportTurnFailure(classifyTurnError(error), error, false, isOpeningTurn);
@@ -3149,7 +3427,6 @@ const GameViewer = ({
       setChoicesReady(false);
       setSuggestedLocation(null);
       entityOfferRef.current = NO_ENTITY_OFFER;
-      followerPeelRef.current = undefined;
       // Stamp a stable id for this turn, written into its assistant JSON (powers the digest apply-guard).
       currentTurnIdRef.current = randomUUID();
       // The attachments leave the action box with the text, and the turn keeps the ones it may carry.
@@ -3159,6 +3436,12 @@ const GameViewer = ({
       const carried = resentAttachments ?? plan.attachments;
       setActionAttachments((prev) => setTurnAttachments(prev, turnId, carried));
       if (!resentAttachments) setPendingAttachments([]);
+      const liveAtSend = resentList ? reopenSent(resentList)?.list ?? [] : actionList;
+      // A written page one was never the player's text, and a scripted turn's action is canned.
+      const box = plan.writtenNarration === null && !script ? { text: action, images: resentAttachments ?? attachments ?? [] } : null;
+      unlandedListRef.current = { turnId, list: liveAtSend, sent: sentActions, box };
+      setActionList((list) => closeList(list).live);
+      setSentActions((map) => recordSent(map, turnId, sentEntries, tellsActionList && !script, sentState));
       // This turn hasn't entered history yet; an abort before the user message is added (the up-front
       // location request) must not be mistaken for "narration came through" (see abortGeneration).
       userTurnAddedRef.current = false;
@@ -3179,6 +3462,7 @@ const GameViewer = ({
       turnStartItemsRef.current = { ...liveItemsRef.current, copies: [...liveItemsRef.current.copies] };
       // The At Game Start scripts shape the opening: once per new playthrough, ahead of the before box.
       scriptLocationRef.current = turnLocation;
+      scriptBookRef.current = null;
       turnMemoriesRef.current = scriptMemoriesRef.current;
       turnReadRef.current = { action: scriptActionFor(planInput), number: closedTurns(fullMessageHistory) + 1, id: turnId, ...EMPTY_REPLY };
       if (isOpeningTurn) setOpeningTurnAction(turnReadRef.current.action);
@@ -3206,8 +3490,7 @@ const GameViewer = ({
       /** The world the turn's prompts read: the code view, with the followers at the player's side. */
       const sceneBox = (): SceneWrites | null => {
         if (!turnJoin) return codeView;
-        const peeled = peeledBy(turnJoin);
-        return { ...(codeView ?? {}), positions: turnJoin.positions, ...(peeled.length && { addedEntities: discoveredAsEntities(peeled) }) };
+        return { ...(codeView ?? {}), positions: turnJoin.positions, uniques: turnJoin.uniques, generics: turnJoin.generics };
       };
       // An On Call write since the narration's context values were built, which later prompts must read (Q52).
       let narrationBuilt = false;
@@ -3343,18 +3626,9 @@ const GameViewer = ({
         return classified;
       };
 
-      /** What the narration confirms: who took part, who is on screen, and who just walked in. */
+      /** What the narration confirms: who took part and who is on screen. Where the player ends the turn
+       *  settles once any narrated move has answered. */
       const applyNarrationReading = (narration: string): Partial<TurnMaterial> => {
-        // Commit the auto-resolved move now that the narration — already written for the new location —
-        // succeeded, so an aborted/empty turn leaves the location unchanged.
-        if (turnJoin) {
-          applyFollowerState({ followers: turnJoin.followers, positions: movedPositions(turnJoin.positions, moveStart.positions) }, peeledBy(turnJoin));
-        }
-        if (turnLocation && turnLocation.id !== currentLocation?.id) {
-          changeLocation(turnLocation);
-          addLogEntry(`Moved to location: ${turnLocation.name}`);
-        }
-
         const reading = readNarration({
           narration,
           priorNarration,
@@ -3365,36 +3639,50 @@ const GameViewer = ({
           sceneCast,
         });
         turnParticipants = reading.participants;
+        turnNarration = narration;
+        turnProse = reading.prose;
         // Apply the authoritative scene list now (narration is done). Independent of turnParticipants, which
         // still feeds stored participation and choices.
         setVisibleEntities(reading.visibleEntities);
-        meetNamed(narration, turnLocation ?? currentLocation);
         const plannedCast = sceneCast;
-        if (plannedCast) setStrangerAliases((prev) => strangerAliasesFromCast(prev, plannedCast, allEntities, isMetAtStart));
-        // Visitors affect the next turn's context (this turn's ctx already ran).
-        const visitorLocation = turnLocation;
-        if (visitorLocation) {
-          const turnId = currentTurnIdRef.current;
-          setDiscoveredEntities((prev) => {
-            const additions = selectVisitorAdditions({
-              prose: reading.prose,
-              entities,
-              allEntities,
-              location: visitorLocation,
-              locations,
-              presentIds: presentIdsAt(visitorLocation),
-              discovered: prev,
-              turnId,
-            });
-            return additions.length ? [...prev, ...additions] : prev;
-          });
+        if (plannedCast) {
+          strangerAliasesRef.current = strangerAliasesFromCast(strangerAliasesRef.current, plannedCast, allEntities, isMetAtStart);
+          setStrangerAliases((prev) => strangerAliasesFromCast(prev, plannedCast, allEntities, isMetAtStart));
         }
+        return planHasPass(plan, "narratedMove") ? {} : settlePlace();
+      };
+
+      /** Commit where the player ends the turn, once: the move, who came along, who the player met there,
+       *  and who the choices may act for. */
+      const settlePlace = (): Partial<TurnMaterial> => {
+        if (placeSettled) return {};
+        placeSettled = true;
+        // The narration succeeded, so an aborted or empty turn leaves the location unchanged.
+        if (turnJoin) {
+          applyFollowerState(turnJoin);
+        }
+        if (turnLocation && turnLocation.id !== currentLocation?.id) {
+          changeLocation(turnLocation);
+          addLogEntry(`Moved to location: ${turnLocation.name}`);
+        }
+        meetNamed(turnNarration, turnLocation ?? currentLocation);
         const sceneEntities = presentSceneEntities(
           allEntities,
           turnParticipants,
           recentParticipants(fullMessageHistory, IN_SCENE_TURNS - 1),
         );
         return { sceneEntityTokens: sceneEntityOverride(turnLocation, sceneEntities) };
+      };
+
+      /** The destination a location request's answer names, if any. */
+      const destinationNamed = (parsed: unknown) =>
+        typeof parsed === "string" ? destinations.find((loc) => loc.name === parsed) : undefined;
+
+      /** Where a router or narrated move takes the turn. Scripts and Tool calls read it from here on. */
+      const moveTurnTo = (target: GameLocation) => {
+        turnLocation = target;
+        scriptLocationRef.current = target;
+        executeTool = turnToolExecutor();
       };
 
       /**
@@ -3478,8 +3766,9 @@ const GameViewer = ({
           if (event.stage === "planning") {
             // The router has settled the move, so the followers and "come along" can stand beside the player.
             if (moveFrom) {
-              const joined = joinEntityMoves(moveStart, { from: moveFrom, to: turnLocation?.id }, entityIntents);
+              const joined = joinEntityMoves(moveStart, { from: moveFrom, to: turnLocation?.id }, entityIntents, turnWorld());
               turnJoin = joined === moveStart ? null : joined;
+              scriptBookRef.current = turnJoin && { book: turnJoin, now: storyNow };
             }
             return assembleNarration();
           }
@@ -3499,7 +3788,13 @@ const GameViewer = ({
               historyRuns: history.runs,
             };
           }
+          if (event.stage === "narratedMove") {
+            // A Tool call's move this turn is its one move too.
+            return turnLocation && turnLocation.id !== moveFrom ? { moved: true } : undefined;
+          }
           if (event.stage === "postNarration") {
+            // A narrated move that never ran, or failed, still leaves the place to settle.
+            const place = settlePlace();
             // With no choices pass there is nothing to wait on, so the input unblocks right away.
             if (!planHasPass(plan, "choices")) setChoicesReady(true);
             // The scene's cast, whose text resolved with each owner: the diary pass sends it as is.
@@ -3512,6 +3807,7 @@ const GameViewer = ({
             const ctx = ctxStale ? { ctx: contextValues(turnLocation, sceneBox()) } : {};
             ctxStale = false;
             return {
+              ...place,
               ...ctx,
               subjects: {
                 ...material.subjects, ...fanOut,
@@ -3528,17 +3824,24 @@ const GameViewer = ({
         const [first] = event.outcomes;
         switch (first.id) {
           case "locationAuto": {
-            const matchedName = first.parsed as string | null;
-            const target = matchedName ? destinations.find((loc) => loc.name === matchedName) : undefined;
-            if (target && currentLocation && target.id !== currentLocation.id) {
-              turnLocation = target;
-              scriptLocationRef.current = target;
-              executeTool = turnToolExecutor();
-            }
+            const target = destinationNamed(first.parsed);
+            if (target && currentLocation && target.id !== currentLocation.id) moveTurnTo(target);
             return;
           }
+          case "narratedMove": {
+            const target = destinationNamed(first.parsed);
+            if (target && moveFrom && target.id !== moveFrom) {
+              moveTurnTo(target);
+              const joined = joinEntityMoves(moveStart, { from: moveFrom, to: target.id }, entityIntents, turnWorld());
+              turnJoin = joined === moveStart ? null : joined;
+              scriptBookRef.current = turnJoin && { book: turnJoin, now: storyNow };
+              // The passes after the narration read the place the story took the player.
+              ctxStale = true;
+            }
+            return settlePlace();
+          }
           case "entityLocationAuto":
-            entityIntents = peelIntents(entityMovesOf(event.outcomes), peel);
+            entityIntents = entityMovesOf(event.outcomes);
             return;
           case "thinking": {
             if (!first.raw) return;
@@ -3629,6 +3932,8 @@ const GameViewer = ({
           // diary passes record against.
           baseCtx: contextValues(null, codeView),
           destinations: destinations.map((loc) => loc.name),
+          farDestinations: farDestinationNames(reach),
+          here: currentLocation?.name,
         }),
         request,
         signal,
@@ -3676,7 +3981,6 @@ const GameViewer = ({
         heldNames: [...entities.map((entity) => entity.name), ...suppressedCharacterNames],
         diaryNames,
         toolCalls: worldToolTurn.calls(),
-        peel,
       };
       const commit = computeTurnCommit({ result, plan, context: commitContext });
       if (!commit) return;
@@ -3689,6 +3993,8 @@ const GameViewer = ({
         isNewTurn: !regenerate && !script,
         context: commitContext,
         entityMove: { start: moveStart, from: moveFrom, applied: turnJoin ?? moveStart },
+        prose: turnProse,
+        told,
       });
       // The allowance notice comes after the commit, never while the stream runs.
       showHostedNotices(settings.switchBackFromHostedAi);
@@ -3704,6 +4010,7 @@ const GameViewer = ({
       releaseChoices();
       setAiRequestType(null);
       scriptLocationRef.current = null;
+      scriptBookRef.current = null;
       turnClockRef.current = null;
       turnMemoriesRef.current = null;
       turnReadRef.current = null;
@@ -3727,7 +4034,7 @@ const GameViewer = ({
     if (pendingTurnNonce === 0) return;
     const pending = pendingTurnRef.current;
     pendingTurnRef.current = null;
-    if (pending !== null) sendGameAction(pending.action, { writtenNarration: pending.writtenNarration, resentAttachments: pending.resentAttachments, regenerate: pending.regenerate });
+    if (pending !== null) sendGameAction(pending.action, { writtenNarration: pending.writtenNarration, resentAttachments: pending.resentAttachments, resentList: pending.resentList, regenerate: pending.regenerate });
     // sendGameAction is deliberately not a dependency — we want this render's (post-restore) closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingTurnNonce]);
@@ -3804,6 +4111,15 @@ const GameViewer = ({
   // Where a running turn stands for its scripts' `location`, ahead of the render that commits a move. Null
   // between turns, where the live location stands.
   const scriptLocationRef = useRef<GameLocation | null>(null);
+  // Where the running turn's scripts read the cast, ahead of the write that commits it: the followers once the
+  // move settles (Q220), then the moves and pulls for the After batch (Q218), each with the story minute it was placed
+  // at. Null outside a turn: the live book, now.
+  const scriptBookRef = useRef<ScriptBook | null>(null);
+  /** The places a script reads now. */
+  const scriptPlacesNow = useCallback(() => {
+    const turnBook = scriptBookRef.current;
+    return scriptPlaces(turnBook?.book ?? currentBook(), positionWorldAt(turnBook?.now ?? storyNow, undefined));
+  }, [currentBook, positionWorldAt, storyNow]);
   // The Memory panel's rows as a script's `memories` reads them, from the ledger the panel builds.
   const scriptMemoryList = useMemo(() => scriptMemories(buildMemoryLedger({
     history: fullMessageHistory, overrides: memoryOverrides, pins: memoryPins, selection: milestoneSelection,
@@ -3881,6 +4197,7 @@ const GameViewer = ({
         // `previous` reads its bands under the pins the turn started with: its own stats' bands, traits and code pins.
         const startPins = pinsFor(basePins, {
           traits: [...held.acquired], disabledTraitIds: [...held.disabledTraitIds], ownedTraits: held.ownedTraits, stats: before,
+          entityStats: entityBase,
         }).world;
         const resolveStart = (text: string) => resolveFor(startPins, text);
         const ownerRows = entityCodeTurns(
@@ -3906,8 +4223,8 @@ const GameViewer = ({
             traits: held.acquired, disabledTraitIds: held.disabledTraitIds, ownedTraits: held.ownedTraits, stats, entityStats: entityBase,
           }, world),
           ownerTraits: {
-            ...held, world, entities: codeEntities.world, library: libraryIn(world), discovered: laterDiscovered(discoveredEntities),
-            inSceneIds: liveScene().inSceneIds,
+            ...held, world, entities: codeEntities.world, library: libraryIn(world), discovered: laterDiscovered(discoveredInPlay),
+            inSceneIds: presence.inScene.map(({ entity }) => entity.id),
             metIds: metIdsNow(),
           },
           placeholders: {
@@ -3918,12 +4235,12 @@ const GameViewer = ({
             // A During AI Output run reads the pins its earlier sentences left.
             pinsAfter: (after) => pinsFor(after.codePins, {
               traits: [...after.acquired], disabledTraitIds: [...after.disabledTraitIds], ownedTraits: after.ownedTraits, stats: [...after.stats],
+              entityStats: { ...entityBase, ...after.entityStats },
             }).world,
           },
           owners,
           places: { locations, location: here && { id: here.id, name: here.name }, connections },
-          positions: { ...runtimePositions(discoveredEntities), ...entityPositions },
-          followers: entityFollowers,
+          ...scriptPlacesNow(),
           resolveText: (text, owner) => (owner ? resolveEntityText(owner, text) : resolvePH(text)),
           memories: turnMemoriesRef.current ?? scriptMemoriesRef.current,
           notes: liveScene().notes,
@@ -3996,6 +4313,7 @@ const GameViewer = ({
             result = { ...result, worldWrites: withoutBodies(result.worldWrites) };
           }
           setLoreToggles((prev) => withLoreWrites(prev, result.loreWrites));
+          setWorldOptionValues((prev) => withOptionWrites(prev, result.optionWrites));
           // Onto the latest values, as the player's stats below: the regen tick can apply while the run awaits.
           const ownersInForce = entityInForceUnder(result.traits?.ownedTraits ?? held.ownedTraits ?? {});
           setEntityStats((prev) => withOwnerCodeResults(prev, result.owners, ownersInForce));
@@ -4048,6 +4366,7 @@ const GameViewer = ({
           if (inventory?.length && result.items) landScriptInventoryRef.current?.(inventory, result.items, totals, undefined, baseWrites);
           setCodePins((prev) => withPinWrites(prev, result.pinWrites));
           setLoreToggles((prev) => withLoreWrites(prev, result.loreWrites));
+          setWorldOptionValues((prev) => withOptionWrites(prev, result.optionWrites));
           ranTraits?.log.forEach((line, i) => {
             const trait = ranTraits.logTraits?.[i];
             if (!trait || !dropped.has(trait)) addLogEntry(line);
@@ -4063,8 +4382,8 @@ const GameViewer = ({
         return null;
       }
     },
-    [setGlobalStats, setEntityStats, entityOwnersOf, entityInForceUnder, addStatDeltas, setCodePins, setLoreToggles, resolvePH, resolveFor, statCodePlaceholders, pinsFor, traits, authoredStats, worldScripts, scriptTabWorld, resolveTraitText, gatedWorld, codeEntities, statEntities, inForceOn, liveScene, libraryIn, locations, currentLocation, discoveredEntities,
-      entityPositions, entityFollowers, resolveEntityText, setGlobalTraits, setDisabledTraitIds, setAppliedTraitValues, setCascadeOffTraitIds, setOwnedTraits, addLogEntry, playPrompts, commitTraitState,
+    [setGlobalStats, setEntityStats, entityOwnersOf, entityInForceUnder, addStatDeltas, setCodePins, setLoreToggles, resolvePH, resolveFor, statCodePlaceholders, pinsFor, traits, authoredStats, worldScripts, scriptTabWorld, resolveTraitText, gatedWorld, codeEntities, statEntities, inForceOn, liveScene, presence, libraryIn, locations, currentLocation, discoveredEntities,
+      scriptPlacesNow, resolveEntityText, setGlobalTraits, setDisabledTraitIds, setAppliedTraitValues, setCascadeOffTraitIds, setOwnedTraits, addLogEntry, playPrompts, commitTraitState,
       worldItems, worldSlots, inventoryWorld, personaRef, startActionTotals],
   );
 
@@ -4569,9 +4888,10 @@ const GameViewer = ({
     return prepareStatCode(stats, stats, [], { deltaHours: 0, elapsedHours: turnClockRef.current ?? gameTime, calendar }, base ?? undefined, timing, { items });
   };
   toolScriptSourceRef.current = (base) => {
-    const world = getWorldData();
+    const world = getInPlayWorldData();
     const played = openingPersonaOf(personaRef, { libraryEntity: persona?.entity });
-    return { state: prepareTurnStartCode(base)?.turn.state ?? openingStateOf(world, undefined, played), authored: world };
+    const state = prepareTurnStartCode(base)?.turn.state ?? standaloneStateOf(world, played, scriptPlacesNow());
+    return { state, authored: world };
   };
 
   /**
@@ -5229,10 +5549,12 @@ const GameViewer = ({
     [passQueue, discoveredDescriptionJob],
   );
 
+  // An empty action box sends when Since Last Turn tells the AI something: Pages only, thinking off (Q11, Q32).
+  const sendsEmpty = tellsActionList && listCounts(actionList).shown > 0;
   const handleSendAction = () => {
     const input = playerInput.trim();
     // A scene render holds the turn as well as the input: the model and the image server share one card.
-    if (!input || isWaitingForAI || sceneImageJob) return;
+    if ((!input && !sendsEmpty) || isWaitingForAI || sceneImageJob) return;
     if (input.startsWith("/")) {
       runSlashCommand(input);
       setPlayerInput("");
@@ -5262,22 +5584,10 @@ const GameViewer = ({
     }),
     [worldItems, traitEntities, traitName, resolvePH, inventoryWorld],
   );
-  const settleWithItems = useCallback((state: TraitRuntimeState, world: TraitWorld, nameOf: (trait: Trait) => string, previousPersona?: PersonaRef): GatedTraitResult => {
-    // The turn's settle runs after the clock advances, so this is where timed effects end (Q40).
-    const settled = settleInventory(
-      { copies: itemCopies, traits: state, ledger: itemEffects, now: gameTime, bodies }, settleWorldOf(world, nameOf, previousPersona),
-    );
-    const itemsMoved = settled.copies !== itemCopies || JSON.stringify(settled.ledger) !== JSON.stringify(itemEffects ?? {})
-      || JSON.stringify(settled.bodies) !== JSON.stringify(bodies) || settled.bodyLog.length > 0;
-    if (settled.traits === state && !itemsMoved) return { state, log: settled.log, cascade: [], cascadeNames: [] };
-    return {
-      state: settled.traits === state ? { ...state } : settled.traits, log: settled.log, cascade: settled.cascade, cascadeNames: settled.cascadeNames,
-      items: {
-        copies: settled.copies, ledger: settled.ledger, bodies: settled.bodies, bodyLog: settled.bodyLog,
-        bodyUnequipped: settled.bodyUnequipped, events: settled.events,
-      },
-    };
-  }, [itemCopies, itemEffects, gameTime, bodies, settleWorldOf]);
+  // The turn's settle runs after the clock advances, so this is where timed effects end (Q40).
+  const settleWithItems = useCallback((state: TraitRuntimeState, world: TraitWorld, nameOf: (trait: Trait) => string, previousPersona?: PersonaRef): GatedTraitResult => (
+    settleTraitsWithItems(state, { copies: itemCopies, ledger: itemEffects, now: gameTime, bodies }, settleWorldOf(world, nameOf, previousPersona))
+  ), [itemCopies, itemEffects, gameTime, bodies, settleWorldOf]);
   const commitSettledItems = useCallback((result: GatedTraitResult) => {
     if (!result.items) return;
     liveItemsRef.current = heldItemsOf(result.items);
@@ -5286,13 +5596,14 @@ const GameViewer = ({
     setBodies(result.items.bodies);
   }, [itemCopies, setItemCopies, setItemEffects, setBodies]);
   const runItemEventsRef = useRef<((events: readonly ItemScriptEvent[], totals: ActionTotals) => Promise<void>) | null>(null);
+  /** Hands back the item script runs the settle started, if any. */
   const commitGatedTraits = useCallback(
-    (result: GatedTraitResult, because: string, totals: ActionTotals) => {
+    (result: GatedTraitResult, because: string, totals: ActionTotals): Promise<void> | undefined => {
       if (result.state !== traitState) commitTraitState(result.state);
       commitSettledItems(result);
       for (const line of [...result.log, ...(result.items?.bodyLog ?? [])]) addLogEntry(line);
       setTraitCascade(result.cascadeNames.length ? { off: result.cascadeNames, because } : null);
-      if (result.items?.events.length) void runItemEventsRef.current?.(result.items.events, totals);
+      return result.items?.events.length ? runItemEventsRef.current?.(result.items.events, totals) : undefined;
     },
     [traitState, commitTraitState, commitSettledItems, addLogEntry],
   );
@@ -5308,6 +5619,14 @@ const GameViewer = ({
   const settleHistory = useMemo(() => ({ states: gameStates, commit: setGameStates }), [gameStates, setGameStates]);
   useSettleOnSaveLoad(saveLoads, !personaPending, traitState, gatedWorld, traitName, commitLoadSettle, settleHistory, settleWithItems);
   useSeedAvatarOnSaveLoad(saveLoads, !personaPending, persona);
+  // A load places the cast under the gates of the state before it; place it again under the loaded state's (Q52).
+  const placedLoads = useRef(saveLoads);
+  useEffect(() => {
+    if (saveLoads === placedLoads.current) return;
+    placedLoads.current = saveLoads;
+    if (authoredLocations.every((l) => inPlay.isLocationOn(l.id))) return;
+    placeCast(positionWorldAt(storyNow, currentLocation?.id));
+  }, [saveLoads, authoredLocations, inPlay, placeCast, positionWorldAt, storyNow, currentLocation]);
   // The per-turn settle writes log lines and leaves the banner alone, as a stat-code switch does (Q26).
   const commitTurnSettle = useCallback(
     (result: GatedTraitResult, totals: ActionTotals) => {
@@ -5324,6 +5643,53 @@ const GameViewer = ({
   // After the stat pass and stat code, so a lost requirement unequips this turn (Q123).
   const settleTurn = useTurnSettle(traitState, gatedWorld, traitName, commitTurnSettle, settleWithItems);
 
+  // A library persona settles once its entity loads, so the settle and the run read it (Q15). `from` is the
+  // world the traits still hold under.
+  const [waitingPersona, setWaitingPersona] = useState<{ ref: PersonaRef; name: string | null; from: TraitWorld } | null>(null);
+  // Script runs a panel action started and still going; a listed action and undo wait for them.
+  const [panelRuns, setPanelRuns] = useState(0);
+  const listBusy = panelRuns > 0 || waitingPersona !== null;
+  const trackPanelRun = useCallback((run: Promise<unknown> | undefined) => {
+    if (!run) return;
+    setPanelRuns((n) => n + 1);
+    void run.finally(() => { if (mounted.current) setPanelRuns((n) => n - 1); });
+  }, [mounted]);
+  const takeActionSnapshot = useCallback((): ActionSnapshot => ({ state: saveCurrentGameState(), persona: personaRef ?? null }), [saveCurrentGameState, personaRef]);
+  /** Restores the state from before a listed action (Q6). What the player wrote by hand since stays (Q29). */
+  const restoreActionSnapshot = useCallback(({ state, persona: ref }: ActionSnapshot) => {
+    const live = saveCurrentGameState();
+    const handWritten = { characterData: live.characterData, playerNotes: live.playerNotes, gameplayText: live.gameplayText };
+    if (!loadGameState({ ...state, ...handWritten }, locations, { keepLiveHistory: true })) return;
+    // Item script runs still in flight belong to the undone action.
+    itemRunGenerationRef.current += 1;
+    liveItemsRef.current = heldItemsOf({ copies: state.itemCopies ?? [], ledger: state.itemEffects ?? {}, bodies: state.bodies ?? {} });
+    setTraitCascade(null);
+    if (ref ? !(personaRef && samePersonaRef(ref, personaRef)) : personaRef) setPersonaRef(ref ?? undefined);
+  }, [saveCurrentGameState, loadGameState, locations, personaRef, setPersonaRef]);
+  /** Undoes the newest entry when `facts` exactly reverses it (Q17). True when it did. */
+  const reverseListedAction = useCallback((facts: ListedActionFacts) => {
+    const reversal = reversalOf(actionList, facts);
+    if (!reversal) return false;
+    setActionList(reversal.list);
+    restoreActionSnapshot(reversal.restore);
+    return true;
+  }, [actionList, setActionList, restoreActionSnapshot]);
+  const addListedAction = useCallback((facts: ListedActionFacts, snapshot: ActionSnapshot) => {
+    setActionList((list) => addAction(list, facts, snapshot, randomUUID()));
+  }, [setActionList]);
+  const panelActions = useMemo<PanelActionList>(
+    () => ({ reverse: reverseListedAction, snapshot: takeActionSnapshot, add: addListedAction }),
+    [reverseListedAction, takeActionSnapshot, addListedAction],
+  );
+  const undoNewestAction = useCallback(() => {
+    const undo = undoNewest(actionList);
+    if (!undo) return;
+    setActionList(undo.list);
+    restoreActionSnapshot(undo.restore);
+    const { facts } = actionList[actionList.length - 1];
+    if (facts.kind === 'stat') revertManualStatEditPage(facts.owner?.id ?? null, facts.stat.id, facts.from);
+  }, [actionList, setActionList, restoreActionSnapshot, revertManualStatEditPage]);
+
   /**
    * Switch a trait on or off mid-play, acquiring it first if the player doesn't have it yet. Every trait the
    * author marked switchable is available whenever its gate holds; everything the trait does beyond its stat changes (AI
@@ -5331,21 +5697,53 @@ const GameViewer = ({
    * trait freezes the world's stat changes as they stand right now, authored and chips intact, as seeding does.
    */
   const toggleTrait = useCallback(
-    (traitId: string, enabled: boolean, ownerId: OwnerId) => {
+    (traitId: string, enabled: boolean, ownerId: OwnerId, ownerName: string | null = null) => {
+      if (isWaitingForAI || listBusy) return;
       const world = gatedWorld();
+      const name = traitNameIn(world, traitId, traitName, ownerId) ?? traitId;
+      const facts: ListedActionFacts = {
+        kind: 'trait', trait: { id: traitId, name }, owner: ownerId === null ? null : { id: ownerId, name: ownerName ?? ownerId }, enabled,
+      };
+      if (reverseListedAction(facts)) return;
       const switched = switchPlayerTrait(traitState, traitId, enabled, world, traitName, ownerId);
       if (!switched) return;
+      const snapshot = takeActionSnapshot();
       const items = settleWithItems(switched.state, world, traitName);
       const result = {
         ...items, log: [...switched.log, ...items.log], cascade: [...switched.cascade, ...items.cascade],
         cascadeNames: [...switched.cascadeNames, ...items.cascadeNames],
       };
       const totals = startActionTotals();
-      commitGatedTraits(result, traitNameIn(world, traitId, traitName, ownerId) ?? traitId, totals);
-      void fireSwitchScripts(traitState, result.state, world, totals);
+      trackPanelRun(commitGatedTraits(result, name, totals));
+      trackPanelRun(fireSwitchScripts(traitState, result.state, world, totals));
+      addListedAction(facts, snapshot);
     },
-    [traitState, gatedWorld, traitName, commitGatedTraits, fireSwitchScripts, settleWithItems, startActionTotals],
+    [isWaitingForAI, listBusy, traitState, gatedWorld, traitName, commitGatedTraits, fireSwitchScripts, settleWithItems, startActionTotals,
+      reverseListedAction, takeActionSnapshot, trackPanelRun, addListedAction],
   );
+
+  /** Set a mid-game World Option between turns. It applies at once and lists as a hidden action (Q41, Q42). */
+  const changeWorldOption = useCallback((option: WorldOption, value: WorldOptionValueOf) => {
+    if (isWaitingForAI || listBusy) return;
+    const from = optionValue(option, worldOptionValues);
+    if (from === value) return;
+    const facts: ListedActionFacts = {
+      kind: 'option', option: { id: option.id, name: option.name }, from: optionValueRef(option, from), to: optionValueRef(option, value),
+    };
+    const snapshot = takeActionSnapshot();
+    const values = { ...worldOptionValues, [option.id]: value };
+    setWorldOptionValues(values);
+    // Gates on the Option settle at once, as after a trait toggle (Q41).
+    const world = { ...gatedWorld(), optionValues: values };
+    const result = settleWithItems(traitState, world, traitName);
+    const totals = startActionTotals();
+    trackPanelRun(commitGatedTraits(result, option.name, totals));
+    trackPanelRun(fireSwitchScripts(traitState, result.state, world, totals));
+    addListedAction(facts, snapshot);
+  }, [
+    isWaitingForAI, listBusy, worldOptionValues, traitState, gatedWorld, traitName, settleWithItems, commitGatedTraits, fireSwitchScripts,
+    startActionTotals, trackPanelRun, addListedAction, takeActionSnapshot, setWorldOptionValues,
+  ]);
 
   /** Script inventory writes through the Inventory module, checked against `over`, else the live state, and the
    *  Bodies in force under it with `baseWrites` on top (Q41, Q58). The render's Bodies can be behind a write. */
@@ -5478,16 +5876,18 @@ const GameViewer = ({
       requirement: equipRequirement({ traits: traitState, ledger: itemEffects, now: gameTime }, settleWorld),
       traitPicks: traitBodyPicks,
       basePicks: bodies.base,
+      actions: panelActions,
       commit: (copies, previous, lines, itemUses, events) => {
         const totals = startActionTotals();
-        void runItemEvents([...events, ...commitItemCopies(copies, previous, lines, itemUses, totals)], totals);
+        trackPanelRun(runItemEvents([...events, ...commitItemCopies(copies, previous, lines, itemUses, totals)], totals));
       },
+      busy: listBusy,
       timed: personaRef ? timedEffectViews(itemEffects, worldItems, playedEntityIds(personaRef, traitEntities), gameTime, {
         stat: (ownerId, statId) => traitState.entityStats?.[ownerId]?.find((s) => s.id === statId)?.name ?? statId,
         trait: (ownerId, traitId) => traitNameIn(world, traitId, traitName, ownerId) ?? traitId,
       }) : [],
     };
-  }, [gatedWorld, settleWorldOf, traitState, itemEffects, gameTime, personaRef, worldItems, traitEntities, traitName, commitItemCopies, runItemEvents, traitBodyPicks, startActionTotals]);
+  }, [gatedWorld, settleWorldOf, traitState, itemEffects, gameTime, personaRef, worldItems, traitEntities, traitName, commitItemCopies, runItemEvents, traitBodyPicks, startActionTotals, panelActions, listBusy, trackPanelRun]);
 
   /** The present items whose stat effects the game applies, which the stat request names (Q53). */
   const statItemNames = (location: GameLocation | null): string[] =>
@@ -5502,16 +5902,8 @@ const GameViewer = ({
   const inventoryOwnersAt = (
     location: GameLocation | null,
     discovered: readonly InventoryOwner[],
-    positions?: FollowerState["positions"],
-  ): InventoryOwner[] => {
-    const scene = liveScene(location, null);
-    const played = new Set([scene.persona?.entity.id, ...(scene.playedEntities ?? []).map((e) => e.id)]);
-    const here = new Set(positions ? entityIdsAt(location?.id, entitiesInPlay(scene.entities, positions)) : scene.presentIds);
-    return [
-      ...scene.entities.filter((e) => here.has(e.id) && !played.has(e.id)).map((e) => ({ id: e.id, name: e.name })),
-      ...discovered,
-    ];
-  };
+    standings?: Standings,
+  ): InventoryOwner[] => inventoryOwnersIn(liveScene(location, null), location, discovered, standings);
 
   /**
    * The Inventory pass's operations through the validator and the inventory settle, with nothing committed. `owners`
@@ -5525,6 +5917,7 @@ const GameViewer = ({
     base: TurnCodeState | null,
     from: InventoryPassFrom,
     world: TraitWorld = gatedWorld(),
+    told: readonly ToldAction[] = [],
   ) => {
     if (!ops.length) return null;
     const traitsBefore = traitStateOver(base);
@@ -5532,8 +5925,10 @@ const GameViewer = ({
     const entityStatsBefore = traitsBefore.entityStats ?? {};
     const inForce = entityInForceUnder(traitsBefore.ownedTraits ?? {});
     const result = applyInventoryPass(from.copies, ops, {
-      items: worldItems, runtimeItems: from.runtimeItems, playerNames: [...new Set([...playerNames, ...playedNames(playedEntities)])], owners,
-      location: location && { id: location.id, name: location.name }, resolve: resolvePH,
+      items: worldItems, runtimeItems: from.runtimeItems, playerNames: [...new Set([...playerNames, ...playedNames(playedEntities)])],
+      // Rebuilt live from the ids, so a re-roll's stored owners match by Alias too (Q18).
+      owners: passOwners(owners, allEntities, strangerAliasesRef.current),
+      location: location && { id: location.id, name: location.name }, resolve: resolvePH, told,
       money: {
         currencies: worldCurrencies, placements: worldPlacements,
         stats: { globalStats: traitsBefore.stats, entityStats: entityStatsBefore },
@@ -5558,8 +5953,9 @@ const GameViewer = ({
   };
 
   /**
-   * The Inventory pass committed before the stat deltas (Q53). Answers the state the stat commit then starts from
-   * and the item events the caller fires once the turn settles, or null when nothing moved.
+   * The Inventory pass committed before the stat deltas (Q53). `landed` holds the state the stat commit then starts
+   * from and the item events the caller fires once the turn settles, and is null when nothing moved. `kept` holds
+   * the operations left after the `told` guard (Q50).
    */
   const landInventoryPass = (
     ops: readonly InventoryPassOp[],
@@ -5568,13 +5964,14 @@ const GameViewer = ({
     base: TurnCodeState | null,
     from: InventoryPassFrom,
     totals: ActionTotals,
-  ): { state: TurnCodeState; events: ItemScriptEvent[] } | null => {
-    const pass = inventoryPassOver(ops, location, owners, base, from);
-    if (!pass) return null;
+    told: readonly ToldAction[] = [],
+  ): { kept: InventoryPassOp[]; landed: { state: TurnCodeState; events: ItemScriptEvent[] } | null } => {
+    const pass = inventoryPassOver(ops, location, owners, base, from, gatedWorld(), told);
+    if (!pass) return { kept: [], landed: null };
     const { result, moved } = pass;
     for (const line of result.diagnostics) addSystemLogEntry(line);
     if (result.runtimeItems.length !== from.runtimeItems.length) setRuntimeItems(result.runtimeItems);
-    if (!moved) return null;
+    if (!moved) return { kept: result.ops, landed: null };
     const { traitsBefore, traitsPaid, settled, state, world } = moved;
     // A paid stat joins the turn's held bar deltas, as the runs before the AI do.
     const paidDeltas = appliedStatDeltas(resolveStatNames(traitsBefore.stats, resolvePH), resolveStatNames(traitsPaid.stats, resolvePH));
@@ -5588,7 +5985,7 @@ const GameViewer = ({
     setBodies(settled.bodies);
     for (const line of [...settled.log, ...settled.bodyLog]) addLogEntry(line);
     void fireSwitchScripts(traitsBefore, settled.traits, world, totals);
-    return { state, events: [...result.events, ...settled.events] };
+    return { kept: result.ops, landed: { state, events: [...result.events, ...settled.events] } };
   };
 
   /** Move the stats onto a new persona, whose linked stat traits replace the old one's, then settle the traits
@@ -5600,16 +5997,20 @@ const GameViewer = ({
       // The `you` Item Copies' effects and grants move onto the new played entity (Q107, Q117).
       const settled = settleWithItems(moved.state, to, traitName, from.persona);
       const totals = startActionTotals();
-      commitGatedTraits({ ...settled, log: [...moved.log, ...settled.log] }, name ?? 'the persona change', totals);
-      void fireSwitchScripts(traitState, settled.state, to, totals, from);
+      trackPanelRun(commitGatedTraits({ ...settled, log: [...moved.log, ...settled.log] }, name ?? 'the persona change', totals));
+      trackPanelRun(fireSwitchScripts(traitState, settled.state, to, totals, from));
     },
-    [traitState, gatedWorld, traitName, commitGatedTraits, fireSwitchScripts, settleWithItems, startActionTotals],
+    [traitState, gatedWorld, traitName, commitGatedTraits, fireSwitchScripts, settleWithItems, startActionTotals, trackPanelRun],
   );
-  // A library persona settles once its entity loads, so the settle and the run read it (Q15). `from` is the
-  // world the traits still hold under.
-  const [waitingPersona, setWaitingPersona] = useState<{ ref: PersonaRef; name: string | null; from: TraitWorld } | null>(null);
+  /** Runs after PersonaRow set the new reference, so the live state and `personaRef` still read the old persona.
+   *  It cannot refuse, so PersonaRow's Change is the mid-turn block. */
   const changePersona = useCallback(
     (ref: PersonaRef, name: string | null) => {
+      const facts: ListedActionFacts = {
+        kind: 'persona', from: { id: personaKey(personaRef ?? { source: 'none' }), name: persona?.entity.name ?? null }, to: { id: personaKey(ref), name },
+      };
+      if (reverseListedAction(facts)) return;
+      addListedAction(facts, takeActionSnapshot());
       const from = waitingPersona?.from ?? gatedWorld();
       if (ref.source === 'library') {
         setWaitingPersona({ ref, name, from });
@@ -5618,7 +6019,7 @@ const GameViewer = ({
       setWaitingPersona(null);
       settlePersonaTraits(ref, name, from);
     },
-    [waitingPersona, gatedWorld, settlePersonaTraits],
+    [personaRef, persona, reverseListedAction, addListedAction, takeActionSnapshot, waitingPersona, gatedWorld, settlePersonaTraits],
   );
   useEffect(() => {
     if (!waitingPersona || personaPending || !personaRef || !samePersonaRef(personaRef, waitingPersona.ref)) return;
@@ -5629,7 +6030,7 @@ const GameViewer = ({
   const changeLocation = useCallback(
     (newLocation: GameLocation) => {
       setCurrentLocation(newLocation);
-      carryFollowersTo(newLocation.id);
+      placeCast(positionWorldAt(storyNow, newLocation.id));
       // Read in the updater, so followers a move offer adds after this call keep their rows.
       setVisibleEntities((rows) => sceneAfterMove(rows, currentFollowers(), allEntities));
 
@@ -5639,7 +6040,24 @@ const GameViewer = ({
         setAmbientSound(null);
       }
     },
-    [setCurrentLocation, carryFollowersTo, setVisibleEntities, currentFollowers, allEntities],
+    [setCurrentLocation, placeCast, positionWorldAt, storyNow, setVisibleEntities, currentFollowers, allEntities],
+  );
+  /** The travel gate from where the player stands (Q3). */
+  const canEnterFromHere = useCallback((id: string) => inPlay.canEnter(currentLocation?.id, id), [inPlay, currentLocation]);
+  /** Travel through the map, a listed action (Q42). */
+  const travel = useCallback(
+    (to: GameLocation) => {
+      if (isWaitingForAI || listBusy) return;
+      const facts: ListedActionFacts = {
+        kind: 'travel', from: currentLocation ? { id: currentLocation.id, name: resolvePH(currentLocation.name) } : null,
+        to: { id: to.id, name: resolvePH(to.name) },
+      };
+      if (reverseListedAction(facts)) return;
+      const snapshot = takeActionSnapshot();
+      changeLocation(to);
+      addListedAction(facts, snapshot);
+    },
+    [isWaitingForAI, listBusy, currentLocation, resolvePH, reverseListedAction, takeActionSnapshot, changeLocation, addListedAction],
   );
 
   const isInitialized = useRef(false);
@@ -5656,12 +6074,15 @@ const GameViewer = ({
       // Cold-load from the main menu: restore the save instead of starting a fresh game. Its world is
       // already in GameData (loaded before this view mounted), so `locations` here are the right ones.
       if (initialSaveId) {
-        void loadGame(initialSaveId, locations, authoredStats, codeEntities.world, worldOverview.vrmStore, worldItems, savedOwnerTraits);
+        void loadGame(initialSaveId, authoredLocations, authoredStats, authoredEntities, worldOverview.vrmStore, worldItems, savedOwnerTraits, authoredConnections, inPlay.isEntityOn)
+          .then((loaded) => { if (loaded && mounted.current) rebaseRightDots(); });
         return;
       }
+      // The seeded state is the new game's baseline.
+      rebaseRightDots();
 
       // New game, once: a loaded save returned above. The fold reads the authored world, chips and all.
-      const opening = openingFold(getWorldData(), { traits: initialTraits, owned: initialOwnedTraits }, {
+      const opening = openingFold(getWorldData(), { traits: initialTraits, owned: initialOwnedTraits, options: initialOptionValues }, {
         ...(initialPersona ?? { ref: { source: 'none' } }), characters: initialCharacters ?? [],
       });
       const acquired = opening.state.ownerTraits.acquired;
@@ -5684,8 +6105,11 @@ const GameViewer = ({
       // A new game starts with no entity picked in the stat panel or the entity view.
       setSelectedEntityId(undefined);
 
-      // Use the player's chosen starting location, else a random starting point (fallback: any location).
-      const location = resolveStartingLocation(locations, initialLocationId);
+      // The player's chosen start, else a random one, skipping locations the gates turn off or lock at the start (Q12).
+      const startOpen = startLocationIdsOpen(getWorldData(), playedEntityIdOf(initialPersona?.ref, authoredEntities), initialOptionValues);
+      const startId = startingLocationIn(authoredLocations, (id) => startOpen.has(id), initialLocationId)?.id;
+      const startRaw = authoredLocations.find((l) => l.id === startId);
+      const location = locations.find((l) => l.id === startId) ?? (startRaw && { ...startRaw, name: resolvePH(startRaw.name) });
       const authoredLocation = location ? authoredLocations.find((l) => l.id === location.id) ?? location : null;
       // The pins the game opens under, from every source: the traits just applied, the starting location
       // and the bands the post-trait stats fall in. None of it is in state yet, so anything written in this
@@ -5697,7 +6121,12 @@ const GameViewer = ({
         globalTraits: acquired,
         owned: initialOwnedTraits,
         sharedPlaceholders: worldPlaceholders,
-      }, { location: authoredLocation, stats: opening.traitState.stats, placeholders, rolls: sessionRolls }).world;
+        entityStats: opening.entityStats,
+        blueprints: pinBlueprints,
+      }, {
+        options: optionPinLists(worldOptions, initialOptionValues),
+        location: authoredLocation, stats: opening.traitState.stats, placeholders, rolls: sessionRolls,
+      }).world;
       if (location && authoredLocation) {
         changeLocation(location);
         // A log line is frozen the moment it is written.
@@ -5713,6 +6142,7 @@ const GameViewer = ({
       setMemoryPins({});
       setCodePins({});
       setLoreToggles({});
+      setWorldOptionValues(initialOptionValues);
       setEntityVisualPreference({});
       // A new game always holds a reference; None is a choice, and absence means a save from before personas.
       const personaPick: PersonaPick = initialPersona ?? { ref: { source: 'none' } };
@@ -5742,17 +6172,24 @@ const GameViewer = ({
       // Pre-fill the drawn opening so the player can shape the first turn before submitting it. Resolved
       // here (against the pins the traits above are about to impose) so the player reads plain prose.
       // An Opening Narration is page one: the game starts on it at once, with the box left empty.
-      // Each One entity starts at one of its locations, so the opening pool reads who stands at the start.
-      const startPositions = startingPositions(positionedCast(codeEntities.world, personaPick.ref), locations.map((l) => l.id));
+      // Each Unique entity rolls its Start, so the opening pool reads who stands at the start.
+      setPlayerStartLocationId(location?.id);
+      // Every authored entity rolls every Routine's Start; Routine gates read the state after the setup picks (Q12).
+      const startBook = placeAll(EMPTY_BOOK, positionWorld(
+        castCourses(positionedCast(authoredEntities, personaPick.ref), [], gatePick(opening.gate)), storyMinute(0), location?.id, locations, connections,
+        undefined, location?.id,
+      ));
+      const startPositions = startBook.positions;
       setEntityPositions(startPositions);
-      setEntityFollowers([]);
+      setUniqueStates(startBook.uniques);
+      setGenericStates(startBook.generics);
+      setOpeningPlacement(placementOf(startBook));
       setMetEntities([]);
       setStrangerAliases({});
       entityOfferRef.current = NO_ENTITY_OFFER;
-      followerPeelRef.current = undefined;
       // The whole world, since the cast in state still reads the persona from before this seed.
       const { persona: drawnPersona, draw: drawn, owner: drawnOwner } = drawNewGameOpening({
-        pick: personaPick, worldEntities: entitiesInPlay(traitEntities, startPositions), overview: worldOverview, locations, startingLocationId: location?.id,
+        pick: personaPick, worldEntities: traitEntities, placesOf: positionsIn(startBook), overview: worldOverview, locations, startingLocationId: location?.id,
         picked, random: Math.random,
       });
       openingSessionRef.current = {
@@ -5772,10 +6209,17 @@ const GameViewer = ({
   }, [
     initialSaveId,
     loadGame,
+    connections,
+    setUniqueStates,
+    setPlayerStartLocationId,
+    setOpeningPlacement,
     resetEntityStats,
     setSelectedEntityId,
     initialTraits,
     initialOwnedTraits,
+    initialOptionValues,
+    worldOptions,
+    setWorldOptionValues,
     traitEntities,
     initialLocationId,
     placeholders,
@@ -5786,6 +6230,7 @@ const GameViewer = ({
     dictionaries,
     getWorldData,
     authoredLocations,
+    pinBlueprints,
     ownerWorld,
     worldPlaceholders,
     locations,
@@ -5797,6 +6242,8 @@ const GameViewer = ({
     resolveOpening,
     commitTraitState,
     codeEntities,
+    authoredEntities,
+    inPlay,
     resolveTraitText,
     changeLocation,
     addLogEntry,
@@ -5816,6 +6263,7 @@ const GameViewer = ({
     setMemoryEdits,
     setMemoryDeleted,
     setMemoryNotes,
+    rebaseRightDots,
   ]);
 
   const scrollToBottom = useCallback(() => {
@@ -5839,7 +6287,12 @@ const GameViewer = ({
   else busyStartedAtRef.current ??= Date.now();
   const turnStartedAt = busyStartedAtRef.current ?? undefined;
 
+  const questionOpen = useSyncExternalStore(scriptPrompts.subscribe, isQuestionOpen);
+
   const progressBar = (() => {
+    if (isWaitingForAI && questionOpen) {
+      return <RequestStatusRow label={WAITING_FOR_ANSWER_STATUS.label} glyph={WAITING_FOR_ANSWER_STATUS.glyph} startedAt={turnStartedAt} />;
+    }
     // The active turn's request takes the status row; a silent memory digest (which runs between turns)
     // shows here too when no turn is in flight, but only when "Show Silent Requests" is enabled. Tool
     // rounds are silent requests, so their line follows the same setting.
@@ -5966,19 +6419,17 @@ const GameViewer = ({
       <Button
         size="sm"
         onClick={() => {
+          // The place may have locked since the offer (Q56).
+          if (!inPlay.canEnter(currentLocation?.id, suggestedLocation.id)) {
+            setSuggestedLocation(null);
+            return;
+          }
           changeLocation(suggestedLocation);
           addLogEntry(`Moved to location: ${suggestedLocation.name}`);
           const offer = entityOfferRef.current;
-          const offered = followerPeelRef.current;
           entityOfferRef.current = NO_ENTITY_OFFER;
-          followerPeelRef.current = undefined;
           if (hasEntityOffer(offer)) {
-            const live = liveFollowerState();
-            const went = moveWithPlayer(live, offer, suggestedLocation.id);
-            applyFollowerState(
-              { followers: went.followers, positions: movedPositions(went.positions, live.positions) },
-              offered ? peeledCharacters(went, offered.peelOff, new Set(), offered.turnId) : [],
-            );
+            applyFollowerState(moveWithPlayer(liveFollowerState(), offer, suggestedLocation.id, positionWorldAt(storyNow, suggestedLocation.id)));
           }
           setSuggestedLocation(null);
         }}
@@ -5990,7 +6441,6 @@ const GameViewer = ({
         variant="ghost"
         onClick={() => {
           entityOfferRef.current = NO_ENTITY_OFFER;
-          followerPeelRef.current = undefined;
           setSuggestedLocation(null);
         }}
       >
@@ -5999,8 +6449,27 @@ const GameViewer = ({
     </div>
   ) : null;
 
-  const leftPanel = (
+  // The left panel's top row; the rail draws its own labeled pair.
+  const backButton = (
+    <Tip tip="Exit to Main Menu">
+      <Button variant="ghost" size="icon" className="border-transparent" onClick={() => setShowExitConfirm(true)}>
+        <ArrowLeft className="h-5 w-5" />
+      </Button>
+    </Tip>
+  );
+  const musicButton = (
+    <Tip tip={bgmEnabled ? "Turn Music Off" : "Turn Music On"}>
+      <Button variant="ghost" size="icon" className="border-transparent" onClick={() => setBgmEnabled(!bgmEnabled)}>
+        {bgmEnabled ? <Music className="h-5 w-5" /> : <MusicOffIcon className="h-5 w-5 text-muted-foreground" />}
+      </Button>
+    </Tip>
+  );
+  const leftPanelAt = (placement: PanelPlacement) => (
     <LeftPanel
+      placement={placement}
+      // In the drawer, Back and Music stay on the rail.
+      rowStart={placement === 'docked' ? backButton : undefined}
+      rowEnd={placement === 'docked' ? musicButton : undefined}
       // Runtime-discovered characters must be in this list or they render as disabled, portrait-less
       // rows the player can't open — and the Discovered badge/remove control never resolves them.
       entities={allEntities}
@@ -6013,10 +6482,14 @@ const GameViewer = ({
       }}
       onRegenerateMemory={regenerateMemory}
       narrationPrompt={systemPrompt}
-      requestedTab={surfaceNav.tab('gameViewer')}
+      requestedTab={placement === 'drawer' ? leftTab : surfaceNav.tab('gameViewer')}
       requestKey={surfaceNav.key}
+      // Docking after the drawer, or after a collapse, opens on the tab last shown. Mobile keeps its own default.
+      initialTab={isMobile ? undefined : leftTab}
+      onTabChange={setLeftTab}
     />
   );
+  const leftPanel = leftPanelAt('docked');
 
   // The scene images belonging to the page being viewed (one turn per page).
   const viewedTurn = parseTurnContent(fullMessageHistory[pageAssistantIndex(currentPage, messagesPerPage)]?.content ?? "");
@@ -6026,12 +6499,15 @@ const GameViewer = ({
       parseAssistantMessage={parseAssistantMessage}
       narrationBadge={<DemoAIBadge onOpen={openDemoAIDialog} />}
       narrationLine={demoAIEntryLine ? <DemoAIEntryLine /> : null}
-      storyCard={storyCard.showing || (import.meta.env.DEV && devRoute?.modal === 'storyCard') ? (
-        <StoryCard className="my-4" onNotNow={storyCard.dismiss} onSeeLevels={() => { storyCard.dismiss(); openRoadScene(); }} />
+      storyCard={engineCard.showing || (import.meta.env.DEV && devRoute?.modal === 'storyCard' && devRoute.tab === 'engine') ? (
+        <StoryCard className="my-4" testId="engine-story-card" {...ENGINE_CARD_COPY} onNotNow={engineCard.dismiss} onSeeLevels={() => { engineCard.dismiss(); openRoadScene('engine'); }} />
+      ) : storyCard.showing || (import.meta.env.DEV && devRoute?.modal === 'storyCard') ? (
+        <StoryCard className="my-4" onNotNow={storyCard.dismiss} onSeeLevels={() => { storyCard.dismiss(); openRoadScene('demo'); }} />
       ) : null}
       totalPages={totalPages}
       handlePageChange={handlePageChange}
       handleSendAction={handleSendAction}
+      emptySendHeld={actionList.length > 0 && !sendsEmpty}
       handleKeyPress={handleKeyPress}
       handleRollback={handleRollback}
       handleRegenerate={handleRegenerate}
@@ -6061,29 +6537,78 @@ const GameViewer = ({
       progressBar={progressBar}
       likePrompt={likePromptCard}
       locationSuggestion={locationSuggestion}
+      actionTray={(
+        <ActionListTray
+          entries={actionList}
+          disabled={isWaitingForAI || isViewingPast || listBusy}
+          onUndo={undoNewestAction}
+          onToggleHidden={(id) => setActionList((list) => toggleHidden(list, id))}
+        />
+      )}
       commandPreview={commandPreview}
       commandChoices={commandChoices}
       commandRunId={commandRunId}
       commandAction={commandChoices ? CHOICES_TEST_ACTION : null}
       onDismissCommandPreview={stopCommandPreview}
       onRescanNarration={rescanNarration}
+      storyWidth={isMobile ? undefined : storyWidth}
+      onStoryWidthChange={setStoryWidth}
     />
   );
 
-  const rightPanel = (
+  const rightPanelAt = (placement: PanelPlacement, asRail = false) => (
     <RightPanel
+      placement={placement}
+      // The panel draws its own rail: only it knows which tabs it shows.
+      collapsed={asRail}
+      railOpen={drawerSide === 'right'}
+      railDots={rightDots}
+      onShownTab={setShownRightTab}
+      onRailOpen={(tab) => openDrawer('right', tab)}
+      onRailClose={closeDrawer}
       onLocationClick={() => setIsLocationModalOpen(true)}
       onToggleTrait={toggleTrait}
+      onChangeWorldOption={changeWorldOption}
+      actionsBusy={listBusy}
       inventorySettle={inventorySettle}
       onPersonaChange={changePersona}
       traitCascade={traitCascade}
       onDismissTraitCascade={() => setTraitCascade(null)}
       onRegenerateStats={handleRegenerateStats}
       sceneImageJob={sceneImageJob}
-      language={language}
-      setLanguage={setLanguage}
     />
   );
+  const rightPanel = rightPanelAt('docked');
+
+  // Only a collapsed desktop side has a drawer.
+  const openDrawerSide = !isMobile && (drawerSide === 'left' ? leftCollapsed : drawerSide === 'right' && rightCollapsed) ? drawerSide : null;
+  // A side that docks, or a switch to mobile, closes its drawer for good, so a later collapse opens none.
+  if (drawerSide && !openDrawerSide) setDrawerSide(null);
+  const dockFromDrawer = (side: PanelSide) => {
+    setDrawerSide(null);
+    if (side === 'left') setLeftCollapsed(false);
+    else setRightCollapsed(false);
+  };
+  // The left panel keeps one mount docked, in its drawer and stowed, so the Entity View's model never reloads.
+  const leftHost = (docked: boolean) => (
+    <PanelDrawer
+      side="left"
+      mode={docked ? 'docked' : openDrawerSide === 'left' ? 'drawer' : 'stowed'}
+      onClose={closeDrawer}
+      onDock={() => dockFromDrawer('left')}
+    >
+      {leftPanelAt(docked ? 'docked' : 'drawer')}
+    </PanelDrawer>
+  );
+  const rightDrawer = openDrawerSide === 'right' && (
+    <PanelDrawer side="right" onClose={closeDrawer} onDock={() => dockFromDrawer('right')}>
+      {rightPanelAt('drawer')}
+    </PanelDrawer>
+  );
+  const sideStrip = (side: PanelSide, collapsed: boolean, setCollapsed: (update: (c: boolean) => boolean) => void) =>
+    openDrawerSide === side
+      ? <EdgeToggleSpacer />
+      : <EdgeToggle side={side} collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />;
 
   // The location whose background the scene shows — the paged turn's when browsing history, else live.
   const viewLocation = isViewingPast
@@ -6102,6 +6627,8 @@ const GameViewer = ({
     cancelSceneImage();
     passSessionRef.current += 1;
     passQueue?.abort();
+    // The loaded save's list wins over a running turn's.
+    unlandedListRef.current = null;
     // The loaded save draws its own opening on first need, with nothing shown yet.
     openingSessionRef.current = newOpeningSession();
     // A save from another (installed) world: swap GameData to that world first, then restore the save against
@@ -6112,35 +6639,44 @@ const GameViewer = ({
         // Use the migrated world for the save restore — the raw one may be a legacy shape whose locations/
         // stats lack the migration fixes (morph bindings, renamed keys) that loadWorldData just applied.
         const { world: migrated } = loadWorldData(world, false, { stored: true });
-        return await loadGame(
+        const loaded = await loadGame(
           id, Array.isArray(migrated.locations) ? migrated.locations : [], Array.isArray(migrated.stats) ? migrated.stats : [],
           Array.isArray(migrated.entities) ? migrated.entities : [], migrated.worldOverview?.vrmStore,
-          Array.isArray(migrated.items) ? migrated.items : [],
+          Array.isArray(migrated.items) ? migrated.items : [], undefined, Array.isArray(migrated.connections) ? migrated.connections : [],
         );
+        if (loaded && mounted.current) rebaseRightDots();
+        return loaded;
       } catch (error) {
         console.error('Cross-world load failed:', error);
         toastError(error, { headline: "Couldn't load that save's world." });
         return false;
       }
     }
-    return loadGame(id, locations, stats, codeEntities.world, worldOverview.vrmStore, worldItems, savedOwnerTraits);
+    const loaded = await loadGame(id, authoredLocations, stats, authoredEntities, worldOverview.vrmStore, worldItems, savedOwnerTraits, authoredConnections, inPlay.isEntityOn);
+    // A loaded game starts with no dots, from its own state.
+    if (loaded && mounted.current) rebaseRightDots();
+    return loaded;
   };
-  const menuModal = (extra?: { onEditWorld?: () => void; onShowAiContext?: () => void }) => (
+  const menuModal = (directActions: boolean) => (
     <MenuModal
+      directActions={directActions}
       onSettingsClick={() => setIsSettingsOpen(true)}
       onReportBug={canReportBug ? () => setShowBugReport(true) : undefined}
       onSave={handleMenuSave}
       onLoad={handleMenuLoad}
       worldOverview={worldOverview}
       worldId={worldId ? String(worldId) : undefined}
-      onExitToMenu={onExitToMenu}
-      {...extra}
+      onExit={() => setShowExitConfirm(true)}
+      onEditWorld={() => setIsEditingWorld(true)}
+      onShowAiContext={() => setIsDebugOpen(true)}
     />
   );
 
   return (
     <div
-      className={`flex ${isMobile ? "flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]" : "p-4"} app-viewport isolate text-label md:text-body bg-background overflow-hidden`}
+      className={`flex ${isMobile ? "flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]" : `p-4 ${GAME_VIEW_CONTAINER}`} app-viewport isolate text-label md:text-body bg-background overflow-hidden`}
+      data-game-raised-panels={!isMobile && !uiHidden ? "" : undefined}
+      {...GAME_VIEW_PROPS}
     >
       {locationBackground && (
         <LocationBackdrop
@@ -6149,43 +6685,64 @@ const GameViewer = ({
           overlayHidden={uiHidden}
         />
       )}
+      {/* Above the location art, behind the panels and buttons. Windows desktop only. */}
+      <div aria-hidden data-window-corner-gradient="" className="window-corner-gradient -z-[5] hidden [[data-window-overlay]_&]:block" />
       <ThemedToastContainer />
 
-      {isMobile && !uiHidden && (
-        <div className="flex shrink-0 items-center gap-1 mb-1">
-          {[
-            { key: "character", label: "Story" },
-            { key: "game", label: "Game" },
-            { key: "status", label: "Status" },
-          ].map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setMobilePanel(t.key)}
-              className={`flex-1 min-w-0 rounded py-2 text-helper ${
-                mobilePanel === t.key
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-          {/* Menu joins the tab row on mobile; Edit World + AI Context fold into it (their header buttons hide). */}
-          {menuModal({ onEditWorld: () => setIsEditingWorld(true), onShowAiContext: () => setIsDebugOpen(true) })}
-        </div>
-      )}
-
       {!uiHidden && (isMobile ? (
-        <div className="flex-grow min-h-0 flex flex-col">
-          {mobilePanel === "character" && leftPanel}
-          {mobilePanel === "game" && middlePanel}
-          {mobilePanel === "status" && rightPanel}
-        </div>
+        <Tabs value={mobilePanel} onValueChange={(next) => setMobilePanel(next as MobilePanel)} className="flex-grow min-h-0 flex flex-col">
+          <div className="flex shrink-0 items-center gap-1 mb-1">
+            <CollapsingTabsList aria-label="Game Panels" value={mobilePanel} tabs={MOBILE_PANEL_TABS} follow={mobileSwipe} className="flex-1" />
+            {/* The single menu joins the tab row on mobile. */}
+            {menuModal(false)}
+          </div>
+          <MobilePanelStage
+            tabs={MOBILE_PANEL_TABS}
+            value={mobilePanel}
+            onValueChange={setMobilePanel}
+            progress={mobileSwipe}
+            renderPanel={(panel) => (panel === "character" ? leftPanel : panel === "game" ? middlePanel : rightPanel)}
+          />
+        </Tabs>
       ) : (
         <>
-          {leftPanel}
-          {middlePanel}
-          {rightPanel}
+          <SideColumn
+            side="left"
+            motion={leftMotion}
+            rail={(
+              <PanelRail
+                side="left"
+                label="Story"
+                tabs={LEFT_PANEL_TABS}
+                top={(
+                  <>
+                    <RailAction icon={<ArrowLeft className="h-5 w-5" />} label="Exit" tip="Exit to Main Menu" onClick={() => setShowExitConfirm(true)} />
+                    <RailAction
+                      icon={bgmEnabled ? <Music className="h-5 w-5" /> : <MusicOffIcon className="h-5 w-5" />}
+                      label="Music"
+                      tip={bgmEnabled ? "Turn Music Off" : "Turn Music On"}
+                      onClick={() => setBgmEnabled(!bgmEnabled)}
+                    />
+                  </>
+                )}
+                openTab={openDrawerSide === 'left' ? leftTab : undefined}
+                onOpen={(tab) => openDrawer('left', tab)}
+                onClose={closeDrawer}
+              />
+            )}
+            panel={leftHost}
+          />
+          {sideStrip('left', leftCollapsed, setLeftCollapsed)}
+          <NarrationColumn left={leftMotion} right={rightMotion} width={storyWidth}>{middlePanel}</NarrationColumn>
+          {sideStrip('right', rightCollapsed, setRightCollapsed)}
+          <SideColumn
+            side="right"
+            motion={rightMotion}
+            rail={rightPanelAt('docked', true)}
+            // Collapsed, the right side's drawer is its own mount, outside the column.
+            panel={(docked) => docked && rightPanel}
+          />
+          {rightDrawer}
         </>
       ))}
 
@@ -6194,7 +6751,7 @@ const GameViewer = ({
       {!isMobile && (
       <Tip tip={uiHidden ? "Show UI" : "Hide UI"}>
         <Button
-          onClick={() => setUiHidden((h) => !h)}
+          onClick={() => { setUiHidden((h) => !h); closeDrawer(); }}
           className={`absolute bottom-2 left-2 z-30 flex items-center justify-center rounded-full w-10 h-10 p-0 transition-opacity ${
             uiHidden ? "opacity-0 hover:opacity-100" : "opacity-100"
           }`}
@@ -6204,43 +6761,20 @@ const GameViewer = ({
       </Tip>
       )}
 
-      {/* BGM + AI-context buttons — desktop only. On mobile the music toggle is dropped and AI context moves
-          into the tab-row menu. */}
+      {/* The right column's header. */}
       {!uiHidden && !isMobile && (
-      <div className="absolute top-16 left-2 md:top-2 flex gap-2">
-        <Button
-          onClick={() => setBgmEnabled(!bgmEnabled)}
-          className="flex items-center justify-center rounded-full w-10 h-10 p-0"
-        >
-          <Music
-            className={`h-5 w-5 ${bgmEnabled ? "" : "text-muted-foreground"}`}
-          />
-        </Button>
-        <Tip tip="Show the full AI context sent each turn">
-          <Button
-            onClick={() => setIsDebugOpen(true)}
-            className="flex items-center justify-center rounded-full w-10 h-10 p-0"
-          >
-            <ScrollText className="h-5 w-5" />
-          </Button>
-        </Tip>
+      <div ref={headerWidthRef} className="absolute top-2 right-[calc(0.5rem+var(--window-buttons-width))] flex gap-2">
+        {menuModal(true)}
       </div>
       )}
-
-      {/* Edit-world + Menu buttons — desktop only. On mobile both fold into the tab-row menu. */}
-      {!uiHidden && !isMobile && (
-      <div className="absolute top-16 right-2 md:top-2 flex gap-2">
-        <Tip tip="Edit World">
-          <Button
-            onClick={() => setIsEditingWorld(true)}
-            className="flex items-center justify-center rounded-full w-10 h-10 p-0"
-          >
-            <SquarePen className="h-5 w-5" />
-          </Button>
-        </Tip>
-        {menuModal()}
-      </div>
-      )}
+      <ConfirmDialog
+        open={showExitConfirm}
+        onOpenChange={setShowExitConfirm}
+        title={EXIT_TO_MENU_PROMPT.title}
+        icon={<DoorOpen className="h-4 w-4" />}
+        description={EXIT_TO_MENU_PROMPT.description}
+        onConfirm={onExitToMenu}
+      />
 
       {/* Modals */}
       {readmeText && (
@@ -6296,10 +6830,12 @@ const GameViewer = ({
         locations={locations}
         connections={connections}
         currentLocationId={currentLocation?.id ?? null}
-        entitiesAt={metRoster}
+        entitiesAt={mapEntities}
         mapBackground={mapBackdrop}
-        changeLocation={changeLocation}
+        changeLocation={travel}
         resolveText={resolvePH}
+        canEnter={canEnterFromHere}
+        lockLineOf={inPlay.lockLine}
       />
 
 
@@ -6371,7 +6907,7 @@ const GameViewer = ({
 
       {/* Full AI context sent each turn, paginated by turn */}
       <Dialog open={isDebugOpen} onOpenChange={setIsDebugOpen}>
-        <DialogContent surface="aiContext" aria-describedby={undefined} className="max-w-[95vw] w-[95vw] h-[90dvh] flex flex-col overflow-hidden">
+        <DialogContent surface="aiContext" aria-describedby={undefined} className={AI_CONTEXT_DIALOG_SIZE}>
           <RenderMounted render={() => {
             const palette = HIGHLIGHT_PALETTE;
             // Stable per-entry color + name lookups (by the live dictionary's order), shared by the legend,
@@ -6642,11 +7178,11 @@ const GameViewer = ({
             };
             return (
               <>
-                {/* The header row: the title beside the search field; pr-8 keeps it clear of the
-                    dialog's Close button. Below md the title goes back to being screen-reader-only. */}
-                <div className="flex items-center gap-2 flex-shrink-0 pr-8">
+                {/* The header row: the title beside the search field. Below md the title goes back to
+                    being screen-reader-only. */}
+                <div className={cn(dialogTitleRow, 'gap-2 flex-shrink-0')}>
                   <DialogTitle className="sr-only md:not-sr-only md:flex md:flex-shrink-0 md:items-center md:gap-1.5">
-                    <ScrollText className="h-5 w-5" />
+                    <ScrollText className="h-4 w-4" />
                     AI Context
                   </DialogTitle>
                   {/* The find controls share the search field's frame, so the toolbar keeps its one row. */}

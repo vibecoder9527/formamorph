@@ -1,68 +1,16 @@
-import { useId, useMemo, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
-import { DayPicker, type ChevronProps, type DropdownProps } from 'react-day-picker';
+import { lazy, Suspense, useId, useMemo, useState, type ReactNode } from 'react';
+import { CalendarDays, Clock } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import 'react-day-picker/style.css';
 
-/**
- * The calendar in the app's own palette.
- *
- * react-day-picker draws itself from CSS variables, so the theme is a handful of token references
- * rather than a re-implementation of its grid — which also means both themes follow the app's without a
- * second declaration.
- */
-const CALENDAR_THEME = {
-  '--rdp-accent-color': 'hsl(var(--primary))',
-  '--rdp-accent-background-color': 'hsl(var(--accent))',
-  '--rdp-today-color': 'hsl(var(--primary))',
-  '--rdp-day-height': '2.25rem',
-  '--rdp-day-width': '2.25rem',
-  '--rdp-day_button-height': '2rem',
-  '--rdp-day_button-width': '2rem',
-  '--rdp-day_button-border-radius': 'var(--radius)',
-  '--rdp-nav_button-height': '1.75rem',
-  '--rdp-nav_button-width': '1.75rem',
-  '--rdp-nav-height': '2rem',
-} as CSSProperties;
-
-/** The chevrons the navigation buttons draw, so the calendar's arrows match every other arrow here. */
-function CalendarChevron({ orientation, className }: ChevronProps) {
-  const Arrow = orientation === 'left' ? ChevronLeft : ChevronRight;
-  return <Arrow className={cn('h-4 w-4', className)} aria-hidden />;
-}
-
-/**
- * The caption's month and year pickers, drawn with the app's own `Select`.
- *
- * react-day-picker hands this slot a `<select>`-shaped contract — a flat option list and a change event
- * carrying the new value — so the adapter's whole job is to hand `onChange` an event shaped like the one
- * a native select would have fired.
- */
-function CalendarDropdown({ options = [], value, onChange, 'aria-label': ariaLabel }: DropdownProps) {
-  return (
-    <Select
-      value={String(value)}
-      onValueChange={(next) =>
-        onChange?.({ target: { value: next } } as unknown as ChangeEvent<HTMLSelectElement>)}
-    >
-      <SelectTrigger aria-label={ariaLabel} className="h-8 w-auto gap-1 border-none px-2 font-medium shadow-none">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent className="max-h-64">
-        {options.map((option) => (
-          <SelectItem key={option.value} value={String(option.value)} disabled={option.disabled}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
+// react-day-picker loads all of date-fns, so the calendar loads when a pointer or focus nears its button.
+let loadedCalendar: typeof import('./date-calendar') | undefined;
+const loadCalendar = () => import('./date-calendar').then((module) => (loadedCalendar = module));
+// `lazy` suspends on its first render even with the module in hand, and React holds a shown fallback a while.
+const LazyCalendar = lazy(loadCalendar);
 
 /** How far either side of this year the caption's year list reaches. */
 const YEAR_REACH = 10;
@@ -142,7 +90,7 @@ function TimeColumn({ children }: { children: ReactNode }) {
 }
 
 /** One value in an hour or minute column. */
-function TimeCell({ selected, label, onClick }: { selected: boolean; label: string; onClick: () => void }) {
+function TimeCell({ selected, label, onClick, disabled = false }: { selected: boolean; label: string; onClick: () => void; disabled?: boolean }) {
   return (
     <Button
       // Button defers to the element default, which inside a <form> is submit — and this field is meant
@@ -161,6 +109,7 @@ function TimeCell({ selected, label, onClick }: { selected: boolean; label: stri
       // The fill is the only thing saying which value is the chosen one; a reader who cannot see it needs
       // to be told the same thing.
       aria-pressed={selected}
+      disabled={disabled}
       onClick={onClick}
       ref={selected ? centerInColumn : undefined}
     >
@@ -175,15 +124,15 @@ function TimeCell({ selected, label, onClick }: { selected: boolean; label: stri
  * Every click writes through and the popover stays open, so an hour, a minute and a half of the day are
  * three separate corrections rather than one transaction to confirm.
  */
-function TimeColumns({ time, hour12, onCommit }: {
-  time: string; hour12: boolean; onCommit: (next: string) => void;
+function TimeColumns({ time, hour12, onCommit, hourDisabled }: {
+  time: string; hour12: boolean; onCommit: (next: string) => void; hourDisabled?: (hour: number) => boolean;
 }) {
   const { hour, minute } = parseTime(time || DEFAULT_TIME);
   const isPM = hour >= 12;
   const shownHour = hour12 ? (hour % 12 === 0 ? 12 : hour % 12) : hour;
 
-  const pickHour = (shown: number) =>
-    onCommit(`${pad(hour12 ? (shown % 12) + (isPM ? 12 : 0) : shown)}:${pad(minute)}`);
+  const hourOf = (shown: number) => (hour12 ? (shown % 12) + (isPM ? 12 : 0) : shown);
+  const pickHour = (shown: number) => onCommit(`${pad(hourOf(shown))}:${pad(minute)}`);
   const pickMinute = (next: number) => onCommit(`${pad(hour)}:${pad(next)}`);
   const pickMeridiem = (pm: boolean) => onCommit(`${pad((hour % 12) + (pm ? 12 : 0))}:${pad(minute)}`);
 
@@ -195,6 +144,7 @@ function TimeColumns({ time, hour12, onCommit }: {
             key={candidate}
             selected={shownHour === candidate}
             label={hour12 ? String(candidate) : pad(candidate)}
+            disabled={hourDisabled?.(hourOf(candidate)) ?? false}
             onClick={() => pickHour(candidate)}
           />
         ))}
@@ -238,6 +188,10 @@ interface DateTimeFieldProps {
    *  For something dated to the day — a changelog entry — where an hour would be a control that changes
    *  nothing and a clock beside it a question nobody asked. */
   dateOnly?: boolean;
+  /** Ask for a time of day alone: no date control, and the value is a bare `HH:mm`. */
+  timeOnly?: boolean;
+  /** Under `timeOnly`, the hours (0–23) the hour column offers but won't take. */
+  hourDisabled?: (hour: number) => boolean;
   /** Shown but not editable — a window that has already opened, say. */
   readOnly?: boolean;
   /** Ties a caller's `<Label htmlFor>` to the date button. */
@@ -257,7 +211,7 @@ interface DateTimeFieldProps {
  * than the only one — a popover is slower than knowing the number you want.
  */
 export function DateTimeField({
-  value, onChange, label, readOnly = false, dateOnly = false, id, className,
+  value, onChange, label, readOnly = false, dateOnly = false, timeOnly = false, hourDisabled, id, className,
 }: DateTimeFieldProps) {
   const generatedId = useId();
   const buttonId = id ?? generatedId;
@@ -266,7 +220,8 @@ export function DateTimeField({
   const { startMonth, endMonth } = useMemo(captionRange, []);
   const hour12 = useMemo(usesTwelveHourClock, []);
 
-  const { day, time } = splitLocal(value);
+  const Calendar = loadedCalendar?.default ?? LazyCalendar;
+  const { day, time } = timeOnly ? { day: '', time: value.slice(0, 5) } : splitLocal(value);
   const selected = dayToDate(day);
 
   // A day-only field has no second half to wait for and writes the bare day.
@@ -276,19 +231,21 @@ export function DateTimeField({
   // An hour alone is not a moment either, but in a visual picker a click that writes nothing reads as a
   // broken control — so the first one starts at today and the calendar corrects it from there.
   const emitTime = (nextTime: string) =>
-    onChange(`${day || dateToDay(new Date())}T${nextTime || DEFAULT_TIME}`);
+    onChange(timeOnly ? nextTime || DEFAULT_TIME : `${day || dateToDay(new Date())}T${nextTime || DEFAULT_TIME}`);
 
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>
       {/* Read-only is applied to what is shown rather than to what opens it, so a field that turns
           read-only while a popover is up closes it rather than leaving a live control behind. */}
-      <Popover open={dateOpen && !readOnly} onOpenChange={setDateOpen}>
+      {!timeOnly && <Popover open={dateOpen && !readOnly} onOpenChange={setDateOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
             id={buttonId}
             aria-label={`${label} date`}
             disabled={readOnly}
+            onPointerEnter={() => void loadCalendar()}
+            onFocus={() => void loadCalendar()}
             className={cn(
               'flex h-10 min-w-[9rem] items-center gap-2 rounded-md border border-input bg-background px-3 text-label',
               // Only the pair shares a row, so only the pair has a stretch to divide.
@@ -304,27 +261,20 @@ export function DateTimeField({
         </PopoverTrigger>
         {/* portal={false}: inside a modal Dialog, the scroll lock swallows wheel events on body-portaled content. */}
         <PopoverContent portal={false} className="w-auto p-3" align="start">
-          <DayPicker
-            mode="single"
-            // rdp's cells use `font: inherit`, and the popover inherits body size; text-label matches
-            // the caption dropdowns and the clock columns.
-            className="text-label"
-            selected={selected}
-            defaultMonth={selected}
-            showOutsideDays
-            captionLayout="dropdown"
-            startMonth={startMonth}
-            endMonth={endMonth}
-            style={CALENDAR_THEME}
-            components={{ Chevron: CalendarChevron, Dropdown: CalendarDropdown }}
-            onSelect={(next) => {
-              if (!next) return;
-              emitDay(dateToDay(next));
-              setDateOpen(false);
-            }}
-          />
+          {/* The calendar's own size, so a cold first open holds its place rather than growing the popover. */}
+          <Suspense fallback={<div data-calendar-loading="" className="h-[19rem] w-[17.5rem]" />}>
+            <Calendar
+              selected={selected}
+              startMonth={startMonth}
+              endMonth={endMonth}
+              onSelect={(next) => {
+                emitDay(dateToDay(next));
+                setDateOpen(false);
+              }}
+            />
+          </Suspense>
         </PopoverContent>
-      </Popover>
+      </Popover>}
 
       {!dateOnly && (
         <div className="relative">
@@ -352,7 +302,7 @@ export function DateTimeField({
                 </Button>
               </PopoverTrigger>
               <PopoverContent portal={false} className="w-auto p-2" align="end">
-                <TimeColumns time={time} hour12={hour12} onCommit={emitTime} />
+                <TimeColumns time={time} hour12={hour12} onCommit={emitTime} hourDisabled={timeOnly ? hourDisabled : undefined} />
               </PopoverContent>
             </Popover>
           </div>

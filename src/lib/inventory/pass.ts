@@ -3,15 +3,17 @@
  * named operations it returns into the validator's id-form operations (Q23, Q24, Q56). Pure.
  */
 import type { ResponseSchema } from '@/lib/aiRequest/responseSchema';
+import { parseJsonReply } from '@/lib/aiRequest/jsonReply';
 import type { PaymentStats } from '@/lib/currency/payment';
 import { sameWhere, stateWord } from '@/lib/items';
 import { escapeRegExp } from '@/lib/utils';
 import type { InventoryPassOp, InventoryPassOpKind, InventoryUseAfter, ItemCopy, ItemCopyWhere, RuntimeItem } from '@/types';
 import type { InventoryCall, InventoryResult } from './index';
+import { guardTold } from './passGuard';
 import { coveredByMoney, settleListedBuy, settlePays } from './passMoney';
 import { candidates, distribute, gainId, itemNameKey, listedName, nameMatches, ownerOf, runOps, skip, startPass, type PassRun, type PassScene } from './passRun';
 
-export { itemNameKey, PASS_HERE, PASS_YOU, type PassMoney, type PassScene } from './passRun';
+export { itemNameKey, passOwners, PASS_HERE, PASS_YOU, type PassMoney, type PassOwner, type PassScene } from './passRun';
 
 export const PASS_OP_KINDS = ['gain', 'lose', 'transfer', 'equip', 'unequip', 'use', 'change', 'reveal', 'pay', 'buy'] as const satisfies readonly InventoryPassOpKind[];
 // Fails to compile when the union gains an operation the list lacks.
@@ -109,17 +111,13 @@ const passOp = (raw: Record<string, unknown>): InventoryPassOp | null => {
 };
 
 const jsonOps = (raw: string): InventoryPassOp[] | null => {
-  try {
-    const parsed: unknown = JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
-    const list = Array.isArray(parsed) ? parsed
-      : parsed && typeof parsed === 'object' && Array.isArray((parsed as { operations?: unknown }).operations)
-        ? (parsed as { operations: unknown[] }).operations : null;
-    if (!list) return null;
-    return list.flatMap((entry) => (entry && typeof entry === 'object' ? [passOp(entry as Record<string, unknown>)] : []))
-      .filter((op): op is InventoryPassOp => op !== null);
-  } catch {
-    return null;
-  }
+  const parsed = parseJsonReply(raw);
+  const list = Array.isArray(parsed) ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { operations?: unknown }).operations)
+      ? (parsed as { operations: unknown[] }).operations : null;
+  if (!list) return null;
+  return list.flatMap((entry) => (entry && typeof entry === 'object' ? [passOp(entry as Record<string, unknown>)] : []))
+    .filter((op): op is InventoryPassOp => op !== null);
 };
 
 /** A cell a reply labeled with its field's name, as in `item: Rope`. */
@@ -140,6 +138,8 @@ export const parseInventoryReply = (raw: string): InventoryPassOp[] => jsonOps(r
 export interface InventoryPassResult extends InventoryResult {
   /** Every runtime item: the scene's, and the ones this reply made. */
   runtimeItems: RuntimeItem[];
+  /** The reply's operations less the shown Listed Actions' repeats: what a re-roll replays. */
+  ops: InventoryPassOp[];
   /** The stats after this reply's payments. Absent when the scene has no money. */
   stats?: PaymentStats;
 }
@@ -149,15 +149,16 @@ export function applyInventoryPass(
   copies: readonly ItemCopy[], passOps: readonly InventoryPassOp[], scene: PassScene, call: Omit<InventoryCall, 'source'>,
 ): InventoryPassResult {
   const pass = startPass(copies, scene, call);
-  const money = settlePays(pass, passOps);
+  const ops = guardTold(pass, passOps);
+  const money = settlePays(pass, ops);
   const handMoves = new Set<string>();
-  for (const named of passOps) {
+  for (const named of ops) {
     if (named.op === 'pay') continue;
     if (named.op === 'buy') settleListedBuy(pass, named, money.buys);
     else if (!coveredByMoney(pass, named, money, handMoves)) applyItemOp(pass, named);
   }
   const { list, itemUses, diagnostics, events, runtimeItems, moneyStats } = pass;
-  return { copies: list, itemUses, diagnostics, events, runtimeItems, ...(moneyStats && { stats: moneyStats }) };
+  return { copies: list, itemUses, diagnostics, events, runtimeItems, ops, ...(moneyStats && { stats: moneyStats }) };
 }
 
 type ItemOp = InventoryPassOp & { op: Exclude<InventoryPassOpKind, 'pay' | 'buy'> };

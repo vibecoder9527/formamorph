@@ -9,11 +9,10 @@ A save keeps one game's progress. A backup keeps your worlds, saves, library ent
 <!-- keywords: progress, keep, file, store, checkpoint, quit, stop playing, manual, slot, bookmark, come back later, overwrite, preserve, session, avoid losing -->
 <!-- route: gameViewer -->
 
-1. In the game, select the **Menu** button at the top right.
-2. Select **Save Game**.
-3. Type a name in the box. The box shows the name of the save you loaded or saved last.
-4. Select the **Save** button, or press Enter.
-5. If a save with that name is in this world, **Save already exists** opens. Select **Overwrite** to replace it, or **Keep both** to add a second save.
+1. In the game, select **Save Game** at the top right. On mobile, select **More Actions** (`...`), then **Save Game**.
+2. Type a name in the box. The box shows the name of the save you loaded or saved last.
+3. Select the **Save** button, or press Enter.
+4. If a save with that name is in this world, **Save already exists** opens. Select **Overwrite** to replace it, or **Keep both** to add a second save.
 
 The **Logs** tab records *Game saved as …*. To keep scene images in the save, select their checkbox. See [The Save Game Dialog](#the-save-game-dialog).
 
@@ -22,8 +21,8 @@ The **Logs** tab records *Game saved as …*. To keep scene images in the save, 
 <!-- route: menu -->
 
 1. Open **Load Game**:
-   - In the game, select **Menu**, then **Load Game**.
-   - On the main menu, select the **Menu** button at the top right, then **Load Game**. On a narrow screen, the item is in the **Menu** button at the top center.
+   - In the game, select **Load Game** at the top right. On mobile, select **More Actions** (`...`), then **Load Game**.
+   - On the main menu, select the **Load Game** button at the top right. On a narrow screen, select **More Actions** (`...`) at the top right, then **Load Game**.
 2. Select the folder of the world. In the game, the dialog opens on the current world's folder; select **Back** to see the others.
 3. Select a save. The game opens at the turn you saved.
 
@@ -51,22 +50,21 @@ Each save joins the folder of its world. The dialog opens that folder, and a mes
 
 ## How to Make a Backup
 <!-- keywords: back up, everything, export all, reinstall, new computer, new device, migrate, transfer, safe copy, archive, snapshot, switch browser, before clearing cache, format pc, full dump, bulk, sync devices, protect data -->
-<!-- route: backup#start-backup -->
+<!-- route: settings.data#start-backup -->
 
-1. On the main menu, select the **Menu** button, then **Backup & Restore**.
-2. Select the **Backup** button.
-3. Clear the checkbox of each item you do not want. All items start selected.
-4. Select **Save backup**. You get a file named `formamorph-backup-` and the date.
-5. Keep the file in a safe place, away from the app's own folder.
+1. On the main menu, open **Settings**, select the **Data** tab, then select **Back Up** in the **Backup & Restore** row.
+2. Clear the checkbox of each item you do not want. All items start selected.
+3. Select **Save backup**. You get a file named `formamorph-backup-` and the date.
+4. Keep the file in a safe place, away from the app's own folder.
 
 Make a backup before you update the app or move to a new device. See [What a Backup Holds](#what-a-backup-holds).
 
 ## How to Restore a Backup
 <!-- keywords: recover, bring back, get back, import, reinstall, new device, lost data, migrate, load archive, everything gone, wiped, merge, duplicates, disappeared, old computer, put back -->
-<!-- route: backup#start-restore -->
+<!-- route: settings.data#start-restore -->
 
-1. On the main menu, select the **Menu** button, then **Backup & Restore**.
-2. Select the **Restore** button, then select a backup `.json` file.
+1. On the main menu, open **Settings**, select the **Data** tab, then select **Restore** in the **Backup & Restore** row.
+2. Select a backup `.json` file.
 3. Clear the checkbox of each item you do not want.
 4. Items you already have show an **exists** tag. To replace them, select **Overwrite existing** in their group.
 5. Select **Restore**. The app reloads when it is done.
@@ -162,15 +160,29 @@ To turn it off, clear **Autosave** in the **Saves** section of the [Settings](Se
 
 **Quick Start** starts a new game with the world's defaults. It does not load a save. See [How to Start with the Defaults](Starting-a-Game#how-to-start-with-the-defaults).
 
+## When a World Can't Be Read
+<!-- keywords: world won't load, world missing, damaged world, corrupted world, ghost world, null, can't be read, library error, broken save data, repair -->
+<!-- route: unreadableWorlds -->
+
+A stored world can get damaged on disk. Formamorph hides it, and your other worlds still load. A notice opens once each session. Select **Review** to see each damaged world and its fix:
+
+| Button | Shows for | What it does |
+| --- | --- | --- |
+| **Restore** | A world that ships with Formamorph | Replaces it with the original. Your edits to it are lost. |
+| **Download Again** | A world from Community Creations | Removes your copy and opens its listing. |
+| **Remove** | Any other world | Removes it from your library. |
+
+💡 If you have a backup of the world, restore it before you select **Remove**. See [How to Restore a Backup](#how-to-restore-a-backup).
+
 ## The Backup & Restore Dialog
 <!-- keywords: what is included, settings not included, avatars missing, optimize, downscale, invalid file, select all, compress pictures, skip duplicates -->
 <!-- route: backup -->
 
-Open it from the main menu's **Menu** button. It has three buttons: **Backup**, **Restore** and **Close**.
+The **Back Up** and **Restore** buttons in the **Data** tab of **Settings** open it on the main menu. It opens over **Settings**. **Cancel** closes it.
 
-**Backup** lists what you have in up to four groups: **Worlds**, **Saves**, **Entities** and **Dictionaries**. A group shows only when it has items. Each group has a checkbox that selects all of its items, and a count of the items you selected. **Save backup** is off when nothing is selected.
+**Back Up** lists what you have in up to four groups: **Worlds**, **Saves**, **Entities** and **Dictionaries**. A group shows only when it has items. Each group has a checkbox that selects all of its items, and a count of the items you selected. **Save backup** is off when nothing is selected.
 
-**Restore** reads a backup file and shows the groups that the file holds.
+**Restore** asks for a backup file first, then shows the groups that the file holds.
 
 | Control | What it does |
 |---|---|
@@ -209,6 +221,28 @@ Formamorph stores your data in the app's browser storage on your device. Nothing
 The web version asks the browser to keep its storage. A browser can still clear it, and a hosted copy of the app on a new address starts empty. Make a backup if your data matters to you.
 
 On Windows and Linux, copy the whole folder to move your data to a new place.
+
+## The Merge Your Other Data Dialog
+<!-- keywords: merge, appdata, missing worlds, missing saves, taskbar pin, shortcut, data disappeared, two copies, don't merge -->
+<!-- route: profileMerge -->
+
+On Windows, starting the `Formamorph.exe` inside the `app` folder keeps your data in AppData instead of the `userdata` folder. When you next start the main `Formamorph.exe`, this dialog opens on the main menu and offers to bring that data over.
+
+| Column | Meaning |
+|---|---|
+| **new** | Items only the other copy has. Merge adds them. |
+| **replaces yours** | Items both copies have, where the other copy is newer. Merge replaces yours. |
+| **kept** | Items both copies have, where yours is newer or the age is unknown. Yours stays. |
+
+| Button | What it does |
+|---|---|
+| **Merge** | Copies the items, smallest first. A bar shows each group's progress, and the dialog can't be closed until it finishes. |
+| **Not Now** | Closes the dialog. It opens again the next time you start Formamorph. |
+| **Don't Merge** | Closes the dialog for good. |
+
+The merge covers worlds, saves, entities, dictionaries, Avatars, stat templates, Mascot images, settings, sign-in, your model folder choice and local models. For an Avatar both copies hold, the newer one stays. Stat templates, Mascot images, settings and the model folder choice carry no age, so the merge adds only the ones you lack. Local models move into your model folder last, since they're the largest.
+
+When the merge finishes, the dialog lists what it added, replaced and kept, and any item it couldn't bring over, with the reason. If it brought over settings, select **Restart** so they take effect. Imported saves go to the end of each world's save list as ordinary saves. The copy in AppData stays, except for local models, which move. If the merge stops partway, it's offered again on the next start.
 
 ## App Updates
 <!-- keywords: release notes, whats new, changelog, stable or beta, check manually, forced to, rollback, failed to start, current version, web reload -->
@@ -266,7 +300,7 @@ On the web, the version number at the bottom left of the main menu opens **What'
 
 ## Related
 
-- [🎮 How to Play](How-to-Play): the game menu and the **Logs** tab
+- [🎮 How to Play](How-to-Play): the game's actions and the **Logs** tab
 - [⚙️ Settings](Settings): the **Autosave** setting and the **Data** tab
 - [📚 Library](Library): import and export worlds, entities, dictionaries and avatars
 - [📱 Install on Android](Install-on-Android): updates and exports on Android

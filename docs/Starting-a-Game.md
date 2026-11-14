@@ -13,7 +13,7 @@ A new game starts at **Enter World**. One dialog holds every choice before page 
 2. Select **Enter World**.
 3. If the world has an **Introduction**, read it and close it.
 4. In the **Enter World** dialog, select each category in the list on the left and make your picks. The categories are in [The Enter World Dialog](#the-enter-world-dialog).
-5. Select **Start Game**. When the persona you play has an Avatar, the button reads **Continue to Avatar**, and the Avatar step comes next.
+5. Select **Start Game**. When the persona you play has an Avatar, the button reads **Continue to Avatar**, and the Avatar step comes next. With no Avatar in your library, a persona on **User's Default** has no Avatar, so the button reads **Start Game** and the game starts without the step.
 
 A world with nothing to choose skips the **Enter World** dialog. A world with a **Custom Persona** opens it even then, so you can type your **Name**.
 
@@ -30,9 +30,19 @@ For the **Persona** category, see [How to Pick a Persona](Personas#how-to-pick-a
 
 - The persona that **Enter World** picks first.
 - The author's default traits.
+- Each World Option on its default.
 - A random starting location. When the persona is one of the world's own entities, you start at its location.
 
 No library additions come in, even after **Remember Additions**. The world's own dictionaries are on as the author set them.
+
+## How to Pick World Options
+<!-- keywords: world settings, game options, reply length, style, difficulty, slider, switch, setup choices -->
+<!-- route: enterWorld -->
+
+1. In the **Enter World** dialog, open **World Options**. It is the first category when the world has any.
+2. Pick a value for each Option: a round button for a choice, a checkbox for on or off, a slider for a number.
+
+Each Option starts on the author's default, so you can skip the category.
 
 ## How to Pick Starting Traits
 <!-- keywords: choose, character creation, options, class, race, perks, background, skills, abilities, attributes, species, feats, start button disabled, greyed out, customize character -->
@@ -108,6 +118,7 @@ The dialog shows the world's name at the top and a category list on the left. On
 
 | Category | What you pick | Shows when |
 |---|---|---|
+| **World Options** | How the world plays, such as reply length or style | The world has Options shown to the player |
 | **Persona** | Who you play | The world or your library has a persona to pick, or the world has a **Custom Persona** |
 | **Starting Traits** | One category per trait group, and one per entity whose traits you set | The world has traits you can pick |
 | **Starting Location** | Where the story begins | The world offers more than one starting location |
@@ -131,6 +142,7 @@ An entity whose traits you set gets a category with its portrait and name. Your 
 | A lock and *Locked* | The trait needs only traits you can't see |
 | *Unlocked by …* | The picks that opened it |
 | A stat line, such as *Strength: +2* | What the trait does to a stat |
+| An Avatar icon | The trait changes your Avatar's sliders or colors. Hover it to see which ones. It shows only when you will play with an Avatar. |
 
 A world can have **Hidden** traits. They work like **Automatic** traits, and they never show in the list.
 
@@ -148,7 +160,7 @@ The list shows **Random** first, then each starting location with its descriptio
 | A location | That location |
 | **Random** | Any starting location, at random |
 
-When you play one of the world's own entities, its locations join the list, and its starting location is picked for you. You can pick another. After you pick a location yourself, a persona change no longer moves it, unless the new persona can't start there.
+When you play one of the world's own entities, the places it can start at join the list. Its starting location is picked for you. The same holds for a world's **Custom Persona** when you pick **None** or one of your library personas: its **Start Locations** join the list. You can pick another. After you pick a location yourself, a persona change no longer moves it, unless the new persona can't start there.
 
 ## Library Additions
 <!-- keywords: bring my character, extra npc, companion, mods, custom content, lorebook order, remember for next time, tag meaning, include my own -->

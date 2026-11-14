@@ -1,4 +1,4 @@
-import { Code, Images, Wrench, type LucideIcon } from 'lucide-react';
+import { Code, Images, SlidersHorizontal, Wrench, type LucideIcon } from 'lucide-react';
 
 import { ELEMENT_ICONS } from '@/lib/elementIcons';
 
@@ -25,12 +25,14 @@ export interface WorldEditorTab {
  *  `devRouter.test.ts`. */
 export const WORLD_EDITOR_TABS = [
   { value: 'overview', label: 'Overview', icon: ELEMENT_ICONS.world },
+  { value: 'openings', label: 'Openings', icon: ELEMENT_ICONS.opening, advancedOnly: true },
   { value: 'media', label: 'Media', icon: Images },
   { value: 'entities', label: 'Entities', group: 'content', icon: ELEMENT_ICONS.entities },
-  { value: 'items', label: 'Items', group: 'content', icon: ELEMENT_ICONS.item },
   { value: 'locations', label: 'Locations', group: 'content', icon: ELEMENT_ICONS.location },
+  { value: 'items', label: 'Items', group: 'content', icon: ELEMENT_ICONS.item },
   { value: 'traits', label: 'Traits', group: 'content', icon: ELEMENT_ICONS.trait },
   { value: 'stats', label: 'Stats', group: 'content', icon: ELEMENT_ICONS.stat },
+  { value: 'options', label: 'Options', group: 'content', icon: SlidersHorizontal },
   { value: 'dictionary', label: 'Dictionary', group: 'vocabulary', icon: ELEMENT_ICONS.dictionary },
   { value: 'placeholders', label: 'Placeholders', group: 'vocabulary', icon: ELEMENT_ICONS.placeholder, advancedOnly: true },
   { value: 'scripts', label: 'Scripts', group: 'logic', icon: Code, advancedOnly: true },

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_PROMPT_VARIABLES, TOKEN_PATTERN, decodeChipKey, decodeVariant, encodeVariant, joinToken, splitToken, tokenVariant,
-  variableAxes, variableForToken, variableOptionIds, variantLabelForToken, withVariant, type TokenParts,
+  variableForToken, variableOptionIds, variantLabelForToken, withVariant, type TokenParts,
 } from './promptVariables';
 import { corpusTokens } from '@/test/tokenCorpus';
 import { parsePromptTemplate, renderPromptTemplate, serializeSegments } from './promptTemplate';
@@ -138,22 +138,6 @@ describe('the chip label', () => {
     expect(variantLabelForToken('<ENTITIES|sublocations.stats>')).toBe('In Sub');
     expect(variantLabelForToken('<ENTITIES|inscene.withstats.summary.notraits.markdown>')).toBe('In Scene, Summary, Markdown');
     expect(variantLabelForToken('<PERSONA|nostats.norange>')).toBe('No Stats');
-  });
-});
-
-describe('lock groups', () => {
-  const groups = (base: string) => Object.fromEntries(
-    variableAxes(variableForToken(base)!).filter((a) => a.toggle).map((a) => [a.id, a.lockGroup ?? null]),
-  );
-
-  it('group the Stats chip pieces, and the Stat Detail pieces of each roster chip', () => {
-    expect(groups('<STATS DESCRIPTION>')).toEqual({ numbers: 'statDetail', descriptions: 'statDetail', meaning: 'statDetail' });
-    const roster = {
-      withstats: null, withtraits: null, traits: null, stats: null,
-      range: 'statDetail', descriptor: 'statDetail', description: 'statDetail',
-    };
-    expect(groups('<ENTITIES>')).toEqual(roster);
-    expect(groups('<PERSONA>')).toEqual(roster);
   });
 });
 

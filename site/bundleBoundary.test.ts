@@ -49,6 +49,8 @@ const ALLOWED = [
   '@/services/UserService',
   '@/components/ui/',
   '@/components/UserAvatar',
+  '@/components/EmailMarkerNotice',
+  '@/lib/dev/devEmailMarkerStub',
   '@/components/theme-provider',
   '@/components/PatreonSection',
   '@/components/RoleBadge',
@@ -69,6 +71,7 @@ const ALLOWED = [
   '@/lib/hostedAi/unconfirmedCopy',
   '@/lib/refusalWatch',
   '@/lib/serverDate',
+  '@/lib/useEmailRecheck',
   '@/lib/useMountedRef',
   '@/lib/useRenameSubmit',
   '@/lib/usernameRule',
@@ -202,7 +205,9 @@ describe('the site entry stays out of the game bundle', () => {
     // 74: `resetTime`, the pure leaf that formats the local reset weekday and time for the allowance section.
     // 75: `SupportersWall`, the wall the page and the game's Credits dialog share; it reads only leaves already listed.
     // 76: `unconfirmedCopy`, the one sentence for an unconfirmed pledge, which the app and the allowance section share.
-    expect(reachableFromSite().size).toBeLessThanOrEqual(76);
+    // 78: `EmailMarkerNotice`, the marked-address notice the game and the site share, and `devEmailMarkerStub`, its DEV-only fixture; both read only `AuthService`.
+    // 79: `useEmailRecheck`, the account re-read both email sections run after a send; it reads only `AuthService`.
+    expect(reachableFromSite().size).toBeLessThanOrEqual(79);
   });
 
   it('reaches the gesture group helper through the slider and color picker, and nothing behind it', () => {

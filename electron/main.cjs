@@ -7,35 +7,83 @@ const fs = require('node:fs');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
 const { collect: collectVram } = require('./vramCollect.cjs');
+const { cudaSupport, nvidiaCards } = require('./nvidiaFacts.cjs');
+const { evaluateCudaSupport } = require('./cudaSupport.cjs');
+const { engineBackend, withDeviceSettings, createVramClassAsk } = require('./engineBackend.cjs');
+const { createBackendChoice } = require('./engineBackendChoice.cjs');
+const { createCudaInstall, driverVersions } = require('./cudaInstall.cjs');
+const { createCudaStarts } = require('./cudaStart.cjs');
+const { readEnginePin } = require('./enginePin.cjs');
 // The engine runs in a utility process; this is its main-process face, with the same API the engine module
 // exports. See llmEngineProxy.cjs.
 const llmEngine = require('./llmEngineProxy.cjs');
 const { selectEngineDevice, ENGINE_DEVICE_AUTO } = require('./engineDevice.cjs');
 const llamaServer = require('./llamaServer.cjs');
 const { overflowPolicy, DEFAULT_POLICY: DEFAULT_OVERFLOW_POLICY } = require('./contextOverflow.cjs');
-const { binaryPath: llamaServerBinary, listServerDevices, deviceListing } = llamaServer;
+const { binaryPath: llamaServerBinary, readServerDevices, deviceListing } = llamaServer;
 const modelDownload = require('./modelDownload.cjs');
 const { scanModels, resolveModelRef, isRootRef, projectorFileName } = require('./modelScan.cjs');
 const modelMove = require('./modelMove.cjs');
 const { portableUserDataDir, migratePersistentStores } = require('./portableProfile.cjs');
+const { mergeSource, writeMarker, SOURCE_STORES } = require('./profileMerge.cjs');
+const { openSource } = require('./profileMergeSource.cjs');
+const { readFields, fillField } = require('./profileMergeModelFolder.cjs');
+const { modelSides, plannedModelsDir, sourceModelsDir } = require('./profileMergeModels.cjs');
+const { samePath } = require('./samePath.cjs');
 const { corsResponse } = require('./corsShim.cjs');
 const { httpOrigin, stripOrigin } = require('./originStrip.cjs');
 const { contextMenuTemplate } = require('./contextMenu.cjs');
 const { confirmLeave } = require('./leavePrompt.cjs');
+const { windowChromeOptions, setWindowSymbolColor, watchFullScreen, isFullScreen, leaveFullScreen } = require('./windowChrome.cjs');
 const updater = require('./updater.cjs');
 const perfMeter = require('./perfMeter.cjs');
+const { launcherToRestartThrough, handOff, taskbarDetails } = require('./launcherHandoff.cjs');
+const { spawn } = require('node:child_process');
+
+const APP_ID = 'dev.jakejames.formamorph';
+
+// A direct start of `<root>/app/Formamorph.exe` restarts through the launcher. See launcherHandoff.cjs.
+const handoffLauncher = launcherToRestartThrough({
+  platform: process.platform,
+  isPackaged: app.isPackaged,
+  env: process.env,
+  execPath: process.execPath,
+  exists: fs.existsSync,
+});
+if (handoffLauncher) {
+  try {
+    handOff({
+      launcher: handoffLauncher,
+      argv: process.argv.slice(1),
+      dialog,
+      reveal: (file) => shell.showItemInFolder(file),
+      spawn: (exe, argv) => spawn(exe, argv, { detached: true, stdio: 'ignore' })
+        .on('error', (err) => console.error('Launcher handoff failed:', err))
+        .unref(),
+    });
+    app.exit(0);
+  } catch (err) {
+    console.error('Launcher handoff failed:', err); // keep running unhandled rather than not start at all
+  }
+}
+if (process.platform === 'win32' && process.env.FORMAMORPH_ROOT) app.setAppUserModelId(APP_ID);
 
 // Portable/AppImage builds keep their whole profile (settings, saves, worlds, library) beside the exe so
 // copying the folder carries everything; installed (mac dmg) and dev keep the OS-default userData (dev would
 // otherwise dump the Chromium profile into the repo). Must run before app-ready — module load qualifies. On
 // the first post-change launch, migrate the persistent stores out of the old default location once.
 const portableProfile = portableUserDataDir();
+// The AppData profile whose data the launcher start offers to merge. See profileMerge.cjs.
+let mergeOffer = null;
 if (portableProfile) {
   const defaultUserData = app.getPath('userData'); // capture BEFORE overriding
   const fresh = !fs.existsSync(portableProfile) || fs.readdirSync(portableProfile).length === 0;
   try { fs.mkdirSync(portableProfile, { recursive: true }); } catch { /* ignore */ }
   if (fresh && fs.existsSync(defaultUserData)) migratePersistentStores(defaultUserData, portableProfile);
   app.setPath('userData', portableProfile);
+  mergeOffer = mergeSource({
+    platform: process.platform, env: process.env, sourceDir: defaultUserData, targetDir: portableProfile, fsApi: fs,
+  });
 }
 
 const DIST = path.join(__dirname, '..', 'dist');
@@ -52,21 +100,27 @@ let mainWindow = null;
 // gpuDevice is a device *name* (or 'auto'/'all'), which the engine resolves against `--list-devices` at each
 // start — an index saved across a driver change would point at a different card.
 // contextOverflow applies to the next request with no reload (llm-set-context-overflow).
-let engineOptions = { contextSize: 8192, gpuLayers: -1, flashAttention: true, parallelRequests: 2, unifiedKvCache: true, kCacheType: 'f16', vCacheType: 'f16', kvCacheInRam: false, gpuDevice: ENGINE_DEVICE_AUTO, contextOverflow: DEFAULT_OVERFLOW_POLICY };
+let engineOptions = { contextSize: 8192, gpuLayers: -1, flashAttention: true, parallelRequests: 2, unifiedKvCache: true, kCacheType: 'f16', vCacheType: 'f16', kvCacheInRam: false, gpuDevice: ENGINE_DEVICE_AUTO, engineBackend: 'auto', contextOverflow: DEFAULT_OVERFLOW_POLICY };
 
 // Every GPU llama-server can see, for the device picker. `--list-devices` initializes every backend, so it is
 // read once and cached; each engine start reads its own copy and refreshes this one through its status.
-let deviceEnumeration = null;
-// One read at a time: a desktop boot can ask twice at once (a model starting while the picker fills).
-let devicesInFlight = null;
+// Keyed by binary: the bundled Vulkan build and the CUDA build list different devices.
+const deviceEnumerations = new Map();
+// One read at a time per binary: a desktop boot can ask twice at once (a model starting while the picker fills).
+const devicesInFlight = new Map();
 
-async function currentEnumeration() {
-  if (deviceEnumeration) return deviceEnumeration;
-  devicesInFlight ??= listServerDevices({ bin: llamaServerBinary() })
-    .then(deviceListing)
-    .finally(() => { devicesInFlight = null; });
-  deviceEnumeration = await devicesInFlight;
-  return deviceEnumeration;
+const deviceNames = (enumeration) => enumeration.devices.map((d) => d.name);
+
+async function enumerationOf(bin) {
+  const cached = deviceEnumerations.get(bin);
+  if (cached) return cached;
+  if (!devicesInFlight.has(bin)) {
+    devicesInFlight.set(bin, readServerDevices({ bin }).then(({ ok, devices }) => deviceListing(devices, ok)).finally(() => devicesInFlight.delete(bin)));
+  }
+  const enumeration = await devicesInFlight.get(bin);
+  // A failed listing and an empty CUDA listing are asked again next time: a reinstall at the same path can list devices.
+  if (enumeration.listed && (enumeration.devices.length || bin === llamaServerBinary())) deviceEnumerations.set(bin, enumeration);
+  return enumeration;
 }
 
 /** nvidia-smi's GPUs for Auto's pick; none without nvidia-smi, where the name patterns decide alone. */
@@ -74,10 +128,31 @@ async function nvidiaGpus() {
   try { return (await collectVram()).gpus; } catch { return []; }
 }
 
-/** The engine's load options for a model: the renderer's settings plus the GPUs Auto picks among. */
+const chooseBackend = createBackendChoice({
+  platform: process.platform,
+  install: cuda,
+  readCards: nvidiaCards,
+  vulkanDeviceNames: async () => deviceNames(await enumerationOf(llamaServerBinary())),
+});
+/** The backend the next start runs for `options`, the engine options by default. */
+const backendChoice = (options = engineOptions) => chooseBackend(options);
+
+/** The engine's load options for a model: the renderer's settings, the GPUs Auto picks among, and the CUDA build when the backend choice says CUDA. */
 async function startOptions(modelPath) {
-  return { modelPath, ...engineOptions, nvidiaGpus: await nvidiaGpus() };
+  const { cudaBinary } = await backendChoice();
+  return { modelPath, ...engineOptions, nvidiaGpus: await nvidiaGpus(), cudaBinary };
 }
+
+// Starts that keep the CUDA failure record. Off Windows a start never runs CUDA, so it never falls back.
+let cudaStarts = null;
+const engineStarts = () => (cudaStarts ??= createCudaStarts({
+  engine: llmEngine,
+  install: cuda(),
+  startOptions,
+  nextBackend: async () => (await backendChoice()).backend,
+  readCards: nvidiaCards,
+}));
+const startEngine = (modelPath) => engineStarts().start(modelPath);
 
 // Keep the (multi-GB) models beside the app so a portable build stays self-contained — burying them in
 // AppData orphans them for a portable exe with no uninstaller. Portable Windows builds run from a temp
@@ -150,8 +225,15 @@ function detectLmStudioDir() {
 
 // Push every engine status change to the renderer (it also polls once on mount via 'llm-status').
 llmEngine.onStatus((state) => {
-  // A start read the device list afresh; keep the picker's copy in step, so a card added or removed shows.
-  if (deviceEnumeration && Array.isArray(state.gpuDeviceOptions)) deviceEnumeration = { ...deviceEnumeration, gpuDeviceNames: state.gpuDeviceOptions };
+  // A start read the device list afresh; keep the picker's copy of that backend in step, so a card added or removed shows.
+  if (Array.isArray(state.gpuDeviceOptions)) {
+    for (const [bin, enumeration] of deviceEnumerations) {
+      if (enumeration.gpuBackend !== state.gpuBackend) continue;
+      // A card new to this copy has no total yet, which the VRAM class reads as unknown.
+      const devices = state.gpuDeviceOptions.map((name) => enumeration.devices.find((d) => d.name === name) ?? { name, totalMB: null });
+      deviceEnumerations.set(bin, { ...enumeration, devices, listed: true });
+    }
+  }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('llm-status', state);
 });
 
@@ -216,17 +298,23 @@ function watchRenderer(win) {
 }
 
 function createWindow() {
+  const { webPreferences: chromePreferences, ...chrome } = windowChromeOptions(process.platform);
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     autoHideMenuBar: true,
+    ...chrome,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      ...chromePreferences,
     },
   });
   mainWindow = win;
+  watchFullScreen(win, process.platform);
+  const taskbar = taskbarDetails({ platform: process.platform, env: process.env, appId: APP_ID, execPath: process.execPath });
+  if (taskbar) win.setAppDetails(taskbar);
 
   // External links (footer socials, the update dialog's "Full changelog") open in the system browser, not a
   // new in-app window — deny the popup and hand http(s) URLs to the OS.
@@ -257,6 +345,7 @@ function createWindow() {
   });
 
   watchRenderer(win);
+  win.on('closed', () => { void closeMergeReader(); });
 
   // Closing the window with unsaved world edits: the page cancels the unload, so ask. See leavePrompt.cjs.
   win.webContents.on('will-prevent-unload', confirmLeave(win, dialog));
@@ -279,6 +368,17 @@ function createWindow() {
     });
   }
 }
+
+ipcMain.handle('window-symbol-color', (event, color) => {
+  setWindowSymbolColor(BrowserWindow.fromWebContents(event.sender), color, process.platform);
+});
+// Sync, so a reload in full screen lays out without the room for the window buttons from its first frame.
+ipcMain.on('window-is-full-screen', (event) => {
+  event.returnValue = isFullScreen(BrowserWindow.fromWebContents(event.sender), process.platform);
+});
+ipcMain.handle('window-leave-full-screen', (event) => {
+  leaveFullScreen(BrowserWindow.fromWebContents(event.sender), process.platform);
+});
 
 // Desktop-only network bridge: renderer → main HTTP fetch that isn't bound by browser CORS. Used by
 // cloud image providers (OpenAI-style) whose APIs can't be reached directly from the web build.
@@ -312,6 +412,44 @@ ipcMain.handle('vram-stats', async () => {
   }
 });
 
+// CUDA support verdict from its own nvidia-smi query, so the VRAM readout above is never affected by it.
+ipcMain.handle('cuda-support', () => cudaSupport());
+
+// The optional CUDA build, one folder per pinned tag under userData/engines. Windows only (spec Q2).
+let cudaInstall = null;
+const ENGINE_RUNS = new Set(['loading', 'ready']);
+// Old tags' folders are deleted once the engine stops (Q16).
+llmEngine.onStatus((state) => { if (!ENGINE_RUNS.has(state.status)) cudaInstall?.prune(); });
+function cuda() {
+  cudaInstall ??= createCudaInstall({
+    enginesDir: path.join(app.getPath('userData'), 'engines'),
+    pin: readEnginePin(),
+    downloader: modelDownload.createDownloader({
+      allowedHosts: ['github.com'],
+      busyMessage: 'A CUDA download is already in progress.',
+      hostMessage: 'CUDA downloads are only allowed from github.com.',
+    }),
+    // The row follows the VRAM query's NVIDIA list; the support verdict comes from the facts query.
+    probe: async () => {
+      const nvidia = process.platform === 'win32' && (await nvidiaGpus()).length > 0;
+      if (!nvidia) return { nvidia, support: { supported: false, reason: 'no-nvidia-card' }, drivers: null };
+      const cards = await nvidiaCards();
+      return { nvidia, support: evaluateCudaSupport(cards), drivers: driverVersions(cards) };
+    },
+    stopEngine: () => llmEngine.stop(),
+    engineRunning: () => ENGINE_RUNS.has(llmEngine.getState().status),
+    freeSpace: modelMove.freeSpace,
+    onStatus: (s) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cuda-status', s); },
+  });
+  return cudaInstall;
+}
+ipcMain.handle('cuda-status', () => cuda().status({ refresh: true }));
+ipcMain.handle('cuda-install', () => cuda().install());
+ipcMain.handle('cuda-cancel', () => { cuda().cancel(); return true; });
+ipcMain.handle('cuda-remove', () => cuda().remove());
+// The row's Retry: forget the CUDA failure, and restart a model running on Vulkan when the next start is CUDA.
+ipcMain.handle('cuda-retry', () => engineStarts().retry());
+
 // Desktop-only local LLM: load a GGUF and serve an OpenAI-compatible endpoint on localhost. The renderer
 // then points its normal OpenAI endpoint at it. Handlers return the engine's serializable state. Loading
 // is filename-only and confined to the models folder — no arbitrary-path start is exposed over IPC.
@@ -321,7 +459,7 @@ ipcMain.handle('llm-load', async (_event, ref) => {
   const modelPath = resolveModelRef(ref, scanOptions());
   if (!modelPath) throw new Error('That model is no longer in a searched folder.');
   await llmEngine.stop();
-  return llmEngine.start(await startOptions(modelPath));
+  return startEngine(modelPath);
 });
 ipcMain.handle('llm-stop', () => llmEngine.stop());
 ipcMain.handle('llm-status', () => llmEngine.getState());
@@ -340,6 +478,7 @@ ipcMain.handle('llm-set-options', async (_event, opts) => {
     vCacheType: llamaServer.cacheType(opts.vCacheType ?? engineOptions.vCacheType),
     kvCacheInRam: typeof opts.kvCacheInRam === 'boolean' ? opts.kvCacheInRam : engineOptions.kvCacheInRam,
     gpuDevice: typeof opts.gpuDevice === 'string' ? opts.gpuDevice : engineOptions.gpuDevice,
+    engineBackend: engineBackend(opts.engineBackend ?? engineOptions.engineBackend),
     contextOverflow: engineOptions.contextOverflow,
   };
   // A quantized V cache needs Flash Attention; without it the stored V type is not usable.
@@ -352,12 +491,13 @@ ipcMain.handle('llm-set-options', async (_event, opts) => {
     || next.kCacheType !== engineOptions.kCacheType
     || next.vCacheType !== engineOptions.vCacheType
     || next.kvCacheInRam !== engineOptions.kvCacheInRam
-    || next.gpuDevice !== engineOptions.gpuDevice;
+    || next.gpuDevice !== engineOptions.gpuDevice
+    || next.engineBackend !== engineOptions.engineBackend;
   engineOptions = next;
   const loaded = llmEngine.getState().modelPath;
   if (changed && loaded) {
     await llmEngine.stop();
-    return llmEngine.start(await startOptions(loaded));
+    return startEngine(loaded);
   }
   return llmEngine.getState();
 });
@@ -369,17 +509,46 @@ ipcMain.handle('llm-set-context-overflow', async (_event, policy) => {
   return engineOptions.contextOverflow;
 });
 
-// Every GPU the engine could be pinned to, for the device picker: { backend, devices, autoPick }. An empty
-// list with a 'cpu' backend is a machine with no GPU, which the picker says rather than offering nothing.
-// autoPick is the card Auto would use right now, so the dropdown can show it next to the word.
-ipcMain.handle('llm-list-devices', async () => {
-  const enumeration = await currentEnumeration();
-  let autoPick = null;
-  if (enumeration.gpuDeviceNames.length) {
-    const pick = selectEngineDevice({ deviceNames: enumeration.gpuDeviceNames, nvidiaGpus: await nvidiaGpus() });
-    if (pick.index != null) autoPick = enumeration.gpuDeviceNames[pick.index] ?? null;
+// The next start with the current options: the panel's Restart on CUDA, once CUDA landed under a Vulkan run.
+ipcMain.handle('llm-restart', async () => {
+  const { status, modelPath: loaded } = llmEngine.getState();
+  if (status !== 'ready' || !loaded) return llmEngine.getState();
+  await llmEngine.stop();
+  return startEngine(loaded);
+});
+
+/** The backend choice for `options` and the cached listing of the build that start would run. */
+async function startEnumeration(options) {
+  const { cudaBinary, ...picked } = await backendChoice(options);
+  let choice = picked;
+  let enumeration = cudaBinary ? await enumerationOf(cudaBinary) : null;
+  // A CUDA build that lists no devices starts on Vulkan, so the picker lists Vulkan's.
+  if (!enumeration?.devices.length) {
+    if (cudaBinary) choice = { backend: 'vulkan', reason: 'no-cuda-devices' };
+    enumeration = await enumerationOf(llamaServerBinary());
   }
-  return { backend: enumeration.gpuBackend, devices: enumeration.gpuDeviceNames, autoPick };
+  return { choice, enumeration };
+}
+
+// The shell's own copy of the options holds defaults until the engine is wanted, so the ask takes the saved ones.
+const vramClassAsk = createVramClassAsk({ engineOptions: () => engineOptions, startEnumeration, nvidiaGpus });
+ipcMain.handle('llm-vram-class', (_event, saved) => vramClassAsk(saved));
+
+// Every GPU the engine could be pinned to, for the device picker: { backend, devices, autoPick, choice }. The
+// devices are those of the backend the next start runs with `pending` (the panel's unsaved Backend and device
+// settings), and `choice` is that backend with its reason. An empty list with a 'cpu' backend is a machine
+// with no GPU, which the picker says rather than offering nothing. autoPick is the card Auto would use right
+// now, so the dropdown can show it next to the word.
+ipcMain.handle('llm-list-devices', async (_event, pending) => {
+  const options = withDeviceSettings(engineOptions, pending);
+  const { choice, enumeration } = await startEnumeration(options);
+  let autoPick = null;
+  const names = deviceNames(enumeration);
+  if (names.length) {
+    const pick = selectEngineDevice({ deviceNames: names, nvidiaGpus: await nvidiaGpus() });
+    if (pick.index != null) autoPick = names[pick.index] ?? null;
+  }
+  return { backend: enumeration.gpuBackend, devices: names, autoPick, choice };
 });
 
 // Installed GGUF filenames across every searched folder (used where only names matter).
@@ -453,7 +622,7 @@ ipcMain.handle('llm-move-models', async (_event, { from, to }) => {
     const name = path.basename(loadedBefore);
     // Reload from the new folder if it made the trip, otherwise from where it stayed.
     const back = result.moved.includes(name) ? path.join(to, name) : loadedBefore;
-    if (fs.existsSync(back)) await llmEngine.start(await startOptions(back));
+    if (fs.existsSync(back)) await startEngine(back);
   }
   return result;
 });
@@ -478,7 +647,7 @@ ipcMain.handle('llm-download', async (_event, { url, fileName, projector = null,
   });
   if (autoLoad !== false) {
     await llmEngine.stop();
-    await llmEngine.start(await startOptions(finalPath));
+    await startEngine(finalPath);
   }
   return { path: finalPath };
 });
@@ -501,6 +670,75 @@ ipcMain.handle('llm-delete-model', async (_event, fileName) => {
   modelDownload.discardPartial(modelsDir(), projector);
   try { fs.unlinkSync(path.join(modelsDir(), projector)); } catch { /* the model has none */ }
   try { fs.unlinkSync(target); return true; } catch { return false; }
+});
+
+// Profile merge: the renderer reads the AppData profile's records through these and writes them itself.
+let mergeReader = null;
+const openMergeReader = () => {
+  mergeReader ??= openSource({ electron: { session, BrowserWindow }, dir: mergeOffer.dir })
+    .catch((err) => { mergeReader = null; throw err; });
+  return mergeReader;
+};
+// The hidden window would keep the app running once the main window closes.
+function closeMergeReader() {
+  const pending = mergeReader;
+  mergeReader = null;
+  return pending ? pending.then((reader) => reader.close(), () => {}) : Promise.resolve();
+}
+// Not Now, or a merge that stopped, holds the offer until the next start.
+let mergeLater = false;
+ipcMain.handle('merge-offer', () => (mergeOffer && !mergeLater ? { merged: mergeOffer.merged } : null));
+ipcMain.handle('merge-summaries', async (_event, categories) => {
+  if (!mergeOffer || !Array.isArray(categories)) return {};
+  const stores = categories.filter((key) => Object.hasOwn(SOURCE_STORES, key)).map((key) => ({ key, ...SOURCE_STORES[key] }));
+  return (await openMergeReader()).summaries(stores);
+});
+ipcMain.handle('merge-record', async (_event, { category, id }) => {
+  if (!mergeOffer || !Object.hasOwn(SOURCE_STORES, category) || typeof id !== 'string') return null;
+  return (await openMergeReader()).record({ ...SOURCE_STORES[category], id });
+});
+ipcMain.handle('merge-settings', async () => (mergeOffer ? (await openMergeReader()).settings() : {}));
+ipcMain.handle('merge-model-folder', () => (
+  mergeOffer ? { source: readFields(mergeOffer.dir, fs), target: readFields(app.getPath('userData'), fs) } : { source: {}, target: {} }
+));
+ipcMain.handle('merge-model-folder-fill', (_event, field) => {
+  if (!mergeOffer) throw new Error('The other copy is closed.');
+  const merged = fillField({ sourceDir: mergeOffer.dir, targetDir: app.getPath('userData'), field, fsApi: fs });
+  modelLocations = { ...modelLocations, ...merged };
+  try { fs.mkdirSync(modelsDir(), { recursive: true }); } catch { /* the picker reports a missing folder */ }
+});
+// Local models: the files each side holds, and a one-file move into the folder's models directory.
+ipcMain.handle('merge-models', () => {
+  if (!mergeOffer) return { source: [], target: [] };
+  // Planned before the model-folder fill runs, so the destination is the one the fill will leave.
+  const targetModelsDir = plannedModelsDir({
+    chosen: modelLocations.downloadDir, sourceDir: mergeOffer.dir, defaultDir: defaultModelsDir(), fsApi: fs,
+  });
+  return modelSides({ sourceDir: mergeOffer.dir, targetModelsDir, fsApi: fs });
+});
+ipcMain.handle('merge-model-move', async (event, name) => {
+  if (!mergeOffer || typeof name !== 'string') throw new Error('The other copy is closed.');
+  const from = sourceModelsDir(mergeOffer.dir, fs);
+  if (samePath(from, modelsDir())) return;
+  await modelMove.moveFile({ from, to: modelsDir(), name }, (bytes) => {
+    if (!event.sender.isDestroyed()) event.sender.send('merge-model-progress', bytes);
+  });
+});
+// The app reads settings once at load; relaunching keeps FORMAMORPH_ROOT, so it stays a launcher start.
+ipcMain.handle('merge-restart', () => {
+  app.relaunch();
+  app.exit(0);
+});
+ipcMain.handle('merge-later', () => {
+  mergeLater = true;
+  return closeMergeReader();
+});
+ipcMain.handle('merge-mark', async (_event, { state, categories }) => {
+  if (!mergeOffer) return false;
+  writeMarker(mergeOffer.dir, state, fs, Array.isArray(categories) ? categories : []);
+  mergeOffer = null;
+  await closeMergeReader();
+  return true;
 });
 
 // Desktop auto-updater IPC (per-platform download/apply; detection is renderer-side). getWindow returns the
@@ -535,6 +773,8 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  // A pin bump replaces an installed CUDA build in the background; old folders go first.
+  if (process.platform === 'win32') void Promise.resolve().then(() => cuda().startup()).catch(() => { /* the row shows the status */ });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

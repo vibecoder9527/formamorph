@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { Trash2 } from 'lucide-react';
+import { DESTRUCTIVE_ROW_ACTION_HOVER } from '@/components/EditorRow';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Hint } from '@/components/ui/typography';
@@ -7,10 +9,11 @@ import { SelectOptions } from '@/components/SelectOptions';
 import { Tip } from '@/components/ui/tooltip';
 import { knownHere, toggleKnownInPick } from '@/lib/entityPresence';
 import { fieldFrame } from '@/lib/historyField';
+import { cn } from '@/lib/utils';
 import type { Entity, GameLocation } from '@/types';
 
 /** The Known Here section of a location's Presence tab: each entity known at this location through its Known In
- *  picks, with **Remove** on this location's own picks, and a select that adds this location to another one's. */
+ *  picks, with a remove button on this location's own picks, and a select that adds this location to another one's. */
 export default function LocationKnownHere({ location, locations, entities, labelOf, locationLabel, onChange }: {
   location: GameLocation;
   locations: GameLocation[];
@@ -36,9 +39,9 @@ export default function LocationKnownHere({ location, locations, entities, label
           <div key={entity.id} className="flex items-center gap-2 rounded-md border p-2" {...fieldFrame('entities', entity.id, 'knownIn')}>
             <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
             {via === null ? (
-              <Tip tip={`Removes this location from ${label}’s Known In`}>
-                <Button variant="ghost" size="sm" className="shrink-0" onClick={() => onChange(toggleKnownInPick(entity, location.id))}>
-                  Remove
+              <Tip tip={`Remove ${label} from Known Here`}>
+                <Button variant="ghost" size="icon" className={cn('h-8 w-8 shrink-0', DESTRUCTIVE_ROW_ACTION_HOVER)} onClick={() => onChange(toggleKnownInPick(entity, location.id))}>
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </Tip>
             ) : (

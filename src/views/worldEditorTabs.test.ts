@@ -9,15 +9,15 @@ describe('editorTabGroupsFor', () => {
   it('puts Overview and Media ahead of the groups, with Dictionary alone in Vocabulary in Simple mode', () => {
     expect(shape(false)).toEqual([
       [null, ['Overview', 'Media']],
-      ['Content', ['Entities', 'Items', 'Locations', 'Traits', 'Stats']],
+      ['Content', ['Entities', 'Locations', 'Items', 'Traits', 'Stats', 'Options']],
       ['Vocabulary', ['Dictionary']],
     ]);
   });
 
-  it('adds Placeholders to Vocabulary, and Scripts and Tools under Logic, in Advanced mode', () => {
+  it('adds Openings after Overview, Placeholders to Vocabulary, and Scripts and Tools under Logic, in Advanced mode', () => {
     expect(shape(true)).toEqual([
-      [null, ['Overview', 'Media']],
-      ['Content', ['Entities', 'Items', 'Locations', 'Traits', 'Stats']],
+      [null, ['Overview', 'Openings', 'Media']],
+      ['Content', ['Entities', 'Locations', 'Items', 'Traits', 'Stats', 'Options']],
       ['Vocabulary', ['Dictionary', 'Placeholders']],
       ['Logic', ['Scripts', 'Tools']],
     ]);
@@ -27,9 +27,9 @@ describe('editorTabGroupsFor', () => {
     expect(editorTabGroupsFor(false).some((group) => group.id === 'logic')).toBe(false);
   });
 
-  it('holds Overview and Media in the landing slot, under no group name', () => {
+  it('holds Overview, Openings and Media in the landing slot, under no group name', () => {
     const [landing] = editorTabGroupsFor(true);
     expect(landing.label).toBeUndefined();
-    expect(landing.tabs.map((tab) => tab.value)).toEqual(['overview', 'media']);
+    expect(landing.tabs.map((tab) => tab.value)).toEqual(['overview', 'openings', 'media']);
   });
 });

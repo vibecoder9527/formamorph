@@ -277,11 +277,42 @@ The **Aliases** field shows in **Advanced** mode only, but aliases work in both 
 
 Give an entity the one or two names the narration uses. The AI reads every alias of an entity in the scene, so a long list adds prompt text for no gain.`,
   },
+  'worldEditor.relationships': {
+    title: 'Relationships',
+    wikiPage: 'World-Editor-Entities',
+    wikiAnchor: 'relationships',
+    body: `Each row says what another entity is to the one you're editing. Pick the other entity in **Add a relationship**, then type its role in the box beside its name.
+
+**Example**
+
+You're editing *Mara*, and *Tom* is her son.
+
+1. On Mara's **Profile** tab, pick **Tom** in **Add a relationship**.
+2. In the box beside **Tom**, type *son*.
+
+**How the AI reads a row**
+
+| Name in the row | | Entity you're editing | Role you type |
+|---|---|---|---|
+| Tom | is | Mara's | son |
+
+**Persona**
+
+The **Persona** row says what the player's character is to this entity. With *friend* beside **Persona** on Mara, the AI reads that the player's character is Mara's friend.
+
+**One row per pair**
+
+You don't need a second row on Tom for Mara. If both rows exist, the AI reads only one of them, so make sure they agree.`,
+  },
   'worldEditor.strangerName': {
     title: 'Stranger Name',
     wikiPage: 'World-Editor-Entities',
-    wikiAnchor: 'strangers',
+    wikiAnchor: 'stranger-name',
     body: `Hides who an entity is until the player meets it. Until then, the player sees the **Stranger Name**, such as "a hooded figure", in place of the **Name**. The AI narrator uses the Stranger Name too.
+
+- Leave it blank to show the Name.
+- The **Stranger Description** is on the **Descriptions** tab, under the **Player-Facing Description**. It works with or without a Stranger Name.
+- Clearing this field keeps the Stranger Description.
 
 **How the player meets the entity**
 
@@ -293,17 +324,58 @@ Once met, the player sees the Name for the rest of the game.
 **Before the player meets the entity**
 
 - If the AI tracks the entity under another name, such as "the tall woman", the player sees that name instead.
-- The entity's popup in the **Entities** tab shows the **Stranger Description** in place of the **Player-Facing Description**. Leave the Stranger Description blank to show no description.
-- The Map doesn't show the entity. The Help window shows it only under that other name, with no description.
+- The Map doesn't show an entity with a Stranger Name. The Help window shows it only under that other name, with no description.
 
 **Entities the player has already met**
 
-The player has met an entity from the start when it has no Stranger Name, or when either of these is true:
+The player has met an entity from the start when it has no Stranger Name and no Stranger Description, or when either of these is true:
 
 - It has a relationship with the persona, in either direction.
 - One of its **Known In** picks is one of the persona's **Locations**, or contains one. The **Nearby** default doesn't count.
 
-Both stranger fields take placeholders and rolls.`,
+The field takes placeholders and rolls. It shows in Advanced mode, in the World Editor only.`,
+  },
+  'worldEditor.strangerDescription': {
+    title: 'Stranger Description',
+    wikiPage: 'World-Editor-Entities',
+    wikiAnchor: 'stranger-description',
+    body: `Shows the player a different description until they meet the entity. Until then, the player sees the **Stranger Description** in place of the **Player-Facing Description**.
+
+- Leave it blank to show no description until the player meets the entity. An entity with neither stranger field starts met.
+- The field works alone. With no **Stranger Name**, the player knows the Name but sees this description until they meet the entity.
+- The entity's popup in the **Entities** tab shows it. The Help window shows it too when the entity has no Stranger Name.
+- The AI narrator sees nothing new. It keeps using the Name, or the Stranger Name when there is one.
+- A script reads \`met\` as false for the entity until the player meets it. A relationship or a **Known In** pick can meet it at the start. \`meet()\` makes the player meet the entity, as for any stranger.
+- The player meets the entity the same way as any stranger: the narration uses its Name while it is at the player's location, or a script calls \`meet()\`. See **Stranger Name** for the rules.
+
+The field takes placeholders and rolls. It shows in Advanced mode, in the World Editor only.`,
+  },
+  'worldEditor.unidentifiedName': {
+    title: 'Unidentified Name',
+    wikiPage: 'World-Editor-Items',
+    wikiAnchor: 'unidentified-name',
+    body: `Hides what an item is until the story reveals it. Until then, the player sees the **Unidentified Name**, such as "Cloudy Vial", in place of the **Name**.
+
+- Leave it blank to show the Name.
+- Fill this field or the **Unidentified Description**, and every copy of the item starts unidentified.
+- The player sees the Unidentified Name in the **Inventory** tab, in the log and in the Help window.
+- The AI narrator sees both names. It can reveal the real one when the story does, or a script can call \`copy.reveal()\`.
+- A copy that is out of sight first comes into view and stays unidentified. A second reveal identifies it.
+
+The field takes placeholders and rolls.`,
+  },
+  'worldEditor.unidentifiedDescription': {
+    title: 'Unidentified Description',
+    wikiPage: 'World-Editor-Items',
+    wikiAnchor: 'unidentified-description',
+    body: `Shows the player a different description until the story reveals the item. Until then, the player sees the **Unidentified Description** in place of the **Player-Facing Description**.
+
+- Leave it blank to show the Player-Facing Description.
+- Fill this field or the **Unidentified Name**, and every copy of the item starts unidentified.
+- The two fields work apart. You can write a description with no Unidentified Name, or the other way around.
+- The item's effects apply while it is unidentified.
+
+The field takes placeholders and rolls.`,
   },
   'worldEditor.statChanges': {
     title: 'Stat Changes',
@@ -343,6 +415,20 @@ When two active traits change the same stat, the trait lower in the trait list w
 - Items in a slot the new Body lacks come off and stay in the inventory. Where a slot holds fewer items, the item equipped last comes off first.
 
 When two active traits set a Body, the one switched on last wins. When it switches off, the one before it takes over. With none left, the Body goes back to the one the owner started with.`,
+  },
+  'worldEditor.traitSliders': {
+    title: 'Sliders',
+    wikiPage: 'World-Editor-Traits',
+    wikiAnchor: 'sliders',
+    body: `Sets the Avatar's sliders while the trait is active. Find it on the trait's **Appearance** tab. For example, an *Elf* trait sets Ear Shape to 1.
+
+- Each picked slider gets a **Set To** number, 1 by default. Any number works.
+- The slider takes this value in place of the player's own setting. A stat bound to the slider still adds on top.
+- When the trait switches off, the player's own setting comes back.
+- A world trait changes the player's Avatar. An entity's own trait changes that entity's model.
+- Select **Preview** at the bottom left of the panel to set sliders and colors on the Avatar itself. **Save** writes them to the trait.
+
+When two active traits set the same slider, the one switched on last wins.`,
   },
   'worldEditor.placeholderPins': {
     title: 'Placeholder Pins',

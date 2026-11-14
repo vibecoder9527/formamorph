@@ -1,5 +1,6 @@
 import { HIGHLIGHT_PALETTE } from './highlightUtils';
 import { escapeRegExp } from './utils';
+import { WALK_MOVE_CAP } from './locationGraph';
 import type { TextOrigin } from './markedText';
 
 /** An optional alternate form a variable's chip can be switched to in Chip Options. `id: null` is the
@@ -32,8 +33,8 @@ export interface PromptVariantAxis {
   /** For a toggle axis: whether the piece is on while it holds its default (null) option, read from the
    *  chip's other picks. Absent, `onByDefault` decides. */
   onByDefaultWhen?: (selection: Record<string, string | null>) => boolean;
-  /** For a toggle axis: one chip's toggle axes with this name form a group whose last piece on stays on. */
-  lockGroup?: string;
+  /** For a toggle axis: stays live under Name content, which sends this piece beside each name. */
+  keptInNames?: boolean;
   /** For a toggle axis: the Chip Options row its checkbox sits in. Axes that share a row name share a row. */
   row?: string;
   /** One line for the row, read from the first axis of the row that carries it. */
@@ -67,7 +68,7 @@ export interface PromptVariable {
 }
 
 /** Every prompt editor maps to one of these kinds (mirrors the Settings → Output → Turn Extras toggles). */
-export type PromptKind = 'narration' | 'thinking' | 'choices' | 'statupdates' | 'location' | 'entitylocation' | 'summary' | 'milestone' | 'diary' | 'director' | 'character' | 'storyboard' | 'timepassed' | 'timeopening' | 'scenetags' | 'discover' | 'inventory';
+export type PromptKind = 'narration' | 'thinking' | 'choices' | 'statupdates' | 'location' | 'narratedmove' | 'entitylocation' | 'summary' | 'milestone' | 'diary' | 'director' | 'character' | 'storyboard' | 'timepassed' | 'timeopening' | 'scenetags' | 'discover' | 'inventory';
 
 const SUMMARY_VARIANT: PromptVariant = {
   id: 'summary',
@@ -85,7 +86,7 @@ const LOCATION_SCOPE_AXIS: PromptVariantAxis = {
     { id: 'sublocations', label: 'Sub', help: "Sends the current location's direct sub-locations" },
     { id: 'parent', label: 'Parent', help: 'Sends the containing location, or nothing at the top level' },
     { id: 'reachable', label: 'Reachable', help: 'Sends the containing location and its neighbors' },
-    { id: 'destinations', label: 'Destinations', help: 'Sends connections, sub-locations, the containing location and its neighbors' },
+    { id: 'destinations', label: 'Destinations', help: `Sends every place the story can move the player to, up to ${WALK_MOVE_CAP} steps away, with the places on the way` },
   ],
 };
 
@@ -143,18 +144,18 @@ const STAT_DESCRIPTOR_HELP = "Sends the word for the stat's current level, like 
 const STAT_DESCRIPTION_HELP = 'Sends what the stat measures';
 
 // Stats content is three independent pieces (each a checkbox), plus the shared format axis. The stat's Name
-// is always present; at least one piece must stay on (enforced in the editor). The old single-select ids
-// `numbers` (Range) and `descriptions` (Descriptor) are kept, so existing tokens still render; `meaning` is new.
+// is always present; with every piece off a stat sends its name only. The ids are `numbers` (Range),
+// `descriptions` (Descriptor) and `meaning` (Description).
 const STAT_VALUES_AXIS: PromptVariantAxis = {
-  id: 'numbers', label: 'Range', toggle: true, lights: 'range', lockGroup: 'statDetail', row: 'Stat Detail', rowHelp: STAT_DETAIL_ROW_HELP, help: STAT_RANGE_HELP,
+  id: 'numbers', label: 'Range', toggle: true, lights: 'range', row: 'Stat Detail', rowHelp: STAT_DETAIL_ROW_HELP, help: STAT_RANGE_HELP,
   options: [{ id: null, label: 'Range' }, { id: 'numbers', label: 'Range' }],
 };
 const STAT_STATUS_AXIS: PromptVariantAxis = {
-  id: 'descriptions', label: 'Descriptor', toggle: true, lights: 'descriptor', lockGroup: 'statDetail', row: 'Stat Detail', help: STAT_DESCRIPTOR_HELP,
+  id: 'descriptions', label: 'Descriptor', toggle: true, lights: 'descriptor', row: 'Stat Detail', help: STAT_DESCRIPTOR_HELP,
   options: [{ id: null, label: 'Descriptor' }, { id: 'descriptions', label: 'Descriptor' }],
 };
 const STAT_MEANING_AXIS: PromptVariantAxis = {
-  id: 'meaning', label: 'Description', toggle: true, lights: 'meaning', lockGroup: 'statDetail', row: 'Stat Detail', help: STAT_DESCRIPTION_HELP,
+  id: 'meaning', label: 'Description', toggle: true, lights: 'meaning', row: 'Stat Detail', help: STAT_DESCRIPTION_HELP,
   options: [{ id: null, label: 'Description' }, { id: 'meaning', label: 'Description' }],
 };
 
@@ -185,9 +186,9 @@ const INCLUDE_TRAITS_AXIS = rosterToggle('traits', 'Traits', 'notraits', "Sends 
 const PERSONA_INCLUDE_TRAITS_AXIS = { ...INCLUDE_TRAITS_AXIS, help: "Sends the persona's owned traits",
   rowHelp: 'Picks what the persona sends besides its name' };
 const ROSTER_STAT_DETAIL_AXES: PromptVariantAxis[] = [
-  rosterToggle('range', 'Range', 'norange', STAT_RANGE_HELP, { onByDefault: true, lockGroup: 'statDetail', row: 'Stat Detail', rowHelp: STAT_DETAIL_ROW_HELP, lights: 'range' }),
-  rosterToggle('descriptor', 'Descriptor', 'nodescriptor', STAT_DESCRIPTOR_HELP, { onByDefault: true, lockGroup: 'statDetail', row: 'Stat Detail', lights: 'descriptor' }),
-  rosterToggle('description', 'Description', 'nodescription', STAT_DESCRIPTION_HELP, { onByDefault: true, lockGroup: 'statDetail', row: 'Stat Detail', lights: 'meaning' }),
+  rosterToggle('range', 'Range', 'norange', STAT_RANGE_HELP, { onByDefault: true, row: 'Stat Detail', rowHelp: STAT_DETAIL_ROW_HELP, lights: 'range' }),
+  rosterToggle('descriptor', 'Descriptor', 'nodescriptor', STAT_DESCRIPTOR_HELP, { onByDefault: true, row: 'Stat Detail', lights: 'descriptor' }),
+  rosterToggle('description', 'Description', 'nodescription', STAT_DESCRIPTION_HELP, { onByDefault: true, row: 'Stat Detail', lights: 'meaning' }),
 ];
 
 // The Entities chip's stats piece: null is the scope's default (on for Here and In Scene), `nostats` stores off, `stats` on.
@@ -198,6 +199,12 @@ const ENTITY_STATS_AXIS: PromptVariantAxis = {
   options: [{ id: null, label: 'Stats' }, { id: 'nostats', label: 'No Stats' }, { id: 'stats', label: 'Stats', hideInLabel: true, on: true }],
 };
 
+// The Entities chip's movement piece: on in a bare token, `nomovement` turns it off.
+const ENTITY_MOVEMENT_AXIS = rosterToggle('movement', 'Movement', 'nomovement',
+  "Marks each entity that follows the player, waits for them, or can't leave right now", {
+    onByDefault: true, keptInNames: true, row: 'Include', lights: 'movement',
+  });
+
 // The Persona chip's stats piece: on in a bare token, `nostats` turns it off.
 const PERSONA_STATS_AXIS: PromptVariantAxis = {
   ...ENTITY_STATS_AXIS, onByDefaultWhen: undefined, help: "Sends the persona's own stats: range, descriptor and description",
@@ -207,7 +214,16 @@ const PERSONA_STATS_AXIS: PromptVariantAxis = {
 // Each variable gets a fixed palette slot so its color is stable everywhere (chip + preview, every prompt).
 const WORLD: PromptVariable = { token: '<WORLD DESCRIPTION>', label: 'World', color: HIGHLIGHT_PALETTE[0], affixable: true };
 const STATS: PromptVariable = { token: '<STATS DESCRIPTION>', label: 'Stats', color: HIGHLIGHT_PALETTE[1], axes: [STAT_VALUES_AXIS, STAT_STATUS_AXIS, STAT_MEANING_AXIS, FORMAT_AXIS] };
-const TRAITS: PromptVariable = { token: '<TRAITS DESCRIPTION>', label: 'Traits', color: HIGHLIGHT_PALETTE[2], axes: [FORMAT_AXIS] };
+// Traits have no AI summary, so the chip's Content row offers Description and Name only.
+const TRAITS_CONTENT_AXIS: PromptVariantAxis = {
+  id: 'content',
+  label: 'Content',
+  options: [
+    { id: null, label: 'Description', help: "Sends each trait's name and description" },
+    { id: 'name', label: 'Name', help: 'Sends only the trait names, one per line' },
+  ],
+};
+const TRAITS: PromptVariable = { token: '<TRAITS DESCRIPTION>', label: 'Traits', color: HIGHLIGHT_PALETTE[2], axes: [TRAITS_CONTENT_AXIS, FORMAT_AXIS] };
 const LOCATION: PromptVariable = { token: '<LOCATION>', label: 'Location', color: HIGHLIGHT_PALETTE[3], axes: [LOCATION_SCOPE_AXIS, CONTENT_AXIS, FORMAT_AXIS], affixable: true };
 // The entity the player plays. Affixable so a placement can carry its own heading, which then disappears
 // with the value when no persona is set.
@@ -229,7 +245,7 @@ const MARKDOWN: PromptVariable = {
 const ACTIVE_CHARACTER: PromptVariable = { token: '<ACTIVE CHARACTER GUIDANCE>', label: 'Active Character Guidance', color: HIGHLIGHT_PALETTE[13] };
 // Entities are one chip whose `scope` axis picks here / sub-locations / reachable siblings.
 const ENTITIES: PromptVariable = { token: '<ENTITIES>', label: 'Entities', color: HIGHLIGHT_PALETTE[8], axes: [
-  ENTITY_SCOPE_AXIS, ONLY_WITH_STATS_AXIS, ONLY_WITH_TRAITS_AXIS, CONTENT_AXIS, INCLUDE_TRAITS_AXIS, ENTITY_STATS_AXIS, ...ROSTER_STAT_DETAIL_AXES, FORMAT_AXIS,
+  ENTITY_SCOPE_AXIS, ONLY_WITH_STATS_AXIS, ONLY_WITH_TRAITS_AXIS, CONTENT_AXIS, INCLUDE_TRAITS_AXIS, ENTITY_STATS_AXIS, ENTITY_MOVEMENT_AXIS, ...ROSTER_STAT_DETAIL_AXES, FORMAT_AXIS,
 ], affixable: true };
 // The activated-dictionary lore for the turn — supplied by GameViewer per turn (narration prompt only). The
 // `before` variant renders the early "## Background Lore" block; the default renders the late "## Foreground Lore".
@@ -254,9 +270,26 @@ const NARRATION: PromptVariable = { token: '<NARRATION>', label: 'Narration', co
 // here so the shared prompt parser/chip recognize it; it is never offered in a game prompt's toolbar.
 export const SUBJECT: PromptVariable = { token: '<SUBJECT>', label: 'Subject', color: HIGHLIGHT_PALETTE[12] };
 
+// Not `format`: the labels-style preset strips an axis with that id.
+const TIME_CLOCK_AXIS: PromptVariantAxis = {
+  id: 'clock',
+  label: 'Format',
+  options: [
+    { id: null, label: 'Time of Day', help: 'Sends the time of day, like "evening"' },
+    { id: 'hours', label: '24-Hour', help: 'Sends the time on a 24-hour clock, like "19:00"' },
+    { id: 'ampm', label: '12-Hour', help: 'Sends the time on a 12-hour clock, like "7:00 PM"' },
+  ],
+};
+const TIME_DAY_AXIS: PromptVariantAxis = {
+  id: 'day', label: 'Include Day', toggle: true, onByDefault: true, help: 'Sends the day number before the time, like "Day 3"',
+  options: [{ id: null, label: 'Include Day' }, { id: 'noday', label: 'No Day' }],
+};
+
 // The story's own clock — "Day 3, evening" — as a plain inline value. Renders the uniform placeholder while
 // Time in Memory is off, so an affixed placement simply disappears rather than needing its own switch.
-const TIME: PromptVariable = { token: '<TIME>', label: 'Time', color: HIGHLIGHT_PALETTE[10], affixable: true };
+const TIME: PromptVariable = {
+  token: '<TIME>', label: 'Time', color: HIGHLIGHT_PALETTE[10], affixable: true, axes: [TIME_CLOCK_AXIS, TIME_DAY_AXIS],
+};
 
 // Scene-image tag pass only: the characters the composer has put in frame, so the action tags describe
 // those people and no others. A value token like <NARRATION> — never a context block.
@@ -271,9 +304,9 @@ const LATER_MATERIAL: PromptVariable = { token: '<LATER MATERIAL>', label: 'Late
 const REMEMBERED_MOMENTS: PromptVariable = { token: '<REMEMBERED MOMENTS>', label: 'Remembered Moments', color: HIGHLIGHT_PALETTE[11] };
 const NEW_MOMENTS: PromptVariable = { token: '<NEW MOMENTS>', label: 'New Moments', color: HIGHLIGHT_PALETTE[15] };
 
-// Entity location request only: the closed list of replies the entity can give, one per line.
+// Entity location request only, and parsed only: the reply lists ride after the user message, and these chips
+// render nothing.
 const MOVE_OPTIONS: PromptVariable = { token: '<MOVE OPTIONS>', label: 'Move Options', color: HIGHLIGHT_PALETTE[8] };
-// Entity location request only: one sentence saying whether the entity already follows the player.
 const MOVE_STATE: PromptVariable = { token: '<MOVE STATE>', label: 'Move State', color: HIGHLIGHT_PALETTE[7] };
 
 // The AI Language setting, as the directive the prompt actually carries (lib/languages `languageDirective`).
@@ -304,7 +337,8 @@ export const PROMPT_KIND_VARIABLES: Record<PromptKind, PromptVariable[]> = {
   choices: [...CONTEXT_VARS, LANGUAGE],
   statupdates: [...CONTEXT_VARS],
   location: [...CONTEXT_VARS],
-  entitylocation: [CHARACTER, ...CONTEXT_VARS],
+  narratedmove: [...CONTEXT_VARS],
+  entitylocation: [...CONTEXT_VARS],
   summary: [...CONTEXT_VARS],
   milestone: [...CONTEXT_VARS],
   diary: [...CONTEXT_VARS],
@@ -325,8 +359,9 @@ export const PROMPT_KIND_USER_VARIABLES: Partial<Record<PromptKind, PromptVariab
   narration: [PLAYER_ACTION],
   choices: [PLAYER_ACTION, NARRATION],
   statupdates: [PLAYER_ACTION, NARRATION],
-  location: [PLAYER_ACTION, NARRATION],
-  entitylocation: [CHARACTER, PLAYER_ACTION, NARRATION, MOVE_STATE, MOVE_OPTIONS],
+  location: [PLAYER_ACTION],
+  narratedmove: [PLAYER_ACTION, NARRATION],
+  entitylocation: [PLAYER_ACTION, NARRATION],
   summary: [PLAYER_ACTION, NARRATION],
   milestone: [REMEMBERED_MOMENTS, NEW_MOMENTS],
   director: [PLAYER_ACTION, NARRATION],

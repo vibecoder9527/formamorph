@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { namedPlacesOf } from '@/lib/entityPlaces';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { benchEditorWorld, openEditorTab, renderWorldEditorBench, shownEditorTab } from '@/test/worldEditorBench';
 import WorldStorageService from '../services/WorldStorageService';
 import { reloadTourProgress, writeTourRecord } from '@/lib/authoringTour/progress';
 import { TOUR_STEPS } from '@/lib/authoringTour/steps';
 import type { Connection, World } from '@/types';
+import { withFirstStarts } from '@/lib/entityKind';
 
 /** After an undo or redo the editor opens the tab of the record that came back and selects it. */
 
@@ -52,7 +54,7 @@ const statPanelShown = () => screen.queryByRole('tablist', { name: 'Stat Fields'
 /** The stat the panel holds, read from its Name field. */
 const openStatName = () => screen.getByRole('textbox', { name: 'Name' }).textContent;
 /** The canvas's panel for the selected connection. */
-const connectionPanelShown = () => screen.queryByLabelText('Direction of Travel') !== null;
+const connectionPanelShown = () => screen.queryByRole('radiogroup', { name: /^Travel between/ }) !== null;
 const canvasShown = () => document.querySelector('.react-flow') !== null;
 
 beforeEach(() => {
@@ -239,7 +241,7 @@ describe('returning to where the edit was made', () => {
   /** The record the open panel holds, read from its Name field. */
   const openRecordName = () => screen.getByRole('textbox', { name: 'Name' }).textContent;
   const residentIn = (ctx: () => { entities: World['entities'] }, ...locations: string[]) =>
-    ({ ...ctx().entities.find((e) => e.id === 'resident')!, locations });
+    ({ ...withFirstStarts(ctx().entities.find((e) => e.id === 'resident')!, locations.map((place) => ({ id: `at-${place}`, place, weight: 1, schedule: [] }))) });
 
   it('records the place as it stood at the write when a tab switch commits with it', async () => {
     const { ctx } = renderWorldEditorBench(WORLD, 'advanced');
@@ -254,7 +256,7 @@ describe('returning to where the edit was made', () => {
     openEditorTab(/Traits/);
 
     await undo();
-    expect(ctx().entities.find((e) => e.id === 'resident')!.locations).toEqual(['harbor']);
+    expect(namedPlacesOf(ctx().entities.find((e) => e.id === 'resident')!)).toEqual(['harbor']);
     expect(shownEditorTab()).toMatch(/Locations/);
     expect(openRecordName()).toBe('Docks');
   });
@@ -279,13 +281,13 @@ describe('returning to where the edit was made', () => {
       openEditorTab(/Stats/);
 
       await undo();
-      expect(ctx().entities.find((e) => e.id === 'resident')!.locations).toEqual(['harbor']);
+      expect(namedPlacesOf(ctx().entities.find((e) => e.id === 'resident')!)).toEqual(['harbor']);
       expect(shownEditorTab()).toMatch(/Locations/);
       expect(picked()).toEqual(['harbor', 'docks', 'quay']);
       openEditorTab(/Stats/);
 
       await redo();
-      expect(ctx().entities.find((e) => e.id === 'resident')!.locations).toEqual(['harbor', 'docks']);
+      expect(namedPlacesOf(ctx().entities.find((e) => e.id === 'resident')!)).toEqual(['harbor', 'docks']);
       expect(shownEditorTab()).toMatch(/Locations/);
       expect(picked()).toEqual(['harbor', 'docks', 'quay']);
     });

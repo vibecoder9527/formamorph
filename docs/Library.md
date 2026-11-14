@@ -142,9 +142,11 @@ The Group's tiles go back to the board. In the grid view, each tile goes to the 
 
 On a wide screen, the tabs are at the top left. On mobile, they are at the bottom of the screen. When the labels don't fit, only the selected tab keeps its label. With less room, the tabs show icons only. Hover an icon to read its name.
 
-Each tab has a **New** button, such as **New World**, and an **Import** button, such as **Import World**. **Avatars** has only **Import Avatar**. **Community Creations** is beside them. The **Menu** button at the top right holds **Load Game**, **Backup & Restore** and **Settings**.
+Each tab has a **New** button, such as **New World**, and an **Import** button, such as **Import World**. **Avatars** has only **Import Avatar**. **Community Creations** is beside them. **Load Game** and **Settings** are the round buttons at the top right.
 
-On a narrow screen, the top bar hides the tab labels first, then the buttons, then the event badges. The hidden buttons move to the **Menu** button at the top center. The event badges become one chip with a count.
+On a narrow screen, the top bar hides the tab labels first, then the buttons, then the event badges. The hidden buttons move to the **More Actions** button (`...`) at the top right, with **Load Game** and **Settings**. The event badges become one chip with a count.
+
+In the Windows desktop app, **F11** enters and leaves full screen. While in full screen, **More Actions** shows at every width and holds **Exit Full Screen**.
 
 The **Entities** tab also has an **All** and **Personas** switch. **Personas** shows only the entities you can play as. See [Personas](Personas). While **Personas** is on, you cannot move tiles, change their size or change Groups.
 
@@ -205,9 +207,8 @@ World actions such as **Edit World** and **Publish World** are in the world dial
 
 **Delete** asks you to confirm, and you cannot undo it. Make a backup first. See [How to Make a Backup](Saves-and-Backup#how-to-make-a-backup).
 
-- When saves use an avatar, the dialog names them. Those saves use the default avatar after you erase it.
+- When saves use an avatar, the dialog names them. Those saves use your default avatar after you erase it, or the first avatar in your library. With no avatars left, they show none.
 - When library entities use an avatar, the dialog names them. They show no avatar after you erase it.
-- You cannot delete your last avatar.
 - To restore an erased world that came with Formamorph, see [How to Restore Default Worlds](Settings#how-to-restore-default-worlds).
 - When worlds use a deleted entity or dictionary, see [Removing a Library Item](LinkedContent#removing-a-library-item).
 

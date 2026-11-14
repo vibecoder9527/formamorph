@@ -89,6 +89,13 @@ describe('buildPlayerView entities', () => {
     expect(deleted.entities).toEqual([]);
   });
 
+  it('drops a discovered entity the gates turn off, and holds it while they leave it on', () => {
+    const invented: DiscoveredEntity = { entity: { id: 'rt-1', name: 'Ferryman', aiDescription: 'An old ferryman.' }, sourceTurnId: 't1' };
+    const chain = [state({ metEntities: ['rt-1'], discoveredEntities: [invented] })];
+    expect(view({ chain, isEntityOn: (entity) => entity.id !== 'rt-1' }).entities).toEqual([]);
+    expect(view({ chain, isEntityOn: () => true }).entities).toHaveLength(1);
+  });
+
   it("gives a peeled follower its source's player description, never the AI text it carries", () => {
     const peeled: DiscoveredEntity = {
       entity: { id: 'rt-2', name: 'Warden', aiDescription: 'Warden AI summary.' }, sourceTurnId: 't3', peeledFrom: 'warden',
@@ -123,6 +130,17 @@ describe('buildPlayerView entities', () => {
   it('holds an entity without a Stranger Name as met on a save with an empty met list', () => {
     const known = { ...WORLD, entities: [entity('mara', 'Mara'), WARDEN] };
     expect(names(view({ world: known, chain: [state()] }).entities)).toEqual(['Mara']);
+  });
+
+  it('holds an unmet entity with only a Stranger Description under its name and that description, then its player text once met', () => {
+    const ivo = entity('ivo', 'Ivo', { strangerDescription: 'A broad man in a dented helm.' });
+    const world = { ...WORLD, entities: [ivo, WARDEN] };
+    expect(view({ world, chain: [state()] }).entities).toEqual([
+      { kind: 'entity', id: 'ivo', name: 'Ivo', description: 'A broad man in a dented helm.' },
+    ]);
+    expect(view({ world, chain: [state({ metEntities: ['ivo'] })] }).entities).toEqual([
+      { kind: 'entity', id: 'ivo', name: 'Ivo', description: 'Ivo player text.' },
+    ]);
   });
 
   it('holds an entity with a whitespace-only Stranger Name as met', () => {

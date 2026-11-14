@@ -1,11 +1,12 @@
 import { randomUUID } from "@/lib/uuid";
-import type { ChatMessage, Entity, GameLocation, DiscoveredEntity } from '@/types';
+import type { ChatMessage, Entity, DiscoveredEntity } from '@/types';
 import { survivingTurnIds } from '@/lib/turnDigest';
 import { stripReasoning } from '@/lib/aiResponse';
 import { trimToLastSentence } from '@/lib/outputLength';
 import { escapeRegExp } from '@/lib/utils';
 import { sameCharacterName } from '@/lib/entityMatch';
-import { entityIdsAtAny } from '@/lib/entityPresence';
+import type { Standings } from '@/lib/entityPresence';
+import { idsAtAny, positionsIn } from '@/lib/entityPlaces';
 
 /** Labels in the character-note user message. Shared by the request builder and the response cleaner —
  *  a small model often parrots these back into its output. */
@@ -78,33 +79,25 @@ export function cleanDiscoveredDescription(raw: string, name: string): string {
   return trimToLastSentence(out).trim();
 }
 
-/**
- * The discovered entities as ordinary `Entity` records carrying the location they were anchored to, so the
- * whole location-scoped pipeline (rosters, present-entity filters) treats them exactly like authored ones.
- * The anchor is the record's whole membership — a discovered character is somewhere it was invented.
- */
+/** The discovered entities as ordinary `Entity` records. Where each stands is its Position: the book's, else its
+ *  saved anchor through `runtimePositions` (Q41). */
 export function discoveredAsEntities(discovered: readonly DiscoveredEntity[]): Entity[] {
-  return discovered.map((d) => (d.locationId ? { ...d.entity, locations: [d.locationId] } : d.entity));
+  return discovered.map((d) => d.entity);
 }
 
 /**
- * "Bring-them-over": the authored entities that should join the current location as visitors this turn —
- * those living in a **reachable sibling** (a location sharing the current one's non-null parent) that the
- * narration named as participants and that aren't already present. The caller anchors each as a
- * `DiscoveredEntity` at the current location so it flows through the existing present-entity path. Pure.
- * (Matches invented-character discovery's "named in the narration ⇒ in scene" semantics.)
+ * "Bring-them-over" candidates: the authored entities standing in one of the `nearby` places, named by the
+ * narration as participants, and not already present. Where they stand is their Position in `standings`. The
+ * position engine decides which of them may come. Pure.
  */
 export function selectReachableVisitors(
   participants: string[],
-  current: GameLocation | null | undefined,
-  locations: GameLocation[],
+  nearby: readonly string[],
   authoredEntities: Entity[],
   presentIds: string[],
+  standings: Standings = { positions: {}, generics: {} },
 ): Entity[] {
-  const parent = current?.parentId ?? null;
-  if (!current || parent === null) return [];
-  const siblings = locations.filter((l) => l.id !== current.id && (l.parentId ?? null) === parent);
-  const reachableIds = new Set(entityIdsAtAny(siblings.map((l) => l.id), authoredEntities));
+  const reachableIds = new Set(idsAtAny(nearby, authoredEntities, positionsIn(standings)));
   const present = new Set(presentIds);
   return authoredEntities.filter(
     (e) => reachableIds.has(e.id) && !present.has(e.id) && participants.some((p) => sameCharacterName(p, e.name)),

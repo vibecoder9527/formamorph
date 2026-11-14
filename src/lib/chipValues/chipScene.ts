@@ -3,9 +3,11 @@ import type {
 } from '@/types';
 import type { slotsInForce } from '../bodies';
 import type { OwnedStatsInForce, OwnedTraitsInForce, StrangerLabels } from '../locationContext';
+import type { MovementStates } from '../movementTag';
 import type { OwnerStatPart, StatPlacement } from '../statContext';
 import type { ResolvedPersona } from '../persona';
 import type { ResolveEntityText } from '../resolveWorldNames';
+import type { PlacesOf } from '../entityPlaces';
 import type { WorldCalendar } from '../gameClock';
 
 /** The slice each owner's Body in force resolves from. */
@@ -53,10 +55,14 @@ export interface ChipScene {
   location: GameLocation | null;
   locations: GameLocation[];
   connections: Connection[];
+  /** The travel gate from `location`: the destinations chip leaves out what it refuses (Q54). All open when absent. */
+  canEnter?: (id: string) => boolean;
   /** The roster every entity scope draws from. */
   entities: Entity[];
   /** Who is at the location: the Here scope, and whom the lower scopes leave out. */
   presentIds: string[];
+  /** Where each of the scene's cast stands, which the Sub-locations and Reachable scopes read. */
+  placesOf: PlacesOf;
   /** Who has taken part in the scene: the In Scene scope. */
   inSceneIds: string[];
   /** The world's authored items. None when absent. */
@@ -92,4 +98,6 @@ export interface ChipScene {
   inSceneNames?: string[];
   /** The label each unmet stranger's roster block prints, by entity id. None when absent. */
   strangerLabels?: StrangerLabels;
+  /** Each Unique entity's follow state and Strict row, which the Movement tags read. No tags when absent. */
+  movement?: MovementStates;
 }

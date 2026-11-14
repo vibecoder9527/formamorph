@@ -22,7 +22,7 @@ const shapeOf = (entries: readonly SurfaceEntry[]) => `{ ${entries.map((entry) =
 /** The fields on `clock.previous`: the story clock at the start of the turn. Read-only. */
 export const CLOCK_PREVIOUS_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'day', detail: 'number', info: 'Day number at the start of this turn' },
-  { name: 'daypart', detail: 'string', info: 'Daypart at the start of this turn' },
+  { name: 'daypart', detail: 'string', info: 'Time of day at the start of this turn' },
   { name: 'hour', detail: 'number', info: 'Hour of the day at the start of this turn, from 0' },
   { name: 'minute', detail: 'number', info: 'Minute of the hour at the start of this turn, 0 to 59' },
 ]);
@@ -30,7 +30,7 @@ export const CLOCK_PREVIOUS_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
 /** The members of `clock`: the story clock at the end of the turn, then `previous` for its start. Read-only. */
 export const CLOCK_MEMBERS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'day', detail: 'number', info: 'Day number at the end of this turn' },
-  { name: 'daypart', detail: 'string', info: 'Daypart at the end of this turn: night, dawn, morning, midday, afternoon or evening' },
+  { name: 'daypart', detail: 'string', info: 'Time of day at the end of this turn: night, dawn, morning, midday, afternoon or evening' },
   { name: 'hour', detail: 'number', info: 'Hour of the day at the end of this turn, from 0' },
   { name: 'minute', detail: 'number', info: 'Minute of the hour at the end of this turn, 0 to 59' },
   { name: 'deltaHours', detail: 'number', info: 'Story hours this turn consumed' },
@@ -60,7 +60,7 @@ export const LOCATION_ENTRY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'present', detail: 'array', info: 'The entities at the location, each an entry of entities, the persona first when the player is there' },
   { name: 'parent', detail: 'string', info: 'Code name of the location this one is inside, or empty at the top level' },
   { name: 'children', detail: 'string[]', info: 'Code names of the locations inside this one, in the order the editor lists them' },
-  { name: 'exits', detail: 'array', info: 'Where the AI can move the player from the location, each exit with a code name and travel hint' },
+  { name: 'exits', detail: 'array', info: 'The direct ways out of the location, each exit with a code name, travel hint, distance and direction' },
   { name: 'items', detail: 'array', info: 'The Item Copies lying at the location, each with the fields of an items copy' },
 ]);
 
@@ -68,6 +68,8 @@ export const LOCATION_ENTRY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
 export const LOCATION_EXIT_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'name', detail: 'string', info: 'Code name of the location the exit leads to, a key of locations' },
   { name: 'hint', detail: 'string', info: 'Travel hint of the Connection the exit takes, its placeholders filled in, or empty when it has none' },
+  { name: 'distance', detail: 'string', info: 'far when the exit takes a Far Connection, else nearby' },
+  { name: 'oneWay', detail: 'boolean', info: 'True when the exit takes a Connection that runs this way only' },
 ]);
 
 /** The members of `location`: the fields of a `locations` entry for the turn's location, and the move. */
@@ -80,7 +82,7 @@ export const LOCATION_MEMBERS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'present', detail: 'array', info: 'The entities at the turn’s location, the persona first, or none in a world with no location' },
   { name: 'parent', detail: 'string', info: 'Code name of the location the turn’s location is inside, or empty at the top level' },
   { name: 'children', detail: 'string[]', info: 'Code names of the locations inside the turn’s location, in the order the editor lists them' },
-  { name: 'exits', detail: 'array', info: 'Where the AI can move the player this turn, each exit with a code name and travel hint' },
+  { name: 'exits', detail: 'array', info: 'The direct ways out of the turn’s location, each exit with a code name, travel hint, distance and direction' },
   { name: 'items', detail: 'array', info: 'The Item Copies lying at the turn’s location, each with the fields of an items copy' },
   { name: 'move', detail: '(nameOrId) => void', info: 'Moves the turn to a location of the world, in place of the AI’s move. A name the world has no location for stops the script with an error.' },
 ]);
@@ -97,7 +99,7 @@ export const MEMORY_ENTRY_FIELDS: readonly SurfaceEntry[] = readOnlyEntries([
   { name: 'turn', detail: 'number', info: 'Turn number of the memory, from 1, or the turn before it was added for a Custom memory' },
   { name: 'timestamp', detail: 'number', info: 'Total story hours at the end of that turn, on the scale of clock.elapsedHours' },
   { name: 'day', detail: 'number', info: 'Day number at the end of that turn' },
-  { name: 'daypart', detail: 'string', info: 'Daypart at the end of that turn: night, dawn, morning, midday, afternoon or evening' },
+  { name: 'daypart', detail: 'string', info: 'Time of day at the end of that turn: night, dawn, morning, midday, afternoon or evening' },
   { name: 'text', detail: 'string', info: 'Text of the memory as the Memory panel shows it, edits included' },
   { name: 'custom', detail: 'boolean', info: 'True for a memory listed under Custom: one the player wrote or a script pinned' },
   { name: 'kept', detail: 'boolean', info: 'True when the story keeps the memory, though recall can still leave it out of a turn' },
@@ -138,6 +140,10 @@ export const SANDBOX_GLOBALS: readonly SurfaceEntry[] = [
   { name: 'dictionaries', detail: 'object', info: 'Every dictionary in the game by name, with its own placeholders. A dictionary the player turned off isn’t listed. Use dictionaries["Two Words"] for a name with a space.' },
   { name: 'items', detail: 'object', info: 'Every item in the world by name, with its own placeholders and every Item Copy of it. Call items.Lamp.give to give one. Use items["Two Words"] for a name with a space.' },
   { name: 'currencies', detail: 'object', info: 'Every Currency in the world by name. Call currencies.Gold.balance to read what an owner has, and currencies.Gold.pay to move money. Use currencies["Two Words"] for a name with a space.' },
+  {
+    name: 'options', detail: 'object',
+    info: 'Every World Option by name, hidden ones included. A Choice reads its value’s name, an On or Off reads true or false, and a Number reads its number. Set one to change it. Use options["Two Words"] for a name with a space.',
+  },
   { name: 'console', detail: 'object', info: 'Only console.log. Output shows in the browser console.' },
 ];
 
@@ -246,6 +252,12 @@ export const PERSONA_FIELDS: readonly SurfaceEntry[] = withAccess([
   { name: 'met', detail: 'boolean', info: 'Always true for the persona' },
   { name: 'location', detail: 'string', info: 'Code name of the location the player is at, or empty in a world with no location' },
   { name: 'following', detail: 'boolean', info: 'Always false, since the persona moves with the player' },
+  { name: 'waiting', detail: 'boolean', info: 'Always false, since the persona moves with the player' },
+  { name: 'kind', detail: 'string', info: 'Always empty for the persona' },
+  { name: 'action', detail: 'string', info: 'Always empty for the persona' },
+  { name: 'held', detail: 'boolean', info: 'Always false for the persona' },
+  { name: 'knownIn', detail: 'string', info: 'Always empty for the persona' },
+  { name: 'knownInPlaces', detail: 'string[]', info: 'Always empty for the persona' },
   { name: 'description', detail: 'string', info: 'Full AI description of the persona, its placeholders filled in' },
   { name: 'summary', detail: 'string', info: 'Short AI summary of the persona, its placeholders filled in' },
   { name: 'aliases', detail: 'array', info: 'Other names of the persona, its placeholders filled in' },
@@ -264,10 +276,16 @@ export const ENTITY_FIELDS: readonly SurfaceEntry[] = withAccess([
   { name: 'name', detail: 'string', info: 'Code name of the entity' },
   { name: 'type', detail: 'string', info: 'Type text of the entity, or empty when it has none' },
   { name: 'pronouns', detail: 'string', info: 'Pronouns text of the entity, or empty when it has none' },
-  { name: 'inScene', detail: 'boolean', info: 'True when the entity is in this turn’s scene' },
+  { name: 'inScene', detail: 'boolean', info: 'True when the Entities tab lists the entity under In Scene' },
   { name: 'met', detail: 'boolean', info: 'True when the player has met the entity, so they see its name, and never false again' },
-  { name: 'location', detail: 'string', info: 'Code name of the entity’s location, the player’s for a follower, or empty at every location it lists' },
+  { name: 'location', detail: 'string', info: 'Code name of its own location: the player’s for a follower, empty for a Generic entity or no position' },
   { name: 'following', detail: 'boolean', info: 'True when the entity follows the player' },
+  { name: 'waiting', detail: 'boolean', info: 'True when the entity stopped following and waits where it stands' },
+  { name: 'kind', detail: 'string', info: 'unique or generic, or empty when the entity has no kind, and unique for an entity the story added' },
+  { name: 'action', detail: 'string', info: 'What its routine row does now: stay, wander or patrol, or empty with no row in force' },
+  { name: 'held', detail: 'boolean', info: 'True when the narration or a script moved it off its routine, even with no action' },
+  { name: 'knownIn', detail: 'string', info: 'Where the AI receives it while it’s not present: nowhere, nearby, or picked for the places in knownInPlaces' },
+  { name: 'knownInPlaces', detail: 'string[]', info: 'Code names of the locations Known In picks, or empty unless knownIn is picked' },
   { name: 'description', detail: 'string', info: 'Full AI description of the entity, its placeholders filled in' },
   { name: 'summary', detail: 'string', info: 'Short AI summary of the entity, its placeholders filled in' },
   { name: 'aliases', detail: 'array', info: 'Other names of the entity, its placeholders filled in' },
@@ -276,9 +294,9 @@ export const ENTITY_FIELDS: readonly SurfaceEntry[] = withAccess([
   { name: 'stats', detail: 'object', info: 'The entity’s own stats by name, each with the fields of a stats entry. Entries take writes to value, min, max, regen and hidden. Use entities.Mira.stats["Two Words"] for a name with a space.' },
   { name: 'items', detail: 'array', info: 'The Item Copies the entity owns, carried and equipped, each with the fields of an items copy' },
   { name: 'body', detail: 'object | null', info: BODY_INFO },
-  { name: 'move', detail: '(nameOrId) => void', info: 'Moves the entity to a location of the world when the turn ends, and stops it following the player. A name the world has no location for stops the script with an error.' },
-  { name: 'follow', detail: '() => void', info: 'Makes the entity follow the player when the turn ends, at the player’s location' },
-  { name: 'unfollow', detail: '() => void', info: 'Stops the entity following the player when the turn ends, and leaves it at the player’s location. An entity that isn’t following stays where it is.' },
+  { name: 'move', detail: '(nameOrId) => void', info: 'Moves a Unique entity to a location when the turn ends and ends a follow, for a while. A Generic entity ignores it, and a name the world has no location for stops the script with an error.' },
+  { name: 'follow', detail: '() => void', info: 'Makes a Unique entity follow the player when the turn ends, past a locked row and Can Also Go. A Generic entity ignores it.' },
+  { name: 'unfollow', detail: '() => void', info: 'Stops a Unique entity following or waiting when the turn ends, so it goes back to its usual places. A Generic entity ignores it.' },
   { name: 'meet', detail: '() => void', info: 'Makes the player meet the entity, so they see its name. Ignored when met is already true.' },
   { name: 'diary', detail: '(line) => void', info: 'Adds a line to the entity’s diary for this turn, after the AI’s entry. An entity the game doesn’t have stops the script with an error.' },
 ], ['body'], 'writable', OWNER_MAPS);

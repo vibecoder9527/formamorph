@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { positionsIn } from '@/lib/entityPlaces';
 import { chipValues, sceneEntityChipValues } from './chipValues';
 import type { ChipScene } from './chipScene';
 import { knownPersonaLine } from '../personaContext';
@@ -54,6 +55,7 @@ const lore: DictionaryEntry[] = [
 
 const scene = (over: Partial<ChipScene> = {}): ChipScene => ({
   overview: 'A quiet stretch of coast.',
+  placesOf: positionsIn({ positions: {}, generics: {} }),
   stats: [health],
   traits: [saltborn, lightSleeper],
   traitGroups,
@@ -130,6 +132,17 @@ describe('the Entities chip', () => {
     // The Merchant is in the Gatehouse and the Market; the sub-location scope wins over reachable.
     expect(values('<ENTITIES|sublocations.name>')).toBe('Merchant');
     expect(values('<ENTITIES|reachable.name>')).toBe('Watchman');
+  });
+
+  it('lists someone one Nearby link away and leaves out someone across a Far link', () => {
+    const docks: GameLocation = { id: 'docks', name: 'Docks' };
+    const dockhand: Entity = { id: 'dockhand', name: 'Dockhand', locations: ['docks'] };
+    const pier: Connection = { id: 'pier', a: 'docks', b: 'north-gate', aToB: {} };
+    const farWalk: Connection = { id: 'walk', a: 'north-gate', b: 'market', aToB: {}, bToA: {}, distance: 'far' };
+    const values = chipValues(scene({
+      locations: [...locations, docks], connections: [pier, farWalk], entities: [...entities, dockhand],
+    }));
+    expect(values('<ENTITIES|reachable.name>')).toBe('Dockhand');
   });
 
   it('lists a known entity only in Known, and never one a higher scope lists', () => {
@@ -548,6 +561,15 @@ describe('the Notes and Time chips', () => {
     const values = chipValues(scene());
     expect(values('<NOTES>')).toBe('Looking for the map-seller.');
     expect(values('<TIME>')).toBe('Day 2, afternoon');
+  });
+
+  it('read the Time chip in its picked format, with or without the day', () => {
+    const values = chipValues(scene());
+    expect(values('<TIME|hours>')).toBe('Day 2, 14:00');
+    expect(values('<TIME|ampm>')).toBe('Day 2, 2:00 PM');
+    expect(values('<TIME|noday>')).toBe('afternoon');
+    expect(values('<TIME|hours.noday>')).toBe('14:00');
+    expect(values('<TIME|ampm.noday>')).toBe('2:00 PM');
   });
 
   it('render the placeholder when absent', () => {

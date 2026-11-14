@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { HistoryMoveEvent, WorldHistoryControls } from '@/contexts/worldRecorder';
 import { findHistoryField } from '@/lib/historyField';
+import { connectionIdOfField } from '@/lib/connectionEditing';
+import type { ConnectionOpen } from '@/managers/LocationConnections';
+import type { PresenceReveal } from '@/lib/entityPicking';
 import { revealForMove, type RevealTab } from '@/lib/historyReveal';
 import { useLanding, type LandingOptions } from '@/lib/surface/useLanding';
-import type { FindingSection } from '@/lib/testBench/rules';
 import type { ConnectionReveal, SelectionReveal } from '@/managers/LocationCanvas';
 import { LOCATION_VIEWS, type LocationView } from '@/views/locationViews';
 
@@ -26,7 +28,9 @@ export interface HistoryRevealOptions {
   /** Shows a panel sub-tab, or the Overview's prompt panel. The editor falls back to its default for one the mode doesn't offer. */
   showSubTab: (tab: string, subTab: string) => void;
   /** The find bar's route to a record: its tab, a clear list filter, the record selected and scrolled to. */
-  navigateToItem: (section: FindingSection, id: string) => void;
+  navigateToItem: (section: RevealTab, id: string) => void;
+  /** Asks the location panel to open one Connection's row, or drops the last request with `null`. */
+  showConnectionRow?: (request: ConnectionOpen | null) => void;
 }
 
 // Full screen moves a prompt field out of the editor's tree, so the field is looked up in the whole page.
@@ -46,6 +50,8 @@ export function useHistoryReveal(options: HistoryRevealOptions) {
   const [selectionReveal, setSelectionReveal] = useState<SelectionReveal | null>(null);
   const clearSelectionReveal = useCallback(() => setSelectionReveal(null), []);
   const [fieldReveal, setFieldReveal] = useState<FieldReveal | null>(null);
+  const [presenceReveal, setPresenceReveal] = useState<PresenceReveal | null>(null);
+  const clearPresenceReveal = useCallback(() => setPresenceReveal(null), []);
   const latest = useRef(options);
   latest.current = options;
   const { onMove } = options;
@@ -58,15 +64,17 @@ export function useHistoryReveal(options: HistoryRevealOptions) {
     if (!move) return;
     setMove(null);
     const {
-      touring, visibleTabs, holds, setActiveTab, clearSearch, setLocationView, showSubTab, navigateToItem,
+      touring, visibleTabs, holds, setActiveTab, clearSearch, setLocationView, showSubTab, navigateToItem, showConnectionRow,
     } = latest.current;
     if (touring) return;
+    showConnectionRow?.(null);
     const target = revealForMove(move.steps, move.world, {
       shows: (tab) => visibleTabs.some((shown) => shown.value === tab),
       holds,
     });
     // A request the canvas never took, or a field landing still looking, must not outlive the move that made it.
     setSelectionReveal(null);
+    setPresenceReveal(null);
     setFieldReveal(null);
     landField(null);
     if (!target) return;
@@ -90,12 +98,18 @@ export function useHistoryReveal(options: HistoryRevealOptions) {
       setLocationView(LOCATION_VIEWS.find((view) => view.value === target.view)?.value ?? 'list');
     }
     if (target.subTab !== undefined) showSubTab(target.tab, target.subTab);
+    if (target.presenceEntity) setPresenceReveal(target.presenceEntity);
     // A field that never renders lands nothing, so the reveal ends at the selection (Q8).
     if (target.field !== undefined) {
+      // The canvas shows a revealed Connection in its own panel, with no row to open.
+      const rowId = target.connection ? null : connectionIdOfField(target.field);
+      if (rowId) showConnectionRow?.({ id: rowId });
       setFieldReveal({ field: target.field });
       landField(target.field);
     }
   }, [move, landField]);
 
-  return { connectionReveal, clearConnectionReveal, selectionReveal, clearSelectionReveal, fieldReveal };
+  return {
+    connectionReveal, clearConnectionReveal, selectionReveal, clearSelectionReveal, fieldReveal, presenceReveal, clearPresenceReveal,
+  };
 }

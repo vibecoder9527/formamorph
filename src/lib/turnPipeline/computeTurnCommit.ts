@@ -1,17 +1,19 @@
 import type { AITurnResult, Entity, InventoryPassOp, TurnToolCall } from '@/types';
 import type { StatClock, WorldWrites } from '@/lib/statCodeExecutor';
 import { mergeWorldWrites } from '@/lib/worldWrites';
-import type { WorldCalendar } from '@/lib/gameClock';
-import { FLAT_HOURS_PER_TURN } from '@/lib/gameClock';
+import type { ClockReading, WorldCalendar } from '@/lib/gameClock';
+import { FLAT_HOURS_PER_TURN, readingHours } from '@/lib/gameClock';
 import { materializeDiscoveredEntity } from '@/lib/runtimeCharacters';
 import { sameCharacterName } from '@/lib/entityMatch';
 import { randomUUID } from '@/lib/uuid';
 import type { parseStatUpdates } from '@/lib/statChanges';
 import { readStatResponse, savedStatAsks, statResponseChanges, type StatResponse } from '@/lib/statRequest';
 import {
-  applyAtOnce, applyEntityCodeWrites, entityMoveIntents, isEntityMove, joinEntityMoves, NO_ENTITY_OFFER, offerOf, peelIntents,
-  type EntityMoveIntents, type EntityMoveOffer, type FollowerState, type PeelOff, type PlayerMove,
+  applyAtOnce, applyEntityCodeWrites, entityMoveIntents, isEntityReply, joinEntityMoves, NO_ENTITY_OFFER, offerOf,
+  type EntityMoveIntents, type EntityMoveOffer, type FollowerState, type PlayerMove,
 } from '@/lib/entityFollowing';
+import { placeAll, withPlayerAt, type PositionWorld } from '@/lib/positionPlay';
+import { partWays } from '@/lib/positionEngine';
 import type { TurnPassId, TurnPlan } from './turnPlan';
 import type { TurnPassOutcome, TurnResult } from './turnRunner';
 
@@ -65,8 +67,6 @@ export interface TurnCommitContext {
   diaryNames?: Readonly<Record<string, string>>;
   /** The turn's Script World Tool calls, in call order. */
   toolCalls?: readonly TurnToolCall[];
-  /** How an Everywhere Listed entity's "come along" peels a new follower off it. Absent ⇒ none peels. */
-  peel?: PeelOff;
 }
 
 export interface TurnCommitInput {
@@ -139,17 +139,19 @@ export function computeTurnCommit({ result, plan, context }: TurnCommitInput): T
   const statAsks = statResponse ? savedStatAsks(statResponse) : undefined;
   const statMaxChanges = stats?.maxes ?? {};
 
-  // The measured duration when the clock pass ran. An unreadable, out-of-range or absent reply resolves to the
-  // flat hour rather than to zero, so a bad answer cannot freeze a clock the player asked to measure. With the
-  // pass off, the turn costs the player's Time Per Turn, which may be zero.
-  const measuredHours = answerOf<number | null>(passes, 'timePassed');
-  const clockPassRan = passes.some((outcome) => outcome.id === 'timePassed');
-  const fixedHours = clockPassRan ? FLAT_HOURS_PER_TURN : Math.max(0, context.fixedTurnHours ?? FLAT_HOURS_PER_TURN);
-  const turnHours = measuredHours ?? fixedHours;
-
   // Seed the story's opening hour, on the opening turn only: a retroactive answer would re-date every
   // memory stamp already written. An unreadable answer leaves it null, which reads as the shipped default.
   const openingHour = plan.isOpeningTurn ? answerOf<number | null>(passes, 'openingTime') : null;
+
+  // The measured duration when the clock pass ran, resolved from the clock at the turn's start. An unreadable,
+  // out-of-range or absent reply resolves to the flat hour rather than to zero, so a bad answer cannot freeze a
+  // clock the player asked to measure. With the pass off, the turn costs the player's Time Per Turn.
+  const reading = answerOf<ClockReading | null>(passes, 'timePassed');
+  const startCalendar = openingHour !== null ? { ...context.calendar, startHour: openingHour } : context.calendar;
+  const measuredHours = reading ? readingHours(reading, context.gameTime, startCalendar) : null;
+  const clockPassRan = passes.some((outcome) => outcome.id === 'timePassed');
+  const fixedHours = clockPassRan ? FLAT_HOURS_PER_TURN : Math.max(0, context.fixedTurnHours ?? FLAT_HOURS_PER_TURN);
+  const turnHours = measuredHours ?? fixedHours;
 
   const summary = answerOf<string>(passes, 'summary') ?? '';
 
@@ -179,7 +181,7 @@ export function computeTurnCommit({ result, plan, context }: TurnCommitInput): T
     });
   }
 
-  const entityMoves = peelIntents(entityMovesOf(passes), context.peel);
+  const entityMoves = entityMovesOf(passes);
 
   const inventoryOps = answerOf<InventoryPassOp[]>(passes, 'inventory') ?? [];
 
@@ -215,7 +217,7 @@ export function computeTurnCommit({ result, plan, context }: TurnCommitInput): T
       elapsedHours: context.gameTime + turnHours,
       // The opening turn's own frame, built from the hour just measured: without it the opening turn's stat
       // code reads the default start hour and an accumulating stat banks that wrong value for good.
-      calendar: openingHour !== null ? { startHour: openingHour } : context.calendar,
+      calendar: startCalendar,
     },
     isOpeningTurn: plan.isOpeningTurn,
     openingHour,
@@ -231,34 +233,48 @@ export function computeTurnCommit({ result, plan, context }: TurnCommitInput): T
  *  change nothing. */
 export function entityMovesOf(passes: readonly TurnPassOutcome[]): EntityMoveIntents {
   return entityMoveIntents([...answers(passes, 'entityLocationAuto'), ...answers(passes, 'entityLocationSuggest')]
-    .flatMap(({ subject, parsed }) => subject?.entity ? [{ entity: subject.entity, move: isEntityMove(parsed) ? parsed : null }] : []));
+    .flatMap(({ parsed }) => (Array.isArray(parsed) ? parsed : []))
+    .flatMap((reply: unknown) => (isEntityReply(reply) ? [reply] : [])));
 }
 
 /**
  * A committed turn's entity replies laid over `state`, once the player's move is known: `from` is where the
  * turn began, `to` where the player stands after the router and the turn's code. While the commit offers a
  * move the player has not taken, "stay here" and each walk apply at once and "come along" waits in `offer`
- * for Go. The code's entity writes apply last, and an entity they name leaves the offer.
+ * for Go. The code's entity writes apply last, and an entity they name leaves the offer. `world.scene.now` is
+ * the time the engine places everyone for. A disabled entity's follow ends (Q9).
  */
-export function commitEntityMoves<S extends FollowerState>(
-  state: S,
+export function commitEntityMoves(
+  state: FollowerState,
   commit: Pick<TurnCommit, 'entityMoves' | 'suggestedLocation' | 'codeWrites'>,
   move: PlayerMove,
-): { state: S; offer: EntityMoveOffer } {
+  world: PositionWorld,
+): { state: FollowerState; offer: EntityMoveOffer } {
+  const result = commitMovesOn(state, commit, move, world);
+  return world.off?.size ? { ...result, state: [...world.off].reduce(partWays, result.state) } : result;
+}
+
+/** The commit's entity replies and code writes laid over `state`, before any disabled entity's follow ends. */
+function commitMovesOn(
+  state: FollowerState,
+  commit: Pick<TurnCommit, 'entityMoves' | 'suggestedLocation' | 'codeWrites'>,
+  move: PlayerMove,
+  world: PositionWorld,
+): { state: FollowerState; offer: EntityMoveOffer } {
   const { entityMoves } = commit;
   const code = commit.codeWrites?.entities;
   const moved = move.to !== undefined && move.to !== move.from;
   if (commit.suggestedLocation && !moved) {
     const written = new Set(code?.filter((write) => write.kind !== 'meet').map((write) => write.entity));
     const offer = offerOf(entityMoves);
+    const at = placeAll(applyAtOnce(state, entityMoves, move.from, world), withPlayerAt(world, move.from));
     return {
-      state: applyEntityCodeWrites(applyAtOnce(state, entityMoves, move.from), code, move.from),
-      offer: written.size ? {
-        comeAlong: offer.comeAlong.filter((id) => !written.has(id)), comeOnce: offer.comeOnce.filter(({ id }) => !written.has(id)),
-      } : offer,
+      state: applyEntityCodeWrites(at, code, move.from, world),
+      offer: written.size ? { comeAlong: offer.comeAlong.filter((id) => !written.has(id)) } : offer,
     };
   }
-  return { state: applyEntityCodeWrites(joinEntityMoves(state, move, entityMoves), code, move.to ?? move.from), offer: NO_ENTITY_OFFER };
+  const to = move.to ?? move.from;
+  return { state: applyEntityCodeWrites(joinEntityMoves(state, move, entityMoves, world), code, to, world), offer: NO_ENTITY_OFFER };
 }
 
 /**

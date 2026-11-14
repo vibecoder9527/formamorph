@@ -25,6 +25,7 @@ import { SETTINGS_COPY } from '@/components/modals/settingsCopy';
 import { SETTINGS_TABS } from '@/components/modals/settingsTabs';
 import { NARRATION_LAYOUTS } from '@/contexts/settingsDefaults';
 import type { Trait } from '@/types';
+import { AS_LISTED } from '@/test/asListed';
 
 // The stored text through the world migration, images included: the Test Bench pass below reads them.
 const world = migrateWorld(JSON.parse(bundledWorldText('open-chat')));
@@ -32,8 +33,8 @@ const chipIds = (text: string) => directChipTargets([text]);
 const byName = (name: string) => (world.placeholders ?? []).find((ph) => ph.name === name)!.id;
 
 describe('the Open Chat default world', () => {
-  it('is listed as a bundled default under its stable id', () => {
-    expect(DEFAULT_WORLDS).toContainEqual({ id: 'open-chat', defaultName: 'Open Chat' });
+  it('is listed as a bundled default under its stable id, waiting for a library entity', () => {
+    expect(DEFAULT_WORLDS).toContainEqual({ id: 'open-chat', defaultName: 'Open Chat', needsLibraryEntity: true });
     expect(world.worldOverview.name).toBe('Open Chat');
   });
 
@@ -135,7 +136,7 @@ describe('the Open Chat default world', () => {
   it('lets the player be anyone and opens on one editable Player Action', () => {
     expect(world.worldOverview.allowedPersonas).toBeUndefined();
     expect(world.worldOverview.startPersona).toBeUndefined();
-    expect(world.worldOverview.openingsEnabled).not.toBe(false);
+    expect('openingsEnabled' in world.worldOverview).toBe(false);
     const openings = world.worldOverview.openings ?? [];
     expect(openings).toHaveLength(1);
     expect(openings[0].kind).toBe('action');
@@ -210,7 +211,7 @@ describe('the Open Chat tone traits', () => {
       sectionStyle: 'markdown', resolvePH,
     }).prompt;
     const choices = choicesSystemPrompt(resolveWorldPrompt(overview, 'choices', defaultChoicesPrompt, false), 'English', chips);
-    const drawn = drawOpening(openingPool({ overview }), () => 0);
+    const drawn = drawOpening(openingPool({ placesOf: AS_LISTED, overview }), () => 0);
     const opening = resolvePlaceholders(drawn.text, { placeholders, rolls: {}, pins, player: { name: null, kind: 'opening' } });
     return { narration, choices, opening };
   };

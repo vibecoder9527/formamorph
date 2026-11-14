@@ -1,168 +1,111 @@
-import type { Entity, EntityPositions, GameLocation, PersonaRef } from "@/types";
+import type { ContentLocationRef, Entity, EntityKind, EntityPositions, GameLocation, GenericStates, PersonaRef } from "@/types";
 import { ancestors, parentLookup } from "@/lib/ancestors";
+import { isGeneric, placesReturned, startsOf, withGenericStart, withoutRoutinePlace, withRoutineMapped, withRoutineReturned } from "@/lib/entityKind";
+import { withNewStart } from "@/lib/routineEditing";
+import { idsAt, namedPlacesOf, positionsIn, withMembership } from "@/lib/entityPlaces";
+import { randomUUID } from "@/lib/uuid";
+import { inCast } from "@/lib/owners";
 
 /**
- * The inverted index over entity-owned location membership (see ADR-0003). Entities carry the locations
- * they belong to; every roster that asks "who is at this place" reads it through here, so there is one
- * inversion rather than one per caller.
- *
- * During play a runtime layer sits on top: an entity with a position is at that position only, and one
- * without is at every location it lists. `entitiesInPlay` applies it, so the rosters read it unchanged.
- *
- * Roster order is the entity array's own order — the author's ordering of the cast — since an
- * entity-owned list carries no rank within a location.
+ * Entity edits that touch places, and the rosters over the Entity Places module (ADR-0017). Roster order is the
+ * cast's own order.
  */
 
-/** The ids of the entities that belong to `locationId`. Empty for a location nobody lists. */
-export function entityIdsAt(locationId: string | null | undefined, entities: Entity[]): string[] {
-  if (!locationId) return [];
-  return entities.filter((e) => e.locations?.includes(locationId)).map((e) => e.id);
+/** `entity` carried into a world, `map` naming each of its places the world can place (source id → world id).
+ *  An entity with a kind keeps its routine through the map; one with no kind belongs to the mapped places. */
+export function placedIn(entity: Entity, map: Readonly<Record<string, string>>): Entity {
+  return entity.kind ? withRoutineMapped(entity, map, randomUUID) : withMembership(entity, Object.values(map));
 }
 
-/** The deduped ids of the entities that belong to any of `locationIds` — the union a multi-location scope
- *  (sub-locations, reachable) rosters. Each entity appears once however many of the places it lists. */
-export function entityIdsAtAny(locationIds: string[], entities: Entity[]): string[] {
-  const scope = new Set(locationIds);
-  return entities.filter((e) => e.locations?.some((id) => scope.has(id))).map((e) => e.id);
+/** The carry map of `refs` (source id → world id, in ref order): each ref through `connections`, else its own id,
+ *  kept only where `known` holds the place. */
+export function carryMap(
+  refs: readonly ContentLocationRef[], connections: Readonly<Record<string, string>>, known: ReadonlySet<string>,
+): Record<string, string> {
+  return Object.fromEntries(refs.flatMap((ref) => {
+    const id = connections[ref.id] ?? ref.id;
+    return known.has(id) ? [[ref.id, id]] : [];
+  }));
 }
 
-/** A copy of `entity` belonging to exactly `locationIds`, deduped. An empty list drops the field rather
- *  than storing `[]`, so an entity placed nowhere exports as clean as one that never had a membership. */
-export function withEntityLocations(entity: Entity, locationIds: string[]): Entity {
-  const locations = [...new Set(locationIds)];
-  if (locations.length === 0) {
-    const { locations: _none, ...rest } = entity;
-    return rest;
-  }
-  return withMovementRules({ ...entity, locations });
+/** The routine fields of an entity with a kind. */
+export const ROUTINE_FIELDS = ["routines"] as const;
+export type RoutineFields = Pick<Entity, (typeof ROUTINE_FIELDS)[number]>;
+
+/** The routine `source` holds once carried into a world as an entity of `kind`: its places through `connections`, kept
+ *  where `known` holds them (Q11). The one mapping carry, update, compare and link repair share (Q30). */
+export function carriedRoutine(
+  source: Entity, kind: EntityKind, connections: Readonly<Record<string, string>>, known: ReadonlySet<string>,
+): RoutineFields {
+  const carried = placedIn({ ...source, kind }, carryMap(source.locationRefs ?? [], connections, known));
+  return carried.routines ? { routines: carried.routines } : {};
 }
 
-/** A Movement choice, Free included. */
-export type MovementChoice = NonNullable<Entity['movement']> | 'free';
-
-/** Whether `entity` is at every one of two or more listed locations at once. */
-export const isEverywhere = (entity: Entity) => (entity.locations?.length ?? 0) > 1 && entity.presence !== 'random';
-
-/** The Movement choices `entity` offers. One entity at several places at once has no route to walk. */
-export function movementOptions(entity: Entity): MovementChoice[] {
-  return isEverywhere(entity) ? ['free', 'stays', 'follow'] : ['free', 'stays', 'between', 'follow'];
+/**
+ * The inverse of `carriedRoutine` and `carriedMembership`: `item`, a copy in library form whose refs name its world's
+ * places, written back over `source` through the same carry map (Q34, Q35, Q39). An entity with a kind returns its
+ * routine; one with no kind, the membership its refs name. Its refs become the places returned, and `connections`
+ * gains each world place that goes back as a new ref (Q36).
+ */
+export function returnedPlaces(
+  item: Entity, source: Entity, connections: Readonly<Record<string, string>>, known: ReadonlySet<string>,
+): { item: Entity; connections: Record<string, string> } {
+  const sourceRefs = source.locationRefs ?? [];
+  const libraryRefs = new Map(sourceRefs.map((ref) => [ref.id, ref]));
+  const worldRefs = new Map((item.locationRefs ?? []).map((ref) => [ref.id, ref]));
+  const map = carryMap(sourceRefs, connections, known);
+  const { routines: _routines, locationRefs: _r, ...rest } = item;
+  const routine = item.kind ? withRoutineReturned(item, source, map) : {};
+  const places = item.kind
+    ? namedPlacesOf({ ...rest, ...routine })
+    : placesReturned([...worldRefs.keys()], sourceRefs.map((ref) => ref.id), map);
+  const locationRefs = places.flatMap((id) => libraryRefs.get(id) ?? worldRefs.get(id) ?? []);
+  const added = locationRefs.filter((ref) => !libraryRefs.has(ref.id)).map((ref) => [ref.id, ref.id]);
+  return {
+    item: { ...rest, ...routine, ...(locationRefs.length && { locationRefs }) },
+    connections: { ...connections, ...Object.fromEntries(added) },
+  };
 }
 
-/** `entity` with Moves Between reset to Free where it no longer applies. */
-function withMovementRules(entity: Entity): Entity {
-  return entity.movement === 'between' && isEverywhere(entity) ? withMovement(entity, 'free') : entity;
+/** The membership `source` holds once carried into a world as an entity with no kind: the same carry as a first add (Q33). */
+export function carriedMembership(
+  source: Entity, connections: Readonly<Record<string, string>>, known: ReadonlySet<string>,
+): string[] {
+  const { kind: _kind, ...plain } = source;
+  return namedPlacesOf(placedIn(plain, carryMap(source.locationRefs ?? [], connections, known)));
 }
 
-/** A copy of `entity` with `movement`; Free is stored as no field. */
-export function withMovement(entity: Entity, movement: MovementChoice): Entity {
-  if (movement !== 'free') return { ...entity, movement };
-  const { movement: _free, ...rest } = entity;
-  return rest;
+/** A linked `copy` with its routine rebuilt as a fresh carry of `source` through `connections`, as an entity of `kind`. */
+export function withCarriedRoutine(
+  copy: Entity, source: Entity, connections: Readonly<Record<string, string>>, known: ReadonlySet<string>,
+  kind: EntityKind,
+): Entity {
+  const { routines: _routines, ...rest } = copy;
+  return { ...rest, ...carriedRoutine(source, kind, connections, known) };
 }
 
-/** A copy of `entity` with `presence`; Everywhere Listed is stored as no field. */
-export function withPresence(entity: Entity, presence: Entity['presence']): Entity {
-  if (presence) return { ...entity, presence };
-  const { presence: _everywhere, ...rest } = entity;
-  return withMovementRules(rest);
+/** Whether a Start of `entity` begins at `locationId`. */
+export const startsAt = (entity: Entity, locationId: string) => startsOf(entity).some((start) => start.place === locationId);
+
+/** `entity` with one more Start at `locationId`, weight 1 and no rows. Its other Starts stay. */
+export const withStartHere = (entity: Entity, locationId: string): Entity =>
+  isGeneric(entity) ? withGenericStart(entity, locationId, randomUUID) : withNewStart(entity, locationId, randomUUID);
+
+/** Where entities stand in play: each Unique entity's position, and each Generic entity's Generic Entity Instances. */
+export interface Standings {
+  positions: Readonly<EntityPositions>;
+  generics: Readonly<GenericStates>;
 }
 
-/** `entities` with `locationId` added to or removed from each listed entity's membership — the write side
- *  of a location-first edit, where the author picks the cast standing in one place. Entities whose
- *  membership is unchanged are returned by reference. */
-export function setLocationRoster(locationId: string, entityIds: string[], entities: Entity[]): Entity[] {
-  const wanted = new Set(entityIds);
-  return entities.map((entity) => {
-    const has = entity.locations?.includes(locationId) ?? false;
-    const should = wanted.has(entity.id);
-    if (has === should) return entity;
-    const next = should
-      ? [...(entity.locations ?? []), locationId]
-      : (entity.locations ?? []).filter((id) => id !== locationId);
-    return withEntityLocations(entity, next);
-  });
-}
-
-/** `entities` as they stand in play: each one with a position lists that location only. The same array when
- *  nobody has a position. */
-export function entitiesInPlay(entities: Entity[], positions: Readonly<EntityPositions>): Entity[] {
-  if (!entities.some((e) => e.id in positions)) return entities;
-  return entities.map((entity) => {
-    const at = positions[entity.id];
-    return at === undefined ? entity : { ...entity, locations: [at] };
-  });
-}
-
-/** The ids of the entities present at `locationId` as they stand in play. Pass the discovered entities in
- *  `entities` too, so the ones met this turn count (Q62). */
+/** The ids of the entities whose Position is `locationId`. Pass the discovered entities in `entities` too, so the
+ *  ones met this turn count (Q62). */
 export const presentEntityIds = (
-  entities: Entity[], positions: Readonly<EntityPositions>, locationId: string | null | undefined,
-): string[] => entityIdsAt(locationId, entitiesInPlay(entities, positions));
+  entities: Entity[], standings: Standings, locationId: string | null | undefined,
+): string[] => idsAt(locationId, entities, positionsIn(standings));
 
-/** The entity fields a position is placed from. */
-export type PlaceableEntity = Pick<Entity, 'id' | 'locations' | 'presence' | 'movement' | 'customPersona'>;
-
-/** The entities that can hold a position under `persona`: all but the Custom Persona and the played one. */
-export function positionedCast<E extends PlaceableEntity>(entities: readonly E[], persona: PersonaRef | undefined): E[] {
-  const played = persona?.source === 'world' ? persona.entityId : undefined;
-  return entities.filter((e) => !e.customPersona && e.id !== played);
-}
-
-/** Where the Presence rule places `entity` among the locations the world still has: a One entity at one
- *  of them drawn with `random`, an entity with a Movement and one listed location there. None for
- *  anyone else. */
-function placeByPresence(entity: PlaceableEntity, live: ReadonlySet<string>, random: () => number): string | undefined {
-  const options = (entity.locations ?? []).filter((id) => live.has(id));
-  if (entity.presence === 'random') return options.length ? options[Math.floor(random() * options.length)] : undefined;
-  return entity.movement && entity.locations?.length === 1 ? options[0] : undefined;
-}
-
-/** The positions a new game starts with, each placed by the Presence rule. */
-export function startingPositions(
-  entities: readonly PlaceableEntity[], locationIds: readonly string[], random: () => number = Math.random,
-): EntityPositions {
-  const live = new Set(locationIds);
-  const positions: EntityPositions = {};
-  for (const entity of entities) {
-    const at = placeByPresence(entity, live, random);
-    if (at) positions[entity.id] = at;
-  }
-  return positions;
-}
-
-/** A save's positions against the world as it is now. A deleted entity's position goes. An entity
- *  without a live position is placed again by the Presence rule; one the rule doesn't place goes back
- *  to every location it lists. The same map when nothing changes. */
-export function reconcilePositions(
-  saved: EntityPositions, entities: readonly PlaceableEntity[], locationIds: readonly string[], random: () => number = Math.random,
-): EntityPositions {
-  const live = new Set(locationIds);
-  const next: EntityPositions = {};
-  let changed = false;
-  for (const entity of entities) {
-    const at = saved[entity.id];
-    if (at !== undefined && live.has(at)) {
-      next[entity.id] = at;
-      continue;
-    }
-    const drawn = placeByPresence(entity, live, random);
-    if (drawn) next[entity.id] = drawn;
-    if (drawn !== at) changed = true;
-  }
-  if (!changed && Object.keys(saved).length !== Object.keys(next).length) changed = true;
-  return changed ? next : saved;
-}
-
-/** {@link reconcilePositions} on a saved state; the same state when nothing changes. */
-export function reconcileGameStatePositions<S extends { entityPositions?: EntityPositions }>(
-  state: S, entities: readonly PlaceableEntity[], locationIds: readonly string[], random: () => number = Math.random,
-): S {
-  const saved = state.entityPositions ?? {};
-  const next = reconcilePositions(saved, entities, locationIds, random);
-  if (next === saved) return state;
-  const { entityPositions: _old, ...rest } = state;
-  // `rest` is `S` minus an optional field, so it still satisfies `S`; TypeScript can't see that through Omit.
-  return (Object.keys(next).length ? { ...rest, entityPositions: next } : rest) as S;
+/** The entities that can hold a position under `persona`: the cast, as `inCast` reads it. */
+export function positionedCast<E extends Pick<Entity, 'id' | 'customPersona' | 'persona' | 'personaOnly'>>(entities: readonly E[], persona: PersonaRef | undefined): E[] {
+  return entities.filter((e) => inCast(e, persona));
 }
 
 /** An entity's Known In: Nearby, Nowhere, or the picked location ids, each covering its subtree. */
@@ -212,14 +155,16 @@ export function knownHere(locationId: string, locations: readonly Pick<GameLocat
 
 const knownInIncludes = (entity: Entity, locationId: string) => Array.isArray(entity.knownIn) && entity.knownIn.includes(locationId);
 
-/** `entities` with `locationId` dropped from every membership and every Known In list — run when a location
- *  is deleted, so no entity keeps pointing at a place that no longer exists. Returns the same array when
- *  nobody listed it. */
+/** `entities` with `locationId` dropped from every membership, every routine and every Known In list — run when a
+ *  location is deleted, so no entity keeps pointing at a place that no longer exists. A Start at the place goes,
+ *  and so does a row left with no places. Returns the same array when nobody named it. */
 export function dropLocationFromEntities(locationId: string, entities: Entity[]): Entity[] {
-  if (!entities.some((e) => e.locations?.includes(locationId) || knownInIncludes(e, locationId))) return entities;
+  const names = (e: Entity) => namedPlacesOf(e).includes(locationId) || knownInIncludes(e, locationId);
+  if (!entities.some(names)) return entities;
   return entities.map((entity) => {
-    let next = entity;
-    if (next.locations?.includes(locationId)) next = withEntityLocations(next, next.locations.filter((id) => id !== locationId));
+    let next = withoutRoutinePlace(entity, locationId);
+    const members = next.kind ? [] : namedPlacesOf(next);
+    if (members.includes(locationId)) next = withMembership(next, members.filter((id) => id !== locationId));
     if (knownInIncludes(next, locationId)) next = toggleKnownInPick(next, locationId);
     return next;
   });

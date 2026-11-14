@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { toastError } from "@/lib/linkToast";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, dialogTitleControl, dialogTitleRow } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import IndeterminateProgress from "@/components/ui/indeterminate-progress";
@@ -102,6 +102,8 @@ interface RemoteWorldDetailsModalProps {
   onOpenContest?: (contestId: string) => void;
   /** Records a new like count after a staff removal, so the card behind this modal agrees. */
   onLikesChanged?: (world: WorldRecord, likes: number) => void;
+  /** Records the Likes Marker reasons read after a staff removal, so the card behind this modal agrees. */
+  onMarkerChanged?: (world: WorldRecord, reasons: LikesMarkerReason[]) => void;
   /** Called when this reader's write starts or drops the listing's pending update. */
   onPendingUpdateChange?: (world: WorldRecord, pending: boolean) => void;
   /** Pins the listing, or unpins it when it is pinned. Staff only. */
@@ -143,7 +145,7 @@ export function RemoteWorldDetailsModal({
   open, onOpenChange, world, collapsed, onToggleCollapsed,
   isAuthenticated, openImageViewer, downloadStateForWorld, downloadProgress, onContextualDownload, onDeviceDownload,
   currentUser, onLike, onGuestLike, guestLikes = false, serverTakesLikes = false, onAnonymousLikes,
-  contests = [], onOpenContest, onLikesChanged, onPendingUpdateChange, onTogglePin, onToggleSupporterOnly, openLikersOnMount = false,
+  contests = [], onOpenContest, onLikesChanged, onMarkerChanged, onPendingUpdateChange, onTogglePin, onToggleSupporterOnly, openLikersOnMount = false,
   capabilities = APP_DETAILS_CAPABILITIES,
   detailsAction, onOpenListing, presetUse,
 }: RemoteWorldDetailsModalProps) {
@@ -188,6 +190,9 @@ export function RemoteWorldDetailsModal({
   // Whether the likers list was opened from the Likes Marker, which lands it on the audit.
   const [auditLikers, setAuditLikers] = useState(false);
   const [freshLikesMarker, setFreshLikesMarker] = useState<LikesMarkerReason[] | undefined>(undefined);
+  // The listing on screen, for a marker read that lands after the modal moved to another one.
+  const shownListing = useRef<string | null>(null);
+  shownListing.current = world ? String(world._id || world.id) : null;
 
   // What this world requires and what it is offered as an add-on, read only while the listing is open.
   const downloadPlan = useWorldDownloadPlan(world, open && capabilities.localLibrary);
@@ -626,11 +631,11 @@ export function RemoteWorldDetailsModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent aria-describedby={undefined} className={cn("h-[85dvh] flex flex-col", collapsed ? "sm:max-w-[600px]" : "sm:max-w-[1200px]")}>
         <DialogHeader className="shrink-0">
-          <div className="flex items-center gap-2">
+          <div className={cn(dialogTitleRow, 'gap-2')}>
             <DialogTitle className="min-w-0 flex-1">
               {/* `leading-normal` overrides DialogTitle's `leading-none`, whose one-em line box crops
-                  descenders under `truncate`'s overflow clip. Fits the row's existing height. */}
-              <span className="truncate leading-normal">{world?.name || `${KIND_LABELS[world ? kindOf(world) : 'world'].one} Details`}</span>
+                  descenders under `truncate`'s overflow clip. */}
+              <span className={cn('block truncate leading-normal', dialogTitleControl)}>{world?.name || `${KIND_LABELS[world ? kindOf(world) : 'world'].one} Details`}</span>
             </DialogTitle>
             {detailsAction && <div className="shrink-0">{detailsAction}</div>}
             {world && onTogglePin && capabilities.moderation && isStaff(currentUser) && (
@@ -1014,6 +1019,11 @@ export function RemoteWorldDetailsModal({
             listingName={world?.name}
             currentUser={currentUser}
             onLikesChanged={(likes) => { if (world) onLikesChanged?.(world, likes); }}
+            onMarkerChanged={(reasons) => {
+              if (!world) return;
+              if (shownListing.current === String(world._id || world.id)) setFreshLikesMarker(reasons);
+              onMarkerChanged?.(world, reasons);
+            }}
           />
         )}
 

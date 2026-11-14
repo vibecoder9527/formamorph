@@ -86,6 +86,12 @@ describe('seedLens', () => {
     expect(seedLens(noStart, null, null).locationId).toBe('loc-market');
   });
 
+  it('opens a fresh seed on the persona start, as Enter World does, below the editor selection', () => {
+    const custom: Entity = { id: 'e-self', name: 'Self', customPersona: true, locations: ['loc-market'] };
+    expect(seedLens(world({ entities: [custom] }), null, null).locationId).toBe('loc-market');
+    expect(seedLens(world({ entities: [custom] }), null, 'loc-harbor').locationId).toBe('loc-harbor');
+  });
+
   const wren: Entity = { id: 'e-wren', name: 'Wren', persona: true, locations: ['loc-market'] };
   const sable: Entity = { id: 'e-sable', name: 'Sable', persona: true };
 
@@ -101,7 +107,7 @@ describe('seedLens', () => {
 
   it('re-seeds only the half the world no longer has', () => {
     const stored = { personaId: 'e-wren', locationId: 'loc-gone', locationChosen: true };
-    expect(seedLens(world({ entities: [wren] }), stored, null)).toEqual({ personaId: 'e-wren', locationId: 'loc-harbor' });
+    expect(seedLens(world({ entities: [wren] }), stored, null)).toEqual({ personaId: 'e-wren', locationId: 'loc-market' });
   });
 
   it('drops a stored persona the world no longer offers', () => {
@@ -138,6 +144,12 @@ describe('lensWithPersona', () => {
   it('stays put for a persona with no location, and for None', () => {
     expect(lensWithPersona(w, { personaId: null, locationId: 'loc-harbor' }, 'e-sable').locationId).toBe('loc-harbor');
     expect(lensWithPersona(w, { personaId: 'e-wren', locationId: 'loc-market' }, null)).toEqual({ personaId: null, locationId: 'loc-market' });
+  });
+
+  it('moves the location to the Custom Persona’s start under None', () => {
+    const newcomer: Entity = { id: 'cp', name: 'Newcomer', customPersona: true, locations: ['loc-market'] };
+    const withCustom = world({ entities: [wren, sable, newcomer] });
+    expect(lensWithPersona(withCustom, { personaId: 'e-sable', locationId: 'loc-harbor' }, null).locationId).toBe('loc-market');
   });
 });
 
@@ -268,11 +280,21 @@ describe('pins from owned traits', () => {
     ],
   }];
 
-  it('keeps a cast entity’s owned default out of the world-level pins', () => {
+  it('lays a cast entity’s owned default in the world-level pins, under the player’s (Q17, Q18)', () => {
     const lens = buildLens(world({ entities: ash() }), { personaId: null, pickedTraitId: null, locationId: null });
-    expect(lens.pins).toEqual({});
+    expect(lens.pins).toEqual({ 'ph-hair': 'jet' });
     expect(buildLens(world({ entities: ash() }), { personaId: null, pickedTraitId: 't-sedge', locationId: null }).pinLayers.map((l) => [l.label, l.wins]))
-      .toEqual([['Trait: Sedge-Born', true]]);
+      .toEqual([["Trait: Ash's Tamed", false], ['Trait: Sedge-Born', true]]);
+  });
+
+  it('lays a cast entity’s own stat band at its start value', () => {
+    const banded = ash()!.map((e) => ({ ...e, traits: [], stats: [{
+      id: 's-trust', name: 'Trust', type: 'number' as const, description: '', regen: 0, value: 5, min: 0, max: 100, descriptors: [
+      { id: 'd-low', threshold: 10, description: 'Wary', placeholderPins: [{ placeholderId: 'ph-hair', value: 'ash' }] },
+    ] }] })) as LensWorld['entities'];
+    const lens = buildLens(world({ entities: banded }), { personaId: null, pickedTraitId: null, locationId: null });
+    expect(lens.pins).toEqual({ 'ph-hair': 'ash' });
+    expect(lens.pinLayers.map((l) => [l.label, l.wins])).toEqual([["Ash's Trust ≤ 10", true]]);
   });
 
   describe('a blueprint pin', () => {

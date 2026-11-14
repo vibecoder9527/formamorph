@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseTimeDelta,
+  parseClockReading,
+  readingHours,
   splitTurnHours,
   formatTimeLeft,
   joinTurnHours,
@@ -11,6 +12,7 @@ import {
   daypart,
   formatAbsolute,
   formatClock,
+  formatStoryTime,
   parseOpeningDaypart,
   OPENING_HOURS,
   formatRelative,
@@ -19,7 +21,36 @@ import {
   buildStamper,
   flatHoursAt,
   DEFAULT_START_HOUR,
+  nextDaypartEdge,
+  storyMinute,
 } from './gameClock';
+
+/** The hours an unanchored text reply costs: the parser and the resolver the turn commit runs. */
+const countHours = (reply: string): number | null => {
+  const reading = parseClockReading(reply);
+  return reading && readingHours(reading, 0);
+};
+
+describe('storyMinute', () => {
+  it('counts minutes from midnight of day 1, on the minute the clock stamp shows', () => {
+    expect(storyMinute(0)).toBe(DEFAULT_START_HOUR * 60);
+    expect(storyMinute(0.25, { startHour: 22 })).toBe(22 * 60 + 15);
+    expect(storyMinute(26)).toBe(24 * 60 + 10 * 60);
+    expect(formatClock(1.5)).toBe('Day 1, 09:30');
+    expect(storyMinute(1.5)).toBe(9 * 60 + 30);
+  });
+});
+
+describe('nextDaypartEdge', () => {
+  it('returns the first daypart edge after a minute, where daypart() changes', () => {
+    expect(nextDaypartEdge(10 * 60)).toBe(660);
+    expect(daypart(659 / 60)).toBe('morning');
+    expect(daypart(660 / 60)).toBe('midday');
+    expect(nextDaypartEdge(660)).toBe(780);
+    expect(nextDaypartEdge(23 * 60)).toBe(1440 + 360); // night runs past midnight to dawn
+    expect(nextDaypartEdge(3 * 1440 + 100)).toBe(3 * 1440 + 360);
+  });
+});
 
 describe('flatHoursAt', () => {
   it('charges one hour per user/assistant pair', () => {
@@ -104,6 +135,21 @@ describe('parseOpeningDaypart', () => {
     for (const hour of Object.values(OPENING_HOURS)) {
       expect(dayAndHour(0, { startHour: hour }).day).toBe(1);
     }
+  });
+});
+
+describe('formatStoryTime', () => {
+  it('reads a 12-hour clock across midnight and noon', () => {
+    expect(formatStoryTime(16, undefined, '12h', true)).toBe('Day 2, 12:00 AM');
+    expect(formatStoryTime(4, undefined, '12h', true)).toBe('Day 1, 12:00 PM');
+    expect(formatStoryTime(15.5, undefined, '12h', true)).toBe('Day 1, 11:30 PM');
+    expect(formatStoryTime(1, undefined, '12h', true)).toBe('Day 1, 9:00 AM');
+  });
+
+  it('drops the day when asked, in every style', () => {
+    expect(formatStoryTime(11, undefined, 'daypart', false)).toBe('evening');
+    expect(formatStoryTime(11, undefined, '24h', false)).toBe('19:00');
+    expect(formatStoryTime(11, undefined, '12h', false)).toBe('7:00 PM');
   });
 });
 
@@ -215,35 +261,35 @@ describe('buildStamper', () => {
   });
 });
 
-describe('parseTimeDelta', () => {
+describe('clock text replies — counts', () => {
   it('reads the units the prompt asks for', () => {
-    expect(parseTimeDelta('15m')).toBeCloseTo(0.25);
-    expect(parseTimeDelta('2h')).toBe(2);
-    expect(parseTimeDelta('3d')).toBe(72);
-    expect(parseTimeDelta('2w')).toBe(336);
+    expect(countHours('15m')).toBeCloseTo(0.25);
+    expect(countHours('2h')).toBe(2);
+    expect(countHours('3d')).toBe(72);
+    expect(countHours('2w')).toBe(336);
   });
 
   it('accepts spelled-out units and surrounding prose', () => {
-    expect(parseTimeDelta('about 3 days')).toBe(72);
-    expect(parseTimeDelta('45 minutes passed')).toBeCloseTo(0.75);
-    expect(parseTimeDelta('  6 hrs  ')).toBe(6);
+    expect(countHours('about 3 days')).toBe(72);
+    expect(countHours('45 minutes passed')).toBeCloseTo(0.75);
+    expect(countHours('  6 hrs  ')).toBe(6);
   });
 
   it('treats a bare number as hours, the unit the game counts in', () => {
-    expect(parseTimeDelta('4')).toBe(4);
+    expect(countHours('4')).toBe(4);
   });
 
   it('keeps a legitimate zero — a single line of dialogue costs nothing', () => {
-    expect(parseTimeDelta('0')).toBe(0);
-    expect(parseTimeDelta('0m')).toBe(0);
+    expect(countHours('0')).toBe(0);
+    expect(countHours('0m')).toBe(0);
   });
 
   it('rejects nonsense and out-of-range values so callers fall back rather than lurch', () => {
-    expect(parseTimeDelta('')).toBeNull();
-    expect(parseTimeDelta('some time passed')).toBeNull();
-    expect(parseTimeDelta('-2h')).toBeNull();
-    expect(parseTimeDelta('500 weeks')).toBeNull(); // past MAX_TURN_HOURS
-    expect(parseTimeDelta(`${MAX_TURN_HOURS}h`)).toBe(MAX_TURN_HOURS); // the boundary itself is allowed
+    expect(countHours('')).toBeNull();
+    expect(countHours('some time passed')).toBeNull();
+    expect(countHours('-2h')).toBeNull();
+    expect(countHours('500 weeks')).toBeNull(); // past MAX_TURN_HOURS
+    expect(countHours(`${MAX_TURN_HOURS}h`)).toBe(MAX_TURN_HOURS); // the boundary itself is allowed
   });
 });
 
@@ -278,16 +324,16 @@ describe('hoursByPosition', () => {
   });
 });
 
-describe('parseTimeDelta — spelled-out counts', () => {
+describe('clock text replies — spelled-out counts', () => {
   it('reads a count written in words', () => {
-    expect(parseTimeDelta('five minutes')).toBeCloseTo(5 / 60);
-    expect(parseTimeDelta('Three days')).toBe(72);
-    expect(parseTimeDelta('an hour')).toBe(1);
+    expect(countHours('five minutes')).toBeCloseTo(5 / 60);
+    expect(countHours('Three days')).toBe(72);
+    expect(countHours('an hour')).toBe(1);
   });
 
   it('ignores a bare word with no unit — prose is not a measurement', () => {
-    expect(parseTimeDelta('a while')).toBeNull();
-    expect(parseTimeDelta('one')).toBeNull();
+    expect(countHours('a while')).toBeNull();
+    expect(countHours('one')).toBeNull();
   });
 });
 

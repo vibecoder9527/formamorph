@@ -54,6 +54,14 @@ describe('Avatar Customization with no Avatar in the library', () => {
     expect(done.mock.calls[0][0].chosenVrm).toBeNull();
   });
 
+  it('renders no customization controls until an Avatar shows', async () => {
+    mount();
+    await screen.findByText(/No Avatars yet/);
+    expect(screen.queryByText('Animate Avatar')).toBeNull();
+    fireEvent.change(document.getElementById('model-upload') as HTMLInputElement, { target: { files: [new File(['vrm'], 'Wren.vrm')] } });
+    await screen.findByText('Animate Avatar');
+  });
+
   it("opens the file picker from the empty state's Import Avatar, and shows the preview once one is added", async () => {
     mount();
     await screen.findByText(/No Avatars yet/);
@@ -78,14 +86,21 @@ describe('Avatar Customization with no Avatar in the library', () => {
   });
 });
 
-describe("a locked world pick on a build with no bundled Avatar", () => {
+describe("a locked library pick", () => {
   const hint = /This world.s Avatar isn.t available/;
 
-  it('says so when the picked Avatar is not in the library', async () => {
+  it("shows User's Default when the picked Avatar is not in the library", async () => {
     library.models = [meta('heron', 'Heron')];
+    mount({ vrm: { kind: 'library', id: 'gone' } });
+    await waitFor(() => expect(screen.getByTestId('preview').dataset.url).toBe('blob:avatar'));
+    expect(screen.queryByText(hint)).toBeNull();
+  });
+
+  it('says so when the picked Avatar is gone and the library is empty', async () => {
     mount({ vrm: { kind: 'library', id: 'gone' } });
     await screen.findByText(hint);
     expect(screen.queryByTestId('preview')).toBeNull();
+    expect(screen.queryByText('Animate Avatar')).toBeNull();
   });
 
   it('shows the Avatar, with no hint, when it is in the library', async () => {

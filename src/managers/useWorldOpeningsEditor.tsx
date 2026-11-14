@@ -1,0 +1,339 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, MapPinOff, Plus } from 'lucide-react';
+import { EditorRow, EditorRowList, treeRowPaddingLeft } from '@/components/EditorRow';
+import { ListSearchToolbar } from '@/components/ListToolbar';
+import type { ListEditorParts } from '@/components/listEditorHooks';
+import type { ListSearch } from '@/components/listToolbarHooks';
+import { TreeCollapseAllButton } from '@/components/CollapseAllButton';
+import { revealKeys, type TreeCollapse } from '@/components/treeCollapse';
+import { Button } from '@/components/ui/button';
+import { ListDetailBack } from '@/components/ui/list-detail';
+import { Tip } from '@/components/ui/tooltip';
+import { Hint } from '@/components/ui/typography';
+import { useGameData } from '@/contexts/GameDataContext';
+import { EntityIcon, GroupIcon, LocationIcon, WorldIcon } from '@/lib/elementIcons';
+import { matchesListSearch, type ListSearchNames } from '@/lib/listSearch';
+import {
+  addOpening, hasAuthoredOpenings, openingsEditorView, type EditorOpeningRow, type OpeningOwner,
+} from '@/lib/openings';
+import {
+  entityOwnerKey, entityPickChoices, foldKey, locationOwnerKey, locationPicker, openingsTabOwners, openingsTabRows,
+  resolveOwnerKey, WORLD_OWNER_KEY, type OpeningsTabOwner, type OwnerKind,
+} from '@/lib/openingsTab';
+import { labelPlaceholders } from '@/lib/placementLetters';
+import { cn } from '@/lib/utils';
+import {
+  DefaultOpeningNote, EntityOpeningsHint, LocationOpeningsHint, OpeningsList, WorldOpeningsHint,
+} from './OpeningsPanel';
+import { OpeningsAddMenu } from './OpeningsAddMenu';
+
+const NONE_COLLAPSED: ReadonlySet<string> = new Set();
+
+/** The fold keys of the groups above an owner row, nearest first. Null for an owner the list does not show. */
+function groupsAbove(rows: ReturnType<typeof openingsTabRows>, ownerKey: string): string[] | null {
+  const at = rows.findIndex((row) => row.kind === 'owner' && row.owner.key === ownerKey);
+  const own = rows[at];
+  if (!own || own.kind === 'rule') return null;
+  const out: string[] = [];
+  let depth = own.depth;
+  for (let i = at - 1; i >= 0 && depth > 0; i--) {
+    const row = rows[i];
+    if (row.kind !== 'rule' && row.depth < depth) { out.push(foldKey(row)); depth = row.depth; }
+  }
+  return out;
+}
+
+const KIND_ICON = { world: WorldIcon, location: LocationIcon, entity: EntityIcon } as const;
+
+const NO_START_TIP: Record<Exclude<OwnerKind, 'world'>, string> = {
+  location: "Isn't a starting location, so its openings never come up",
+  entity: "Isn't at any starting location, so its openings never come up",
+};
+
+/**
+ * The World Editor's Openings tab: This World and every location and entity with openings, in their own
+ * nesting, beside the selected owner's openings. With nothing selected, desktop shows This World. A search
+ * keeps an owner whose name or opening text matches. A parent folds its rows away; a search has its own folds.
+ * Neither moves the selection.
+ */
+export function useWorldOpeningsEditor({ selectedId, onSelect, search, collapse, defaultToWorld, onOpenEntity, onOpenLocation }: {
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  search: ListSearch;
+  /** The owner list's folded groups, held by the World Editor for the visit. */
+  collapse: TreeCollapse;
+  /** Holds This World while nothing is selected: the desktop split always has a pane to fill. */
+  defaultToWorld: boolean;
+  /** Opens that entity's Openings tab. */
+  onOpenEntity: (entityId: string) => void;
+  /** Opens that location's Openings tab. */
+  onOpenLocation: (locationId: string) => void;
+}): ListEditorParts {
+  const {
+    worldOverview, updateWorldOverview, entities, entityGroups, updateEntity, locations, updateLocation, placeholders,
+    placementLetters, placeholderOwners,
+  } = useGameData();
+  // Folded groups live in the World Editor's per-tab store, so they outlast a tab switch.
+  const [searchFolds, setSearchFolds] = useState<{ query: string; collapsed: ReadonlySet<string> }>({ query: '', collapsed: NONE_COLLAPSED });
+  const view = openingsEditorView({ overview: worldOverview, entities, locations });
+  const names: ListSearchNames = { placeholders, letters: placementLetters, owners: placeholderOwners };
+  const label = (name: string) => labelPlaceholders(name, placeholders, { letters: placementLetters, owners: placeholderOwners });
+  const typed = search.typed;
+  const textMatches = (rows: EditorOpeningRow[]) => rows.some((row) => matchesListSearch(row.opening.text, typed, names));
+  const matches = (name: string, rows: EditorOpeningRow[]) => !typed || matchesListSearch(name, typed, names) || textMatches(rows);
+
+  // A key no owner answers to any more (a deleted location or entity) falls back to This World.
+  const resolved = selectedId ? resolveOwnerKey(selectedId, locations, entities) : null;
+  const ownerGone = !!selectedId && !resolved;
+  useEffect(() => { if (ownerGone) onSelect(WORLD_OWNER_KEY); }, [ownerGone, onSelect]);
+
+  const heldKey = resolved && selectedId ? selectedId : defaultToWorld || ownerGone ? WORLD_OWNER_KEY : null;
+  const owners = openingsTabOwners(view, resolved && selectedId ? { key: selectedId, owner: resolved } : null);
+  // A search opens on every match and folds on its own; new text opens them all again.
+  const searchFolded = searchFolds.query === typed ? searchFolds.collapsed : NONE_COLLAPSED;
+  const searchCollapse: TreeCollapse = {
+    value: { ...collapse.value, collapsed: new Set(searchFolded) },
+    update: (next) => setSearchFolds({ query: typed, collapsed: next({ ...collapse.value, collapsed: new Set(searchFolded) }).collapsed }),
+  };
+  const shownCollapse = typed ? searchCollapse : collapse;
+  const rowsArgs = { owners, locations, entities, entityGroups, matches };
+  const rows = openingsTabRows({ ...rowsArgs, collapsed: shownCollapse.value.collapsed });
+  const openRows = openingsTabRows({ ...rowsArgs, matches: () => true, collapsed: NONE_COLLAPSED });
+  const parentsOf = (tree: typeof rows) => tree.flatMap((row) => (row.kind !== 'rule' && row.parent ? [foldKey(row)] : []));
+  // Collapse All acts on the parents the list shows: every one, or the search result's.
+  const parentKeys = parentsOf(typed ? openingsTabRows({ ...rowsArgs, collapsed: NONE_COLLAPSED }) : openRows);
+  // The fold keys of every group above the selected owner.
+  const above = selectedId ? groupsAbove(openRows, selectedId) : null;
+  const aboveRef = useRef(above);
+  aboveRef.current = above;
+  // Effect deps: the reveal reruns when the owner's ancestry changes, not on every render.
+  const ancestry = JSON.stringify(above);
+  const { revealed } = collapse.value;
+  const { update } = collapse;
+  // An outside navigation (Find, Reveal Origin) clears `revealed`, so it opens the groups even for the same owner.
+  // An owner with no row yet waits for the render that draws it.
+  useEffect(() => {
+    const keys = aboveRef.current;
+    if (selectedId && keys) update((prev) => (prev.revealed === selectedId ? prev : revealKeys(prev, selectedId, keys)));
+  }, [selectedId, ancestry, revealed, update]);
+  const toggleFold = (key: string) => shownCollapse.update((was) => {
+    const next = new Set(was.collapsed);
+    if (!next.delete(key)) next.add(key);
+    return { ...was, collapsed: next };
+  });
+  const held = heldKey ? owners.get(heldKey) : undefined;
+
+  const displayName = (owner: OpeningsTabOwner) => (owner.kind === 'world'
+    ? 'This World'
+    : label(owner.name) || (owner.kind === 'location' ? 'Unnamed Location' : 'Unnamed Entity'));
+
+  const noStartIcon = (kind: OwnerKind, className?: string) => kind !== 'world' && (
+    <span role="img" aria-label="No Starting Location" className={cn('inline-flex shrink-0', className)}>
+      <MapPinOff className="h-3.5 w-3.5" aria-hidden />
+    </span>
+  );
+
+  const lead = (parent: boolean) => (parent ? 'chevron' : parentKeys.length ? 'spacer' : undefined);
+
+  const ownerRow = (owner: OpeningsTabOwner, depth: number, parent = false, isCollapsed = false) => {
+    const Icon = KIND_ICON[owner.kind];
+    const count = owner.group.rows.length;
+    const name = displayName(owner);
+    return (
+      <EditorRow
+        key={owner.key}
+        grip={false}
+        depth={depth}
+        lead={lead(parent)}
+        collapsed={isCollapsed}
+        onToggleCollapse={() => toggleFold(owner.key)}
+        collapseLabels={[`Expand ${name}`, `Collapse ${name}`]}
+        selected={heldKey === owner.key}
+        onSelect={() => onSelect(owner.key)}
+        selectionLabel={`Select ${name}`}
+        icon={<Icon className="h-4 w-4 shrink-0" aria-hidden />}
+        label={name}
+        meta={(
+          <span className="flex items-center gap-1.5">
+            {owner.group.atNoStart && noStartIcon(owner.kind)}
+            <span className="tabular-nums">{count}</span>
+          </span>
+        )}
+        metaTitle={`${count} ${count === 1 ? 'opening' : 'openings'}${owner.group.atNoStart ? ', No Starting Location' : ''}`}
+        actions={[]}
+      />
+    );
+  };
+
+  const [worldRow, ...ownedRows] = rows;
+  const anyOwned = ownedRows.length > 0;
+  const list = (
+    <div>
+      <EditorRowList className={cn(anyOwned && 'mb-1 border-b pb-1')}>
+        {worldRow?.kind === 'owner' && ownerRow(worldRow.owner, 0)}
+      </EditorRowList>
+      {anyOwned && (
+        <EditorRowList>
+          {ownedRows.map((row) => {
+            if (row.kind === 'owner') return ownerRow(row.owner, row.depth, row.parent, row.collapsed);
+            if (row.kind === 'rule') return <div key={row.key} role="separator" className="my-1 border-b" />;
+            const Icon = row.context === 'location' ? LocationIcon : GroupIcon;
+            const name = label(row.name) || (row.context === 'location' ? 'Unnamed Location' : 'Unnamed Folder');
+            return (
+              // Context only: a parent that holds no listed owner. It never selects, but it folds.
+              <div
+                key={row.key}
+                data-testid="openings-context-row"
+                className="flex items-center gap-1 px-2 py-1 text-label text-muted-foreground"
+                style={{ paddingLeft: treeRowPaddingLeft(row.depth) }}
+              >
+                {row.parent ? (
+                  <button
+                    type="button"
+                    className="shrink-0"
+                    aria-label={row.collapsed ? `Expand ${name}` : `Collapse ${name}`}
+                    onClick={(e) => { e.stopPropagation(); toggleFold(row.key); }}
+                  >
+                    {row.collapsed ? <ChevronRight className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
+                  </button>
+                ) : <span className="w-4 shrink-0" aria-hidden />}
+                <span className="w-6 shrink-0" aria-hidden />
+                <Icon className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+                <span className="min-w-0 truncate opacity-70">{name}</span>
+              </div>
+            );
+          })}
+        </EditorRowList>
+      )}
+      {typed && !anyOwned && <Hint className="p-2">Nothing else matches &ldquo;{typed}&rdquo;</Hint>}
+    </div>
+  );
+
+  const patchOwner = (owner: OpeningsTabOwner, patch: OpeningOwner) => {
+    const { location, entity } = owner.group;
+    if (owner.kind === 'world') updateWorldOverview(patch);
+    else if (location) updateLocation({ ...location, ...patch });
+    else if (entity) updateEntity({ ...entity, ...patch });
+  };
+  const ownerOf = (owner: OpeningsTabOwner): OpeningOwner =>
+    owner.kind === 'world' ? worldOverview : owner.group.location ?? owner.group.entity ?? {};
+
+  const ownersOfOpenings = [...entities, ...locations];
+  const detail = held ? (
+    <OwnerPane
+      owner={held}
+      name={displayName(held)}
+      onOpen={() => {
+        if (held.group.location) onOpenLocation(held.group.location.id);
+        else if (held.group.entity) onOpenEntity(held.group.entity.id);
+      }}
+      onAdd={() => patchOwner(held, addOpening(ownerOf(held)))}
+      noStart={held.group.atNoStart && held.kind !== 'world' ? NO_START_TIP[held.kind] : null}
+    >
+      {held.kind === 'world' && view.defaultOpening && !typed && <DefaultOpeningNote view={view} label={label} />}
+      <OpeningsList
+        owner={ownerOf(held)}
+        rows={held.group.rows}
+        onChange={(patch) => patchOwner(held, patch)}
+        placeholders={placeholders}
+        ownerId={held.group.entity?.id}
+        ownerName={held.group.entity?.name}
+        search={typed}
+        names={names}
+        addButton={false}
+        selfSwitch={held.group.showSelf}
+        empty={held.kind === 'world' && view.defaultOpening ? null : <Hint>No openings yet</Hint>}
+      />
+      {held.kind === 'world'
+        ? <WorldOpeningsHint anyOpenings={[worldOverview, ...ownersOfOpenings].some(hasAuthoredOpenings)} />
+        : held.group.location
+          ? <LocationOpeningsHint />
+          : held.group.entity && <EntityOpeningsHint worldOwner={held.group.entity} showSelf={held.group.showSelf} />}
+    </OwnerPane>
+  ) : null;
+
+  // The + offers what the tab doesn't list with no search (Q7, Q21).
+  const listedKeys = new Set(openingsTabOwners(view, null).keys());
+  const addMenu = (
+    <OpeningsAddMenu
+      locations={locationPicker(locations, (id) => listedKeys.has(locationOwnerKey(id)))}
+      entityChoices={entityPickChoices(entityGroups, entities, (id) => listedKeys.has(entityOwnerKey(id)))}
+      onPickLocation={(l) => { updateLocation({ ...l, ...addOpening(l) }); onSelect(locationOwnerKey(l.id)); }}
+      onPickEntity={(id) => {
+        const entity = entities.find((e) => e.id === id);
+        if (!entity) return;
+        updateEntity({ ...entity, ...addOpening(entity) });
+        onSelect(entityOwnerKey(id));
+      }}
+    />
+  );
+
+  return {
+    search,
+    toolbar: (className, extras) => (
+      <ListSearchToolbar
+        className={className}
+        search={search}
+        placeholder="Search openings"
+        add={{ label: 'Add to Openings', menu: addMenu }}
+        after={(
+          <>
+            {/* The search keeps the tree, so the button stays enabled while it has text. */}
+            <TreeCollapseAllButton collapse={{ noun: 'groups', parents: parentKeys, state: shownCollapse }} shown />
+            {extras?.after}
+          </>
+        )}
+        target={extras?.target}
+      >
+        {extras?.children}
+      </ListSearchToolbar>
+    ),
+    list,
+    detail,
+    footer: undefined,
+    fills: false,
+    ownsSlot: false,
+    showDetail: !!held,
+    onBack: () => onSelect(null),
+  };
+}
+
+/** The selected owner's header (icon, name, Add Opening), its notes, and its openings. */
+function OwnerPane({ owner, name, onOpen, onAdd, noStart, children }: {
+  owner: OpeningsTabOwner;
+  name: string;
+  /** Opens the owner's own Openings tab. This World has none. */
+  onOpen: () => void;
+  onAdd: () => void;
+  /** Why the owner's openings never come up, when they don't. */
+  noStart: string | null;
+  children: ReactNode;
+}) {
+  const Icon = KIND_ICON[owner.kind];
+  return (
+    <section aria-label={name} className="space-y-3">
+      <div className="flex items-center gap-2">
+        <ListDetailBack />
+        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        <h2 className="min-w-0 flex-1 truncate text-body font-semibold">
+          {owner.kind === 'world' ? name : (
+            <Tip tip={owner.kind === 'location' ? "Open this location's Openings tab" : "Open this entity's Openings tab"} labelsChild={false}>
+              <Button type="button" variant="link" className="h-auto max-w-full p-0 text-body font-semibold" onClick={onOpen}>
+                <span className="truncate">{name}</span>
+              </Button>
+            </Tip>
+          )}
+        </h2>
+        <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={onAdd}>
+          <Plus className="mr-1 h-4 w-4" aria-hidden /> Add Opening
+        </Button>
+      </div>
+      {noStart && (
+        <Hint className="flex items-center gap-1">
+          <MapPinOff className="h-3.5 w-3.5 shrink-0" aria-hidden /> {noStart}
+        </Hint>
+      )}
+      {children}
+    </section>
+  );
+}

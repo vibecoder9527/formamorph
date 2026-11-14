@@ -1,140 +1,237 @@
 import { describe, it, expect } from 'vitest';
-import type { Connection, Entity, GameLocation } from '@/types';
+import type { Connection, Entity, EntityStart, GameLocation, Traversable, UniqueStates } from '@/types';
 import {
-  ENTITY_MOVE_LABELS, entityMoveDestinations, entityMoveIntents, entityMoveOffers, entityMoveOptions, entityMoveRequests, entityMoveSubjects, joinEntityMoves,
-  liveFollowers, movedPositions, moveWithPlayer, NO_ENTITY_MOVES,
+  applyEntityCodeWrites, chainEntityWrites, entityMoveIntents, entityMoveLabel, entityMoveOffers, entityMoveOptions, entityMoveSubjects, followersOf,
+  joinEntityMoves, movedPositions, NO_ENTITY_MOVES, type FollowerState,
 } from './entityFollowing';
 import { defaultEntityLocationPrompt } from '@/components/game/GamePrompts';
-import { entitiesInPlay } from './entityPresence';
+import { castCourses } from './entityKind';
+import { storyMinute } from './gameClock';
+import { positionWorld } from './positionPlay';
+import type { EntityCodeWrite } from './statCodeExecutor';
+import { startsOf } from '@/lib/entityKind';
+import { oneRoutine } from '@/test/routines';
 
-const entity = (id: string, over: Partial<Entity> = {}): Entity => ({ id, name: id, ...over }) as Entity;
+// harbor > { inn, square, keep } ; a quay off the square through a one-way Connection ; the gate is top-level.
+const place = (id: string, parentId?: string): GameLocation => ({ id, name: id, ...(parentId && { parentId }) });
+const LOCATIONS = [place('harbor'), place('inn', 'harbor'), place('square', 'harbor'), place('keep', 'harbor'), place('quay'), place('gate')];
+const QUAY: Connection = { id: 'quay', a: 'square', b: 'quay', aToB: {} };
+const NOON = storyMinute(4); // 12:00
+
+const start = (place: string, schedule: EntityStart['schedule'] = []): EntityStart => ({ id: `at-${place}`, place, weight: 1, schedule });
+const unique = (id: string, starts: EntityStart[], traversable: Traversable = []): Entity =>
+  ({ id, name: id, kind: 'unique', routines: oneRoutine(starts, traversable), locations: [...new Set(starts.map((s) => s.place))] });
+const wander = (...places: string[]) => [{
+  id: 'w', time: 'allDay' as const, action: { kind: 'wander' as const, places: places.map((p) => ({ place: p, weight: 1 })), idle: 600 },
+}];
+
+const corvin = unique('corvin', [start('inn')], 'anywhere'); // a migrated Can Follow
+const wenna = unique('wenna', [start('inn')]); // a migrated Stays Put
+const tess = unique('tess', [start('inn', wander('inn', 'square', 'quay'))]); // a migrated Moves Between
+const clerk = unique('clerk', [start('inn', [{ id: 'shift', time: 'allDay', strict: true, action: { kind: 'stay', place: 'inn' } }])], 'anywhere');
+const moths: Entity = {
+  id: 'moths', name: 'moths', kind: 'generic', locations: ['inn', 'gate'],
+  routines: oneRoutine([{ id: 'm1', place: 'inn', weight: 1, schedule: [] }, { id: 'm2', place: 'gate', weight: 1, schedule: [] }]),
+};
+const albus = unique('albus', [start('keep')], 'anywhere');
+const CAST = [corvin, wenna, tess, clerk, moths, albus];
+
+const world = (playerAt = 'inn', cast: Entity[] = CAST) => positionWorld(castCourses(cast), NOON, playerAt, LOCATIONS, [QUAY], () => 0);
+const state = (positions: Record<string, string>, follow: string[] = []): FollowerState => ({
+  positions,
+  uniques: Object.fromEntries(CAST.filter((e) => e.kind === 'unique').map((e) => [e.id, {
+    startId: startsOf(e)[0].id, lastRun: NOON, ...(e.id === 'tess' && { rowId: 'w', idleEnd: NOON + 600 }),
+    ...(follow.includes(e.id) && { follow: { mode: 'following' as const } }),
+  }])) as UniqueStates,
+  generics: {},
+});
+const AT_INN = { corvin: 'inn', wenna: 'inn', tess: 'inn', clerk: 'inn', albus: 'keep' };
 
 describe('who gets an entity location request', () => {
-  const cast = [
-    entity('sylvie', { movement: 'follow', locations: ['keep', 'inn'], presence: 'random' }),
-    entity('corvin', { movement: 'follow', locations: ['inn'] }),
-    entity('wenna', { movement: 'stays', locations: ['inn'] }),
-    entity('moths', { locations: ['inn'] }),
-    entity('guards', { movement: 'follow', locations: ['inn', 'gate'] }),
-    entity('albus', { movement: 'follow', locations: ['keep'] }),
-  ];
-  const positions = { sylvie: 'inn', corvin: 'inn', wenna: 'inn', albus: 'inn' };
-  const subjects = (followers: string[]) =>
-    entityMoveSubjects(entitiesInPlay(cast, positions), { positions, followers }, 'inn').map((e) => e.id);
+  const subjects = (s: FollowerState, at = 'inn') =>
+    entityMoveSubjects(CAST, s, at, world(at)).map((e) => e.id);
 
-  it('asks each Can Follow entity standing or listed here, and each follower', () => {
-    expect(subjects(['albus'])).toEqual(['sylvie', 'corvin', 'guards', 'albus']);
+  it('asks each follower and each Unique entity here whose row is not Strict', () => {
+    // Wenna may go nowhere else, and is still asked: she can come along.
+    expect(subjects(state(AT_INN))).toEqual(['corvin', 'wenna', 'tess']);
+    expect(subjects(state({ ...AT_INN, albus: 'inn' }, ['albus']))).toEqual(['corvin', 'wenna', 'tess', 'albus']);
   });
 
-  it('never asks a Stays Put or Free entity', () => {
-    expect(subjects([])).not.toContain('wenna');
-    expect(subjects([])).not.toContain('moths');
+  it('never asks a Generic entity or a character on a Strict row', () => {
+    const asked = subjects(state(AT_INN));
+    expect(['moths', 'clerk'].filter((id) => asked.includes(id))).toEqual([]);
+  });
+
+  it('never asks a character whose Away row began while it stood here, and still asks one following through it', () => {
+    // An Away row lets nobody leave mid-scene, so Nell still stands at the inn (Q29).
+    const nell = unique('nell', [start('inn', [{ id: 'gone', time: 'allDay', action: { kind: 'away' } }])], 'anywhere');
+    const asked = (follow: boolean) => entityMoveSubjects([nell], {
+      positions: { nell: 'inn' },
+      uniques: { nell: { startId: 'at-inn', lastRun: NOON, rowId: 'gone', ...(follow && { follow: { mode: 'following' as const } }) } },
+      generics: {},
+    }, 'inn', world('inn', [nell])).map((e) => e.id);
+    expect(asked(false)).toEqual([]);
+    expect(asked(true)).toEqual(['nell']);
+  });
+
+  it('still asks a follower whose row is Strict, since a running follow ignores it', () => {
+    expect(subjects(state(AT_INN, ['clerk']))).toContain('clerk');
   });
 
   it('asks nobody standing elsewhere, and nobody when the player is nowhere', () => {
-    expect(entityMoveSubjects(cast, { positions: { corvin: 'gate', sylvie: 'inn', albus: 'inn' }, followers: [] }, 'keep')).toEqual([]);
-    expect(entityMoveSubjects(cast, { positions, followers: ['albus'] }, undefined)).toEqual([]);
+    expect(subjects(state(AT_INN), 'square')).toEqual([]);
+    expect(entityMoveSubjects(CAST, state(AT_INN), undefined, world())).toEqual([]);
   });
 
-  it('offers a follower different replies from a newcomer', () => {
-    expect(entityMoveOptions(true)).toEqual(['keepFollowing', 'stayHere']);
-    expect(entityMoveOptions(false)).toEqual(['stay', 'comeAlong']);
+  it('never asks a character left waiting', () => {
+    const s = state(AT_INN);
+    const waiting = { ...s, uniques: { ...s.uniques, corvin: { ...s.uniques.corvin, follow: { mode: 'waiting' as const, until: NOON + 60 } } } };
+    expect(subjects(waiting)).toEqual(['wenna', 'tess']);
   });
 });
 
-describe('a Moves Between entity', () => {
-  const location = (id: string, over: Partial<GameLocation> = {}): GameLocation => ({ id, name: id.toUpperCase(), ...over }) as GameLocation;
-  // keep ← wall → tower; the barrow hangs off the tower, the yard sits inside the keep.
-  const locations = [location('keep'), location('yard', { parentId: 'keep' }), location('wall'), location('tower'), location('barrow')];
-  const connections = [
-    { id: 'c1', a: 'keep', b: 'wall', aToB: {}, bToA: {} },
-    { id: 'c2', a: 'wall', b: 'tower', aToB: {}, bToA: {} },
-    { id: 'c3', a: 'tower', b: 'barrow', aToB: {}, bToA: {} },
-  ] as Connection[];
-  const blackwell = entity('blackwell', { movement: 'between', locations: ['keep', 'wall', 'tower'] });
-  const names = (standingAt: string, who = blackwell) =>
-    entityMoveDestinations(who, standingAt, locations, connections).map((l) => l.id);
+describe('what a request offers', () => {
+  const offers = (e: Entity, following = false, s = state(AT_INN)) =>
+    entityMoveOffers(e, following, 'inn', s, world(), LOCATIONS, [QUAY]);
 
-  it('is asked when it stands where the player is', () => {
-    expect(entityMoveSubjects([blackwell], { positions: { blackwell: 'wall' }, followers: [] }, 'wall')).toEqual([blackwell]);
-    expect(entityMoveSubjects([blackwell], { positions: { blackwell: 'keep' }, followers: [] }, 'wall')).toEqual([]);
+  it('offers a follower different replies from a newcomer, and a follower no walk', () => {
+    expect(offers(corvin).moves).toEqual(['stay', 'comeAlong']);
+    expect(offers(corvin, true)).toEqual({
+      moves: ['keepFollowing', 'waitHour', 'waitThisDaypart', 'waitNextDaypart', 'partWays'], destinations: [],
+    });
   });
 
-  it('is offered each of its own locations one hop away, and nothing else', () => {
-    expect(names('wall')).toEqual(['keep', 'tower']);
-    // The yard is a tree neighbor and the barrow a Connection away, but neither is its own.
-    expect(names('keep')).toEqual(['wall']);
-    expect(names('tower')).toEqual(['wall']);
+  it('offers walks to its allowed places one travel link away (Q105)', () => {
+    // The quay is a row place, but only from the square.
+    expect(offers(tess).destinations.map((l) => l.id)).toEqual(['square']);
+    // Anywhere allows every neighbor, and no place further off.
+    expect(offers(corvin).destinations.map((l) => l.id).sort()).toEqual(['harbor', 'keep', 'square']);
+    // An empty Traversable list and an empty schedule allow only where she stands.
+    expect(offers(wenna).destinations).toEqual([]);
   });
 
-  it('respects one-way legs', () => {
-    const oneWay = [{ id: 'c1', a: 'keep', b: 'wall', aToB: {} }] as Connection[];
-    expect(entityMoveDestinations(blackwell, 'wall', locations, oneWay).map((l) => l.id)).toEqual([]);
-    expect(entityMoveDestinations(blackwell, 'keep', locations, oneWay).map((l) => l.id)).toEqual(['wall']);
+  it('names every reply the shipped prompt can offer', () => {
+    for (const move of [...entityMoveOptions(false), ...entityMoveOptions(true)]) {
+      const lead = entityMoveLabel(move, NOON).split(/ about| until/)[0];
+      expect(defaultEntityLocationPrompt).toContain(lead);
+    }
+  });
+});
+
+describe('the join of replies to the player move', () => {
+  const intents = (over: Partial<typeof NO_ENTITY_MOVES>) => ({ ...NO_ENTITY_MOVES, ...over });
+
+  it('brings followers and "come along" to the new place and leaves the one told to wait waiting', () => {
+    const s = state({ ...AT_INN, albus: 'inn' }, ['albus', 'tess']);
+    const joined = joinEntityMoves(s, { from: 'inn', to: 'square' }, intents({ wait: [{ id: 'tess', length: 'hour' }], comeAlong: ['corvin'] }), world());
+    expect(movedPositions(joined.positions, s.positions)).toEqual({ albus: 'square', corvin: 'square' });
+    expect(followersOf(joined)).toEqual(['corvin', 'albus']);
+    expect(joined.uniques.tess.follow).toEqual({ mode: 'waiting', until: NOON + 60 });
+    expect(joined.positions.tess).toBe('inn');
   });
 
-  describe('standing in play, where it lists its position only', () => {
-    const requestAt = (at: string) => {
-      const positions = { blackwell: at };
-      const cast = entitiesInPlay([blackwell], positions);
-      return entityMoveRequests(cast, [blackwell], { positions, followers: [] }, at, locations, connections)[0];
+  it('waits each offered length, never past the end of the next daypart (Q3, Q8)', () => {
+    const until = (length: 'hour' | 'thisDaypart' | 'nextDaypart', now = NOON) => {
+      const w = positionWorld(castCourses(CAST), now, 'inn', LOCATIONS, [QUAY], () => 0);
+      const joined = joinEntityMoves(state(AT_INN, ['corvin']), { from: 'inn', to: 'square' }, intents({ wait: [{ id: 'corvin', length }] }), w);
+      expect(joined.positions.corvin).toBe('inn');
+      return (joined.uniques.corvin.follow as { until: number }).until % (24 * 60);
     };
-
-    it('is still offered its own locations one hop away', () => {
-      expect(requestAt('wall').destinations.map((l) => l.id)).toEqual(['keep', 'tower']);
-    });
-
-    it('can walk back onto its route from where a script left it', () => {
-      expect(requestAt('barrow').destinations.map((l) => l.id)).toEqual(['tower']);
-    });
-
-    it('comes along into another of its locations, and no further', () => {
-      const state = { positions: { blackwell: 'keep' }, followers: [] };
-      const { comeOnce } = entityMoveIntents([{ entity: requestAt('keep').entity, move: 'comeAlong' }]);
-      const offer = { comeAlong: [], comeOnce };
-      expect(moveWithPlayer(state, offer, 'wall').positions.blackwell).toBe('wall');
-      expect(moveWithPlayer(state, offer, 'barrow').positions.blackwell).toBe('keep');
-    });
+    expect(until('hour')).toBe(13 * 60);
+    expect(until('thisDaypart')).toBe(13 * 60);
+    expect(until('nextDaypart')).toBe(17 * 60);
+    // Across midnight, the longest wait is the end of the daypart after this one.
+    expect(until('thisDaypart', 23 * 60 + 30)).toBe(6 * 60);
+    expect(until('nextDaypart', 23 * 60 + 30)).toBe(8 * 60);
   });
 
-  it('is offered stay, come along and its places, but walks nowhere while it follows', () => {
-    const offers = (following: boolean) => entityMoveOffers(blackwell, following, 'wall', locations, connections);
-    expect(offers(false).moves).toEqual(['stay', 'comeAlong']);
-    expect(offers(false).destinations.map((l) => l.id)).toEqual(['keep', 'tower']);
-    expect(offers(true)).toEqual({ moves: ['keepFollowing', 'stayHere'], destinations: [] });
+  it('sends a follower who parts ways back to its routine, in the scene until the player leaves (Q106)', () => {
+    const s = state(AT_INN, ['tess']);
+    const parted = joinEntityMoves(s, { from: 'inn', to: 'inn' }, intents({ partWays: ['tess'] }), world());
+    expect(followersOf(parted)).toEqual([]);
+    expect(parted.uniques.tess.follow).toBeUndefined();
+    expect(parted.positions.tess).toBe('inn');
+    // The player leaves for the gate, which her routine never uses: she stays behind on it.
+    const left = joinEntityMoves(parted, { from: 'inn', to: 'gate' }, NO_ENTITY_MOVES, world('gate'));
+    expect(left.positions.tess).not.toBe('gate');
+    expect(left.uniques.tess.follow).toBeUndefined();
   });
 
-  it('is the only Movement offered places', () => {
-    expect(names('wall', entity('sylvie', { movement: 'follow', locations: ['keep', 'wall'] }))).toEqual([]);
-  });
-});
-
-describe('the shipped entity location prompt', () => {
-  it('names every reply the request can offer', () => {
-    for (const label of Object.values(ENTITY_MOVE_LABELS)) expect(defaultEntityLocationPrompt).toContain(label);
-  });
-});
-
-describe('what a join writes back', () => {
-  const start = { positions: { sylvie: 'inn', albus: 'inn', wenna: 'inn' }, followers: ['albus'] };
-  it('writes only the positions it moved', () => {
-    const joined = joinEntityMoves(start, { from: 'inn', to: 'square' }, { ...NO_ENTITY_MOVES, comeAlong: ['sylvie'] });
-    expect(movedPositions(joined.positions, start.positions)).toEqual({ sylvie: 'square', albus: 'square' });
+  it('leaves a follower its routine does not allow there waiting where it stood', () => {
+    const s = state(AT_INN, ['tess']);
+    const joined = joinEntityMoves(s, { from: 'inn', to: 'gate' }, NO_ENTITY_MOVES, world('inn'));
+    expect(joined.positions.tess).toBe('inn');
+    expect(joined.uniques.tess.follow).toMatchObject({ mode: 'waiting' });
   });
 
-  it('puts back a join the turn applied early when the commit ends where the turn began', () => {
-    const early = joinEntityMoves(start, { from: 'inn', to: 'square' }, { ...NO_ENTITY_MOVES, comeAlong: ['sylvie'] });
-    // Code moved the player back, so the commit's join is the start itself.
-    const final = joinEntityMoves(start, { from: 'inn', to: 'inn' }, { ...NO_ENTITY_MOVES, comeAlong: ['sylvie'] });
-    expect(final).toBe(start);
-    expect(movedPositions(final.positions, early.positions)).toEqual({ sylvie: 'inn', albus: 'inn' });
+  it('refuses "come along" on a Strict row', () => {
+    const joined = joinEntityMoves(state(AT_INN), { from: 'inn', to: 'square' }, intents({ comeAlong: ['clerk'] }), world());
+    expect(joined.positions.clerk).toBe('inn');
+    expect(followersOf(joined)).toEqual([]);
+  });
+
+  it('drops "come along" without a move', () => {
+    const joined = joinEntityMoves(state(AT_INN), { from: 'inn', to: 'inn' }, intents({ comeAlong: ['corvin'] }), world());
+    expect(followersOf(joined)).toEqual([]);
+  });
+
+  it('walks a character only to a place its routine allows', () => {
+    const s = state(AT_INN);
+    const allowed = joinEntityMoves(s, { from: 'inn', to: undefined }, intents({ goTo: [{ id: 'tess', to: 'square' }, { id: 'wenna', to: 'square' }] }), world());
+    expect(allowed.positions).toMatchObject({ tess: 'square', wenna: 'inn' });
   });
 });
 
-describe('followers on load', () => {
-  it('drops a follower the world no longer has', () => {
-    expect(liveFollowers(['albus', 'gone'], new Set(['albus']))).toEqual(['albus']);
-    const kept = ['albus'];
-    expect(liveFollowers(kept, new Set(['albus']))).toBe(kept);
+describe("a script's entity writes", () => {
+  const writes = (s: FollowerState, ...list: EntityCodeWrite[]) =>
+    applyEntityCodeWrites(s, list, 'inn', world());
+
+  it('makes any Unique entity follow, past Strict and Traversable, and never a Generic entity', () => {
+    const s = writes(state(AT_INN), { entity: 'clerk', kind: 'follow' }, { entity: 'wenna', kind: 'follow' }, { entity: 'moths', kind: 'follow' });
+    expect(followersOf(s)).toEqual(['wenna', 'clerk']);
+    expect(s.uniques.clerk.follow).toEqual({ mode: 'following', script: true });
+    expect('moths' in s.uniques).toBe(false);
+  });
+
+  it('leaves a Generic entity where its Generic Entity Instances stand on a script follow or move', () => {
+    const swarm = { m1: { position: 'inn', lastRun: NOON }, m2: { position: 'gate', lastRun: NOON } };
+    const before = { ...state(AT_INN), generics: { moths: swarm } };
+    const s = writes(before, { entity: 'moths', kind: 'follow' }, { entity: 'moths', kind: 'move', location: 'keep' });
+    expect(s.generics.moths).toEqual(swarm);
+    expect('moths' in s.positions || 'moths' in s.uniques).toBe(false);
+  });
+
+  it('parts ways on unfollow, leaving the character where it stands', () => {
+    const s = writes(state(AT_INN, ['corvin']), { entity: 'corvin', kind: 'unfollow' });
+    expect(followersOf(s)).toEqual([]);
+    expect(s.positions.corvin).toBe('inn');
+  });
+
+  it('ends a follow on move and holds the character there', () => {
+    const s = writes(state(AT_INN, ['wenna']), { entity: 'wenna', kind: 'move', location: 'keep' });
+    expect(s.positions.wenna).toBe('keep');
+    expect(s.uniques.wenna.follow).toBeUndefined();
+    expect(s.uniques.wenna.hold).toEqual({ untilScriptMove: true });
+  });
+
+  it('lays the writes over the chain for the next script, Generic entities untouched', () => {
+    const next = chainEntityWrites(
+      { positions: { corvin: 'keep' }, followers: [], waiting: ['corvin'] },
+      [{ entity: 'corvin', kind: 'follow' }, { entity: 'moths', kind: 'follow' }], 'inn', (id) => id !== 'moths',
+    );
+    expect(next).toEqual({ positions: { corvin: 'inn' }, followers: ['corvin'], waiting: [] });
+  });
+});
+
+describe('the replies as intents', () => {
+  it('keeps only the replies that change anything', () => {
+    const intents = entityMoveIntents([
+      { entity: corvin, move: 'comeAlong' }, { entity: tess, move: 'waitNextDaypart' }, { entity: wenna, move: 'stay' },
+      { entity: albus, move: { goTo: 'keep' } }, { entity: clerk, move: null }, { entity: moths, move: 'partWays' },
+    ]);
+    expect(intents).toEqual({
+      wait: [{ id: 'tess', length: 'nextDaypart' }], partWays: ['moths'], comeAlong: ['corvin'], goTo: [{ id: 'albus', to: 'keep' }],
+    });
+    expect(entityMoveIntents([{ entity: wenna, move: 'keepFollowing' }])).toBe(NO_ENTITY_MOVES);
   });
 });

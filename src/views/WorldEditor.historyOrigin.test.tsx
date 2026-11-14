@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { namedPlacesOf } from '@/lib/entityPlaces';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -7,6 +8,7 @@ import {
 import { reloadTourProgress } from '@/lib/authoringTour/progress';
 import type { World } from '@/types';
 import { boxScripts, codeAt } from '@/test/scriptFixtures';
+import { oneRoutine } from '@/test/routines';
 
 /** An edit made through a mirror returns the author to the tab and record they made it on. */
 
@@ -41,7 +43,8 @@ const WORLD: World = benchEditorWorld({
   ],
   entities: [
     {
-      id: 'resident', name: 'Odd Wick', playerDescription: 'The lamp-keeper.', aiDescription: 'Keeps the lamps.', locations: ['harbor'],
+      id: 'resident', name: 'Odd Wick', playerDescription: 'The lamp-keeper.', aiDescription: 'Keeps the lamps.', locations: ['harbor'], kind: 'generic',
+      routines: oneRoutine([{ id: 's1', place: 'harbor', weight: 1, schedule: [] }]),
       openings: [{ id: 'o-lamp', text: 'Wick trims a lamp.', kind: 'narration' }],
     },
     {
@@ -118,26 +121,15 @@ describe('an undo of an edit made through a mirror', () => {
     openEditorTab(/Locations/);
     fireEvent.click(within(treeRow('Docks')).getByText('Docks'));
     fireEvent.mouseDown(within(screen.getByRole('tablist', { name: 'Location Fields' })).getByRole('tab', { name: 'Presence' }));
-    await user.click(screen.getByRole('combobox', { name: /Select entities/ }));
-    await user.click(await screen.findByRole('option', { name: 'Odd Wick, not selected' }));
-    await user.keyboard('{Escape}');
-    expect(ctx().entities.find((e) => e.id === 'resident')!.locations).toEqual(['harbor', 'docks']);
+    await user.click(screen.getByRole('combobox', { name: 'Add an entity here' }));
+    await user.click(await screen.findByRole('option', { name: 'Odd Wick' }));
+    expect(namedPlacesOf(ctx().entities.find((e) => e.id === 'resident')!)).toEqual(['harbor', 'docks']);
 
     await expectReturnTo(/Stats/, () => {
       expect(shownEditorTab()).toMatch(/Locations/);
       fireEvent.mouseDown(within(screen.getByRole('tablist', { name: 'Location Fields' })).getByRole('tab', { name: 'Details' }));
       expect(openRecordName()).toBe('Docks');
     });
-  });
-
-  it('returns to the Overview tab for an entity opening added there', async () => {
-    const { ctx } = renderWorldEditorBench(WORLD, 'advanced');
-    await screen.findByLabelText('World Name');
-    fireEvent.click(screen.getByRole('radio', { name: 'Openings' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add Opening to Odd Wick' }));
-    expect(ctx().entities[0].openings).toHaveLength(2);
-
-    await expectReturnTo(/Stats/, () => expect(shownEditorTab()).toMatch(/Overview/));
   });
 
   it('returns to the Traits tab for an entity-owned trait group', async () => {

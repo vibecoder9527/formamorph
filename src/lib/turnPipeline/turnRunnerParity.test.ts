@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { planTurn } from './planTurn';
 import { runTurn, type TurnAdvance, type TurnRequestAdapter } from './turnRunner';
-import { fixture, recordedPasses, inputFor, narrationOf, expectedCap, PARITY_DESTINATIONS } from './parityTestInputs';
+import { fixture, recordedPasses, inputFor, narrationOf, expectedCap, expectedMessages, PARITY_DESTINATIONS } from './parityTestInputs';
 import type { TurnMaterial, TurnPassId, TurnPassSubject } from './turnPlan';
 import type { ChatMessage, RequestMessage } from '@/types';
 import { parseDirectorCast } from '@/lib/stagedPlanning';
@@ -119,7 +119,7 @@ describe('turn pipeline parity with the recorded run', () => {
       const { recorded, emitted, result } = await replay(index as number);
       expect(result.status, JSON.stringify(result.status === 'failed' ? result.kind : '')).toBe('ok');
       expect(emitted.map((r) => [r.type, r.maxTokens, r.silent, r.attachTurnId])).toEqual(
-        recorded.map((r) => [r.request.type, expectedCap(r.request), r.request.silent, r.request.attachTurnId]),
+        recorded.map((r) => [r.request.type, expectedCap(r.id, r.request), r.request.silent, r.request.attachTurnId]),
       );
     },
   );
@@ -129,7 +129,7 @@ describe('turn pipeline parity with the recorded run', () => {
     const compared: TurnPassId[] = [];
     recorded.forEach((entry, i) => {
       if (!MESSAGE_EXACT.includes(entry.id)) return;
-      expect(emitted[i]?.messages, `${entry.id} messages`).toEqual(entry.request.messages);
+      expect(emitted[i]?.messages, `${entry.id} messages`).toEqual(expectedMessages(entry.id, entry.request.messages));
       compared.push(entry.id);
     });
     // Exactly which passes were compared, so the comparison cannot quietly shrink.

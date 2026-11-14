@@ -84,7 +84,7 @@ The words Formamorph uses, and what each one means. Each term links the page tha
 | [Autosave](Saves-and-Backup#autosave) | The saves each world keeps, written after every turn: one by default, more with **Autosaves Kept** |
 | [Backup](Saves-and-Backup#the-backup--restore-dialog) | One file with your worlds, saves, library entities and library dictionaries |
 | [Avatar](Avatars) | A 3D model from a VRM file, chosen for an entity |
-| [User's Default](Avatars#how-to-set-your-default-avatar) | The Avatar you mark as your default. An entity set to it shows your default, or the bundled Avatar when you have none. |
+| [User's Default](Avatars#how-to-set-your-default-avatar) | The Avatar you mark as your default. An entity set to it shows your default. With no default, it shows another Avatar in your library. With an empty library, it shows none. |
 | [Permissive License](Avatars#the-permissive-license) | A VRM license that allows every use the community needs. An Avatar needs it to publish. |
 | [Profile Image](Avatars#avatars-3d-models-and-profile-images) | The image on your Community Creations account. It is not an Avatar. |
 
@@ -137,12 +137,20 @@ The words Formamorph uses, and what each one means. Each term links the page tha
 | [Location](World-Editor-Locations) | A place in the story. The player is always in one location. |
 | [Sub-Location](World-Editor-Locations#nesting-is-the-ais-map-not-the-players) | A location nested inside another. Nesting decides where the story can move the player. |
 | [Connection](World-Editor-Locations#connections) | A travel link you make between two locations, one-way or two-way |
+| [Automatic Links](World-Editor-Locations#automatic-links) | The links every location has to its parent, its children and its siblings, with no Connection |
+| [Distance](World-Editor-Locations#nearby-and-far) | Whether a link is **Nearby** or **Far**. It decides what the AI hears of the entities at the other end. |
+| [Nearby](World-Editor-Locations#nearby-and-far) | A link whose entities the AI receives as nearby. Every new link is Nearby. |
+| [Far](World-Editor-Locations#nearby-and-far) | A link the AI hears nothing across. The player can still travel it. |
 | [Travel Hint](World-Editor-Locations#travel-hints) | Text that tells the AI how the player makes one trip of a Connection |
 | [Locations Canvas](World-Editor-Locations#list-and-canvas) | The visual view of the **Locations** tab, with boxes for locations and arrows for Connections |
 | [Auto Arrange](World-Editor-Locations#list-and-canvas) | The canvas command that lays out boxes for you. Nothing on the canvas moves without it or you. |
 | [Map](How-to-Play#the-change-location-dialog) | The read-only canvas the player sees during the game, on the **Map** tab |
-| [Presence](World-Editor-Locations#entities) | Where an entity with several locations is in a new game: **Everywhere Listed** or **One, at Random** |
-| [Movement](World-Editor-Locations#entities) | How an entity moves during the game: **Free**, **Stays Put**, **Moves Between Its Locations** or **Can Follow the Player** |
+| [Placement](World-Editor-Entities) | How an entity stands in the world: **Unique**, one character that begins at one of its starts, or **Generic**, a type of character that begins at every start at the same time |
+| [Starts](World-Editor-Entities#starts) | The locations an entity can begin a game at, one tab each on its **Presence** tab. Each start keeps its own schedule. |
+| [Routine](World-Editor-Entities#routines) | One way an entity lives: its own starts, schedules and **Can Also Go**, applied while its **Requires** holds |
+| [Schedule](World-Editor-Entities#the-schedule) | A start's day as a list of rows: when the entity stays at a location, wanders between several, patrols them in order, or is away |
+| [Locked](World-Editor-Entities#the-schedule) | A lock set on a schedule row. During that time the entity can't be called over or start to follow the player. |
+| [Can Also Go](World-Editor-Entities#can-also-go) | Where a Unique entity may go beyond its schedule, set per Routine: **Anywhere**, or **Only Listed Locations**. It applies when the entity follows the player or is called over. |
 | [Known In](World-Editor-Entities#locations) | Where the AI knows of an entity while the entity isn't present. The default is **Nearby**. |
 | [Known Here](World-Editor-Locations#entities) | A location's list of entities that aren't there, but that the entities there may speak of |
 | [Relationship](World-Editor-Entities#the-panel) | Another entity, or the persona, with its role toward this entity. The AI reads each one as a line. |

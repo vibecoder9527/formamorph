@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, dialogFullHeight, dialogCenteredAnimation } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, dialogFullHeight, dialogSafeArea, dialogCenteredAnimation } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import PromptField from "@/components/prompt/PromptField";
 import { plainVocabulary } from "@/lib/chipVocabulary";
@@ -49,6 +49,7 @@ export const EditTextModal = ({
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent
         surface="editText"
+        placement="own"
         ref={morphRef}
         hideClose
         // The stock slide is a half-width offset that assumes a transform-centered dialog; this one is
@@ -67,7 +68,7 @@ export const EditTextModal = ({
           // dialog is a window on top of a window, and the buttons that save the edit would be under it.
           // A fixed height, not a max: the window keeps its size and the editor scrolls inside it, so a long
           // turn and a short one open the same box.
-          fullscreen ? `${dialogFullHeight} max-w-none w-screen rounded-none` : 'sm:max-w-[760px] h-[85dvh]',
+          fullscreen ? `${dialogFullHeight} ${dialogSafeArea} max-w-none w-screen rounded-none` : 'sm:max-w-[760px] h-[85dvh]',
         )}
       >
         <DialogHeader>

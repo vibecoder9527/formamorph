@@ -50,7 +50,6 @@ vi.mock('@/components/prompt/PlaceholderField', () => ({
   default: (props: { label: string; value: string }) => <input readOnly aria-label={props.label} value={props.value} />,
   PlaceholderNameField: (props: { value: string }) => <input readOnly value={props.value} />,
 }));
-vi.mock('@/components/ui/multi-select', () => ({ MultiSelect: () => null }));
 vi.mock('@/components/AiGenerateButton', () => ({ default: () => null }));
 vi.mock('./LocationConnections', () => ({ default: () => null }));
 vi.mock('./ImageTagsField', () => ({ default: () => null }));
@@ -86,11 +85,6 @@ beforeEach(() => {
 });
 
 describe('the location pin section', () => {
-  it('mounts its help topic', () => {
-    renderManager();
-    expect(screen.getByRole('button', { name: 'About Placeholder Pins' })).toBeInTheDocument();
-  });
-
   it('adds a pin, aims it, and writes the value onto the location by id', async () => {
     renderManager();
     await userEvent.click(screen.getByRole('button', { name: 'Add Placeholder Pin' }));

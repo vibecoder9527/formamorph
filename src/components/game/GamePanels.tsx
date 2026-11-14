@@ -23,11 +23,12 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { ReasoningBlock } from './ReasoningBlock';
 import { ChatNarration, PLAYER_ACTION_BUBBLE, type ChatBubbleTurn, type ChatPlayerTurn } from './ChatNarration';
 import { RequestStatusStrip } from './RequestStatusRow';
-import { NARRATION_FADE, NARRATION_FADE_UNDER_STRIP, useEdgeFades } from './narrationFade';
+import { NARRATION_END_SPACE, NARRATION_FADE, NARRATION_FADE_UNDER_STRIP, useEdgeFades } from './narrationFade';
 import { ChatChoices } from './ChatChoices';
 import { ChoiceRows } from './ChoiceRows';
 import { TurnCard } from './TurnCard';
 import { ActionLine } from './ActionLine';
+import { SentActions } from './ActionListTray';
 import { StatsActions } from './StatsActions';
 import { bubbleActions, choicesActions, playerBubbleActions, withEndpoints } from '@/lib/bubbleActions';
 import { useEndpointTip, withEndpointLine } from '@/lib/useEndpointTip';
@@ -39,14 +40,17 @@ import { useSlashCompletion } from '@/lib/useSlashCompletion';
 import { SuggestionList } from '@/components/SuggestionList';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { TokenAutocomplete } from "@/components/TokenAutocomplete";
-import { COMMON_LANGUAGES } from "@/lib/languages";
-import { Send, RefreshCw, Languages, Loader2, Headphones, Square, ChevronUp, ChevronDown, X, MoreHorizontal, NotebookPen, Brain, ScrollText } from "lucide-react";
-import { AvatarIcon, EntitiesIcon, ItemIcon, LocationIcon, StatIcon, TraitIcon } from '@/lib/elementIcons';
+import { Send, RefreshCw, Loader2, Headphones, Square, ChevronUp, X, MoreHorizontal, Check, SlidersHorizontal } from "lucide-react";
+import { WorldOptionsTab } from '@/components/game/WorldOptionsTab';
+import { midGameOptions } from '@/lib/worldOptions';
+import type { WorldOption, WorldOptionValueOf } from '@/types';
+import type { StoryWidth } from "@/lib/gamePanelPrefs";
+import { AvatarIcon, ItemIcon, LocationIcon, StatIcon, TraitIcon } from '@/lib/elementIcons';
 import { balanceRows } from '@/lib/currency';
 import { InventoryTab } from './InventoryTab';
 import { CollapsingTabsList } from '@/components/ui/collapsing-tabs-list';
 import { useInventoryPanel, type InventoryPanelSettle } from './useInventoryPanel';
+import type { StatFacts } from '@/lib/actionList';
 import { targetAttribute } from '@/lib/surface/surfaceTargets';
 import { pageTurnId, withoutAttachment, setTurnAttachments, turnAttachments } from '@/lib/actionAttachments';
 import { useAttachmentIntake } from '@/lib/useAttachmentIntake';
@@ -73,7 +77,8 @@ import TtsPlaybackBar from './TtsPlaybackBar';
 import { MemoryPanel } from './MemoryPanel';
 import { SceneImagePanel } from './SceneImagePanel';
 import { ScenePlate } from './ScenePlate';
-import { GAME_LEFT_PANEL_TABS, GAME_RIGHT_PANEL_TABS } from './panelTabs';
+import { GAME_LEFT_PANEL_TABS, GAME_RIGHT_PANEL_TABS, LEFT_PANEL_TABS } from './panelTabs';
+import { PanelRail, type PanelPlacement, type RailTab } from './PanelRail';
 import { useDevRoute } from '@/lib/devRouter';
 import type { TTSProgress } from './TTSModal';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -88,6 +93,8 @@ import type { TraitCascade } from './SetupTraitList';
 import { daypartAt, formatAbsolute, formatClock } from '@/lib/gameClock';
 import { logKind } from '@/lib/playLog';
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
+import { useSlidePresence } from "@/lib/useSlidePresence";
 import { useResolvedWorld } from '@/lib/useResolvedWorld';
 import { LocationTabBody } from './LocationTabBody';
 import { EntityListRow, EntityListSection } from './EntityListRow';
@@ -112,6 +119,16 @@ import { scriptPrompts } from '@/lib/scriptPrompts';
 import { turnTells } from '@/lib/scriptTells';
 import { ScriptPromptLine, ScriptTellLines } from './ScriptPromptLine';
 
+/** The Entity View slide, on the nav rail's curve. */
+const ENTITY_VIEW_SLIDE_MS = 200;
+
+
+const STORY_WIDTHS: { value: StoryWidth; label: string }[] = [
+  { value: 'reading', label: 'Reading Width' },
+  { value: 'fullHeight', label: 'Full Height' },
+  { value: 'full', label: 'Full Width' },
+];
+
 /** What the entity view shows: an entity, or the played side when no entity is played. */
 type EntityViewSubject = { kind: 'entity'; entity: Entity } | { kind: 'played' };
 
@@ -119,7 +136,17 @@ type EntityViewSubject = { kind: 'entity'; entity: Entity } | { kind: 'played' }
 const PLAYED_SIDE: Pick<Entity, 'id' | 'name'> = { id: '__you', name: 'You' };
 
 
-export const LeftPanel = ({ entities, onEntityClick, onStrangerClick, onRegenerateMemory, narrationPrompt, requestedTab, requestKey }: {
+export const LeftPanel = ({ rowStart, rowEnd, entities, onEntityClick, onStrangerClick, onRegenerateMemory, narrationPrompt, requestedTab, requestKey, initialTab, onTabChange, placement = 'docked' }: {
+  /** `drawer`: fills the side's drawer instead of a quarter of the row. */
+  placement?: PanelPlacement;
+  /** The tab a fresh mount opens on when no request names one. */
+  initialTab?: string;
+  /** Each tab the panel shows, as it changes. */
+  onTabChange?: (tab: string) => void;
+  /** Landscape only: controls at the start of the top row. */
+  rowStart?: React.ReactNode;
+  /** Landscape only: controls beside the top row's Entity View toggle. */
+  rowEnd?: React.ReactNode;
   entities: Entity[];
   /** A tab an outside request selects. */
   requestedTab?: string;
@@ -186,9 +213,13 @@ export const LeftPanel = ({ entities, onEntityClick, onStrangerClick, onRegenera
   const firstShowable = lookAround.find((row) => row.met && showable(row.entity))?.entity;
   const isMobile = useIsMobile();
   const [showEntityView, setShowEntityView] = React.useState(true);
-  const [leftTab, setLeftTab] = React.useState(requestedTab ?? (isMobile ? "model" : "notes"));
+  const reducedMotion = usePrefersReducedMotion();
+  const entityViewSlide = useSlidePresence(showEntityView, ENTITY_VIEW_SLIDE_MS, reducedMotion);
+  const slideTransition = (property: string) => (reducedMotion ? 'none' : `${property} ${ENTITY_VIEW_SLIDE_MS}ms cubic-bezier(0.2, 0, 0, 1)`);
+  const [leftTab, setLeftTab] = React.useState(requestedTab ?? initialTab ?? (isMobile ? "model" : "notes"));
   const landingKey = useRequestKey(requestKey);
   React.useEffect(() => { if (requestedTab) setLeftTab(requestedTab); }, [requestedTab, landingKey]);
+  React.useEffect(() => { onTabChange?.(leftTab); }, [leftTab, onTabChange]);
 
   // The shared pick when it has something to show, else the played entity, else the first showable scene
   // entity. The stat panel's (None) and a pick with nothing to show both leave the view on that fallback.
@@ -287,46 +318,70 @@ export const LeftPanel = ({ entities, onEntityClick, onStrangerClick, onRegenera
           onPreferenceChange={entityViewPreference.onPreferenceChange}
           imageIndex={entityViewGallery.imageIndex}
           onImageStep={entityViewGallery.onImageStep}
-          morphValues={entityViewMorphs}
+          morphValues={entityViewMorphs.morphs}
+          onMorphNames={entityViewMorphs.onCatalog}
         />
       </div>
     </div>
   ) : null;
 
   return (
-  <Card className="w-full md:w-1/4 md:shrink-0 md:mr-1 grow md:grow-0 min-h-0 flex flex-col bg-background/60 border-border overflow-hidden">
+  <Card
+    // In the drawer, with no tab strip, the panel is named by the tab it shows.
+    {...(placement === 'drawer' && { role: 'region', 'aria-label': LEFT_PANEL_TABS.find((tab) => tab.value === leftTab)?.label })}
+    className={cn(
+    'min-h-0 flex flex-col bg-background/60 border-border overflow-hidden',
+    // On desktop its side column sets the width.
+    'w-full grow',
+  )}>
     <CardContent className="flex-grow flex flex-col overflow-hidden p-4 sm:p-1">
-      {/* Landscape: the entity view on top with a show/hide toggle in the upper right */}
+      {/* Landscape: the top row above the entity view, with its show/hide toggle at the end */}
       {!isMobile && (
         <div className="mb-2">
-          <div className="relative flex items-center justify-center min-h-10">
+          <div className="flex items-center gap-1 min-h-10">
+            {rowStart}
+            <div className="flex-1" />
+            {rowEnd}
             <Tip tip={showEntityView ? "Hide Entity View" : "Show Entity View"}>
               <Button
                 variant="ghost"
                 size="icon"
-                className="absolute right-0"
+                className="border-transparent"
                 onClick={() => setShowEntityView((s) => !s)}
               >
-                {showEntityView ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                <ChevronUp
+                  className="h-5 w-5"
+                  style={{ transform: showEntityView ? 'none' : 'rotate(180deg)', transition: slideTransition('transform') }}
+                />
               </Button>
             </Tip>
           </div>
-          {showEntityView && entityView}
+          {/* The grid row slides; the content keeps its full size and clips, so a model never resizes. */}
+          {entityViewSlide.mounted && entityView && (
+            <div
+              className="grid"
+              style={{ gridTemplateRows: entityViewSlide.open ? '1fr' : '0fr', transition: slideTransition('grid-template-rows') }}
+            >
+              <div className="min-h-0 overflow-hidden"><div className="mt-2">{entityView}</div></div>
+            </div>
+          )}
         </div>
       )}
 
       <Tabs surfaceTabs="gameViewer" value={leftTab} onValueChange={setLeftTab} className="w-full flex-grow flex flex-col overflow-hidden">
-        <CollapsingTabsList
-          aria-label="Story"
-          value={leftTab}
-          tabs={[
-            ...(isMobile ? [{ value: 'model', icon: AvatarIcon, label: 'View' }] : []),
-            { value: 'entities', icon: EntitiesIcon, label: 'Entities' },
-            { value: 'notes', icon: NotebookPen, label: 'Notes' },
-            { value: 'memory', icon: Brain, label: 'Memory' },
-            { value: 'logs', icon: ScrollText, label: `Logs (${logEntries.reduce((sum, entry) => sum + 1 + (entry.repeat || 0), 0)})` },
-          ]}
-        />
+        {/* In the drawer, the rail switches tabs. */}
+        {placement !== 'drawer' && (
+          <CollapsingTabsList
+            aria-label="Story"
+            value={leftTab}
+            tabs={[
+              ...(isMobile ? [{ value: 'model', icon: AvatarIcon, label: 'View' }] : []),
+              ...LEFT_PANEL_TABS.map((tab) => (tab.value === 'logs'
+                ? { ...tab, label: `${tab.label} (${logEntries.reduce((sum, entry) => sum + 1 + (entry.repeat || 0), 0)})` }
+                : tab)),
+            ]}
+          />
+        )}
         {isMobile && (
           <TabsContent value="model" className="flex-grow overflow-hidden min-h-[100px]">
             {entityView}
@@ -508,6 +563,7 @@ export const MiddlePanel = ({
   totalPages,
   handlePageChange,
   handleSendAction,
+  emptySendHeld = false,
   handleKeyPress,
   handleRollback,
   handleRegenerate,
@@ -536,13 +592,19 @@ export const MiddlePanel = ({
   progressBar,
   likePrompt,
   locationSuggestion,
+  actionTray,
   commandPreview,
   commandChoices = null,
   commandAction = null,
   commandRunId = 0,
   onDismissCommandPreview,
-  onRescanNarration
+  onRescanNarration,
+  storyWidth,
+  onStoryWidthChange,
 }: {
+  /** The device's story width, picked in the narration options on desktop. Absent on mobile. */
+  storyWidth?: StoryWidth;
+  onStoryWidthChange?: (width: StoryWidth) => void;
   /** A status badge that leads the narration options. */
   narrationBadge?: React.ReactNode;
   /** A short line at the top of the narration area, in both layouts. */
@@ -553,6 +615,8 @@ export const MiddlePanel = ({
   totalPages: number;
   handlePageChange: (page: number) => void;
   handleSendAction: () => void;
+  /** Since Last Turn lists entries but would tell the AI none, so an empty action box cannot send (Q11, Q32). */
+  emptySendHeld?: boolean;
   handleKeyPress: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   /** Rolls back to `page`, or to the viewed page. */
   handleRollback: (page?: number) => void;
@@ -594,6 +658,8 @@ export const MiddlePanel = ({
   /** The once-only in-game like prompt, above the pager and in the flow so it covers no narration. */
   likePrompt?: React.ReactNode;
   locationSuggestion: React.ReactNode;
+  /** The Action List tray, above the action box in the Pages layout. */
+  actionTray?: React.ReactNode;
   commandPreview: boolean;
   /** The preview's choices, or null when it shows narration only. */
   commandChoices?: CommandChoices | null;
@@ -630,6 +696,7 @@ export const MiddlePanel = ({
     isGameStarted,
     actionAttachments,
     setActionAttachments,
+    sentActions,
     pendingAttachments,
     setPendingAttachments,
     scriptTells,
@@ -829,6 +896,27 @@ export const MiddlePanel = ({
               <ActionIcon.export className="h-4 w-4" />
               Export Story
             </Button>
+            {storyWidth && onStoryWidthChange && (
+              <>
+                <div aria-hidden className="-mx-1 my-1 h-px bg-border" />
+                <p id="story-width-label" className="px-2 py-1 text-meta text-muted-foreground">Story Width</p>
+                <div role="radiogroup" aria-labelledby="story-width-label" className="flex flex-col">
+                  {STORY_WIDTHS.map(({ value, label }) => (
+                    <Button
+                      key={value}
+                      variant="ghost"
+                      role="radio"
+                      aria-checked={storyWidth === value}
+                      className="justify-start gap-2 text-meta h-8"
+                      onClick={() => onStoryWidthChange(value)}
+                    >
+                      <Check className={cn('h-4 w-4', storyWidth !== value && 'invisible')} />
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </PopoverContent>
       </Popover>
@@ -884,7 +972,11 @@ export const MiddlePanel = ({
   );
 
   return (
-    <Card className="w-full flex-grow md:mx-0.5 md:min-w-0 md:basis-0 min-h-0 flex flex-col bg-background/60 border-border overflow-hidden">
+    <Card className={cn(
+      'w-full flex-grow md:mx-0.5 md:min-w-0',
+      storyWidth !== 'full' && storyWidth !== 'fullHeight' && 'md:max-w-4xl',
+      'md:basis-0 min-h-0 flex flex-col bg-background/60 border-border overflow-hidden',
+    )}>
       <CardContent className="flex-grow flex flex-col overflow-hidden p-4 sm:p-1">
         {memoryBar}
         {/* Determinate generation progress (sentence X of N) while narration synthesizes; playback
@@ -999,7 +1091,9 @@ export const MiddlePanel = ({
                   />
                 )}
                 {actionLine !== undefined && (
-                  <ActionLine text={actionLine} actions={actionLineActions} attachments={turnAttachments(actionAttachments, sceneTurnId)} />
+                  <ActionLine text={actionLine} actions={actionLineActions} attachments={turnAttachments(actionAttachments, sceneTurnId)}>
+                    <SentActions sent={sceneTurnId ? sentActions[sceneTurnId] : undefined} />
+                  </ActionLine>
                 )}
                 {showReasoning && pageReasoning?.text && (
                   <ReasoningBlock text={pageReasoning.text} ms={pageReasoning.ms} active={pageReasoningLive && liveReasoning.active} />
@@ -1053,6 +1147,7 @@ export const MiddlePanel = ({
                 actions={pageChoicesActions}
               />
             )}
+            <div aria-hidden className={NARRATION_END_SPACE} />
           </ScrollArea>
           )}
           <ConfirmDialog
@@ -1172,6 +1267,7 @@ export const MiddlePanel = ({
             )}
           </div>
           <div className={cn('flex flex-col gap-2', attachDragOver && 'rounded-md ring-2 ring-inset ring-ring')} {...intakeProps}>
+            {!chatLayout && actionTray}
             {imageAttachments && (
               <AttachmentThumbs
                 attachments={pendingAttachments}
@@ -1234,7 +1330,7 @@ export const MiddlePanel = ({
                 <Tip tip={withEndpointLine('Send', endpointTip('narration'))} labelsChild={false}>
                   <Button
                     onClick={handleSendAction}
-                    disabled={disabled}
+                    disabled={disabled || (!playerInput.trim() && emptySendHeld)}
                     aria-label="Send"
                     className="border-dashed border-2 w-12 px-0"
                   >
@@ -1261,14 +1357,30 @@ const entityItems = (options: StatPanelOption[]) =>
   ));
 
 export const RightPanel = ({
-  onLocationClick, onToggleTrait, onPersonaChange, traitCascade, onDismissTraitCascade, onRegenerateStats, sceneImageJob,
-  language, setLanguage, inventorySettle,
+  onLocationClick, onToggleTrait, onChangeWorldOption, onPersonaChange, traitCascade, onDismissTraitCascade, onRegenerateStats, sceneImageJob,
+  inventorySettle, actionsBusy = false, collapsed, placement = 'docked', railOpen, railDots, onShownTab, onRailOpen, onRailClose,
 }: {
+  /** Desktop: shows the panel's rail in place of the panel. */
+  collapsed?: boolean;
+  /** `drawer`: fills the side's drawer instead of the right column. */
+  placement?: PanelPlacement;
+  /** The rail's drawer is open, on the tab the panel shows. */
+  railOpen?: boolean;
+  /** The rail tabs that show a change dot. */
+  railDots?: ReadonlySet<string>;
+  /** Told the tab the panel shows while it is open, and null when it closes or collapses to its rail. */
+  onShownTab?: (tab: string | null) => void;
+  onRailOpen?: (tab: string) => void;
+  onRailClose?: () => void;
   onLocationClick: () => void;
   /** The live game's equip check and inventory settle for a panel write. Absent ⇒ the operations alone land. */
   inventorySettle?: InventoryPanelSettle;
   /** Switch an owner's trait on or off mid-play; owned by GameViewer, which reverses its stat changes. */
-  onToggleTrait: (traitId: string, enabled: boolean, ownerId: OwnerId) => void;
+  onToggleTrait: (traitId: string, enabled: boolean, ownerId: OwnerId, ownerName: string | null) => void;
+  /** Script runs of an earlier panel action still go, so a listed action waits. */
+  actionsBusy?: boolean;
+  /** Set a mid-game World Option; owned by GameViewer, which lists the change. */
+  onChangeWorldOption: (option: WorldOption, value: WorldOptionValueOf) => void;
   /** Settle the traits after the player picks another persona. `name` is that persona's; null for None. */
   onPersonaChange: (ref: PersonaRef, name: string | null) => void;
   /** What the player's last trait switch or persona change turned off. */
@@ -1276,10 +1388,9 @@ export const RightPanel = ({
   onDismissTraitCascade: () => void;
   onRegenerateStats: (page: number) => void;
   sceneImageJob: 'tags' | 'image' | null;
-  language: string;
-  setLanguage: (value: string) => void;
 }) => {
   const { statUpdatesEnabled } = useSettings();
+  const endpointTip = useEndpointTip();
   const {
     // Aliased to the viewed-page values (equal to live on the latest page) so paging back shows that
     // turn's stats/traits/time/deltas read-only. `commitManualStatEdit` writes live and rebaselines the
@@ -1308,8 +1419,10 @@ export const RightPanel = ({
     personaRef,
     setSelectedEntityId,
     itemCopies,
+    viewWorldOptionValues,
   } = useGameplay();
   const worldItems = useGameDataOptional()?.items;
+  const worldOptions = useGameDataOptional()?.options;
   const {
     locations, connections, traits, traitGroups, viewStats: globalStats, currentLocation, resolveTraitText, resolveEntityText,
     entities: cast, persona, traitEntities, traitLibrary, codeEntities,
@@ -1334,6 +1447,7 @@ export const RightPanel = ({
   // The one tree from the owner resolver: the player's rows at the top, then a node per present owner with
   // its owned traits and links expanded. A trait under two owners is two rows, told apart by their node.
   const gameData = useGameDataOptional();
+  const avatars = usePlayAvatars();
   const ownerWorld = React.useMemo(
     () => ({ traits, traitGroups, entities: traitEntities }),
     [traits, traitGroups, traitEntities],
@@ -1344,7 +1458,7 @@ export const RightPanel = ({
   const traitTree = React.useMemo(() => {
     const resolveText = (text: string, owner: Entity, trait?: Trait) => (trait ? resolveTraitText(trait, text, owner) : resolveEntityText(owner, text));
     // Strangers who share a label are numbered in scene order, as the stat picker numbers them.
-    const strangers = sceneNow.filter((p) => !p.met && p.label);
+    const strangers = sceneNow.filter((p) => !p.known && p.label);
     const labels = new Map(numbered(strangers.map((p) => ({ id: p.entity.id, label: p.label! }))).map((o) => [o.id, o.label]));
     const inScene = inSceneTraitTree(ownerTraitTree(ownerWorld, personaRef, traitLibrary), {
       scene: new Set(sceneNow.map((p) => p.entity.id)),
@@ -1384,9 +1498,9 @@ export const RightPanel = ({
   const daypart = daypartAt(gameTime, calendar);
   const gateWorld = React.useMemo<TraitWorld>(() => ({
     traits, groups: traitGroups, entities: worldEntitiesOf(cast, persona), persona: personaRef ?? { source: 'none' }, daypart,
-    ...(worldItems ? { items: worldItems } : {}), itemCopies,
+    ...(worldItems ? { items: worldItems } : {}), itemCopies, options: worldOptions, optionValues: viewWorldOptionValues,
     ...inPlayOwners(ownerWorld, personaRef, traitLibrary),
-  }), [traits, traitGroups, cast, persona, personaRef, daypart, worldItems, itemCopies, ownerWorld, traitLibrary]);
+  }), [traits, traitGroups, cast, persona, personaRef, daypart, worldItems, itemCopies, worldOptions, viewWorldOptionValues, ownerWorld, traitLibrary]);
   const viewTraitState = React.useMemo(
     () => ({ traits: globalTraits, disabledTraitIds: viewDisabledTraitIds, ownedTraits: viewOwnedTraits }),
     [globalTraits, viewDisabledTraitIds, viewOwnedTraits],
@@ -1413,6 +1527,16 @@ export const RightPanel = ({
     return item && visibleItemImage(item, copy, gateInput);
   }, [worldItems, gateInput]);
   const inventory = useInventoryPanel(inventorySettle, itemImageOf);
+  // Listed actions wait while a turn or an earlier action's scripts run (Q13).
+  const actionsBlocked = isWaitingForAI || actionsBusy;
+  // A manual stat edit lists after it runs (Q1); the controls wait while a turn or an item script runs (Q13).
+  const listedActions = inventorySettle?.actions;
+  const statsLocked = isWaitingForAI || !!inventorySettle?.busy;
+  const listStatEdit = (facts: StatFacts, commit: () => void) => {
+    const before = listedActions?.snapshot();
+    commit();
+    if (before !== undefined) listedActions?.add(facts, before);
+  };
   const {
     options: entityOptions, shown: shownEntity, section: entitySection, players: playedOwners, showPicker: entitiesShowStats,
   } = useStatPanelEntity(entityInForce);
@@ -1459,7 +1583,19 @@ export const RightPanel = ({
   // stat the player never sees can't put the line there for the ones they do.
   // A world with no stat the player can see gets no Stats tab; the panel then opens on Traits.
   const hasShownStats = globalStats.some((stat) => stat.hidden !== true) || ownersShowStats;
-  const shownTab = (!hasShownStats && activeTab === 'stats') || (!hasInventory && activeTab === 'inventory') ? 'traits' : activeTab;
+  // A world with no Option flagged for change during play gets no Options tab.
+  const playOptions = midGameOptions(gameData?.options);
+  const hasOptions = playOptions.length > 0;
+  const shownTab = (!hasShownStats && activeTab === 'stats') || (!hasInventory && activeTab === 'inventory') || (!hasOptions && activeTab === 'options')
+    ? 'traits' : activeTab;
+  // The rail lists the same tabs as the panel.
+  const statusTabs: RailTab[] = [
+    ...(hasShownStats ? [{ value: 'stats', icon: StatIcon, label: 'Stats' }] : []),
+    { value: 'traits', icon: TraitIcon, label: 'Traits' },
+    ...(hasInventory ? [{ value: 'inventory', icon: ItemIcon, label: 'Inventory' }] : []),
+    { value: 'location', icon: LocationIcon, label: 'Location' },
+    ...(hasOptions ? [{ value: 'options', icon: SlidersHorizontal, label: 'World Options' }] : []),
+  ];
   const anyDescriptors = visibleStats.some(({ stat }) => (stat.descriptors?.length ?? 0) > 0);
   // The author's groups decide where each row sits, so a save made before a regrouping follows it.
   const playerLayout = statPanelLayout(
@@ -1482,8 +1618,13 @@ export const RightPanel = ({
           isViewingPast={isViewingPast}
           snap={snapStats}
           editable={isEditMode && !isViewingPast}
+          locked={statsLocked}
           reserveDescriptorLine={owner.rows.some((row) => (row.descriptors?.length ?? 0) > 0)}
-          onCommitValue={(value) => commitManualEntityStatEdit(owner.entity.id, stat.id, value)}
+          avatarInUse={avatars.inUse(owner.entity)}
+          onCommitValue={(value) => listStatEdit(
+            { kind: 'stat', stat: { id: stat.id, name: stat.name }, owner: { id: owner.entity.id, name: owner.entity.name }, from: stat.value, to: value },
+            () => commitManualEntityStatEdit(owner.entity.id, stat.id, value),
+          )}
         />
       )}
     />
@@ -1493,40 +1634,51 @@ export const RightPanel = ({
     ? (locations.find((l) => l.id === viewLocationId) ?? currentLocation)
     : currentLocation;
 
+  React.useEffect(() => {
+    if (collapsed || !onShownTab) return;
+    onShownTab(shownTab);
+    return () => onShownTab(null);
+  }, [collapsed, shownTab, onShownTab]);
+
+  if (collapsed) {
+    return (
+      <PanelRail side="right" label="Status" tabs={statusTabs} openTab={railOpen ? shownTab : undefined} dots={railDots} onOpen={onRailOpen} onClose={onRailClose} />
+    );
+  }
+
+  const inDrawer = placement === 'drawer';
   return (
-    <Card className="w-full md:w-1/4 md:shrink-0 md:ml-1 grow md:grow-0 min-h-0 flex flex-col md:h-full bg-background/60 border-border overflow-hidden">
+    <div className={cn(
+      'relative w-full min-h-0 flex flex-col',
+      // On desktop its side column sets the width.
+      !inDrawer && 'grow md:h-full md:pt-[calc(var(--header-line)-1rem)]',
+      inDrawer && 'grow',
+    )}>
+    {/* The empty strip above the column, from the window's top edge. */}
+    {!inDrawer && <div aria-hidden className="game-right-column-drag hidden md:block absolute inset-x-0 -top-4 h-[var(--header-line)] pointer-events-none" />}
+    <Card
+      // In the drawer, with no tab strip, the panel is named by the tab it shows.
+      {...(inDrawer && { role: 'region', 'aria-label': statusTabs.find((tab) => tab.value === shownTab)?.label })}
+      className="w-full grow min-h-0 flex flex-col bg-background/60 border-border overflow-hidden"
+    >
       <CardContent className="flex flex-col h-full overflow-hidden p-4 sm:p-1">
       <div className="mb-4 sm:mb-1 flex-shrink-0 flex flex-col gap-2">
-        <div className="flex items-center gap-2 pl-2">
-          <Languages className="h-6 w-6 shrink-0" />
-          <div className="flex-grow">
-            <TokenAutocomplete
-              single
-              openOnFocus
-              values={language ? [language] : []}
-              onChange={(vals) => setLanguage(vals[0] ?? '')}
-              options={COMMON_LANGUAGES}
-              placeholder="Language or style"
-            />
-          </div>
-        </div>
-        {/* The story's position, not an hour count: elapsed hours read as a stopwatch, and the daypart is
-            what the prose is actually written around. Same wording the memory stamps use. */}
-        <p className="text-center">{formatAbsolute(gameTime, calendar)}</p>
-        <PersonaRow onChange={onPersonaChange} />
+        {/* The daypart is what the prose is written around; the exact clock waits in the tip. */}
+        <Tip tip={formatClock(gameTime, calendar)} labelsChild={false}>
+          <p tabIndex={0} className="self-center rounded-sm text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">{formatAbsolute(gameTime, calendar)}</p>
+        </Tip>
+        <PersonaRow onChange={onPersonaChange} disabled={actionsBlocked} />
       </div>
 
       <Tabs value={shownTab} onValueChange={setActiveTab} className="w-full flex-grow flex flex-col overflow-hidden">
-        <CollapsingTabsList
-          aria-label="Status"
-          value={shownTab}
-          tabs={[
-            ...(hasShownStats ? [{ value: 'stats', icon: StatIcon, label: 'Stats' }] : []),
-            { value: 'traits', icon: TraitIcon, label: 'Traits' },
-            ...(hasInventory ? [{ value: 'inventory', icon: ItemIcon, label: 'Inventory' }] : []),
-            { value: 'location', icon: LocationIcon, label: 'Location' },
-          ]}
-        />
+        {/* In the drawer, the rail switches tabs. */}
+        {!inDrawer && (
+          <CollapsingTabsList
+            aria-label="Status"
+            value={shownTab}
+            tabs={statusTabs}
+          />
+        )}
         {/* `flex` is state-scoped for the same reason as on the Entities tab. */}
         <TabsContent value="stats" className="flex-grow overflow-hidden flex-col data-[state=active]:flex">
           {entitiesShowStats && entityPicker}
@@ -1548,12 +1700,17 @@ export const RightPanel = ({
                           isViewingPast={isViewingPast}
                           snap={snapStats}
                           editable={isEditMode && !isViewingPast}
+                          locked={statsLocked}
                           reserveDescriptorLine={anyDescriptors}
-                          onCommitValue={(value) => {
-                            const newStats = [...globalStats];
-                            newStats[index] = { ...stat, value };
-                            commitManualStatEdit(newStats);
-                          }}
+                          avatarInUse={!!avatars.played}
+                          onCommitValue={(value) => listStatEdit(
+                            { kind: 'stat', stat: { id: stat.id, name: stat.name }, from: stat.value, to: value },
+                            () => {
+                              const newStats = [...globalStats];
+                              newStats[index] = { ...stat, value };
+                              commitManualStatEdit(newStats);
+                            },
+                          )}
                         />
                       );
                     }}
@@ -1596,6 +1753,7 @@ export const RightPanel = ({
               editing={isEditMode}
               onEditingChange={setIsEditMode}
               onRegenerate={statUpdatesEnabled && (globalStats.length > 0 || ownersShowStats) ? () => onRegenerateStats(currentPage) : undefined}
+              endpointLine={endpointTip('statUpdates')}
             />
           </ScrollArea>
         </TabsContent>
@@ -1614,14 +1772,19 @@ export const RightPanel = ({
               isOff={(id, ownerId) => (ownerId === null
                 ? disabledTraits.has(id) || !heldTraitIds.has(id)
                 : !activeOwned[ownerId]?.includes(id))}
-              readOnly={isViewingPast}
-              onToggleTrait={onToggleTrait}
+              readOnly={isViewingPast || actionsBlocked}
+              onToggleTrait={(traitId, enabled, ownerId) => onToggleTrait(traitId, enabled, ownerId, ownerId === null ? null : traitTree.entityNodes.get(ownerId)?.name ?? null)}
               resolveTraitText={resolveTreeTraitText}
               hiddenOwners={hiddenTraitOwners}
               emptyOwner={entitiesShowTraits && entitySection && !traitTree.entityNodes.has(entitySection.entity.id) ? shownEntity?.label : undefined}
               view={traitsView}
               setView={setTraitsView}
               gates={traitGates}
+              avatarInUse={(ownerId) => {
+                if (ownerId === null) return !!avatars.played;
+                const entity = traitTree.entityNodes.get(ownerId);
+                return !!entity && avatars.inUse(entity);
+              }}
               cascade={traitCascade}
               onDismissCascade={onDismissTraitCascade}
             />
@@ -1662,10 +1825,22 @@ export const RightPanel = ({
               connections={connections}
               resolveText={resolvePH}
               past={isViewingPast}
+              disabled={actionsBlocked}
               onLocationClick={onLocationClick}
             />
           </ScrollArea>
         </TabsContent>
+        {hasOptions && (
+          <TabsContent value="options" className="flex-grow overflow-hidden">
+            <WorldOptionsTab
+              options={playOptions}
+              values={viewWorldOptionValues}
+              disabled={actionsBlocked || isViewingPast}
+              onChange={onChangeWorldOption}
+              resolveText={resolvePH}
+            />
+          </TabsContent>
+        )}
       </Tabs>
       {isViewingPast && (
         <p className="text-center text-meta font-medium text-primary bg-primary/10 rounded py-0.5 mt-2 flex-shrink-0">
@@ -1674,5 +1849,6 @@ export const RightPanel = ({
       )}
     </CardContent>
   </Card>
+    </div>
   );
 };

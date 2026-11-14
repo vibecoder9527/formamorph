@@ -18,6 +18,9 @@ import { allPlaceholders } from '@/lib/placeholderHomes';
 import { placeholderSelection } from '@/lib/placeholderTree';
 import { boxScripts } from '@/test/scriptFixtures';
 import { scriptEntryKey } from '@/lib/worldScripts';
+import { routinePlaces, startsOf, applyingRoutine } from '@/lib/entityKind';
+import { PLAYER_START, type EntityStart, type ScheduleRow } from '@/types';
+import { oneRoutine } from '@/test/routines';
 
 /** A described entity at the starting location — what keeps the completeness rules quiet about a fixture
  *  that is about something else entirely. */
@@ -2255,6 +2258,139 @@ describe('entity completeness rules', () => {
   });
 });
 
+describe('rules that read an entity routine', () => {
+  const start = (id: string, place: string, schedule: EntityStart['schedule'] = []): EntityStart =>
+    ({ id, place, weight: 1, schedule });
+  const stayRow = (place: string): ScheduleRow => ({ id: 'r1', time: 'allDay', action: { kind: 'stay', place } });
+  const described = { playerDescription: 'Seen around.', aiDescription: 'A fen regular.' };
+  /** An entity with a kind, `locations` as the routine derives it. */
+  const kinded = (starts: EntityStart[], over: Partial<Entity> = {}): Entity => ({
+    id: 'k1', name: 'Pip', ...described, routines: oneRoutine(starts), kind: 'unique', locations: routinePlaces(starts), ...over,
+  });
+  const companion = kinded([start('s1', PLAYER_START)]);
+
+  describe('entity-nowhere', () => {
+    it('leaves a Unique entity whose only Start is Player’s Starting Location alone', () => {
+      expect(only(base({ entities: [resident, companion] }), 'entity-nowhere')).toEqual([]);
+    });
+
+    it('leaves a Generic entity that begins at Player’s Starting Location alone', () => {
+      expect(only(base({ entities: [resident, { ...companion, kind: 'generic' }] }), 'entity-nowhere')).toEqual([]);
+    });
+
+    it('still flags an entity with a kind and no Start', () => {
+      const found = only(base({ entities: [resident, kinded([])] }), 'entity-nowhere');
+      expect(found.map((f) => f.items[0].id)).toEqual(['k1']);
+    });
+
+    it('still flags an entity with no kind and no location', () => {
+      const found = only(base({ entities: [resident, { id: 'n1', name: 'Drift', ...described }] }), 'entity-nowhere');
+      expect(found.map((f) => f.items[0].id)).toEqual(['n1']);
+    });
+  });
+
+  describe('entity-location-orphan', () => {
+    const cases: [string, Entity][] = [
+      ['a Start', kinded([start('s1', 'harbor'), start('s2', 'gone')])],
+      ['a row', kinded([start('s1', 'harbor', [stayRow('gone')])])],
+      ['a Can Also Go entry', kinded([start('s1', 'harbor')], { routines: oneRoutine([], ['gone']) })],
+    ];
+
+    it.each(cases)('reports %s that names a missing location, fixes it, and finds nothing after', (_label, entity) => {
+      const w = base({ entities: [resident, entity] });
+      expect(only(w, 'entity-location-orphan').map((f) => f.items[0].id)).toEqual(['k1']);
+      const fixed = applyRuleFix(w, 'entity-location-orphan');
+      expect(only(fixed, 'entity-location-orphan')).toEqual([]);
+      const after = fixed.entities.find((e) => e.id === 'k1')!;
+      expect(after.locations).toBe(entity.locations);
+      expect(JSON.stringify({ starts: startsOf(after), traversable: applyingRoutine(after)?.traversable })).not.toContain('gone');
+    });
+
+    it('does not report a Start at Player’s Starting Location', () => {
+      expect(only(base({ entities: [resident, companion] }), 'entity-location-orphan')).toEqual([]);
+    });
+
+    it('writes no list for an entity with a kind', () => {
+      const entity: Entity = { ...kinded([start('s1', 'harbor'), start('s2', 'gone')]) };
+      delete entity.locations;
+      const fixed = applyRuleFix(base({ entities: [resident, entity] }), 'entity-location-orphan');
+      expect(fixed.entities.find((e) => e.id === 'k1')).not.toHaveProperty('locations');
+    });
+
+    it('keeps the old check and fix for an entity with no kind', () => {
+      const w = base({ entities: [resident, { id: 'n1', name: 'Maren', locations: ['harbor', 'gone'] }] });
+      expect(only(w, 'entity-location-orphan')).toHaveLength(1);
+      expect(applyRuleFix(w, 'entity-location-orphan').entities[1].locations).toEqual(['harbor']);
+    });
+  });
+
+  describe('entity-row-unreachable', () => {
+    const world = (entity: Entity) => base({
+      locations: [
+        { id: 'harbor', name: 'Harbor Steps', isStarting: true },
+        { id: 'market', name: 'The Long Market' },
+        { id: 'island', name: 'Lone Island' },
+      ],
+      connections: [{ id: 'c1', a: 'harbor', b: 'market', aToB: {}, bToA: {} }],
+      entities: [resident, entity],
+    });
+
+    it('flags a row place the Start has no path to, naming it', () => {
+      const found = only(world(kinded([start('s1', 'harbor', [stayRow('island')])])), 'entity-row-unreachable');
+      expect(found).toHaveLength(1);
+      expect(found[0].items[0].id).toBe('k1');
+      expect(found[0].message).toContain('Lone Island');
+      expect(found[0].message).toContain('has a Routine row at');
+    });
+
+    it('leaves a connected row place, a Start at Player’s Starting Location and a missing place alone', () => {
+      expect(only(world(kinded([start('s1', 'harbor', [stayRow('market')])])), 'entity-row-unreachable')).toEqual([]);
+      expect(only(world(kinded([start('s1', PLAYER_START, [stayRow('island')])])), 'entity-row-unreachable')).toEqual([]);
+      expect(only(world(kinded([start('s1', 'harbor', [stayRow('gone')])])), 'entity-row-unreachable')).toEqual([]);
+      // A Start at a place the world lacks is the orphan rule's finding.
+      expect(only(world(kinded([start('s1', 'gone', [stayRow('island')])])), 'entity-row-unreachable')).toEqual([]);
+    });
+  });
+
+  describe('location-no-entities', () => {
+    it('counts only the flagged location as occupied by an entity that begins at Player’s Starting Location', () => {
+      const w = base({
+        locations: [{ id: 'harbor', name: 'Harbor Steps', isStarting: true }, { id: 'market', name: 'The Long Market' }],
+        entities: [companion],
+      });
+      expect(only(w, 'location-no-entities').map((f) => f.items[0].id)).toEqual(['market']);
+    });
+
+    const withMarket = (entities: Entity[]) => base({
+      locations: [{ id: 'harbor', name: 'Harbor Steps', isStarting: true }, { id: 'market', name: 'The Long Market' }],
+      entities,
+    });
+
+    it('counts the starting location as occupied by an entity that begins at Player’s Starting Location', () => {
+      const found = only(withMarket([companion]), 'location-no-entities');
+      expect(found.map((f) => f.items[0].id)).toEqual(['market']);
+    });
+
+    it('does not count the Custom Persona entity, which is the player', () => {
+      const found = only(withMarket([{ ...companion, customPersona: true }]), 'location-no-entities');
+      expect(found.map((f) => f.items[0].id)).toEqual(['harbor', 'market']);
+    });
+
+    it('counts every location as occupied by that entity when the world flags no starting location', () => {
+      const unflagged = base({
+        locations: [{ id: 'harbor', name: 'Harbor Steps' }, { id: 'market', name: 'The Long Market' }],
+        entities: [companion],
+      });
+      expect(only(unflagged, 'location-no-entities')).toEqual([]);
+    });
+
+    it('flags the starting location when nobody begins there', () => {
+      const found = only(withMarket([]), 'location-no-entities');
+      expect(found.map((f) => f.items[0].id)).toEqual(['harbor', 'market']);
+    });
+  });
+});
+
 describe('trait group rules', () => {
   // `max: null` is a group with no limit.
   const grouped = (over: { min?: number; max?: number | null; defaults?: number; members?: number }) => {
@@ -3880,17 +4016,17 @@ describe('placeholder pin rules', () => {
       expect(found.message).toContain('“Trait: Woven” wins whenever it applies');
     });
 
-    it('reads a cast entity’s owned trait as a rival that wins in its own text', () => {
+    it('reads a cast entity’s owned trait as a rival that a global trait beats (Q18)', () => {
       const [found] = only(contest({
         traits: [trait({ id: 't1', name: 'Sworn', placeholderPins: [pinTo('red')] })],
         entities: [{ id: 'ash', name: 'Ash', traits: [trait({ id: 'o1', name: 'Tamed', placeholderPins: [pinTo('blue')] })] }],
       }), 'placeholder-pin-conflict');
-      expect(found.message).toBe('“Hue” is pinned by “Trait: Sworn” and “Trait: Ash\'s Tamed”, and “Trait: Ash\'s Tamed” wins whenever it applies');
+      expect(found.message).toBe('“Hue” is pinned by “Trait: Ash\'s Tamed” and “Trait: Sworn”, and “Trait: Sworn” wins whenever it applies');
       expect(found.items).toContainEqual({ id: 'o1', name: 'Tamed', section: 'traits' });
     });
 
-    it('stays quiet for two Personas whose links pin one world placeholder to different values', () => {
-      // Only one is played; the other wins in its own text. The cast entity's link still rivals the world trait.
+    it('stays quiet for two persona-only Personas, which never share a playthrough, and pits a Persona against the cast', () => {
+      // A persona-only Persona is in play only while played. A cast entity's link rivals a Persona's (Q17).
       const paladin = trait({ id: 'paladin', name: 'Paladin', groupId: 'blueprints' });
       const link = (id: string, value: string): TraitLink => ({
         id, originalId: 'paladin', kind: 'trait', originalName: 'Paladin', groupId: null,
@@ -3901,11 +4037,40 @@ describe('placeholder pin rules', () => {
       const two = contest({
         traitGroups: [{ id: 'blueprints', name: 'Blueprints', parentId: null, system: 'blueprints' }],
         traits: [paladin],
-        entities: [persona('Albus', 'red'), persona('Sylvie', 'blue')],
+        entities: [persona('Albus', 'red', { personaOnly: true }), persona('Sylvie', 'blue', { personaOnly: true })],
       });
       expect(only(two, 'placeholder-pin-conflict')).toEqual([]);
       const [found] = only({ ...two, entities: [persona('Albus', 'red'), persona('Ash', 'blue', { persona: false })] }, 'placeholder-pin-conflict');
       expect(found.message).toBe('“Hue” is pinned by “Trait: Albus\'s Paladin” and “Trait: Ash\'s Paladin”, and “Trait: Ash\'s Paladin” wins whenever it applies');
+    });
+
+    it('warns when two characters can pin one placeholder to different values, and names the winner (Q21)', () => {
+      const trust = (id: string, value: string) => stat({ id, name: 'Trust', descriptors: [
+        { id: `${id}-low`, threshold: 50, description: 'Wary', placeholderPins: [pinTo(value)] },
+      ] });
+      const two = contest({
+        entities: [{ id: 'ash', name: 'Ash', stats: [trust('s-trust', 'red')] }, { id: 'bo', name: 'Bo', stats: [trust('s-trust', 'blue')] }],
+      });
+      const found = only(two, 'placeholder-pin-entity-tie');
+      expect(found).toHaveLength(1);
+      expect(found[0].severity).toBe('warning');
+      expect(found[0].message).toBe(
+        '“Hue” is pinned to different values by “Ash\'s Trust ≤ 50” and “Bo\'s Trust ≤ 50”. “Bo\'s Trust ≤ 50” wins when they apply at once',
+      );
+      expect(found[0].items).toEqual([
+        { id: 'p1', name: 'Hue' },
+        { id: 'ash', name: "Ash's Trust ≤ 50", section: 'entities' },
+        { id: 'bo', name: "Bo's Trust ≤ 50", section: 'entities' },
+      ]);
+      // A Persona in the cast wins only while played, which the warning says.
+      const [asPersona] = only(contest({
+        entities: [{ id: 'ash', name: 'Ash', persona: true, stats: [trust('s-trust', 'red')] }, { id: 'bo', name: 'Bo', stats: [trust('s-trust', 'blue')] }],
+      }), 'placeholder-pin-entity-tie');
+      expect(asPersona.message).toMatch(/“Bo's Trust ≤ 50” wins when they apply at once, unless the player plays “Ash”$/);
+      // A global band against one entity is precedence, not a tie between entities.
+      expect(only(contest({
+        stats: [trust('s-hunger', 'red')], entities: [{ id: 'bo', name: 'Bo', stats: [trust('s-trust', 'blue')] }],
+      }), 'placeholder-pin-entity-tie')).toEqual([]);
     });
 
     it('stays quiet for pins that can never be in force together: exclusive siblings, bands of one stat', () => {
@@ -5255,6 +5420,7 @@ const RULE_SCOPE: Record<string, 'simple' | 'advanced'> = {
   'placeholder-owner-orphan': 'advanced',
   'placeholder-pin-broken': 'advanced',
   'placeholder-pin-conflict': 'advanced',
+  'placeholder-pin-entity-tie': 'advanced',
   'placeholder-pin-cycle': 'advanced',
   'placeholder-pin-self': 'advanced',
   'placeholder-pin-unknown-value': 'advanced',
@@ -5296,6 +5462,7 @@ const RULE_SCOPE: Record<string, 'simple' | 'advanced'> = {
   'entity-missing-both-descriptions': 'simple',
   'entity-missing-player-description': 'simple',
   'entity-nowhere': 'simple',
+  'entity-row-unreachable': 'simple',
   'image-mislabeled': 'simple',
   'image-not-webp': 'simple',
   // Its field is invisible in both modes, and the repair is the row's own one-click fix.

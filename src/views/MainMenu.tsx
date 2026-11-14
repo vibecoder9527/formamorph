@@ -15,6 +15,7 @@ import { useSurfaceTab } from '@/components/ui/surface';
 import { CollapsingToggleGroup } from '@/components/ui/collapsing-toggle-group';
 import type { SegmentFold } from '@/lib/collapsingSegments';
 import { useHeaderFold } from '@/lib/useHeaderFold';
+import { leaveWindowFullScreen, useWindowFullScreen } from '@/lib/windowChrome';
 import { MEASURE_LAYER } from '@/lib/measureLayer';
 import { KIND_BY_CARD_TYPE, KIND_LABELS } from '@/lib/catalogKinds';
 import { MAIN_MENU_CARD_OPTIONS, MAIN_MENU_CARD_TABS, type MainMenuCardTab } from './mainMenuTabs';
@@ -26,11 +27,12 @@ import { withImportedWorldTools } from '@/lib/tools/worldTools';
 import { ThemedToastContainer } from '@/components/ThemedToastContainer';
 import 'react-toastify/dist/ReactToastify.css';
 import { Button } from "@/components/ui/button";
+import { PersonaIcon } from '@/lib/elementIcons';
 import { Hint, Meta } from "@/components/ui/typography";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tip, Tooltip, TooltipTrigger, TooltipPortal, TooltipPositioner, TooltipPopup } from "@/components/ui/tooltip";
 import {ConfirmDialog} from "@/components/ConfirmDialog";
-import {FilePlus2, DoorOpen, Pencil, AlertTriangle, Code, User, Shield, Globe, LayoutGrid, GalleryThumbnails, Columns2, RectangleVertical, Menu, BookOpen, ChevronLast, MoreHorizontal, MessageSquarePlus, FolderOpen, Archive, Settings, ScrollText, type LucideIcon } from "lucide-react";
+import {FilePlus2, DoorOpen, Pencil, AlertTriangle, Code, User, Shield, Globe, LayoutGrid, GalleryThumbnails, Columns2, RectangleVertical, BookOpen, ChevronLast, Menu, MoreHorizontal, MessageSquarePlus, FolderOpen, Settings, ScrollText, Minimize2, type LucideIcon } from "lucide-react";
 import { DefaultAvatarMenuItem, DefaultBadge, DefaultPersonaMenuItem } from '@/components/library/LibraryDefault';
 import { AvatarThumbnailMenuItems } from '@/components/library/AvatarThumbnail';
 import { useAvatarThumbnails } from '@/lib/useAvatarThumbnails';
@@ -49,6 +51,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  dialogTitleRow,
 } from "@/components/ui/dialog";
 import { SettingsModal } from '../components/modals/SettingsModal';
 import { asSettingsTab, type SettingsTabId } from '../components/modals/settingsTabs';
@@ -82,6 +85,7 @@ import { clearDefaultPersona, readDefaultPersona, setDefaultPersona } from '@/li
 import WorldStorageService, { assertWorldFields } from '../services/WorldStorageService';
 import DictionaryStorageService from '../services/DictionaryStorageService';
 import EntityStorageService from '../services/EntityStorageService';
+import { libraryCopy } from '@/lib/libraryCopy';
 import ModelStorageService from '../services/ModelStorageService';
 import AuthService from '../services/AuthService';
 import ConnectReferencesModal from '@/components/modals/ConnectReferencesModal';
@@ -143,6 +147,7 @@ import { placementsBy, judgingContestsOf } from "@/lib/contests";
 import { useContests } from "@/lib/useContests";
 import { EventBanner, EventBannerChips, EventBannerCount } from "@/components/events/EventBanner";
 import { useEventBanners } from "@/components/events/useEventBanners";
+import { CudaNoticeHost } from "@/components/menu/CudaNotice";
 import { EventAckModal } from "@/components/events/EventAckModal";
 import FeedbackService from "@/services/FeedbackService";
 import { FeedbackHubDialog } from "@/components/menu/FeedbackHubDialog";
@@ -155,7 +160,13 @@ import { linkedSourceCopies, sourceBlockReason } from "@/lib/sourceChecks";
 import { readSourceCheck } from "@/lib/sourceCheckStore";
 import { buildAvatarPublish } from "@/lib/avatarPublish";
 import { buildWorldPublish, type WorldPublishTarget } from "@/lib/worldPublish";
-import { BackupRestoreDialog } from "@/components/menu/BackupRestoreDialog";
+import { BackupRestoreDialog, type BackupStart } from "@/components/menu/BackupRestoreDialog";
+import { ProfileMergeDialog } from "@/components/menu/ProfileMergeDialog";
+import type { ProfileMergeView } from "@/components/menu/profileMergeView";
+import { useProfileMerge } from "@/components/menu/useProfileMerge";
+import { profileMergeBridge } from "@/lib/profileMerge/bridge";
+import { mergeCategories } from "@/lib/profileMerge/categories";
+import { UnreadableWorldsDialog } from "@/components/menu/UnreadableWorldsDialog";
 import { COMMUNITY_ENABLED } from "@/lib/featureFlags";
 import { useAgeGate } from "@/contexts/AgeGateContext";
 import { useAccountDeletion } from "@/contexts/AccountDeletionContext";
@@ -198,10 +209,15 @@ interface MainMenuProps {
   introActive?: boolean;
   /** The intro-seen record as the app launched with it; the intro writes it when it ends, so a live read can't tell. */
   introSeenAtLaunch?: boolean;
+  /** Called once the bundled worlds are seeded and the world list has loaded, so the intro can wait for it. */
+  onLibraryReady?: () => void;
 }
 
 /** Set once the first-run AI setup prompt has been offered, so it never nags again. The play gate still fires. */
 const AI_SETUP_SEEN_KEY = 'FORMAMORPH_aiSetupSeen';
+const TOP_BAR_ROUND_BUTTON = 'flex h-10 w-10 items-center justify-center rounded-full bg-secondary text-secondary-foreground shadow-lg transition-colors hover:bg-secondary/80';
+/** The menu a folded top bar opens: the action buttons, then Load Game and Settings. */
+const FOLDED_MENU = 'flex flex-col gap-2 w-72 [&>button]:w-full [&_svg]:shrink-0';
 
 const aiSetupSeen = (): boolean => {
   try { return localStorage.getItem(AI_SETUP_SEEN_KEY) !== null; } catch { return false; }
@@ -282,8 +298,10 @@ const WorldNotice = ({ tone, icon: Icon, children, actionLabel, actionIcon: Acti
 /** The Help tab's note sits on the screen side of the tab, whichever edge the tab is on. */
 const HELP_NOTE_SIDE = { right: 'left', left: 'right', top: 'bottom', bottom: 'top' } as const;
 
-const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = false, introSeenAtLaunch = true }: MainMenuProps) => {
+const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = false, introSeenAtLaunch = true, onLibraryReady }: MainMenuProps) => {
   const isMountedRef = useRef(true);
+  const onLibraryReadyRef = useRef(onLibraryReady);
+  onLibraryReadyRef.current = onLibraryReady;
   useEffect(() => {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
@@ -295,7 +313,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   const { applyWorldPrompt, setApplyWorldPrompt } = useWorldPromptOptOut();
   const { worldPreset, setWorldPreset } = useWorldPromptPresets();
   // The preset list, and the store prompt listings download into; the pin is applied by GameViewer.
-  const { builtinPresets, promptPresets, userPromptPresets, storeDownloadedPreset, activePresetId, selectPreset } = useSettings();
+  const { builtinPresets, promptPresets, userPromptPresets, storeDownloadedPreset, activePresetId, selectPreset, requestSurface } = useSettings();
   const promptTarget = useMemo(
     () => promptLibraryTarget({ presets: userPromptPresets, store: storeDownloadedPreset }),
     [userPromptPresets, storeDownloadedPreset],
@@ -428,6 +446,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   });
   // DEV dev-router: open Settings (or the Load menu) when the hash asks. Tree-shaken in prod.
   const devRoute = useDevRoute();
+  // DEV: a faked VRAM read or class shows the AI setup gate's local walk.
+  const devLocalGate = import.meta.env.DEV && !!(devRoute?.vram || devRoute?.vramClass);
   const isMobile = useIsMobile();
   // Whether this build can install an update. The Android app is always "mobile", so its version line has
   // to stay in the footer rather than collapsing into the ⋯ menu — an update offer nobody opens is no offer.
@@ -455,7 +475,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     if (!import.meta.env.DEV) return;
     if (devRoute?.modal === 'settings' || devRoute?.modal === 'settingsCompare' || devRoute?.modal === 'chipOptions') setShowSettings(true);
     if (devRoute?.modal === 'menu') setShowLoadDialog(true);
-    if (devRoute?.modal === 'backup') setShowBackup(true);
+    if (devRoute?.modal === 'backup') { setSettingsTab('data'); setShowSettings(true); setBackupAfterSettings(true); }
     if (devRoute?.modal === 'community') openCommunityBrowser();
     // The likers list opens from a listing's details, so this route opens the catalog.
     if (devRoute?.modal === 'likers') openCommunityBrowser();
@@ -464,7 +484,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     if (devRoute?.modal === 'profile') setShowProfileDialog(true);
     if (devRoute?.modal === 'feedbackHub') setShowFeedback(true);
     if (devRoute?.modal === 'adminPanel') setShowAdminPanel(true);
-    if (['worldEditor', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar'].includes(devRoute?.modal ?? '')) setShowWorldEditor(true);
+    if (['worldEditor', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'appearancePreview', 'statAppearancePreview'].includes(devRoute?.modal ?? '')) setShowWorldEditor(true);
     if (devRoute?.modal === 'avatar') setShowCharacterCustomization(true);
     if (devRoute?.modal === 'aiSetup') setGate({ reason: 'firstRun' });
     if (devRoute?.modal === 'firstRun') setDevFirstRun(true);
@@ -705,6 +725,16 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     openPublish(attempt.payload, world.id, typeof world.sourceId === 'string' ? world.sourceId : undefined);
   };
   const [showBackup, setShowBackup] = useState(false);
+  const [backupStart, setBackupStart] = useState<BackupStart>({ kind: 'backup' });
+  const openBackup = (start: BackupStart) => { setBackupStart(start); setShowBackup(true); };
+  // The dev route opens Backup with Settings closed. It waits a task, so Settings hides the page before it
+  // opens and never hides Backup & Restore itself.
+  const [backupAfterSettings, setBackupAfterSettings] = useState(false);
+  useEffect(() => {
+    if (!backupAfterSettings) return;
+    const timer = setTimeout(() => { setBackupAfterSettings(false); setBackupStart({ kind: 'backup' }); setShowBackup(true); }, 0);
+    return () => clearTimeout(timer);
+  }, [backupAfterSettings]);
 
   // A listing the reader asked for from somewhere else — a notification feed row. Held here because the
   // jump crosses two dialogs: the profile closes, the browser opens, and the browser opens the details.
@@ -918,7 +948,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         if (!isMountedRef.current) return;
         setSkeletonWorlds(existingIds.map((id) => ({ id, isLoading: true })));
         const firstRun = existingIds.length === 0;
-        const { failed, errors, updated } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS, bundledWorlds);
+        const libraryHasEntity = await EntityStorageService.hasEntities();
+        const { failed, errors, updated } = await WorldStorageService.loadDefaultWorlds(DEFAULT_WORLDS, bundledWorlds, { libraryHasEntity });
         if (!isMountedRef.current) return;
         if (firstRun) {
           if (failed.length === 0) toast.success("Loaded default worlds");
@@ -935,10 +966,23 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         console.error('Error seeding default worlds:', error);
       }
       await refreshWorlds();
+      if (isMountedRef.current) onLibraryReadyRef.current?.();
     };
 
     initializeWorlds();
   }, [refreshWorlds]);
+
+  // The first entity stored in the library seeds the worlds that wait for one.
+  useEffect(() => EntityStorageService.subscribe(() => {
+    void (async () => {
+      const deleted = readDeletedDefaultWorlds();
+      const stored = new Set(await WorldStorageService.getWorldIds());
+      const waiting = DEFAULT_WORLDS.filter((w) => w.needsLibraryEntity && !stored.has(w.id) && !deleted.has(w.id));
+      if (waiting.length === 0 || !(await EntityStorageService.hasEntities())) return;
+      await WorldStorageService.loadDefaultWorlds(waiting, bundledWorlds);
+      if (isMountedRef.current) await refreshWorlds();
+    })().catch((error: unknown) => console.error('Error seeding default worlds:', error));
+  }), [refreshWorlds]);
 
   // Load the local dictionary library metadata (no defaults to seed). Reused on mount and after the editor
   // modal closes so the grid reflects renames/edits.
@@ -1010,6 +1054,30 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     void refreshEntities();
     void refreshDictionaries();
   }, [refreshWorlds, refreshEntities, refreshDictionaries]);
+
+  // A launcher start offers to merge the AppData profile's data. The dev route shows a canned step instead.
+  const reloadMergedLists = useCallback(() => {
+    void refreshWorlds();
+    void refreshEntities();
+    void refreshDictionaries();
+    void refreshModels();
+  }, [refreshWorlds, refreshEntities, refreshDictionaries, refreshModels]);
+  const devMergeStep = import.meta.env.DEV && devRoute?.modal === 'profileMerge' ? devRoute.tab ?? 'offer' : null;
+  const profileMerge = useProfileMerge({
+    bridge: devMergeStep ? null : profileMergeBridge(),
+    categoriesOf: mergeCategories,
+    onMerged: reloadMergedLists,
+  });
+  const [devMergeView, setDevMergeView] = useState<ProfileMergeView | null>(null);
+  const closeDevMerge = useCallback(() => setDevMergeView(null), []);
+  useEffect(() => {
+    if (!devMergeStep) return;
+    let live = true;
+    void import('@/lib/devProfileMergeSample').then(({ devProfileMergeView }) => {
+      if (live) setDevMergeView(devProfileMergeView(devMergeStep));
+    });
+    return () => { live = false; };
+  }, [devMergeStep]);
 
   // Importing a component file: the worlds it says it suits, and the update review a file whose source is
   // already in the library opens instead.
@@ -1500,7 +1568,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
       case 'auth': if (!isAuthenticated) requestSignIn(); break;
       case 'feedbackHub': setShowFeedback(true); break;
       case 'menu': setShowLoadDialog(true); break;
-      case 'backup': setShowBackup(true); break;
+      // Backup and Restore start from the Data tab's buttons.
+      case 'backup': setSettingsTab('data'); setShowSettings(true); break;
       case 'avatar': setShowCharacterCustomization(true); break;
       case 'aiSetup': setGate({ reason: 'firstRun' }); break;
       case 'intro': onReplayIntro?.(); break;
@@ -1553,6 +1622,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
 
       // Get the current world data
       const worldToDuplicate = selectedWorld!.data;
+      const folder = worldTiles.groupOfItem(selectedWorld.id);
 
       // Generate a unique ID for the duplicated world
       const worldId = `duplicate-${randomUUID()}`;
@@ -1585,6 +1655,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         tags: duplicatedWorld.worldOverview.tags || [],
         isLoading: false
       }]);
+      if (folder) worldTiles.addTo(worldId, folder.id);
 
       // Close the world modal
       setShowWorldModal(false);
@@ -1593,6 +1664,37 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     } catch (error) {
       console.error('Error duplicating world:', error);
       toastError(error, { headline: 'Failed to duplicate world' });
+    }
+  };
+
+  // The copy joins the original's folder, if it has one.
+  const handleDuplicateEntity = async (id: string) => {
+    try {
+      const folder = entityTiles.groupOfItem(id);
+      const details = entities.find((entity) => entity.id === id)?.libraryDetails;
+      const now = new Date().toISOString();
+      const copy = libraryCopy(await EntityStorageService.getEntityData(id), details);
+      await EntityStorageService.storeEntity({ ...copy, createdAt: now, lastAccessed: now });
+      await refreshEntities();
+      if (folder) entityTiles.addTo(copy.id, folder.id);
+      toast.success('Entity duplicated');
+    } catch (error) {
+      toastError(error, { headline: 'Failed to duplicate entity' });
+    }
+  };
+
+  const handleDuplicateDictionary = async (id: string) => {
+    try {
+      const folder = dictionaryTiles.groupOfItem(id);
+      const details = dictionaries.find((dictionary) => dictionary.id === id)?.libraryDetails;
+      const now = new Date().toISOString();
+      const copy = libraryCopy(await DictionaryStorageService.getDictionaryData(id), details);
+      await DictionaryStorageService.storeDictionary({ ...copy, createdAt: now, lastAccessed: now });
+      await refreshDictionaries();
+      if (folder) dictionaryTiles.addTo(copy.id, folder.id);
+      toast.success('Dictionary duplicated');
+    } catch (error) {
+      toastError(error, { headline: 'Failed to duplicate dictionary' });
     }
   };
 
@@ -1717,6 +1819,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   // The top bar folds its parts in order by whether they fit side by side; see `headerFold`.
   const topBarRef = useRef<HTMLDivElement>(null);
   const [tabSteps, setTabSteps] = useState<Record<SegmentFold, number> | null>(null);
+  const windowFullScreen = useWindowFullScreen();
+  const [moreOpen, setMoreOpen] = useState(false);
   const topBarFold = useHeaderFold(topBarRef, tabSteps, `${COMMUNITY_ENABLED && banners.chips.length > 0}:${isAuthenticated && isStaff(currentUser)}`);
 
   // The staff half of the badge story. Its own channel because it counts work rather than news: it is
@@ -1845,6 +1949,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     entities: [],
     dictionaries: [devUpdates.copies[row.itemId] as Dictionary],
     placeholders: [],
+    locations: [],
     writeItem: () => {},
     addPlaceholder: () => {},
   }));
@@ -1864,7 +1969,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     ? `From group “${selectedGroupPreset.group.name}”: ${selectedGroupPreset.name}`
     : null;
 
-  // The menu's action buttons, shared between the full landscape row and the portrait hamburger popover.
+  // The menu's action buttons, shared between the full row and the right-side menu.
   // New/Import are contextual to the card type. A `measuring` copy is inert and carries no landing target.
   const renderActionButtons = (tab: MainMenuCardTab, measuring = false) => {
     const cardNoun = KIND_LABELS[KIND_BY_CARD_TYPE[tab]].one;
@@ -1926,6 +2031,18 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     );
   };
   const actionButtons = renderActionButtons(cardType);
+  const foldedMenuItems = (
+    <>
+      {actionButtons}
+      <div className="h-hairline bg-border my-1" />
+      <Button variant="ghost" className="justify-start" onClick={() => setShowLoadDialog(true)}>
+        <FolderOpen className="mr-2 h-4 w-4" /> Load Game
+      </Button>
+      <Button variant="ghost" className="justify-start" onClick={() => setShowSettings(true)}>
+        <Settings className="mr-2 h-4 w-4" /> Settings
+      </Button>
+    </>
+  );
 
   // One place in the tree, so the entry draft survives the Avatar step taking the whole screen.
   const flow = (
@@ -1946,7 +2063,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     />
   );
   const menu = (
-    <div className="pt-[calc(5rem+env(safe-area-inset-top))] relative flex flex-col app-viewport overflow-hidden">
+    <div className="pt-[calc(5rem+env(safe-area-inset-top))] md:pt-[calc(4.5rem+env(safe-area-inset-top))] relative flex flex-col app-viewport overflow-hidden">
       {downscaleDialog}
       {updateDialog}
       {worldExportDialog}
@@ -1956,52 +2073,36 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           scroll frame rather than covering anything; the root's top padding already clears the fixed bar. */}
       {COMMUNITY_ENABLED && <EventBanner banners={banners} onOpenEvent={openEvent} />}
 
-      {/* Top control bar: card-type switcher (left) + action buttons/hamburger (center) + view toggle &
-          settings (right). items-center keeps every control on the settings cog's centerline (the cog is
-          tallest). The side cells are equal flex-1 so the center section sits at true viewport-center when
+      {/* Top control bar: card-type switcher (left) + action buttons (center) + view toggle, Load Game &
+          Settings (right). items-center keeps every control on the header line. The side cells are equal flex-1 so the center section sits at true viewport-center when
           there's room, and drifts off center before anything folds. `useHeaderFold` folds the parts in order
           once the cells no longer fit side by side: library tabs, then action buttons, then event badges. */}
-      <div ref={topBarRef} className="fixed z-10 flex items-center gap-2 top-[calc(1rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] right-[calc(1rem+env(safe-area-inset-right))]">
+      <div ref={topBarRef} className="fixed z-10 flex items-center gap-2 top-[calc(1rem+env(safe-area-inset-top))] md:top-[env(safe-area-inset-top)] md:h-[var(--header-line)] left-[calc(1rem+env(safe-area-inset-left))] right-[calc(1rem+env(safe-area-inset-right))]">
         {/* Card-type switcher, at the step the bar picks. Hidden on mobile, where the bottom tab bar takes
             over. No min-w-0: the cell keeps the switcher's width, which pushes the center off center. */}
         <div data-fold-left="" className="flex-1 hidden md:flex items-center justify-start">
           <CollapsingToggleGroup options={CARD_TABS} value={cardType} onValueChange={setCardType} aria-label="Library" fold={topBarFold.tabs} onStepWidths={setTabSteps} />
         </div>
 
-        {/* Action buttons: a row, or one menu button once the bar folds them. Folded, the right-cell menu
-            (Load Game / Settings) joins this same popover so there's one menu, not two. */}
+        {/* Action buttons: a row, until the bar folds them into a menu. */}
         <div className={topBarFold.center === 'full' ? 'flex items-center gap-4 justify-center' : 'hidden'}>
           {actionButtons}
         </div>
-        <div className={topBarFold.center === 'menu' ? 'flex' : 'hidden'}>
+        {/* Mobile folds them into a hamburger at the left; wider windows use the right-side menu. */}
+        <div className={topBarFold.center === 'menu' ? 'flex md:hidden' : 'hidden'}>
           <Popover>
             <PopoverTrigger asChild>
-              <GradientButton
-                tone="purple"
-                aria-label="Menu"
-              >
+              <GradientButton tone="purple" aria-label="Menu">
                 <Menu className="h-5 w-5" />
               </GradientButton>
             </PopoverTrigger>
-            <PopoverContent align="center" className="flex flex-col gap-2 w-72 [&>button]:w-full [&_svg]:shrink-0">
-              {actionButtons}
-              <div className="h-hairline bg-border my-1" />
-              <Button variant="ghost" className="justify-start" onClick={() => setShowLoadDialog(true)}>
-                <FolderOpen className="mr-2 h-4 w-4" /> Load Game
-              </Button>
-              <Button variant="ghost" className="justify-start" onClick={() => setShowBackup(true)}>
-                <Archive className="mr-2 h-4 w-4" /> Backup &amp; Restore
-              </Button>
-              <Button variant="ghost" className="justify-start" onClick={() => setShowSettings(true)}>
-                <Settings className="mr-2 h-4 w-4" /> Settings
-              </Button>
-            </PopoverContent>
+            <PopoverContent align="start" className={FOLDED_MENU}>{foldedMenuItems}</PopoverContent>
           </Popover>
         </div>
 
-        {/* Event badges + grid/detailed view toggle + menu (right-most). No min-w-0: every part keeps its
+        {/* Event badges + grid/detailed view toggle + direct buttons or menu. No min-w-0: every part keeps its
             width, and the bar folds a step instead of squeezing one. */}
-        <div className="flex-1 flex items-center justify-end gap-2">
+        <div data-fold-right="" className="flex-1 flex items-center justify-end gap-2">
           {/* Dismissed banners, centered in the slack this cell was already holding rather than pushed
               against the buttons beside it; one count chip once the bar folds them. */}
           {COMMUNITY_ENABLED && (topBarFold.badges === 'full'
@@ -2026,33 +2127,40 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
               </ToggleGroupItem>
             </Tip>
           </ToggleGroup>
-          {/* Right menu: gone once the action buttons fold, since its items join that menu; the view toggle
-              then becomes the right-most control. */}
-          <div className={topBarFold.center === 'full' ? 'block shrink-0' : 'hidden'}>
-            <Popover>
-              <Tip tip="Menu">
+          <div className={topBarFold.center === 'full' ? 'flex shrink-0 gap-2' : 'hidden'}>
+            <Tip tip="Load Game">
+              <button className={TOP_BAR_ROUND_BUTTON} onClick={() => setShowLoadDialog(true)}>
+                <FolderOpen className="h-5 w-5" />
+              </button>
+            </Tip>
+            <Tip tip="Settings">
+              <button className={TOP_BAR_ROUND_BUTTON} onClick={() => setShowSettings(true)}>
+                <Settings className="h-5 w-5" />
+              </button>
+            </Tip>
+          </div>
+          {/* Full screen hides the window buttons, so the menu shows at every width to hold Exit Full Screen. */}
+          <div className={windowFullScreen ? 'block shrink-0' : topBarFold.center === 'menu' ? 'hidden md:block shrink-0' : 'hidden'}>
+            <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+              <Tip tip="More Actions">
                 <PopoverTrigger asChild>
-                  <button className="p-3 bg-secondary text-secondary-foreground rounded-full shadow-lg hover:bg-secondary/80 transition-colors">
-                    <Menu className="h-6 w-6" />
+                  <button className={TOP_BAR_ROUND_BUTTON}>
+                    <MoreHorizontal className="h-5 w-5" />
                   </button>
                 </PopoverTrigger>
               </Tip>
-              {/* Sized for `Backup & Restore` plus its icon; w-48 left it scrunched. */}
-              <PopoverContent align="end" className="w-60 p-1">
-                <div className="flex flex-col">
-                  <Button variant="ghost" className="w-full justify-start" onClick={() => setShowLoadDialog(true)}>
-                    <FolderOpen className="mr-2 h-4 w-4" /> Load Game
+              <PopoverContent align="end" className={FOLDED_MENU}>
+                {topBarFold.center === 'menu' && foldedMenuItems}
+                {windowFullScreen && (
+                  <Button variant="ghost" className="justify-start" onClick={() => { setMoreOpen(false); leaveWindowFullScreen(); }}>
+                    <Minimize2 className="mr-2 h-4 w-4" /> Exit Full Screen
                   </Button>
-                  <Button variant="ghost" className="w-full justify-start" onClick={() => setShowBackup(true)}>
-                    <Archive className="mr-2 h-4 w-4" /> Backup &amp; Restore
-                  </Button>
-                  <Button variant="ghost" className="w-full justify-start" onClick={() => setShowSettings(true)}>
-                    <Settings className="mr-2 h-4 w-4" /> Settings
-                  </Button>
-                </div>
+                )}
               </PopoverContent>
             </Popover>
           </div>
+          {/* A spacer, because flex grows from padding, which would stop the side cells matching. */}
+          <div aria-hidden data-fold-window-buttons="" className="-ml-2 w-[max(0px,calc(var(--window-buttons-width)-0.5rem))] shrink-0" />
         </div>
 
         {/* Hidden copies of every step the bar can fold to, for `useHeaderFold` to measure. The action
@@ -2061,8 +2169,11 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           {MAIN_MENU_CARD_TABS.map((tab) => (
             <div key={tab} data-fold-measure="center" className="flex w-max items-center gap-4">{renderActionButtons(tab, true)}</div>
           ))}
-          <GradientButton data-fold-measure="center-menu" tone="purple" tabIndex={-1}><Menu className="h-5 w-5" /></GradientButton>
-          <span data-fold-measure="right-menu" className="block w-max p-3"><Menu className="h-6 w-6" /></span>
+          <div data-fold-measure="right-direct" className="flex w-max gap-2">
+            <span className={TOP_BAR_ROUND_BUTTON} /><span className={TOP_BAR_ROUND_BUTTON} />
+            {windowFullScreen && <span className={TOP_BAR_ROUND_BUTTON} />}
+          </div>
+          <span data-fold-measure="right-more" className={TOP_BAR_ROUND_BUTTON} />
           {COMMUNITY_ENABLED && banners.chips.length > 0 && (
             <>
               <div data-fold-measure="badges-full" className="w-max"><EventBannerChips banners={banners} /></div>
@@ -2083,19 +2194,28 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         requestKey={surfaceNav.key}
         onWorldsRestored={refreshWorlds}
         onStartAuthoringTour={() => { setShowSettings(false); void handleCreateNewWorld({ tour: true }); }}
+        onOpenBackup={openBackup}
       />
       <AiSetupGate
         open={gate !== null}
         reason={gate?.reason ?? 'firstRun'}
-        mode={import.meta.env.DEV && devRoute?.vram ? 'local' : mode}
-        blocker={import.meta.env.DEV && devRoute?.vram ? 'noModel' : blocker}
+        mode={devLocalGate ? 'local' : mode}
+        blocker={devLocalGate ? 'noModel' : blocker}
         reachable={reachable}
         recheck={recheck}
         onOpenChange={(v) => { if (!v) setGate(null); }}
         onOpenSettings={() => { setGate(null); setSettingsTab('endpoints'); setShowSettings(true); }}
         onReady={handleGateReady}
       />
-      <BackupRestoreDialog open={showBackup} onOpenChange={setShowBackup} />
+      <BackupRestoreDialog open={showBackup} start={backupStart} onOpenChange={setShowBackup} />
+      <ProfileMergeDialog
+        view={devMergeStep ? devMergeView : profileMerge.view}
+        onMerge={devMergeStep ? closeDevMerge : () => void profileMerge.merge()}
+        onNotNow={devMergeStep ? closeDevMerge : profileMerge.notNow}
+        onDecline={devMergeStep ? closeDevMerge : profileMerge.decline}
+        onDone={devMergeStep ? closeDevMerge : profileMerge.done}
+        onRestart={devMergeStep ? closeDevMerge : profileMerge.restart}
+      />
 
       {/* The component-file import review, and the update review a file of a source you already hold
           opens in its place. */}
@@ -2218,15 +2338,14 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           placeholderOf={(entity) => <EntityPlaceholderArt id={entity.id} sourceId={entity.sourceId} name={entity.name} />}
           filter={entityPredicate}
           toolbar={(
-            <ToggleGroup
-              type="single"
-              value={entityFilter}
-              aria-label="Entity Filter"
-              onValueChange={(v) => { if (v) setEntityFilter(entityLibraryFilterCodec.parse(v)); }}
+            <Button
+              variant={entityFilter === 'personas' ? 'default' : 'outline'}
+              size="sm"
+              aria-pressed={entityFilter === 'personas'}
+              onClick={() => setEntityFilter(entityFilter === 'personas' ? 'all' : 'personas')}
             >
-              <ToggleGroupItem value="all">All</ToggleGroupItem>
-              <ToggleGroupItem value="personas">Personas</ToggleGroupItem>
-            </ToggleGroup>
+              <PersonaIcon className="h-4 w-4 mr-2" /> Personas
+            </Button>
           )}
           emptyState={isLoadingEntities ? undefined : entityPredicate ? (
             <div className="flex items-center justify-center py-16 px-4 select-none">
@@ -2255,6 +2374,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             />
           )}
           onCheckUpdates={(id) => { void checkForUpdates('entity', id); }}
+          onDuplicate={(id) => { void handleDuplicateEntity(id); }}
           itemActions={(id) => {
             if (!entities.some((entity) => entity.id === id && entity.persona)) return null;
             return (
@@ -2295,6 +2415,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             />
           )}
           onCheckUpdates={(id) => { void checkForUpdates('dictionary', id); }}
+          onDuplicate={(id) => { void handleDuplicateDictionary(id); }}
           onDelete={setDictionaryToDelete}
         />
       ) : (
@@ -2916,7 +3037,6 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             await clearLibraryModelPicks(modelToDelete!)
               .catch((error: unknown) => toastError(error, 'Could not clear the Avatar from your library entities.'));
           } catch (error) {
-            // The library refuses to drop its last avatar; tell the player why rather than failing silently.
             toastError(error, "Couldn't delete that Avatar.");
           } finally {
             setModelToDelete(null);
@@ -2965,6 +3085,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
 
       <CreditsDialog open={showCredits} onOpenChange={setShowCredits} />
 
+      <UnreadableWorldsDialog onChanged={() => void refreshWorlds()} onOpenListing={handleOpenListing} />
+
       {/* DEV only: the component update review on canned worlds. Its worlds are in memory, so Apply writes
           nothing; `devUpdates` is never set in prod. */}
       <UpdateAvailableDialog
@@ -3002,11 +3124,11 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
       <Dialog open={showWorldPrompts} onOpenChange={setShowWorldPrompts}>
         <DialogContent surface="worldPrompts" className="sm:max-w-[700px] h-[85dvh] flex flex-col">
           <DialogHeader className="shrink-0">
-            {/* The mode switch shares the title row (pr-6 clears the dialog's X), and the description
+            {/* The mode switch shares the title row, and the description
                 doubles as the legend — its "added"/"removed" carry the diff's actual colors — so the
                 chrome costs no row of its own. */}
-            <div className="flex items-center justify-between gap-3 pr-6">
-              <DialogTitle className="leading-normal">Custom Prompts</DialogTitle>
+            <div className={cn(dialogTitleRow, 'justify-between gap-3')}>
+              <DialogTitle>Custom Prompts</DialogTitle>
               <PromptDiffModeToggle mode={promptView} onModeChange={setPromptView} />
             </div>
           </DialogHeader>
@@ -3068,6 +3190,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             onUnreadChange={setUnreadMessages}
             onNotificationsRead={handleNotificationsRead}
             onOpenListing={handleOpenListing}
+            onOpenFeedback={() => requestSurface({ id: 'feedbackHub.questions' })}
             initialTab={surfaceNav.tab('profile') ?? (devRoute?.modal === 'profile' ? (devRoute.tab as ProfileTab | undefined) : undefined)}
             requestKey={surfaceNav.key}
           />
@@ -3101,6 +3224,9 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             held={introActive || gateOpen || firstRunDue}
           />
 
+          {/* One-time CUDA engine offer; waits for the intro, the AI setup gate, the first-run step and any open modal dialog. */}
+          <CudaNoticeHost held={introActive || gateOpen || gate !== null || aiGatePending || firstRunDue} />
+
           {/* Community Creations. The host reads its own libraries, account and events from the services,
               so all the menu hands it is where to open — see CommunityBrowserHost.tsx. */}
           <CommunityBrowserHost
@@ -3128,7 +3254,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           arrow means the editor's guarded back arrow is the sole exit; Esc/overlay are blocked so they can't
           bypass the dirty prompt. */}
       <Dialog open={showWorldEditor} onOpenChange={(open) => { if (open) setShowWorldEditor(true); }}>
-        <DialogContent surface="worldEditor" aria-describedby={undefined}
+        <DialogContent surface="worldEditor" placement="own" aria-describedby={undefined}
           hideClose
           onEscapeKeyDown={(e) => e.preventDefault()}
           onInteractOutside={(e) => e.preventDefault()}
@@ -3143,6 +3269,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             onPlay={playFromEditor}
             onClose={exitWorldEditor}
             initialTab={surfaceNav.tab('worldEditor')}
+            initialOverviewTab={surfaceNav.tab('worldEditorOverview')}
             initialBenchTab={surfaceNav.tab('worldEditorBench')}
             initialTarget={surfaceNav.target}
             requestKey={surfaceNav.key}

@@ -6,7 +6,7 @@
  */
 
 import { customPersonaEntity } from './blueprints';
-import { playedVrmAs, playedVrmPick } from './vrmResolver';
+import { entityAvatarInUse, playedVrmAs, playedVrmPick, type PickedEntity, type VrmContext } from './vrmResolver';
 import type { Entity, PersonaRef, VrmPick, WorldOverview } from '@/types';
 
 /** How the player is starting: the full setup flow, the Quick Start bypass, or resuming a save. */
@@ -26,6 +26,8 @@ export interface EnterFlowWorld {
   /** The world's Introduction readme, as authored. Blank/absent ⇒ no Introduction. */
   introReadme?: string;
   traitCount: number;
+  /** The World Options shown to the player. */
+  shownOptionCount?: number;
   startingLocationCount: number;
   hasLibraryAdditions: boolean;
   /** The world has entities the player can play as. */
@@ -43,22 +45,56 @@ export interface EntryVrmInput {
   libraryPersona: Pick<Entity, 'id' | 'vrmPick'> | undefined;
   entities: readonly Entity[];
   overview: Pick<WorldOverview, 'vrmStore' | 'legacyVrmFallback'> | undefined;
+  /** The ids in the player's Avatar library. Absent while the read runs, when the pick counts as showing. */
+  libraryIds?: ReadonlySet<string>;
 }
 
 /**
  * The pick the draft persona's played side lands on: none skips the avatar step, User's Default offers the
- * picker, and a world or library pick shows that Avatar as set.
+ * picker, and a world or library pick shows that Avatar as set. A library pick that is gone acts as User's
+ * Default, and an empty library leaves User's Default with no Avatar, so the step is skipped.
  */
-export function entryVrmPick({ persona, libraryPersona, entities, overview }: EntryVrmInput): VrmPick | undefined {
+export function entryVrmPick(input: EntryVrmInput): VrmPick | undefined {
+  const { libraryIds } = input;
+  const pick = playedVrmPick(entryVrmContext(input));
+  if (!pick || pick.kind === 'world' || !libraryIds) return pick;
+  if (pick.kind === 'library' && libraryIds.has(pick.id)) return pick;
+  return libraryIds.size ? { kind: 'default' } : undefined;
+}
+
+/** The resolver's context at world entry: the draft persona played, the world's store, no save yet. */
+export function entryVrmContext(
+  { persona, libraryPersona, entities, overview, libraryIds, deviceDefault }: EntryVrmInput & { deviceDefault?: string },
+): VrmContext {
   const entity = persona.source === 'library' ? libraryPersona ?? { id: persona.entityId }
     : persona.source === 'world' ? entities.find((e) => e.id === persona.entityId)
     : undefined;
-  return playedVrmPick({
+  return {
     store: overview?.vrmStore,
+    libraryIds,
+    deviceDefault,
     played: playedVrmAs(entity && persona.source !== 'none' ? { source: persona.source, entity } : null),
     customPersona: customPersonaEntity(entities),
     legacyFallback: overview?.legacyVrmFallback,
-  });
+  };
+}
+
+/** What trait selection reads for an owner's Avatar icon. */
+export interface EntryAvatarInput extends EntryVrmInput {
+  libraryCast: readonly PickedEntity[];
+  deviceDefault?: string;
+}
+
+/** Whether an owner's Avatar is in use at world entry. The played side (`null`, the persona, the Custom Persona
+ *  under None) wears the draft persona's; a cast entity wears its own pick, resolved as the game resolves it. */
+export function entryAvatarInUse(ownerId: string | null, input: EntryAvatarInput): boolean {
+  const { persona, entities, libraryCast } = input;
+  const played = ownerId === null
+    || (persona.source !== 'none' && persona.entityId === ownerId)
+    || (persona.source === 'none' && customPersonaEntity(entities)?.id === ownerId);
+  if (played) return !!entryVrmPick(input);
+  const entity = [...entities, ...libraryCast].find((e) => e.id === ownerId);
+  return !!entity && entityAvatarInUse(entity, entryVrmContext(input));
 }
 
 /**
@@ -71,6 +107,7 @@ export function buildEnterFlow(world: EnterFlowWorld, mode: EnterMode): EnterSte
   if (world.introReadme?.trim()) steps.push('intro');
   if (
     world.traitCount > 0
+    || (world.shownOptionCount ?? 0) > 0
     || world.startingLocationCount > 1
     || world.hasLibraryAdditions
     || world.hasWorldPersonas

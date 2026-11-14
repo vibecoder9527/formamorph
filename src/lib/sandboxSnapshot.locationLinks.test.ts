@@ -55,12 +55,13 @@ describe('location parent, children and exits', () => {
 
   it('lists the router’s destinations in its order, each Connection’s hint filled in', async () => {
     expect(await read(playState(), 'return location.exits;')).toEqual([
-      { name: 'Town', hint: '' }, { name: 'Square', hint: '' }, { name: 'Road', hint: 'the mud path' }, { name: 'Inn', hint: 'a trapdoor' },
+      { name: 'Town', hint: '', distance: 'nearby', oneWay: false }, { name: 'Square', hint: '', distance: 'nearby', oneWay: false },
+      { name: 'Road', hint: 'the mud path', distance: 'nearby', oneWay: false }, { name: 'Inn', hint: 'a trapdoor', distance: 'nearby', oneWay: true },
     ]);
   });
 
   it('lists a one-way Connection only from its own end', async () => {
-    expect(await read(playState(), 'return [locations.Inn.exits, locations.Road.exits];')).toEqual([[], [{ name: 'Old Mill', hint: '' }]]);
+    expect(await read(playState(), 'return [locations.Inn.exits, locations.Road.exits];')).toEqual([[], [{ name: 'Old Mill', hint: '', distance: 'nearby', oneWay: false }]]);
   });
 
   it('names exits by the keys of locations', async () => {
@@ -70,7 +71,7 @@ describe('location parent, children and exits', () => {
   it('turns the current location into text', async () => {
     const [text] = await read(playState(), 'return [JSON.stringify(location)];') as [string];
     const parsed: unknown = JSON.parse(text);
-    expect(parsed).toMatchObject({ name: 'Old Mill', parent: 'Town', children: [], exits: expect.arrayContaining([{ name: 'Inn', hint: 'a trapdoor' }]) });
+    expect(parsed).toMatchObject({ name: 'Old Mill', parent: 'Town', children: [], exits: expect.arrayContaining([{ name: 'Inn', hint: 'a trapdoor', distance: 'nearby', oneWay: true }]) });
   });
 
   it('keeps the start location and its exits after a Before the AI move', async () => {
@@ -93,6 +94,18 @@ describe('location parent, children and exits', () => {
     expect(result.readOnlyWrites).toContain('location.parent');
   });
 
+  it('drops a write to an exit’s distance and oneWay and reports each path', async () => {
+    const far = connections.map((c) => (c.id === 'c-inn' ? { ...c, distance: 'far' as const } : c));
+    const result = await snapshotOf(playState({ places: { locations, location: { id: 'mill', name: 'Old Mill' }, connections: far } })).run({
+      home: { kind: 'tool' }, timing: 'after', args: {},
+      code: 'location.exits[3].distance = "nearby"; location.exits[3].oneWay = false; locations["Old Mill"].exits[0].oneWay = true;'
+        + ' return [location.exits[3], locations["Old Mill"].exits[0].oneWay];',
+    });
+    expect(result.error).toBeNull();
+    expect(JSON.parse(result.reply ?? 'null')).toEqual([{ name: 'Inn', hint: 'a trapdoor', distance: 'far', oneWay: true }, false]);
+    expect(result.readOnlyWrites).toEqual(['location.exits[3].distance', 'location.exits[3].oneWay', 'locations["Old Mill"].exits[0].oneWay']);
+  });
+
   it('reads the same fields in Test Code’s world and in a read-only user Tool run', async () => {
     const opening = openingStateOf({ locations, connections, entities: [hero] });
     expect(await read(opening, 'return [location.name, location.parent, location.exits.map((e) => e.hint)];'))
@@ -103,7 +116,7 @@ describe('location parent, children and exits', () => {
 });
 
 describe('location links stay on the host until read', () => {
-  const linksSpy = () => vi.fn((): SandboxLocationLinks => ({ parent: 'Town', children: [], exits: [{ name: 'Town', hint: '' }] }));
+  const linksSpy = () => vi.fn((): SandboxLocationLinks => ({ parent: 'Town', children: [], exits: [{ name: 'Town', hint: '', distance: 'nearby', oneWay: false }] }));
 
   it('builds none for a run that reads no link', async () => {
     const links = linksSpy();
@@ -118,7 +131,7 @@ describe('location links stay on the host until read', () => {
     const places = { locations: [{ id: 'mill', name: 'Old Mill', links }], location: { id: 'mill', name: 'Old Mill' } };
     const code = 'return [location.parent, location.exits, locations["Old Mill"].children, locations["Old Mill"].exits];';
     const res = await executeStatCode(code, [], null, { places, args: {} });
-    expect(JSON.parse(res.reply ?? 'null')).toEqual(['Town', [{ name: 'Town', hint: '' }], [], [{ name: 'Town', hint: '' }]]);
+    expect(JSON.parse(res.reply ?? 'null')).toEqual(['Town', [{ name: 'Town', hint: '', distance: 'nearby', oneWay: false }], [], [{ name: 'Town', hint: '', distance: 'nearby', oneWay: false }]]);
     expect(links).toHaveBeenCalledTimes(1);
   });
 

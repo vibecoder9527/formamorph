@@ -1,9 +1,12 @@
 import type { Entity, GameLocation, SceneEntity } from "@/types";
-import type { DiscoveredEntity } from "@/types/gameplay";
+import { idsAt, positionsIn } from "../entityPlaces";
 import { findEntityNames, matchNames, matchNamesLoose, sameCharacterName, stripQuotedSpeech } from "../entityMatch";
 import { extractCharacterCandidates, collectCandidateEvidence, type CandidateExclusions } from "../characterCandidates";
 import { buildSceneList, type DirectorCastMember } from "../stagedPlanning";
 import { selectReachableVisitors } from "../runtimeCharacters";
+import { nearbyPlaces } from "../locationGraph";
+import { pullUnique, type PositionBook } from "../positionEngine";
+import { withPlayerAt, type PositionWorld } from "../positionPlay";
 import type { TurnPassSubject } from "./turnPlan";
 
 export interface NarrationReadingInput {
@@ -111,33 +114,35 @@ export interface VisitorInput {
   /** Every entity the turn can resolve against, authored plus discovered. */
   allEntities: Entity[];
   location: GameLocation;
-  locations: GameLocation[];
-  /** Entity ids already at the location, discovered ones included. */
-  presentIds: string[];
-  /** Already-anchored discoveries, so a visitor is never added twice. */
-  discovered: DiscoveredEntity[];
-  turnId: string;
+  /** Where each tracked character stands after the turn's moves, and its engine state. */
+  book: PositionBook;
+  /** The routines and scene the pull reads. Its links set which places are Nearby. */
+  world: PositionWorld;
 }
 
 /**
- * Bring-them-over: an authored character living in a reachable sibling that the narration named joins the
- * current location as a visitor, anchored via the discovered-entity path so it persists and rolls back with
- * the turn.
+ * Bring-them-over: a Unique entity standing one Nearby link away that the narration named joins the current
+ * location, when the position engine allows the pull. A Generic entity is never pulled. Returns the book with each
+ * pull applied; the same book when nobody comes.
  *
  * Fed by a stricter parse than `participants`: this path physically relocates an authored NPC, so it takes
  * full-name hits only — a loose single-word match must not teleport someone into the scene. Prose-only for the
  * same reason presence is: `partial: false` bounds how loosely a name may match, not whether it was merely
- * spoken about, and a full name inside dialogue still hits. Once someone is anchored here they count as
- * present, so a dialogue-only mention would otherwise walk them into the scene permanently and past the
- * now-line's location filter.
+ * spoken about, and a full name inside dialogue still hits.
  */
-export function selectVisitorAdditions(input: VisitorInput): DiscoveredEntity[] {
-  const { prose, entities, allEntities, location, locations, presentIds, discovered, turnId } = input;
+export function selectVisitorAdditions(input: VisitorInput): PositionBook {
+  const { prose, entities, allEntities, location, book, world } = input;
   const visitorParticipants = findEntityNames(prose, allEntities, { partial: false });
-  const visitors = selectReachableVisitors(visitorParticipants, location, locations, entities, presentIds);
-  return visitors
-    .filter((v) => !discovered.some((d) => d.locationId === location.id && sameCharacterName(d.entity.name, v.name)))
-    .map((entity) => ({ entity, locationId: location.id, sourceTurnId: turnId }));
+  const presentIds = idsAt(location.id, allEntities, positionsIn(book));
+  const { scene } = withPlayerAt(world, location.id);
+  const nearby = nearbyPlaces(location.id, scene.locations, scene.connections);
+  const visitors = selectReachableVisitors(visitorParticipants, nearby, entities, presentIds, book);
+  let next = book;
+  for (const entity of visitors) {
+    const routine = world.uniques.get(entity.id);
+    if (routine) next = pullUnique(next, routine, location.id, scene);
+  }
+  return next;
 }
 
 /**

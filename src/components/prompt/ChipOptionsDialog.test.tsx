@@ -91,6 +91,18 @@ describe('Chip Options', () => {
     expect(box('Include', 'Stats')).toBeChecked();
   });
 
+  it("writes the Time chip's Format and Include Day to the token", async () => {
+    const user = userEvent.setup();
+    renderReporting(<Field initial="<TIME>" />);
+    const options = await open(user);
+    expect(within(options).getByRole('radio', { name: 'Time of Day' })).toBeChecked();
+    const includeDay = within(options).getByRole('checkbox', { name: 'Include Day' });
+    expect(includeDay).toBeChecked();
+    await user.click(within(options).getByRole('radio', { name: '12-Hour' }));
+    await user.click(includeDay);
+    expect(stored()).toBe('<TIME|ampm.noday>');
+  });
+
   it('writes each row to the token and reads it back on reopen, without closing between changes', async () => {
     const user = userEvent.setup();
     renderReporting(<Field initial="<ENTITIES>" />);
@@ -149,13 +161,21 @@ describe('Chip Options', () => {
     expect(stored()).toBe('<ENTITIES|withstats.name>');
   });
 
-  it('disables Stat Detail while stats are off and locks the last detail piece on', async () => {
+  it.each(['ENTITIES', 'PERSONA'])('lets every Stat Detail piece go off on the %s chip', async (chip) => {
+    const user = userEvent.setup();
+    renderReporting(<Field initial={`<${chip}|nodescriptor.nodescription>`} />);
+    await open(user);
+    expect(box('Stat Detail', 'Range')).toBeChecked();
+    expect(box('Stat Detail', 'Range')).toBeEnabled();
+    await user.click(box('Stat Detail', 'Range'));
+    expect(stored()).toBe(`<${chip}|norange.nodescriptor.nodescription>`);
+    expect(box('Stat Detail', 'Range')).not.toBeChecked();
+  });
+
+  it('disables Stat Detail while stats are off', async () => {
     const user = userEvent.setup();
     renderReporting(<Field initial="<ENTITIES|nodescriptor.nodescription>" />);
     await open(user);
-    expect(box('Stat Detail', 'Range')).toBeChecked();
-    expect(box('Stat Detail', 'Range')).toBeDisabled();
-    expect(box('Stat Detail', 'Descriptor')).toBeEnabled();
     await user.click(box('Include', 'Stats'));
     expect(stored()).toBe('<ENTITIES|nostats.nodescriptor.nodescription>');
     for (const name of ['Range', 'Descriptor', 'Description']) expect(box('Stat Detail', name)).toBeDisabled();
@@ -208,8 +228,31 @@ describe('Chip Options', () => {
     expect(await screen.findByText(IN_SCENE_HELP)).toBeVisible();
   });
 
+  it('keeps Movement live under Name content and explains the disabled Traits and Stats', async () => {
+    const user = userEvent.setup();
+    renderReporting(<TooltipProvider><Field initial="<ENTITIES|name>" /></TooltipProvider>);
+    await open(user);
+    expect(box('Include', 'Traits')).toBeDisabled();
+    expect(box('Include', 'Stats')).toBeDisabled();
+    expect(box('Include', 'Movement')).toBeEnabled();
+    await user.hover(within(row('Include')).getByText('Traits'));
+    expect(await screen.findByText('Name content sends no stats or traits')).toBeVisible();
+    await user.click(box('Include', 'Movement'));
+    expect(stored()).toBe('<ENTITIES|name.nomovement>');
+  });
+
+  it('turns Movement off per chip and back on', async () => {
+    const user = userEvent.setup();
+    renderReporting(<Field initial="<ENTITIES>" />);
+    await open(user);
+    expect(box('Include', 'Movement')).toBeChecked();
+    await user.click(box('Include', 'Movement'));
+    expect(stored()).toBe('<ENTITIES|nomovement>');
+    await user.click(box('Include', 'Movement'));
+    expect(stored()).toBe('<ENTITIES>');
+  });
+
   it.each([
-    ['<ENTITIES|name>', 'Include'],
     ['<PERSONA|name>', 'Include'],
     ['<PERSONA|name>', 'Stat Detail'],
   ])('explains the disabled %s row on %s in words that fit the persona too', async (token, rowName) => {
@@ -249,7 +292,7 @@ describe('Chip Options', () => {
     expect(rows.compareDocumentPosition(reads) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('shows the Stats chip pieces as checkboxes and locks the last one on', async () => {
+  it('shows the Stats chip pieces as checkboxes and lets the last one go off', async () => {
     const user = userEvent.setup();
     renderReporting(<Field initial="<STATS DESCRIPTION|numbers.descriptions>" />);
     const options = await open(user);
@@ -259,7 +302,21 @@ describe('Chip Options', () => {
     await user.click(descriptor);
     expect(stored()).toBe('<STATS DESCRIPTION|numbers>');
     expect(range).toBeChecked();
-    expect(range).toBeDisabled();
+    expect(range).toBeEnabled();
+    await user.click(range);
+    expect(stored()).toBe('<STATS DESCRIPTION>');
+    expect(range).not.toBeChecked();
+  });
+
+  it('gives the Traits chip a Content row of Description and Name that saves the Name id', async () => {
+    const user = userEvent.setup();
+    renderReporting(<Field initial="<TRAITS DESCRIPTION>" />);
+    const options = await open(user);
+    const content = within(options).getByRole('radiogroup', { name: 'Content' });
+    expect(within(content).getAllByRole('radio').map((r) => r.getAttribute('aria-label') ?? r.textContent)).toEqual(['Description', 'Name']);
+    expect(within(content).getByRole('radio', { name: 'Description' })).toBeChecked();
+    await user.click(within(content).getByRole('radio', { name: 'Name' }));
+    expect(stored()).toBe('<TRAITS DESCRIPTION|name>');
   });
 
   it('writes Header, Prepend and Append below the rows', async () => {

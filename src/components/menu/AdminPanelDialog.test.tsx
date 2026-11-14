@@ -26,6 +26,9 @@ vi.mock('./ReviewTab', () => ({ ReviewTab: () => <div data-testid="review" /> })
 vi.mock('./AutoApprovedTab', () => ({ AutoApprovedTab: () => <div data-testid="auto-approved" /> }));
 vi.mock('./EventsTab', () => ({ EventsTab: () => <div data-testid="events" /> }));
 vi.mock('./ServerSettingsTab', () => ({ ServerSettingsTab: () => <div data-testid="server-settings" /> }));
+vi.mock('./UsageTab', () => ({ UsageTab: () => <div data-testid="usage" /> }));
+vi.mock('./MailTab', () => ({ MailTab: () => <div data-testid="mail" /> }));
+vi.mock('./StorageTab', () => ({ StorageTab: () => <div data-testid="storage" /> }));
 vi.mock('./FeedbackQueueTab', () => ({
   FeedbackQueueTab: ({ type, active }: { type: string; active: boolean }) => (
     <div data-testid={`queue-${type}`} data-active={String(active)} />
@@ -89,10 +92,32 @@ describe('the tab strip', () => {
   it('carries the server settings, which only an administrator reaches', () => {
     render(<AdminPanelDialog open onOpenChange={() => {}} initialTab="serverSettings" />);
 
-    // "Server", not "Server Settings": eight triggers share one fixed grid, and the panel's own heading
+    // "Server", not "Server Settings": nine triggers share one fixed grid, and the panel's own heading
     // carries the full name.
     expect(screen.getByRole('tab', { name: 'Server' })).toBeTruthy();
     expect(screen.getByTestId('server-settings')).toBeTruthy();
+  });
+
+  it('carries the usage report, which only an administrator reaches', () => {
+    render(<AdminPanelDialog open onOpenChange={() => {}} initialTab="usage" />);
+
+    expect(screen.getByRole('tab', { name: 'Usage' })).toBeTruthy();
+    expect(screen.getByTestId('usage')).toBeTruthy();
+  });
+
+  it('carries the mail report, which only an administrator reaches', () => {
+    render(<AdminPanelDialog open onOpenChange={() => {}} initialTab="mail" />);
+
+    expect(screen.getByRole('tab', { name: 'Mail' })).toBeTruthy();
+    expect(screen.getByTestId('mail')).toBeTruthy();
+  });
+
+  it('carries the storage report between Policies and Server', () => {
+    render(<AdminPanelDialog open onOpenChange={() => {}} initialTab="storage" />);
+
+    expect(screen.getByTestId('storage')).toBeTruthy();
+    const names = screen.getAllByRole('tab').map((tab) => tab.textContent?.trim());
+    expect(names.slice(names.indexOf('Policies'), names.indexOf('Server') + 1)).toEqual(['Policies', 'Storage', 'Server']);
   });
 
   it('carries the record of what was done', () => {
@@ -129,6 +154,39 @@ describe('what a moderator sees', () => {
     expect(screen.queryByRole('tab', { name: 'Broadcasts' })).toBeNull();
     expect(screen.queryByRole('tab', { name: 'Policies' })).toBeNull();
     expect(screen.queryByRole('tab', { name: 'Server' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Usage' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Mail' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Storage' })).toBeNull();
+  });
+
+  it('lands on Users when pointed at the storage report', async () => {
+    const AuthService = (await import('@/services/AuthService')).default;
+    vi.spyOn(AuthService, 'getCurrentUser').mockReturnValue({ id: 'm1', username: 'a-mod', accountType: 'mod' });
+
+    render(<AdminPanelDialog open onOpenChange={() => {}} initialTab="storage" />);
+
+    expect(activeTab()).toBe('Users');
+    expect(screen.queryByTestId('storage')).toBeNull();
+  });
+
+  it('lands on Users when pointed at the mail report', async () => {
+    const AuthService = (await import('@/services/AuthService')).default;
+    vi.spyOn(AuthService, 'getCurrentUser').mockReturnValue({ id: 'm1', username: 'a-mod', accountType: 'mod' });
+
+    render(<AdminPanelDialog open onOpenChange={() => {}} initialTab="mail" />);
+
+    expect(activeTab()).toBe('Users');
+    expect(screen.queryByTestId('mail')).toBeNull();
+  });
+
+  it('lands on Users when pointed at the usage report', async () => {
+    const AuthService = (await import('@/services/AuthService')).default;
+    vi.spyOn(AuthService, 'getCurrentUser').mockReturnValue({ id: 'm1', username: 'a-mod', accountType: 'mod' });
+
+    render(<AdminPanelDialog open onOpenChange={() => {}} initialTab="usage" />);
+
+    expect(activeTab()).toBe('Users');
+    expect(screen.queryByTestId('usage')).toBeNull();
   });
 
   it('keeps the events calendar, which is worth reading whether or not a viewer may act on it', async () => {

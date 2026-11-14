@@ -1,10 +1,8 @@
 import { ancestors } from "@/lib/ancestors";
 import type { Connection, GameLocation, LegKey } from "@/types";
+import { createConnection } from "./connectionEditing";
 import {
-  createConnection, directionFrom, withDirection, type ConnectionDirection,
-} from "./connectionEditing";
-import {
-  connectionLegs, implicitNeighbors, isTwoWay, pairKey, parentIndex, reachableFromStarts,
+  connectionLegs, implicitNeighbors, isFar, isTwoWay, pairKey, parentIndex, reachableFromStarts,
 } from "./locationGraph";
 import { holderOf } from "./locationTree";
 import type { StepKey } from "./editorHistory";
@@ -77,6 +75,8 @@ export interface CanvasEdge {
   leg?: LegKey;
   /** A partner arrow runs the other way beside this one. */
   paired?: true;
+  /** The Connection is Far. */
+  far?: true;
 }
 
 export interface LocationCanvasMap {
@@ -230,8 +230,17 @@ export function buildLocationCanvas(
     if (!known.has(connection.a) || !known.has(connection.b)) continue;
     const paired = isTwoWay(connection);
     const shared = paired && connection.aToB?.hint === connection.bToA?.hint;
-    for (const { key, from, to, leg } of connectionLegs(connection)) {
-      const label = shared && key === "bToA" ? undefined : leg.hint && describeHint(leg.hint);
+    const far = isFar(connection);
+    const legs = connectionLegs(connection);
+    const hints = legs.map(({ key, leg }) => (shared && key === "bToA" ? undefined : leg.hint && describeHint(leg.hint)));
+    const legLabel = (i: number): string | undefined => {
+      const hint = hints[i];
+      if (!far) return hint;
+      if (hint) return `Far · ${hint}`; // first, so a truncated hint never hides it
+      return i === 0 && !hints.some(Boolean) ? "Far" : undefined; // a hintless Far pair says Far once
+    };
+    for (const [i, { key, from, to }] of legs.entries()) {
+      const label = legLabel(i);
       edges.push({
         id: `connection:${connection.id}:${key}`,
         source: from,
@@ -240,6 +249,7 @@ export function buildLocationCanvas(
         connectionId: connection.id,
         leg: key,
         ...(paired ? { paired: true as const } : {}),
+        ...(far ? { far: true as const } : {}),
         ...(label ? { label, ...(paired && !shared ? { labelOuter: true as const } : {}) } : {}),
       });
     }
@@ -685,11 +695,6 @@ export function connectionEnds(connection: Connection): [string, string] {
   return [connection.a, connection.b];
 }
 
-/** Which of the direction control's options a record currently sits on. */
-export function directionOf(connection: Connection): ConnectionDirection {
-  return directionFrom(connection, connectionEnds(connection)[0]);
-}
-
 /**
  * Dragging between two locations and clicking a dashed implicit arrow ask for the same thing: this pair gets
  * a two-way Connection, the common case needing no follow-up click. Nothing comes of a self-drag, or of a
@@ -703,15 +708,20 @@ export function connectIntent(fromId: string, toId: string, connections: Connect
   return { kind: "add", connection: createConnection(fromId, toId) };
 }
 
-/** The direction control on a selected arrow — the list panel's own edit, anchored to the pair's first end
- *  instead of to the location whose panel is open. */
-export function directionIntent(connection: Connection, direction: ConnectionDirection): CanvasIntent {
-  return { kind: "update", connection: withDirection(connection, connectionEnds(connection)[0], direction) };
-}
-
 /** A selected Connection as its Travel Hint pair rewrote it: a hint edit, a link, or an unlink. */
 export function updateIntent(connection: Connection): CanvasIntent {
   return { kind: "update", connection };
+}
+
+/** A pair's distance as the Distance control reads it. */
+export type ConnectionDistance = "nearby" | "far";
+
+export const distanceOf = (connection: Connection): ConnectionDistance => connection.distance ?? "nearby";
+
+/** `connection` at `distance`. Nearby is stored as no field. */
+export function withDistance(connection: Connection, distance: ConnectionDistance): Connection {
+  const { distance: _old, ...rest } = connection;
+  return distance === "far" ? { ...rest, distance: "far" } : rest;
 }
 
 /** Deleting a selected arrow deletes the record both of the pair's directions came from, which hands the

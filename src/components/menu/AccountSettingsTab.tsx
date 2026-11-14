@@ -6,8 +6,10 @@ import { Label } from '@/components/ui/label';
 import { Hint, Meta } from '@/components/ui/typography';
 import { cn } from '@/lib/utils';
 import { useMountedRef } from '@/lib/useMountedRef';
+import { useEmailRecheck } from '@/lib/useEmailRecheck';
 import { useAccountDeletion } from '@/contexts/AccountDeletionContext';
-import AuthService from '@/services/AuthService';
+import AuthService, { emailMarkerOf, type EmailNoticeReason } from '@/services/AuthService';
+import { EmailMarkerNotice, QUESTIONS_BOARD_PATH } from '@/components/EmailMarkerNotice';
 import { PatreonSection } from '@/components/PatreonSection';
 import { openExternal } from '@/lib/openExternal';
 
@@ -23,22 +25,32 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** The address on file and whether it is proven, as the cached account currently says. */
-const readEmail = () => {
+const readEmail = (): { address: string | null; verified: boolean; marker: EmailNoticeReason | null } => {
   const user = AuthService.getCurrentUser();
   return {
     // Cast because `AuthUser` types everything past `username` as `unknown`.
     address: (user?.email as string | null | undefined) ?? null,
     verified: user?.emailVerified === true,
+    marker: emailMarkerOf(user),
   };
 };
 
+/** The website's Questions board, for a host that cannot open the Feedback window. */
+const QUESTIONS_BOARD_URL = `https://formamorph.ai${QUESTIONS_BOARD_PATH}`;
+
 /** The address password reset runs on. Setting one asks for the mail; only a resend is separate. */
-function EmailSection({ suspended }: { suspended: boolean }) {
+function EmailSection({ suspended, onOpenFeedback }: { suspended: boolean; onOpenFeedback?: () => void }) {
   const mounted = useMountedRef();
   const [account, setAccount] = useState(readEmail);
   const [typed, setTyped] = useState(() => readEmail().address ?? '');
   const [note, setNote] = useState<Note>(null);
   const [busy, setBusy] = useState<'save' | 'resend' | null>(null);
+
+  const { recheckSoon, drop } = useEmailRecheck((fresh) => {
+    setAccount({ address: fresh.email, verified: fresh.emailVerified, marker: fresh.emailMarker });
+    // The status line or the notice now says what a "sent" note was waiting on.
+    if (fresh.emailMarker || fresh.emailVerified) setNote((held) => (held?.kind === 'success' ? null : held));
+  });
 
   // The cached account can predate the field; one read on arrival settles it.
   useEffect(() => {
@@ -46,7 +58,7 @@ function EmailSection({ suspended }: { suspended: boolean }) {
 
     void AuthService.fetchEmailState().then((fresh) => {
       if (cancelled || !fresh) return;
-      setAccount({ address: fresh.email, verified: fresh.emailVerified });
+      setAccount({ address: fresh.email, verified: fresh.emailVerified, marker: fresh.emailMarker });
       // Only fills an untouched box, so a late read cannot overwrite typing.
       setTyped((held) => held || fresh.email || '');
     });
@@ -70,10 +82,15 @@ function EmailSection({ suspended }: { suspended: boolean }) {
 
     setBusy('save');
     try {
-      const { emailVerified, mailSent } = await AuthService.setEmail(address);
+      const { emailVerified, mailSent, undeliverable } = await AuthService.setEmail(address);
       if (!mounted.current) return;
-      setAccount(readEmail());
+      // A read that started before this answer holds the account as it was.
+      drop();
+      if (mailSent) recheckSoon();
+      setAccount({ ...readEmail(), ...(undeliverable && { verified: false, marker: undeliverable }) });
 
+      // The notice says it all for a marked address.
+      if (undeliverable) return;
       if (emailVerified) {
         setNote({ kind: 'success', text: 'That address is already saved and verified.' });
       } else if (mailSent) {
@@ -93,10 +110,13 @@ function EmailSection({ suspended }: { suspended: boolean }) {
     setNote(null);
     setBusy('resend');
     try {
-      const { emailVerified, mailSent } = await AuthService.resendVerification();
+      const { emailVerified, mailSent, undeliverable } = await AuthService.resendVerification();
       if (!mounted.current) return;
-      setAccount((held) => ({ ...held, verified: emailVerified }));
+      drop();
+      if (mailSent) recheckSoon();
+      setAccount((held) => ({ ...held, verified: emailVerified, marker: undeliverable ?? held.marker }));
 
+      if (undeliverable) return;
       if (emailVerified) {
         setNote({ kind: 'success', text: 'Your email address is already verified.' });
       } else if (mailSent) {
@@ -118,12 +138,27 @@ function EmailSection({ suspended }: { suspended: boolean }) {
         {account.address ? (
           <>
             On file: <span className="text-foreground">{account.address}</span>.{' '}
-            {account.verified ? 'Verified.' : 'Not verified yet.'}
+            {account.marker ? 'Not verified.' : account.verified ? 'Verified.' : 'Not verified yet.'}
           </>
         ) : (
           'No email address on file. Add one so you can reset your password.'
         )}
       </Meta>
+
+      {account.address && account.marker && (
+        <EmailMarkerNotice
+          reason={account.marker}
+          feedback={(text) => (
+            <button
+              type="button"
+              className="text-primary hover:underline"
+              onClick={onOpenFeedback ?? (() => openExternal(QUESTIONS_BOARD_URL))}
+            >
+              {text}
+            </button>
+          )}
+        />
+      )}
 
       {suspended && (
         <Hint>You can&rsquo;t change your email address while your account is suspended.</Hint>
@@ -154,7 +189,7 @@ function EmailSection({ suspended }: { suspended: boolean }) {
           <Button type="submit" size="sm" disabled={busy !== null || suspended}>
             {busy === 'save' ? 'Saving…' : 'Save Email'}
           </Button>
-          {account.address && !account.verified && (
+          {account.address && !account.verified && !account.marker && (
             <Button
               type="button"
               size="sm"
@@ -172,16 +207,18 @@ function EmailSection({ suspended }: { suspended: boolean }) {
 }
 
 /** The account controls: email, password, and ending the account. */
-export function AccountSettingsTab({ suspended, onChangePassword }: {
+export function AccountSettingsTab({ suspended, onChangePassword, onOpenFeedback }: {
   suspended: boolean;
   onChangePassword: () => void;
+  /** Opens the Feedback window on its Questions tab. */
+  onOpenFeedback?: () => void;
 }) {
   // Ending the account lives above the menu, because the privacy prompt raises the same flow.
   const { startDeletion } = useAccountDeletion();
 
   return (
     <div className="space-y-8 py-4">
-      <EmailSection suspended={suspended} />
+      <EmailSection suspended={suspended} onOpenFeedback={onOpenFeedback} />
 
       <PatreonSection openAuthorize={openExternal} refreshOnFocus suspended={suspended} />
 

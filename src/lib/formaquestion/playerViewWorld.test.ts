@@ -7,6 +7,7 @@ import { serializeTurnContent } from '@/lib/turnDigest';
 import { buildToolSnapshot } from '@/lib/tools/toolSnapshot';
 import { buildPlayerView } from './playerView';
 import { playerViewMemory, playerViewScene, playerViewState, playerViewWorld, type PlayerViewReach } from './playerViewWorld';
+import { withFirstRoutine } from '@/lib/entityKind';
 
 const entity = (id: string, name: string, extra: Partial<Entity> = {}): Entity => ({
   id, name, playerDescription: `${name} player text.`, aiDescription: `${name} AI secret.`, aiSummary: `${name} AI summary.`, ...extra,
@@ -35,7 +36,7 @@ const LOCATIONS: GameLocation[] = [
   { id: 'vault', name: 'Vault', playerDescription: 'Vault player text.', aiDescription: 'Vault AI secret.' },
 ];
 const CONNECTIONS: Connection[] = [
-  { id: 'c-hall', a: 'gate', b: 'hall', aToB: { hint: 'through the secret door' } },
+  { id: 'c-hall', a: 'gate', b: 'hall', aToB: { hint: 'through the secret door' }, distance: 'far' },
   { id: 'c-vault', a: 'gate', b: 'vault' },
 ];
 const BRAVE = trait('brave');
@@ -69,7 +70,7 @@ describe('playerViewScene', () => {
   const scene: ChipScene = {
     overview: 'The heir hides in the vault.', stats: STATS, traits: [BRAVE, CURSED], traitGroups: [], persona: null,
     location: LOCATIONS[0], locations: LOCATIONS, connections: CONNECTIONS, entities: [WARDEN, STRANGER],
-    presentIds: ['warden', 'stranger'], inSceneIds: ['stranger'], items: [item('key'), item('gem')], itemCopies: COPIES,
+    presentIds: ['warden', 'stranger'], placesOf: () => [], inSceneIds: ['stranger'], items: [item('key'), item('gem')], itemCopies: COPIES,
     lore: [{ id: 'l1', name: 'Pact', key: ['pact'], value: 'The pact binds the heir.' }], notes: 'My notes.', time: null,
     resolve: (text) => text,
   };
@@ -84,6 +85,17 @@ describe('playerViewScene', () => {
     expect(cut.inSceneIds).toEqual([]);
   });
 
+  it('holds an unmet entity with only a Stranger Description under its name, with that description in both fields', () => {
+    const ivo = entity('ivo', 'Ivo', { strangerDescription: 'A broad man in a dented helm.' });
+    const view = buildPlayerView({
+      world: { entities: [ivo], locations: LOCATIONS, traits: [] }, chain: [reach().current], history: [], persona: null, resolve: (text) => text,
+    });
+    const shown = playerViewScene({ ...scene, entities: [ivo], presentIds: ['ivo'] }, { view, current: reach().current });
+    expect(shown.entities).toEqual([expect.objectContaining({
+      id: 'ivo', name: 'Ivo', playerDescription: 'A broad man in a dented helm.', aiDescription: 'A broad man in a dented helm.',
+    })]);
+  });
+
   it("keeps only the player's own stats and traits, and only the met entity's visible stats", () => {
     expect(ids(cut.stats)).toEqual(['nerve']);
     expect(ids(cut.traits)).toEqual(['brave']);
@@ -92,11 +104,11 @@ describe('playerViewScene', () => {
     expect(cut.entities[0].traits).toEqual([]);
   });
 
-  it('holds met places and their connections, without travel hints or an unmet parent', () => {
+  it('holds met places and their connections, with their distance but without travel hints or an unmet parent', () => {
     expect(ids(cut.locations)).toEqual(['gate', 'hall']);
     expect(cut.locations[1].parentId).toBeNull();
     expect(cut.location?.aiDescription).toBe('Gate player text.');
-    expect(cut.connections).toEqual([{ id: 'c-hall', a: 'gate', b: 'hall', aToB: {} }]);
+    expect(cut.connections).toEqual([{ id: 'c-hall', a: 'gate', b: 'hall', aToB: {}, distance: 'far' }]);
   });
 
   it('holds met items and visible copies, with no effects', () => {
@@ -136,7 +148,7 @@ describe('playerViewMemory', () => {
   const memory = { history, overrides: null, verbatimFloor: 0 };
   const scene = playerViewScene({
     overview: '', stats: [], traits: [], traitGroups: [], persona: null, location: null, locations: [], connections: [],
-    entities: [], presentIds: [], inSceneIds: [], lore: [], notes: '', time: null, resolve: (text) => text,
+    entities: [], presentIds: [], placesOf: () => [], inSceneIds: [], lore: [], notes: '', time: null, resolve: (text) => text,
   }, reach());
 
   it('gives recall the digests and no diary entries', () => {
@@ -164,7 +176,7 @@ describe('playerViewState', () => {
       entities: [WARDEN, STRANGER],
     },
     places: { locations: LOCATIONS, location: { id: 'gate', name: 'Gate' }, connections: CONNECTIONS },
-    positions: { warden: 'gate', stranger: 'gate' }, followers: ['stranger'],
+    positions: { warden: 'gate', stranger: 'gate' }, genericPositions: { warden: ['gate', 'vault'], stranger: ['gate'] }, followers: ['stranger'],
     itemCopies: COPIES, items: [item('key'), item('gem')], clock: {},
     memories: [
       { id: 'm1', turn: 1, timestamp: 0, day: 1, daypart: '', text: 'Digest 1.', custom: false, kept: false, inContext: true, pinned: false, forgotten: false },
@@ -194,6 +206,7 @@ describe('playerViewState', () => {
     expect(ids(cut.places?.locations)).toEqual(['gate', 'hall']);
     expect(cut.places?.locations[0].aiDescription).toBe('Gate player text.');
     expect(cut.positions).toEqual({ warden: 'gate' });
+    expect(cut.genericPositions).toEqual({ warden: ['gate'] });
     expect(cut.followers).toEqual([]);
     expect(ids(cut.itemCopies)).toEqual(['c1']);
     expect(ids(cut.items)).toEqual(['key']);
@@ -263,5 +276,37 @@ describe('playerViewWorld', () => {
       ],
     }, reach());
     expect(ids(linked.stats)).toEqual(['nerve', 'bp-grit']);
+  });
+
+  describe('where met entities stand (Q42)', () => {
+    // The warden begins at the gate and stays in the hall; an unreleased world still stores both as its list (Q5).
+    const routined: Entity = {
+      ...withFirstRoutine(WARDEN, (routine) => ({ ...routine, starts: [{ id: 'w1', place: 'gate', weight: 1, schedule: [{ id: 'w1-day', time: 'allDay', action: { kind: 'stay', place: 'hall' } }] }], traversable: [] })), kind: 'unique', locations: ['gate', 'hall'],
+    };
+    const cutAt = (positions: Record<string, string>, entities = [routined, STRANGER]) => {
+      const base = reach();
+      return playerViewWorld({ ...world, entities }, { ...base, current: { ...base.current, entityPositions: positions } });
+    };
+
+    it('gives no copy a list of places', () => {
+      expect(cutAt({ warden: 'hall' }).entities.map((e) => 'locations' in e)).toEqual([false]);
+    });
+
+    it('places a met entity at its one Position', () => {
+      expect(cutAt({ warden: 'hall' }).livePlaces).toEqual({ positions: { warden: 'hall' }, genericPositions: {} });
+    });
+
+    it('places it nowhere when its Position is a place the player has not met, or when it has none', () => {
+      expect(cutAt({ warden: 'vault' }).livePlaces?.positions).toEqual({});
+      expect(cutAt({}).livePlaces?.positions).toEqual({});
+    });
+
+    it('places an unmet entity nowhere, wherever it stands', () => {
+      expect(cutAt({ warden: 'hall', stranger: 'gate' }).livePlaces?.positions).toEqual({ warden: 'hall' });
+    });
+
+    it('places a met entity with no kind that a script moved at its Position, not its listed place', () => {
+      expect(cutAt({ warden: 'hall' }, [{ ...WARDEN, locations: ['gate'] }, STRANGER]).livePlaces?.positions).toEqual({ warden: 'hall' });
+    });
   });
 });

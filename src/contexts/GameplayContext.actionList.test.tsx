@@ -33,7 +33,7 @@ const mount = () => {
   };
 };
 
-const tonicUse: ListedActionFacts = { kind: 'use', item: { key: 'tonic', name: 'Tonic' }, copyId: 'c1' };
+const tonicUse: ListedActionFacts = { kind: 'use', item: { key: 'tonic', name: 'Tonic' }, instanceId: 'c1' };
 const history: ChatMessage[] = [{ role: 'user', content: 'Look around.' }, { role: 'assistant', content: 'A quiet harbor.' }];
 
 /** A live list whose snapshots carry the history, as `saveCurrentGameState` returns it. */
@@ -51,7 +51,7 @@ const snapshotHistories = (record: SaveRecord) => [
 ].map((snapshot) => snapshot.state.fullMessageHistory);
 
 describe('the live Action List across a save/load round trip', () => {
-  it('saves the list and the newest sent snapshots without their history copies, and loads the list back', async () => {
+  it('saves the list and the newest sent snapshots without their history instances, and loads the list back', async () => {
     const live = mount();
     const list = liveList(live);
     await act(async () => {

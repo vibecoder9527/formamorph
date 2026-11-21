@@ -1,0 +1,98 @@
+import { describe, expect, it } from 'vitest';
+import { narrationHash, type MentionReadingMap } from './mentionReadings';
+import { liveQuoteSpeakers, turnQuoteSpeakers } from './quoteSpeakers';
+import type { LiveQuotes } from './streamingQuotes';
+import { speakerColors } from './speakerPalette';
+
+const COLORS = speakerColors([{ id: 'mira' }]);
+
+const NARRATION = '"Hold the line," Mira says.';
+const quotes = [{ start: 0, end: 16, speaker: 'mira' }];
+const readings = (narration = NARRATION, speaker: string | null = 'mira'): MentionReadingMap => ({
+  t1: { model: 'small', version: 1, textHash: narrationHash(narration), reading: { mentions: [], quotes: [{ ...quotes[0], speaker }] } },
+});
+
+describe('turnQuoteSpeakers', () => {
+  it("gives the renderer the turn's quotes over its narration", () => {
+    expect(turnQuoteSpeakers(true, readings(), COLORS, 't1', NARRATION)).toEqual({ text: NARRATION, quotes, colors: COLORS });
+  });
+
+  it('gives nothing with the feature off', () => {
+    expect(turnQuoteSpeakers(false, readings(), COLORS, 't1', NARRATION)).toBeUndefined();
+  });
+
+  it('gives nothing when the reading read another narration', () => {
+    expect(turnQuoteSpeakers(true, readings('"Hold it," Mira says.'), COLORS, 't1', NARRATION)).toBeUndefined();
+  });
+
+  it('gives the quotes when the reading names no speaker, so each can be corrected (Q70)', () => {
+    expect(turnQuoteSpeakers(true, readings(NARRATION, null), COLORS, 't1', NARRATION)?.quotes).toEqual([{ ...quotes[0], speaker: null }]);
+  });
+
+  it('gives nothing when the reading holds no quote', () => {
+    const empty: MentionReadingMap = {
+      t1: { model: 'small', version: 1, textHash: narrationHash(NARRATION), reading: { mentions: [], quotes: [] } },
+    };
+    expect(turnQuoteSpeakers(true, empty, COLORS, 't1', NARRATION)).toBeUndefined();
+  });
+
+  it('builds a new object when the colors change, so a new cast member repaints', () => {
+    const map = readings();
+    expect(turnQuoteSpeakers(true, map, speakerColors([{ id: 'mira' }]), 't1', NARRATION))
+      .not.toBe(turnQuoteSpeakers(true, map, COLORS, 't1', NARRATION));
+  });
+
+  it('serializes the colors, so the renderer rebuilds its plugins when they change', () => {
+    const map = readings();
+    const json = (colors: typeof COLORS) => JSON.stringify(turnQuoteSpeakers(true, map, colors, 't1', NARRATION));
+    expect(json(speakerColors([{ id: 'mira', quoteColor: 'teal' }]))).not.toBe(json(COLORS));
+    expect(json(speakerColors([{ id: 'mira' }]))).toBe(json(COLORS));
+    const live = (colors: typeof COLORS) => JSON.stringify(liveQuoteSpeakers({ text: NARRATION, quotes }, colors));
+    expect(live(speakerColors([{ id: 'mira', quoteColor: 'teal' }]))).not.toBe(live(COLORS));
+    expect(live(speakerColors([{ id: 'mira' }]))).toBe(live(COLORS));
+  });
+
+  it('returns the same object for the same reading, so the renderer keeps its plugins', () => {
+    const map = readings();
+    expect(turnQuoteSpeakers(true, map, COLORS, 't1', NARRATION)).toBe(turnQuoteSpeakers(true, map, COLORS, 't1', NARRATION));
+  });
+});
+
+describe('early quotes (Q72)', () => {
+  const COLORS2 = speakerColors([{ id: 'mira' }, { id: 'kessa' }]);
+  const early = (speaker: string | null): LiveQuotes => ({ text: NARRATION, quotes: [{ ...quotes[0], speaker }] });
+
+  it('reads the live quotes at each use, keeping one identity while speakers arrive', () => {
+    const live: LiveQuotes = { text: '', quotes: [] };
+    const source = liveQuoteSpeakers(live, COLORS);
+    live.text = NARRATION;
+    live.quotes = quotes;
+    expect(liveQuoteSpeakers(live, COLORS)).toBe(source);
+    expect([source.text, source.quotes]).toEqual([NARRATION, quotes]);
+  });
+
+  it('stands in for the reading until it lands', () => {
+    const live = early('mira');
+    expect(turnQuoteSpeakers(true, {}, COLORS, 't1', NARRATION, live)?.quotes).toEqual(live.quotes);
+    expect(turnQuoteSpeakers(false, {}, COLORS, 't1', NARRATION, live)).toBeUndefined();
+  });
+
+  it('marks only the quotes the reading colors differently, with their early color', () => {
+    expect(turnQuoteSpeakers(true, readings(NARRATION, 'kessa'), COLORS2, 't1', NARRATION, early('mira'))?.recolor)
+      .toEqual(new Map([['0:16', COLORS2.get('mira')]]));
+    const same = readings();
+    expect(turnQuoteSpeakers(true, same, COLORS2, 't1', NARRATION, early('mira')))
+      .toBe(turnQuoteSpeakers(true, same, COLORS2, 't1', NARRATION));
+  });
+
+  it('serializes a recolor change differently', () => {
+    const map = readings(NARRATION, 'kessa');
+    const json = (speaker: string | null) => JSON.stringify(turnQuoteSpeakers(true, map, COLORS2, 't1', NARRATION, early(speaker)));
+    expect(json('mira')).not.toBe(json(null));
+  });
+
+  it('fades a quote the early reading left uncolored from the dialogue color', () => {
+    expect(turnQuoteSpeakers(true, readings(), COLORS2, 't1', NARRATION, early(null))?.recolor?.get('0:16'))
+      .toBe('var(--dialogue-custom, hsl(var(--dialogue)))');
+  });
+});

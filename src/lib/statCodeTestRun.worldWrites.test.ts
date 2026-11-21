@@ -44,11 +44,18 @@ describe('runTestCode world writes', () => {
   });
 
   it('lists each memory line, pin and diary line', async () => {
-    const report = await run('memories.add("Tor lied."); memories.pin("The bridge is out."); entities.Tor.diary("I lied.");', {
+    const report = await run('memories.append("Tor lied."); memories.pin("The bridge is out."); entities.Tor.diary("I lied.");', {
       ...world, entities: [{ id: 'e-tor', name: 'Tor' }],
     });
     expect(report.error).toBeNull();
-    expect(report.writes).toEqual(['memories.add: Tor lied.', 'memories.pin: The bridge is out.', 'diary: Tor: I lied.']);
+    expect(report.writes).toEqual(['memories.append: Tor lied.', 'memories.pin: The bridge is out.', 'diary: Tor: I lied.']);
+  });
+
+  it('lists a named pin, and an edit or remove through an unknown memory name as dropped (Q12, Q25)', async () => {
+    const report = await run('memories.pin("Nursery", "Ash."); memories.Nursery.edit("Bree."); memories.Stable.remove(); return 0;');
+    expect(report.error).toBeNull();
+    expect(report.writes).toEqual(['memories.pin: Nursery: Ash.']);
+    expect(report.dropped).toEqual(['Unknown memory names. Writes ignored: memories["Nursery"], memories["Stable"].']);
   });
 
   it('lists each lore write as code spelled it, and an unknown entry as dropped', async () => {
@@ -93,7 +100,7 @@ describe('runTestCode world writes', () => {
   });
 
   it('reports no reply for a run given no arguments', async () => {
-    const report = await run('memories.add("Noted.");');
+    const report = await run('memories.append("Noted.");');
     expect(report.reply).toBeUndefined();
   });
 

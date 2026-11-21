@@ -5,11 +5,13 @@
  * the downscale-on-export pass does. Publishing never runs this: keeping a published world's images remote is
  * the point of linking them.
  */
-import type { Body, GalleryImage, World } from '@/types';
+import type { Body, GalleryImage, GalleryLink, World } from '@/types';
+import { isMediaRef } from './mediaList';
 import { IMAGE_CAPS, type ImageCap } from './imageOptim';
-import { entityImageData, entityImages } from './entityImages';
-import { locationImages } from './locationImages';
-import { mapImages, rewriteMapImages } from './mapBackground';
+import { entityImageData, galleryLinks } from './entityImages';
+import { locationLinks, rewriteMediaImages } from './mediaGallery';
+import { worldOptimizeTargets } from './mediaIndex';
+import { rewriteMapImages } from './mapBackground';
 import { isRemoteImage } from './imageBytes';
 import { fetchAsDataUrl } from './imageSource';
 
@@ -23,11 +25,17 @@ export interface EmbedFailure {
 export function remoteWorldImages(world: World): string[] {
   const urls: string[] = [];
   const thumb = world.worldOverview?.thumbnail;
-  if (isRemoteImage(thumb)) urls.push(thumb as string);
-  for (const e of world.entities ?? []) urls.push(...entityImageData(e).filter(isRemoteImage));
-  for (const l of world.locations ?? []) urls.push(...locationImages(l).map((img) => img.data).filter(isRemoteImage));
-  urls.push(...mapImages(world.worldOverview).map((img) => img.data).filter(isRemoteImage));
-  for (const b of world.bodies ?? []) if (b.backdrop.kind === 'image' && isRemoteImage(b.backdrop.image.data)) urls.push(b.backdrop.image.data);
+  if (typeof thumb === 'string' && isRemoteImage(thumb)) urls.push(thumb);
+  // A linked entry counts once, however many places link it.
+  const embeddedData = (links: GalleryLink[]) => links.flatMap((link) => (isMediaRef(link) ? [] : [link.data]));
+  for (const e of world.entities ?? []) urls.push(...embeddedData(galleryLinks(e)).filter(isRemoteImage));
+  for (const l of world.locations ?? []) urls.push(...embeddedData(locationLinks(l)).filter(isRemoteImage));
+  for (const entry of Object.values(world.worldOverview?.mediaList ?? {})) if (entry.kind === 'image' && isRemoteImage(entry.data)) urls.push(entry.data);
+  urls.push(...embeddedData(galleryLinks({ images: world.worldOverview?.mapBackground?.images })).filter(isRemoteImage));
+  for (const b of world.bodies ?? []) {
+    const data = b.backdrop.kind === 'image' && !isMediaRef(b.backdrop.image) ? b.backdrop.image.data : undefined;
+    if (data && isRemoteImage(data)) urls.push(data);
+  }
   return urls;
 }
 
@@ -78,23 +86,25 @@ export async function embedWorldRemoteImages(
     }
   };
 
-  const thumbnail = await embed(world.worldOverview?.thumbnail, IMAGE_CAPS.thumbnail);
+  const cover = world.worldOverview?.thumbnail;
+  const thumbnail = isMediaRef(cover) ? cover : await embed(cover, IMAGE_CAPS.thumbnail);
+  // Links keep their ids: their entries are embedded once, below.
+  const embedGallery = async (links: GalleryLink[], cap: ImageCap): Promise<GalleryLink[]> => {
+    const out: GalleryLink[] = [];
+    for (const link of links) out.push(isMediaRef(link) ? link : { ...link, data: (await embed(link.data, cap)) ?? link.data });
+    return out;
+  };
   const entities: World['entities'] = [];
-  for (const e of world.entities ?? []) {
-    const images: GalleryImage[] = [];
-    for (const img of entityImages(e)) images.push({ ...img, data: (await embed(img.data, IMAGE_CAPS.entity)) ?? img.data });
-    entities.push({ ...e, images });
-  }
+  for (const e of world.entities ?? []) entities.push({ ...e, images: await embedGallery(galleryLinks(e), IMAGE_CAPS.entity) });
   const locations: World['locations'] = [];
-  for (const l of world.locations ?? []) {
-    const images: GalleryImage[] = [];
-    for (const img of locationImages(l)) images.push({ ...img, data: (await embed(img.data, IMAGE_CAPS.background)) ?? img.data });
-    locations.push({ ...l, images });
-  }
+  for (const l of world.locations ?? []) locations.push({ ...l, images: await embedGallery(locationLinks(l), IMAGE_CAPS.background) });
+  const budgets = new Map(worldOptimizeTargets(world).entries.map((entry) => [entry.id, entry.budget]));
+  const mediaList = await rewriteMediaImages(world.worldOverview?.mediaList,
+    async (data, entry) => (await embed(data, budgets.get(entry.id) ?? IMAGE_CAPS.entity)) ?? data);
 
   const bodies: Body[] = [];
   for (const b of world.bodies ?? []) {
-    if (b.backdrop.kind !== 'image') { bodies.push(b); continue; }
+    if (b.backdrop.kind !== 'image' || isMediaRef(b.backdrop.image)) { bodies.push(b); continue; }
     const { image } = b.backdrop;
     bodies.push({ ...b, backdrop: { ...b.backdrop, image: { ...image, data: (await embed(image.data, IMAGE_CAPS.entity)) ?? image.data } } });
   }
@@ -108,6 +118,7 @@ export async function embedWorldRemoteImages(
         ...world.worldOverview,
         thumbnail: thumbnail ?? null,
         ...map,
+        ...(mediaList ? { mediaList } : {}),
       },
       entities,
       locations,

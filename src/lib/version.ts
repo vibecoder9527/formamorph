@@ -18,11 +18,15 @@ import { normalizeLinkedItem } from './contentLink';
 import { migrateStatLookups } from './statLookupMigration';
 import { migrateStatCodeRoutes } from './statCodeRoutes';
 import { migrateWorldScriptText } from './scriptTextMigration';
+import { migrateActionListKeys, migrateItemInstanceKeys, migrateMessageInstanceKeys, migrateSentActionKeys } from './itemInstanceKeys';
 import { migrateStatBoxes, migrateStatLinkBoxes, type OriginalOf } from './scripts';
 import { allPlaceholders, placeholderOwners, type PlaceholderHomesWorld } from './placeholderHomes';
 import { blueprintItemIds, offeredWorldTraits } from './traitTree';
 import { mergeDuplicateStatLinks, mergeStatBlueprintsGroups, statBlueprintIds } from './statLinks';
 import { firstRoutine } from './entityKind';
+import { migrateGalleriesToMediaList } from './mediaGallery';
+import { migrateOtherImagesToMediaList } from './mediaImages';
+import { migrateSoundsToMediaList } from './mediaSounds';
 
 /** Current app version, derived from package.json (see vite.config.js `define`). User-managed. */
 export const APP_VERSION = __APP_VERSION__;
@@ -894,7 +898,7 @@ function migrateStatScripts(world: Record<string, unknown>): void {
  * Bring an imported world up to the current format and stamp it with `APP_VERSION`. The dictionary→books
  * fold, the keyword-array migration, the entity- and location-gallery folds, the entity-location flip, the
  * connection-record pair-merge, the Connection-leg conversion, the start-flag rename, the placeholder value-record conversion, the
- * opening-cue move, the player-setting split, the requirement-row wrap, the global-scope rewrite, the entity-stat shape guard, the stat-group shape guard, the content-link guard, the code-box-to-scripts rewrite, the stat-code route rewrite, the persona start-location drop, the legacy player-Avatar move and the stat-binding object form run unconditionally (they aren't version-gated — see `foldDictionaryIntoBooks`); the
+ * opening-cue move, the player-setting split, the requirement-row wrap, the global-scope rewrite, the entity-stat shape guard, the stat-group shape guard, the content-link guard, the code-box-to-scripts rewrite, the stat-code route rewrite, the persona start-location drop, the legacy player-Avatar move, the stat-binding object form and the gallery move into the Media List run unconditionally (they aren't version-gated — see `foldDictionaryIntoBooks`); the
  * rest is skipped for a world already at `APP_VERSION`. Auto-binds legacy body stats to morphs,
  * and renames v1.2 description keys on entities/locations/traits to the audience-based keys. Remaining field defaults are left to `loadWorldData`. Add further 2.0 → 2.x steps here when the shape changes — a version
  * bump is the user's call (see the export-shape-versioning note); shipped worlds are only reshaped through
@@ -926,6 +930,9 @@ export function migrateWorld(raw: unknown): World {
   migrateWorldScriptText(world);
   migrateLegacyPlayerAvatar(world);
   migrateWorldMorphBindings(world);
+  migrateGalleriesToMediaList(world);
+  migrateOtherImagesToMediaList(world);
+  migrateSoundsToMediaList(world);
   if (world.version === APP_VERSION) return world as unknown as World;
 
   if (Array.isArray(world.stats)) {
@@ -1057,6 +1064,8 @@ function migrateBodyMorphs(state: GameState): GameState {
  *      `globalTraits`, and the cascade-off and applied-value maps split into global and owners parts.
  *   6. Scripts (presence-based, every snapshot): each saved stat's two code boxes become scripts.
  *   7. Stat bindings (presence-based, every snapshot): each saved stat's bare binding names become `{ name }`.
+ *   8. Item Instance keys (presence-based, every snapshot and message): `itemCopies`, `copyId` and `targetCopyId`
+ *      become `itemInstances`, `instanceId` and `targetInstanceId`, in the Action List and saved Tool writes too.
  * The appended current page stays `=== currentState`, so `gameStates[page - 1]` resolves the current page
  * identically. Pure — callers decide whether to persist the result (import) or just load it (load).
  */
@@ -1092,9 +1101,9 @@ export function migrateSave(save: SaveObject): SaveObject {
   const migratedCurrent = isLegacy ? migrateLegacySaveState(save.currentState) : save.currentState;
   const migratedHistory = isLegacy ? save.stateHistory.map(migrateLegacySaveState) : save.stateHistory;
   // Canonical flat history: an already-hoisted top-level copy, else the current snapshot's own copy.
-  const messageHistory = save.messageHistory ?? migratedCurrent.fullMessageHistory ?? [];
+  const messageHistory = (save.messageHistory ?? migratedCurrent.fullMessageHistory ?? []).map(migrateMessageInstanceKeys);
   const normalizeSnapshot = (s: GameState) =>
-    migrateSnapshotMorphBindings(migrateSnapshotScripts(migrateBodyMorphs(migrateDefaultAvatarId(migrateGlobalFields(s)))));
+    migrateItemInstanceKeys(migrateSnapshotMorphBindings(migrateSnapshotScripts(migrateBodyMorphs(migrateDefaultAvatarId(migrateGlobalFields(s))))));
   const currentState = normalizeSnapshot(stripSnapshotHistory(migratedCurrent));
   const history = isLegacy
     ? appendCurrentToHistory(migratedHistory.map(stripSnapshotHistory), currentState)
@@ -1106,11 +1115,15 @@ export function migrateSave(save: SaveObject): SaveObject {
     ...book,
     entries: (book.entries ?? []).map(migrateEntryKeys),
   }));
+  const actionList = migrateActionListKeys(save.actionList);
+  const sentActions = migrateSentActionKeys(save.sentActions);
   return {
     ...save,
     currentState,
     stateHistory,
     messageHistory,
+    ...(actionList ? { actionList } : {}),
+    ...(sentActions ? { sentActions } : {}),
     ...(dictionaries ? { dictionaries } : {}),
     version: isLegacy ? APP_VERSION : save.version,
   };

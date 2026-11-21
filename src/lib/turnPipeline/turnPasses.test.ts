@@ -391,7 +391,7 @@ describe('turn pass requests', () => {
     describe('told panel actions', () => {
       const potion = { key: 'potion', name: 'Healing Potion' };
       const told: TurnPlanInput['toldActions'] = [
-        { facts: { kind: 'use', item: potion, copyId: 'c1' }, count: 2 },
+        { facts: { kind: 'use', item: potion, instanceId: 'c1' }, count: 2 },
         { facts: { kind: 'give', item: { key: 'coin', name: 'Coin' }, quantity: 3, to: { id: 'bram', name: 'Bram' } }, count: 1 },
       ];
 
@@ -1122,7 +1122,7 @@ describe('Strip Links And Images at the request', () => {
 describe('the Inventory pass', () => {
   const due = { inventoryDue: true };
 
-  it('is due only in a world with items or Item Copies (Q37)', () => {
+  it('is due only in a world with items or Item Instances (Q37)', () => {
     expect(planTurn(input()).passes.map((p) => p.id)).not.toContain('inventory');
     expect(planTurn(input({}, due)).passes.map((p) => p.id)).toContain('inventory');
   });

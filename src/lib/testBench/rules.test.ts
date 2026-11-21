@@ -21,6 +21,8 @@ import { scriptEntryKey } from '@/lib/worldScripts';
 import { routinePlaces, startsOf, applyingRoutine } from '@/lib/entityKind';
 import { PLAYER_START, type EntityStart, type ScheduleRow } from '@/types';
 import { oneRoutine } from '@/test/routines';
+import { entityImages } from '@/lib/entityImages';
+import { coverData } from '@/lib/mediaImages';
 
 /** A described entity at the starting location — what keeps the completeness rules quiet about a fixture
  *  that is about something else entirely. */
@@ -547,6 +549,36 @@ describe('reference-integrity rules', () => {
     it('flags every name when the world has no Bodies', () => {
       const none = base({ stats: [stat({ id: 's1', name: 'Mana', scripts: boxScripts({ after: 'persona.body = "Wolf";' }) })] });
       expect(only(none, 'script-unknown-body')).toHaveLength(1);
+    });
+  });
+
+  describe('a script naming a Media Entry', () => {
+    const mediaWorld = (code: string, names: string[] = ['Wounded']) => {
+      const world = base({ stats: [stat({ id: 's1', name: 'Mana', scripts: boxScripts({ after: code }) })] });
+      const mediaList = Object.fromEntries(names.map((name, i) => [`m${i}`, { id: `m${i}`, name, kind: 'image' as const, data: 'data:image/webp;base64,AA==' }]));
+      return { ...world, worldOverview: { ...world.worldOverview, mediaList } };
+    };
+
+    it('flags a name the list lacks, once, naming it', () => {
+      const found = only(mediaWorld('entities.Rex.image = "Woundd"; if (persona.image === "Woundd") {}'), 'script-unknown-media');
+      expect(found).toHaveLength(1);
+      expect(found[0].severity).toBe('warning');
+      expect(found[0].message).toContain('“Woundd”');
+      expect(found[0].items.map((i) => i.id)).toEqual(['s1']);
+    });
+
+    it('reads a comparison on either side and a branch no run reaches', () => {
+      expect(only(mediaWorld('if (false) { if ("Gone" != location.image) {} }'), 'script-unknown-media')).toHaveLength(1);
+    });
+
+    it('stays quiet on a real name, a computed name, and a literal beside no media member', () => {
+      expect(only(mediaWorld('entities.Rex.image = "Wounded"; world.music = pick; persona.image = `Wo${1}`;'), 'script-unknown-media')).toEqual([]);
+      expect(only(mediaWorld('const o = { image: "x" }; o.image = "Nope"; persona.name = "Nope"; stats.Mana.image = "x";'), 'script-unknown-media')).toEqual([]);
+    });
+
+    it('flags every name when the world has no list', () => {
+      expect(only(base({ stats: [stat({ id: 's1', name: 'Mana', scripts: boxScripts({ after: 'persona.image = "Wounded";' }) })] }), 'script-unknown-media'))
+        .toHaveLength(1);
     });
   });
 
@@ -1773,6 +1805,16 @@ describe('the unused-placeholder rule', () => {
     expect(only(w, 'placeholder-pinned-unused').map((f) => f.items.map((i) => i.id))).toEqual([['p1', 't1']]);
   });
 
+  it.each(['strangerName', 'strangerDescription'] as const)('counts a trait-pinned chip placed only in %s as a use', (field) => {
+    const w = base({
+      placeholders: [{ id: 'p1', name: 'Guise', values: phValues(['a hooded figure', 'a lizard']) }],
+      traits: [trait({ id: 't1', name: 'Seen', placeholderPins: [{ placeholderId: 'p1', value: 'a lizard' }] })],
+      entities: [resident, { id: 'e2', name: 'Mimi', [field]: '{{ph:p1:world:pl1}}' }],
+    });
+    expect(only(w, 'placeholder-pinned-unused')).toEqual([]);
+    expect(only(w, 'placeholder-unused')).toEqual([]);
+  });
+
   it('counts a chip in a stat description as a use', () => {
     const w = base({
       placeholders: [{ id: 'p1', name: 'Vice', values: phValues(['ale']) }],
@@ -2825,29 +2867,36 @@ describe('trait gate rules', () => {
       const rule = 'trait-gate-reads-own-stat';
       const gate = atLeast('rage', 80);
 
+      const regen = { statChanges: [{ statId: 'rage', value: -5, type: 'regen' as const }] };
+
+      it('fires for a regen change', () => {
+        const found = only(gates([berserk(gate, regen)], { stats: [rage] }), rule);
+        expect(ids(found)).toEqual([['berserk']]);
+        expect(found[0].message).toBe('“BERSERK” requires “Rage” and changes the Regen of “Rage”. Its own Regen can switch it off. Base the requirement on another stat.');
+      });
+
+      // The gate leaves the trait's own rows out (Q32), so only regen can still move the value it reads.
       it.each([
         ['a value change', { statChanges: [{ statId: 'rage', value: 5 }] }],
         ['a max change', { statChanges: [{ statId: 'rage', value: 20, type: 'max' as const }] }],
         ['a stat toggle', { statToggles: [{ statId: 'rage', enabled: true }] }],
-      ])('fires for %s', (_, effect) => {
-        const found = only(gates([berserk(gate, effect)], { stats: [rage] }), rule);
-        expect(ids(found)).toEqual([['berserk']]);
-        expect(found[0].message).toBe('“BERSERK” requires “Rage” and changes “Rage”, so its own effect can turn the requirement off. Base the requirement on another stat.');
+      ])('stays silent for %s', (_, effect) => {
+        expect(only(gates([berserk(gate, effect)], { stats: [rage] }), rule)).toEqual([]);
       });
 
       it('stays silent when the trait changes another stat, or no gate reads the stat', () => {
         const calm = stat({ id: 'calm', name: 'Calm' });
-        expect(only(gates([berserk(gate, { statChanges: [{ statId: 'calm', value: 5 }] })], { stats: [rage, calm] }), rule)).toEqual([]);
-        expect(only(gates([trait({ id: 'plain', name: 'Plain', statChanges: [{ statId: 'rage', value: 5 }] })], { stats: [rage] }), rule)).toEqual([]);
+        expect(only(gates([berserk(gate, { statChanges: [{ statId: 'calm', value: -5, type: 'regen' }] })], { stats: [rage, calm] }), rule)).toEqual([]);
+        expect(only(gates([trait({ id: 'plain', name: 'Plain', ...regen })], { stats: [rage] }), rule)).toEqual([]);
       });
 
       it('reports one stat once however many Conditions read it', () => {
-        const twice = rowed('berserk', [{ all: [gate] }, { all: [atLeast('rage', 60)] }], { statChanges: [{ statId: 'rage', value: 5 }] });
+        const twice = rowed('berserk', [{ all: [gate] }, { all: [atLeast('rage', 60)] }], regen);
         expect(only(gates([twice], { stats: [rage] }), rule)).toHaveLength(1);
       });
 
       it('reads a trait an entity owns', () => {
-        const owner: Entity = { ...resident, id: 'ash', name: 'Ash', stats: [rage], traits: [berserk(gate, { statChanges: [{ statId: 'rage', value: 5 }] })] };
+        const owner: Entity = { ...resident, id: 'ash', name: 'Ash', stats: [rage], traits: [berserk(gate, regen)] };
         expect(ids(only(gates([], { entities: [resident, owner] }), rule))).toEqual([['berserk']]);
       });
     });
@@ -2893,7 +2942,7 @@ describe('trait gate rules', () => {
       const onBree = { kind: 'entity' as const, id: 'bree' };
 
       it('reads the stat of the owner the Condition names, not another owner’s with the same id', () => {
-        const effect = { statChanges: [{ statId: 'rage', value: 5 }] };
+        const effect = { statChanges: [{ statId: 'rage', value: -5, type: 'regen' as const }] };
         const ash = (req: StatRequirement): Entity => ({ ...resident, id: 'ash', name: 'Ash', stats: [rage], traits: [berserk(req, effect)] });
         const rule = 'trait-gate-reads-own-stat';
         // Ash's trait changes Ash's Rage; the Condition reads Bree's.
@@ -2919,7 +2968,7 @@ describe('trait gate rules', () => {
 
       it('reports a link only for a Condition its own override adds', () => {
         const rule = 'trait-gate-reads-own-stat';
-        const smite = trait({ id: 'smite', name: 'Smite', groupId: 'blueprints', statChanges: [{ statId: 'rage', value: 5 }] });
+        const smite = trait({ id: 'smite', name: 'Smite', groupId: 'blueprints', statChanges: [{ statId: 'rage', value: -5, type: 'regen' }] });
         const link = (overrides?: TraitLink['overrides']): TraitLink =>
           ({ id: 'l-smite', originalId: 'smite', kind: 'trait', originalName: 'Smite', groupId: null, ...(overrides ? { overrides } : {}) });
         const w = (traitLink: TraitLink) => gates([smite], {
@@ -2929,7 +2978,7 @@ describe('trait gate rules', () => {
         const gate = { smite: { requires: { value: [{ all: [atLeast('rage', 80)] }], blueprint: [] } } };
         const found = only(w(link(gate)), rule);
         expect(found.map((f) => f.message)).toEqual([
-          '“Smite” on “Bree” requires “Rage” and changes “Rage”, so its own effect can turn the requirement off. Base the requirement on another stat.',
+          '“Smite” on “Bree” requires “Rage” and changes the Regen of “Rage”. Its own Regen can switch it off. Base the requirement on another stat.',
         ]);
         expect(ids(found)).toEqual([['l-smite']]);
         expect(only(w(link()), rule)).toEqual([]);
@@ -3335,6 +3384,23 @@ describe('trait gate rules', () => {
       // Fixing the dead target opens the prerequisite, and it is a default, so the dependent starts selected.
       const w = gates([gated('t', needs('gone'), def), gated('u', needs('t'), def)]);
       expect(only(w, rule)).toEqual([]);
+    });
+
+    describe('stat Conditions read the stats a new game starts with (Q26, Q36)', () => {
+      const luck = stat({ id: 'luck', name: 'Luck', min: 0, max: 10, starting: 0 });
+      const needsLuck = (value: number): TraitRequirement =>
+        ({ kind: 'stat', id: 'luck', operator: '>=', value, unit: 'raw' });
+      const blessed = trait({ id: 'blessed', name: 'Blessed', ...def, statChanges: [{ statId: 'luck', type: 'starting', value: 3 }] });
+
+      it('passes a default that another default’s stat row opens', () => {
+        const w = gates([blessed, gated('lucky', [needsLuck(3)], def)], { stats: [luck] });
+        expect(only(w, rule)).toEqual([]);
+      });
+
+      it('still flags a default whose gate fails with every pick’s rows', () => {
+        const w = gates([blessed, gated('lucky', [needsLuck(4)], def)], { stats: [luck] });
+        expect(ids(only(w, rule))).toEqual([['lucky']]);
+      });
     });
 
     describe('per owner', () => {
@@ -5016,17 +5082,17 @@ describe('the mislabeled-image rule', () => {
     expect(only(flagged, 'image-mislabeled')[0].items[0]).toMatchObject({ id: 'lantern', section: 'items' });
 
     const fixed = applyRuleFix(flagged, 'image-mislabeled');
-    expect(fixed.items?.[0].images?.[0].data.startsWith('data:image/jpeg;')).toBe(true);
+    expect(entityImages(fixed.items?.[0])[0]?.data.startsWith('data:image/jpeg;')).toBe(true);
     expect(fixed.items?.[0].images?.[0].requires).toEqual(MAREN_RULE);
     expect(only(fixed, 'image-mislabeled')).toEqual([]);
   });
 
   it('Fix relabels the thumbnail, a gallery image and a background in one pass', () => {
     const fixed = applyRuleFix(lying(), 'image-mislabeled');
-    expect(fixed.worldOverview?.thumbnail?.startsWith('data:image/jpeg;')).toBe(true);
-    expect(fixed.entities?.[0].images?.[0].data.startsWith('data:image/png;')).toBe(true);
+    expect(coverData(fixed.worldOverview)?.startsWith('data:image/jpeg;')).toBe(true);
+    expect(entityImages(fixed.entities?.[0])[0]?.data.startsWith('data:image/png;')).toBe(true);
     expect(fixed.entities?.[0].images?.[0].requires).toEqual(MAREN_RULE);
-    expect(fixed.locations?.[0].images?.[0].data.startsWith('data:image/jpeg;')).toBe(true);
+    expect(entityImages(fixed.locations?.[0])[0]?.data.startsWith('data:image/jpeg;')).toBe(true);
     expect(only(fixed, 'image-mislabeled')).toEqual([]);
   });
 
@@ -5438,6 +5504,7 @@ const RULE_SCOPE: Record<string, 'simple' | 'advanced'> = {
   'script-overrides-trait': 'advanced',
   'script-unknown-stat': 'advanced',
   'script-unknown-body': 'advanced',
+  'script-unknown-media': 'advanced',
   'script-unknown-blueprint-owner-stat': 'advanced',
   'script-before-reads-delta': 'advanced',
   'script-two-writers': 'advanced',

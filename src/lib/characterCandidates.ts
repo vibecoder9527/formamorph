@@ -12,7 +12,11 @@
  * yields no candidates, which is exactly the pre-feature behavior.
  */
 
-import { SELF_INTRO_BEFORE, isEverydayName, sameCharacterName, stripQuotedSpeech } from './entityMatch';
+import { SELF_INTRO_BEFORE, isEverydayName, sameCharacterName, sameNameSpelling, stripQuotedSpeech } from './entityMatch';
+import { quoteSpeakingClusters } from './coref/mentionReading';
+import type { CorefCluster } from './coref/corefHost';
+import { parseKeywords } from './dictionaryUtils';
+import type { DictionaryEntry, Entity, Placeholder } from '@/types';
 
 /** Mid-sentence uses (accumulated across turns) before an untitled name counts as a character.
  *  Sentence-initial uses are ignored because every sentence opener is capitalized: measured over
@@ -110,6 +114,53 @@ export interface CandidateExclusions {
   terms?: string[];
   /** Names the player deleted. Treated like characters, so a deletion also covers fuller forms. */
   suppressed?: string[];
+}
+
+/** What `entities` add to the exclusions: names and aliases as people; Stranger Names as terms, since their
+ *  last word is a role ("Keeper"), not a surname. */
+export function entityExclusions(
+  entities: readonly Pick<Entity, 'name' | 'aliases' | 'strangerName'>[],
+): Required<Pick<CandidateExclusions, 'characters' | 'terms'>> {
+  const clean = (xs: readonly (string | undefined)[]) => xs.map((n) => (n ?? '').trim()).filter(Boolean);
+  return {
+    characters: clean(entities.flatMap((e) => [e.name, ...(e.aliases ?? [])])),
+    terms: clean(entities.map((e) => e.strangerName)),
+  };
+}
+
+export interface WorldNameSources {
+  /** Names already resolved, so an entity named by a placeholder arrives as its rolled value. */
+  entities: readonly Pick<Entity, 'name' | 'aliases' | 'strangerName'>[];
+  playerNames: readonly string[];
+  locations: readonly { name: string }[];
+  stats: readonly { name: string }[];
+  traits: readonly { name: string }[];
+  dictionary: readonly DictionaryEntry[];
+  placeholders: readonly Pick<Placeholder, 'name' | 'values'>[];
+  playerNotes: string;
+}
+
+/**
+ * Everything in the world a capitalized narration word might be other than a new character. A placeholder's
+ * values are absent: a rolled name ("Cinder") is someone the narration may introduce.
+ */
+export function worldNameExclusions(world: WorldNameSources): Required<Pick<CandidateExclusions, 'characters' | 'terms'>> {
+  const clean = (xs: readonly (string | undefined)[]) => xs.map((n) => (n ?? '').trim()).filter(Boolean);
+  const cast = entityExclusions(world.entities);
+  return {
+    // The persona is a person the narration names, so it takes the surname rule too.
+    characters: [...cast.characters, ...clean(world.playerNames)],
+    terms: clean([
+      ...cast.terms,
+      ...world.locations.map((l) => l.name),
+      ...world.stats.map((s) => s.name),
+      ...world.traits.map((t) => t.name),
+      ...world.dictionary.flatMap((entry) => [entry.name, ...parseKeywords(entry)]),
+      ...world.placeholders.map((p) => p.name),
+      // The player's name lives in free-text notes, so every capitalized run there is off-limits.
+      ...(world.playerNotes.match(/\b[A-Z][A-Za-z'’-]+/g) ?? []),
+    ]),
+  };
 }
 
 /** One name's evidence within the scanned text. */
@@ -305,10 +356,24 @@ export function extractCharacterCandidates(
   exclusions: CandidateExclusions,
   priorEvidence?: Map<string, CandidateEvidence>,
 ): string[] {
-  const evidence = mergeCandidateEvidence(
-    priorEvidence ? mergeCandidateEvidence(new Map(), priorEvidence) : new Map(),
-    collectCandidateEvidence(text),
-  );
+  const evidence = tallyWith(priorEvidence, text);
+  const isBlocked = exclusionCheck(exclusions);
+  const out: string[] = [];
+  for (const record of evidence.values()) {
+    if (!qualifiesAsCharacter(record)) continue;
+    if (isBlocked(record.name)) continue;
+    out.push(record.name);
+  }
+  return out;
+}
+
+/** A copy of `prior` with `text`'s evidence merged in. */
+function tallyWith(prior: Map<string, CandidateEvidence> | undefined, text: string): Map<string, CandidateEvidence> {
+  return mergeCandidateEvidence(prior ? mergeCandidateEvidence(new Map(), prior) : new Map(), collectCandidateEvidence(text));
+}
+
+/** Whether an exclusion blocks a name. */
+function exclusionCheck(exclusions: CandidateExclusions): (name: string) => boolean {
   const people = [...(exclusions.characters ?? []), ...(exclusions.suppressed ?? [])].filter(Boolean);
   const blocked = [...people, ...(exclusions.terms ?? [])].filter(Boolean);
   // Surname collision, PEOPLE ONLY: `sameCharacterName` compares word SETS as a subset, so a
@@ -326,12 +391,108 @@ export function extractCharacterCandidates(
   // cast member is not.
   const lastWord = (n: string) => n.trim().toLowerCase().split(/\s+/).pop() ?? '';
   const blockedSurnames = new Set(people.map(lastWord).filter((w) => w.length > 1));
-  const out: string[] = [];
-  for (const record of evidence.values()) {
-    if (!qualifiesAsCharacter(record)) continue;
-    if (blocked.some((term) => sameCharacterName(record.name, term))) continue;
-    if (blockedSurnames.has(lastWord(record.name))) continue;
-    out.push(record.name);
+  return (name) => blocked.some((term) => sameCharacterName(name, term)) || blockedSurnames.has(lastWord(name));
+}
+
+/** Pronouns that mark a coref cluster as a person (Q73). "They" is absent: the model is weak on singular they. */
+const PERSON_PRONOUNS = new Set(['he', 'she', 'him', 'her', 'his', 'hers', 'himself', 'herself']);
+
+/** The capitalized run a mention span ends on: "the tall Anthro Mienshao" names `Anthro Mienshao`. */
+function spanName(span: string): string | undefined {
+  const head = span.trim().replace(/['’]s$/i, '').replace(/[^A-Za-z]+$/, '');
+  const lastWord = head.split(/\s+/).pop()?.toLowerCase();
+  if (!lastWord) return undefined;
+  return [...scanRuns(span).keys()].find((name) => name.split(/\s+/).pop()?.toLowerCase() === lastWord);
+}
+
+/** What a turn's clusters qualify: the names, and each pooled spelling's link to the name it counted under. */
+export interface ClusterCandidates {
+  names: string[];
+  /** Spelling → name, from every cluster that qualified a name. */
+  links: Map<string, string>;
+}
+
+/**
+ * Character names a turn's coref clusters qualify (Q73). Only a cluster a speech verb ties to a quote on
+ * this page proposes a name. A capitalized run that shares a cluster with a he/she pronoun counts as a
+ * person, and the runs in one cluster that spell one name (Q76) pool their uses under the most-used spelling
+ * no exclusion blocks, ties to the first in the text. Different names in one cluster stay apart. A spelling an earlier turn pooled keeps that turn's name in `priorLinks`,
+ * and is blocked with it. A cluster that holds a known character adds nothing. Evidence only adds: a name
+ * the name rule finds stays found.
+ *
+ * `narration` is the full text the clusters index into; uses are counted on its prose, as
+ * `extractCharacterCandidates` counts them. `priorEvidence` gives the earlier turns' tally when needed.
+ */
+export function clusterCandidates(
+  narration: string,
+  clusters: readonly CorefCluster[],
+  exclusions: CandidateExclusions,
+  priorEvidence?: () => Map<string, CandidateEvidence>,
+  priorLinks: ReadonlyMap<string, string> = new Map(),
+): ClusterCandidates {
+  const excluded = exclusionCheck(exclusions);
+  const knownPerson = exclusionCheck({ ...exclusions, terms: [] });
+  // A known character's spelling, or one an earlier turn linked to an excluded name, makes the cluster someone known.
+  const isKnown = (name: string) => {
+    const link = priorLinks.get(name);
+    return knownPerson(name) || (link !== undefined && excluded(link));
+  };
+  const read = clusters.map((cluster, index) => {
+    const spans = [...cluster].sort((a, b) => a[0] - b[0]).map(([start, end]) => narration.slice(start, end));
+    return {
+      index,
+      gendered: spans.some((span) => PERSON_PRONOUNS.has(span.trim().toLowerCase())),
+      names: [...new Set(spans.map(spanName).filter((name): name is string => !!name))],
+    };
+  });
+  const found: ClusterCandidates = { names: [], links: new Map() };
+  // Most clusters name someone already known, so the tally is only built when one may not.
+  if (!read.some(({ names }) => names.some((name) => !excluded(name)) && !names.some(isKnown))) return found;
+  const evidence = tallyWith(priorEvidence?.(), stripQuotedSpeech(narration));
+  const speaking = quoteSpeakingClusters(narration, clusters);
+  for (const { index, gendered, names } of read) {
+    if (!speaking.has(index)) continue;
+    if (names.some(isKnown)) continue;
+    for (const group of spellingGroups(names, evidence)) {
+      const linked = group.map((name) => priorLinks.get(name))
+        .find((name) => name !== undefined && spellsAll(name, group));
+      const spellings = linked && !group.includes(linked) ? [...group, linked] : group;
+      const records = spellings.flatMap((name) => evidence.get(name) ?? []);
+      const eligible = records.filter((record) => !excluded(record.name));
+      if (!eligible.length) continue;
+      const named = linked ?? eligible.reduce((best, record) => (record.total > best.total ? record : best)).name;
+      const pooled: CandidateEvidence = {
+        name: named,
+        mid: records.reduce((sum, record) => sum + record.mid, 0),
+        total: records.reduce((sum, record) => sum + record.total, 0),
+        titled: records.some((record) => record.titled),
+        person: gendered || records.some((record) => record.person),
+        inProse: records.some((record) => record.inProse),
+        bodied: records.some((record) => record.bodied),
+        introduced: records.some((record) => record.introduced),
+      };
+      if (!qualifiesAsCharacter(pooled)) continue;
+      if (!found.names.includes(named)) found.names.push(named);
+      for (const spelling of spellings) found.links.set(spelling, named);
+    }
   }
-  return out;
+  return found;
+}
+
+/** Whether `name` spells every name in `group` (Q76). */
+const spellsAll = (name: string, group: readonly string[]) => group.every((member) => sameNameSpelling(name, member));
+
+/**
+ * A cluster's names split into spellings of one name (Q76), most-used first, ties in text order. Each name joins
+ * the first group it spells every member of, so a name two others share ("Smith") never chains them together.
+ */
+function spellingGroups(names: readonly string[], evidence: ReadonlyMap<string, CandidateEvidence>): string[][] {
+  const used = (name: string) => evidence.get(name)?.total ?? 0;
+  const groups: string[][] = [];
+  for (const name of [...names].sort((a, b) => used(b) - used(a))) {
+    const group = groups.find((members) => spellsAll(name, members));
+    if (group) group.push(name);
+    else groups.push([name]);
+  }
+  return groups;
 }

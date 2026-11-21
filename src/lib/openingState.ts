@@ -2,9 +2,9 @@
  * The opening fold: the state a new game opens with, built from the authored world, the entry step's picks
  * and the persona. Enter World, the Test Bench's opening instrument and the editors' Script runs all read it.
  */
-import { entityStatOwners, seedEntityStats, statOwnerEntities } from './entityStats';
+import { entityStatOwners, statOwnerEntities } from './entityStats';
+import { seedEntityStats } from './entityStatSeed';
 import { inPlayLibrary, inPlayOwners } from './ownedTraitsInPlay';
-import { ownedTraitStatesFrom } from './ownedTraitState';
 import { allPlaceholders, placeholderOwners } from './placeholderHomes';
 import { startsMet } from './presence';
 import { positionedCast } from './entityPresence';
@@ -17,15 +17,16 @@ import type { UnitHome } from './sandboxSnapshot';
 import { atStartValues, statStartValue } from './statDescriptorGeometry';
 import { activeStatEnabled, inAuthoredOrder, traitOrderIndex } from './traitEffects';
 import {
-  acquireTrait, applyGlobalRowTraits, applyOwnedStatTraits, entityStatTraitsInForce, gateStatsOf, heldGlobalTraits,
-  seedNewGameStats, statTraitsInForce, traitGateInput, type TraitRuntimeState, type TraitWorld,
+  entityStatTraitsInForce, gateStatsOf, heldGlobalTraits, startingTraitState, statTraitsInForce, traitGateInput,
+  type TraitRuntimeState, type TraitWorld,
 } from './traitRuntime';
 import type { GateInput } from './traitGates';
 import { daypartAt } from './gameClock';
 import { gatePick } from './inPlayGates';
 import type { PersonaPick } from './persona';
-import { equipRequirement, settleInventory, startingCopies, type NewId } from './inventory';
+import { equipRequirement, settleInventory, startingInstances, type NewId } from './inventory';
 import { randomUUID } from './uuid';
+import { genericInstancesOf, sandboxMediaOf } from './sandboxMedia';
 import type { OwnerId } from './scope';
 import { resolveEntityText, type PlaceholderMode } from './placeholders';
 import type {
@@ -77,7 +78,7 @@ export interface OpeningFold {
   startingTraits: { trait: Trait; ownerId: OwnerId }[];
   /** The trait slice as play's trait state holds it. */
   traitState: TraitRuntimeState;
-  /** What the seeded Item Copies' effects applied, for the ledger, and the start log with names unresolved. */
+  /** What the seeded Item Instances' effects applied, for the ledger, and the start log with names unresolved. */
   itemEffects: { ledger: ItemEffectLedger; log: string[] };
   /** Which Body-setting traits opened on, in order. */
   bodies: BodyRuntime;
@@ -93,7 +94,7 @@ function turnOneText(placeholders: Placeholder[]): ResolveText {
 }
 
 /** The state a new game opens with. Pure: the same inputs give the same state, its unrolled chips and its
- *  Item Copy ids aside. */
+ *  Item Instance ids aside. */
 export function openingFold(
   world: OpeningFoldWorld, picks: OpeningPicks = NO_OPENING_PICKS, persona?: OpeningPersona, newId: NewId = randomUUID,
 ): OpeningFold {
@@ -103,10 +104,10 @@ export function openingFold(
   const { stats: authored, entities } = playStatWorld({ stats: world.stats ?? [], statGroups: world.statGroups ?? [], entities: world.entities ?? [] });
   const ownerWorld = { traits, traitGroups, entities };
   const library = inPlayLibrary(ownerWorld, persona?.libraryEntity, persona?.characters ?? []);
-  const startWorld = { ...world, entities };
+  const startWorld = { ...world, entities, ...(picks.options ? { optionValues: picks.options } : {}) };
   // The trait picks read the start as Enter World showed it: equipped, before any requirement check (Q51).
   const traitWorld: TraitWorld = {
-    traits, groups: traitGroups, entities, persona: ref, items: world.items ?? [], itemCopies: startingCopies(startWorld, ref, newId),
+    traits, groups: traitGroups, entities, persona: ref, items: world.items ?? [], itemInstances: startingInstances(startWorld, ref, newId),
     options: world.options ?? [], ...(picks.options ? { optionValues: picks.options } : {}),
     ...inPlayOwners(ownerWorld, ref, library),
   };
@@ -116,24 +117,19 @@ export function openingFold(
   const held = inAuthoredOrder(
     heldGlobalTraits(traits.filter((t) => chosen.has(t.id)), traitWorld), traitOrderIndex(traits, traitGroups),
   );
-  let traitState: TraitRuntimeState = { stats: seedNewGameStats(authored), traits: [], disabledTraitIds: [], appliedValues: {} };
-  for (const trait of held) traitState = acquireTrait(traitState, trait, { traits, groups: traitGroups }).state;
-  // Every entity's global rows apply after the world picks; then each entity's own traits apply to its stats.
   const statEntities = statOwnerEntities({ world: entities, library });
-  const rows = applyGlobalRowTraits({
-    ...traitState, ownedTraits: ownedTraitStatesFrom(picks.owned), entityStats: seedEntityStats(statEntities),
-  }, traitWorld);
-  traitState = applyOwnedStatTraits(rows.state, traitWorld);
+  const opening = startingTraitState(authored, held, traitWorld, picks.owned, seedEntityStats(statEntities));
+  let traitState = opening.state;
   // A starting equip that fails its requirement stays carried; none logs, and no script fires (Q37, Q50).
   const settleWorld = { items: world.items ?? [], traits: traitWorld, persona: ref, entities, quietUnequips: true };
-  const itemCopies = startingCopies(startWorld, ref, newId, equipRequirement({ traits: traitState, ledger: undefined }, settleWorld));
-  // Seeded Item Copies apply their effects, On First Obtain included (Q59).
+  const itemInstances = startingInstances(startWorld, ref, newId, equipRequirement({ traits: traitState, ledger: undefined }, settleWorld));
+  // Seeded Item Instances apply their effects, On First Obtain included (Q59).
   const items = settleInventory(
-    { copies: itemCopies, traits: traitState, ledger: undefined },
+    { instances: itemInstances, traits: traitState, ledger: undefined },
     { ...settleWorld, bodies: { bodies: world.bodies, slots: world.slots, entities: [...entities, ...library] } },
   );
   traitState = items.traits;
-  const playWorld: TraitWorld = { ...traitWorld, itemCopies: [...items.copies] };
+  const playWorld: TraitWorld = { ...traitWorld, itemInstances: [...items.instances] };
   const entityStats = traitState.entityStats ?? {};
   const ownedTraits = traitState.ownedTraits ?? {};
 
@@ -158,12 +154,16 @@ export function openingFold(
     places: { locations, location: start && { id: start.id, name: start.name }, connections: world.connections ?? [] },
     resolveText: turnOneText(allPlaceholders(world)),
     clock: { deltaHours: 0, elapsedHours: 0 },
-    itemCopies: playWorld.itemCopies,
+    itemInstances: playWorld.itemInstances,
     items: world.items ?? [],
     slots: world.slots ?? [],
     ...(world.currencies?.length ? { money: { currencies: world.currencies, placements: world.placements ?? [] } } : {}),
+    media: sandboxMediaOf({
+      list: world.worldOverview?.mediaList, overrides: {}, entities, personaId: played?.id, locations, items: world.items ?? [],
+      itemInstances: playWorld.itemInstances ?? [], music: world.worldOverview?.bgm, gate: () => gate,
+    }),
   };
-  const startingTraits = [...held.map((trait) => ({ trait, ownerId: null })), ...rows.appliedRows];
+  const startingTraits = [...held.map((trait) => ({ trait, ownerId: null })), ...opening.appliedRows];
   const gate = traitGateInput(traitState, { ...playWorld, daypart: daypartAt(0) });
   return { state, entityStats, startingTraits, traitState, itemEffects: { ledger: items.ledger, log: items.log }, bodies: items.bodies, gate };
 }
@@ -179,7 +179,11 @@ export function authoringStateOf(world: OpeningFoldWorld, picks?: OpeningPicks, 
   const { state } = fold;
   const cast = positionedCast(state.ownerTraits.entities ?? [], persona?.ref);
   const placed = openingWorld(cast, world.locations ?? [], world.connections ?? [], state.places?.location?.id, gatePick(fold.gate));
-  return { ...state, ...scriptPlaces(placeAll(EMPTY_BOOK, placed), placed) };
+  const book = placeAll(EMPTY_BOOK, placed);
+  return {
+    ...state, ...scriptPlaces(book, placed),
+    ...(state.media && { media: { ...state.media, instances: genericInstancesOf(book.generics) } }),
+  };
 }
 
 /** What a script reads of where the cast stands in a live game. */

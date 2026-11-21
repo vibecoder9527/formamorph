@@ -4,7 +4,10 @@ import { Label } from "@/components/ui/label";
 import { TokenAutocomplete } from "@/components/TokenAutocomplete";
 import { useDanbooruTags } from "@/lib/useDanbooruTags";
 import { Hint } from "@/components/ui/typography";
-import { ImageUpload, SoundUpload } from '../lib/UtilityComponents';
+import { LinkedImageUpload, useSinglePlacement } from './MediaPicker';
+import { COVER_SUBJECT, storedCover } from '@/lib/mediaImages';
+import { MediaSoundSlot } from './MediaSoundSlot';
+import { MUSIC_SUBJECT, storedMusic } from '@/lib/mediaSounds';
 import { targetAttribute } from '@/lib/surface/surfaceTargets';
 import { IMAGE_CAPS } from '../lib/imageOptim';
 import { GenerateImageButton } from '../components/GenerateImageButton';
@@ -12,8 +15,8 @@ import { useEditorMode } from '@/lib/editorMode';
 import { ALLOWED_PERSONAS, limitsToWorld, worldPersonaRules } from '@/lib/personaPick';
 import { customPersonaEntity } from '@/lib/blueprints';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Select, SelectContent, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SelectOptions } from "@/components/SelectOptions";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import PlaceholderText from '@/components/prompt/PlaceholderText';
 import type { AllowedPersonas } from '@/types';
 import { WorldInput } from '@/components/editor/WorldField';
 import { fieldFrame } from '@/lib/historyField';
@@ -35,7 +38,7 @@ const NONE = 'none';
 /** Which personas the player can pick, and which one a new player starts on. Advanced only; Any and the
  *  player's default write no field. */
 const PersonaRulesFields = () => {
-  const { worldOverview, updateWorldOverview, entities } = useGameData();
+  const { worldOverview, updateWorldOverview, entities, placeholders } = useGameData();
   const { allowed, start } = worldPersonaRules(worldOverview);
   const personas = useMemo(() => entities.filter((entity) => entity.persona === true), [entities]);
   const custom = useMemo(() => customPersonaEntity(entities), [entities]);
@@ -83,7 +86,9 @@ const PersonaRulesFields = () => {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectOptions options={options} />
+            {options.map((o) => (
+              <SelectItem key={o.value} value={o.value}><PlaceholderText text={o.label} placeholders={placeholders} /></SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -93,6 +98,7 @@ const PersonaRulesFields = () => {
 
 const WorldOverviewManager = () => {
   const { worldOverview, updateWorldOverview } = useGameData();
+  const placeCover = useSinglePlacement(COVER_SUBJECT);
   const { advanced } = useEditorMode();
   const tagOptions = useDanbooruTags();
 
@@ -132,10 +138,11 @@ const WorldOverviewManager = () => {
         {/* The frame and its Generate button share one box, so the button is as wide as the picture it
             makes rather than centered under it. */}
         <div className="mx-auto w-full max-w-[400px] space-y-2">
-          <ImageUpload
+          <LinkedImageUpload
             id="thumbnail"
             value={worldOverview.thumbnail}
-            onChange={(v) => updateWorldOverview({ thumbnail: v })}
+            subject={COVER_SUBJECT}
+            onChange={(link) => updateWorldOverview({ thumbnail: storedCover(link) })}
             cap={IMAGE_CAPS.thumbnail}
             objectFit="cover"
             previewClassName="w-full aspect-video relative rounded-md"
@@ -143,20 +150,19 @@ const WorldOverviewManager = () => {
           <GenerateImageButton
             subject={{ description: worldOverview.description || worldOverview.systemPrompt || '', kind: 'world' }}
             cap={IMAGE_CAPS.thumbnail}
-            onChange={(v) => updateWorldOverview({ thumbnail: v })}
+            onChange={(v) => placeCover(v, undefined, (link) => updateWorldOverview({ thumbnail: storedCover(link) }))}
             className="w-full"
           />
         </div>
       </div>
       {advanced && <PersonaRulesFields />}
       <div className="space-y-2" {...targetAttribute('worldEditor.overview', 'background-music')}>
-        <Label htmlFor="sound-upload-world-bgm">Background Music</Label>
-        {/* The world stores a bare data URL where a location stores a media record, so the shared widget
-            is fed one and read back for its bytes alone. */}
-        <SoundUpload
+        <Label htmlFor="sound-import-world-bgm">Background Music</Label>
+        <MediaSoundSlot
           id="world-bgm"
-          value={worldOverview.bgm ? { data: worldOverview.bgm } : null}
-          onChange={(media) => updateWorldOverview({ bgm: media?.data ?? null })}
+          value={worldOverview.bgm}
+          subject={MUSIC_SUBJECT}
+          onChange={(next) => updateWorldOverview({ bgm: storedMusic(next) })}
         />
       </div>
     </div>

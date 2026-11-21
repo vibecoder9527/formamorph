@@ -15,18 +15,42 @@ import { isAlwaysOn, isDormant, isShown } from '@/lib/traitEffects';
 import { statRowSide } from '@/lib/traitTree';
 import { traitAvatarChanges } from '@/lib/avatarChanges';
 import { AvatarChangeIcon } from './AvatarChangeIcon';
+import { StatChangeItem } from './StatChangeItem';
 import type { Stat, StatChange, Trait, TraitGroup } from '@/types';
 
-/** What the last selection change turned off, by name, and the pick that caused it. */
-export interface TraitCascade {
-  off: string[];
-  because: string;
-}
+/** What the last selection change turned off, by name, and the pick that caused it; or, after a Preset click,
+ *  the value applied, the traits it turned on and off, and the rows it could not apply or set. */
+export type TraitCascade =
+  | { kind?: 'cascade'; off: string[]; because: string }
+  | {
+    kind: 'preset'; value: string; on: string[]; off: string[];
+    /** The persona and Starting Location the click changed to; absent when unchanged. */
+    persona?: string; location?: string;
+    traitsNotApplied: string[]; notSet: string[];
+  };
 
 const LIST = new Intl.ListFormat('en', { type: 'conjunction' });
+const LISTED_NAMES = 6;
 
-/** The banner after a selection change turns gated traits off. It renders last in its scroll host and sticks
- *  to the host's bottom edge, so the rows above it never move when it appears. */
+/** Names joined as a list, the rest counted after the first six (Q30). */
+const listedNames = (names: readonly string[]) => (names.length > LISTED_NAMES
+  ? LIST.format([...names.slice(0, LISTED_NAMES), `${names.length - LISTED_NAMES} more`])
+  : LIST.format(names));
+
+function PresetLines({ cascade }: { cascade: Extract<TraitCascade, { kind: 'preset' }> }) {
+  const line = (lead: string, names: readonly string[]) => (names.length ? <> {lead} <strong>{listedNames(names)}</strong>.</> : null);
+  return (
+    <>
+      Applied <strong>{cascade.value}</strong>.{line('Turned on', cascade.on)}{line('Turned off', cascade.off)}
+      {cascade.persona && <> Persona set to <strong>{cascade.persona}</strong>.</>}
+      {cascade.location && <> Starting Location set to <strong>{cascade.location}</strong>.</>}
+      {line('Couldn’t apply', cascade.traitsNotApplied)}{line('Couldn’t set', cascade.notSet)}
+    </>
+  );
+}
+
+/** The banner after a selection change turns gated traits off, or after a Preset click. It renders last in its
+ *  scroll host and sticks to the host's bottom edge, so the rows above it never move when it appears. */
 export function TraitCascadeNotice({ cascade, onDismiss }: { cascade: TraitCascade; onDismiss: () => void }) {
   return (
     <div
@@ -34,7 +58,10 @@ export function TraitCascadeNotice({ cascade, onDismiss }: { cascade: TraitCasca
       className="sticky bottom-0 z-10 mt-4 flex items-start gap-2 rounded-lg border bg-background p-3 text-helper shadow-md animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none"
     >
       <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-      <span className="flex-1">Turned off <strong>{LIST.format(cascade.off)}</strong>, because of {cascade.because}.</span>
+      <span className="flex-1">
+        {cascade.kind === 'preset' ? <PresetLines cascade={cascade} />
+          : <>Turned off <strong>{LIST.format(cascade.off)}</strong>, because of {cascade.because}.</>}
+      </span>
       <Button type="button" variant="ghost" size="sm" className="-my-1 h-7" onClick={onDismiss}>Dismiss</Button>
     </div>
   );
@@ -106,10 +133,13 @@ export function SetupTraitList({
     const changes = trait.statChanges
       .map((change) => ({ change, stat: statOf(change) }))
       .filter((row): row is { change: StatChange; stat: Stat } => row.stat !== undefined && row.stat.hidden !== true);
+    // The whole framed row is the label, so every point that highlights on hover also toggles.
+    const Row = fixed ? 'div' : 'label';
     return (
-      <div
+      <Row
         key={trait.id}
-        className={cn(choiceRowClass(selected), disabled && 'cursor-not-allowed opacity-60 hover:border-border hover:bg-card')}
+        htmlFor={fixed ? undefined : `setup-trait-${trait.id}`}
+        className={cn(choiceRowClass(selected), fixed && 'cursor-default', disabled && 'cursor-not-allowed opacity-60 hover:border-border hover:bg-card')}
       >
         {fixed ? (
           <Check role="img" aria-label="Automatic" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -137,10 +167,7 @@ export function SetupTraitList({
             onCheckedChange={() => onTraitSelect(trait.id, ownerId)}
           />
         )}
-        <label
-          htmlFor={`setup-trait-${trait.id}`}
-          className={cn('min-w-0 flex-1', fixed ? undefined : disabled ? 'cursor-not-allowed' : 'cursor-pointer')}
-        >
+        <span className="block min-w-0 flex-1">
           <strong className="flex items-center gap-2 text-label font-semibold">
             {trait.name}
             {locked && <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
@@ -153,18 +180,12 @@ export function SetupTraitList({
           {changes.length > 0 && (
             <ul className="mt-2 list-inside list-disc text-helper text-muted-foreground">
               {changes.map(({ change, stat }, index) => (
-                <li key={index}>
-                  {resolveTraitText(trait, stat.name)}:{' '}
-                  <span className={change.value > 0 ? 'text-success' : 'text-destructive'}>
-                    {change.value > 0 ? '+' : ''}{change.value}
-                  </span>
-                  {change.type && change.type !== 'starting' ? ` (${change.type})` : ''}
-                </li>
+                <StatChangeItem key={index} label={resolveTraitText(trait, stat.name)} value={change.value} type={change.type} />
               ))}
             </ul>
           )}
-        </label>
-      </div>
+        </span>
+      </Row>
     );
   });
 

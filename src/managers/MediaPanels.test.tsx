@@ -5,8 +5,12 @@ import { mediaFixtureWorld } from '@/test/mediaFixture';
 import { formatMediaBytes, mediaSections, sectionTitle, totalBytes, type MediaItem } from '@/lib/mediaIndex';
 import type { useGameData } from '@/contexts/GameDataContext';
 import { measureInWorker, encodeInWorker } from '@/lib/imageOptimWorkerClient';
+import { locationImages } from '@/lib/locationImages';
+import { coverData } from '@/lib/mediaImages';
+import { resolveSound } from '@/lib/mediaSounds';
 
-/** The Media tab's item panel: Replace and Remove, each one History Step, and the reveal that returns to the tab. */
+/** The Media tab's item panel: Replace and Remove, or a list slot's Remove From Slot, each one History Step. */
+/** Sound and gallery slots offer no Replace (Q45); their Import is the slot's, tested with the slot. */
 
 vi.mock('../services/WorldStorageService', () => ({
   default: {
@@ -59,6 +63,8 @@ const pickFile = async (file: File) => {
 
 /** A slot the item panel acts on: where its card sits, how to read the field, and a file that replaces it. */
 interface Slot {
+  /** The control that clears it: the panel's Remove, or the list slot's Remove From Slot (Q45). */
+  remove?: string;
   what: string;
   section: string;
   kind: string;
@@ -71,18 +77,23 @@ interface Slot {
 const audio = () => new File(['new-sound'], 'new.ogg', { type: 'audio/ogg' });
 const webp = () => new File(['new-image'], 'new.webp', { type: 'image/webp' });
 const SLOTS: Slot[] = [
-  { what: 'the world thumbnail', section: 'World', kind: 'image', id: 'world:world:thumbnail', read: (c) => c.worldOverview.thumbnail, file: webp, label: 'Thumbnail' },
-  { what: 'Background Music', section: 'World', kind: 'sound', id: 'world:world:bgm', read: (c) => c.worldOverview.bgm, file: audio, label: 'Background Music' },
-  { what: 'an entity sound', section: 'Entities', kind: 'sound', id: 'entity:wick:sound', read: (c) => c.entities.find((e) => e.id === 'wick')!.sound?.data, file: audio, label: 'Sound: Odd Wick' },
+  { what: 'the world thumbnail', section: 'World', kind: 'image', id: 'world:world:thumbnail', read: (c) => coverData(c.worldOverview), file: webp, label: 'Thumbnail' },
+  { what: 'Background Music', section: 'World', kind: 'sound', id: 'world:world:bgm', read: (c) => resolveSound(c.worldOverview.bgm, c.worldOverview.mediaList)?.data, file: audio, label: 'Background Music' },
+  { what: 'an entity sound', section: 'Entities', kind: 'sound', id: 'entity:wick:sound', read: (c) => resolveSound(c.entities.find((e) => e.id === 'wick')!.sound, c.worldOverview.mediaList)?.data, file: audio, label: 'Sound: Odd Wick' },
   {
     what: 'an entity 3D Model', section: 'Entities', kind: 'model', id: 'entity:wick:model',
     read: (c) => c.entities.find((e) => e.id === 'wick')!.model?.data,
     file: () => new File(['new-model'], 'new.glb', { type: 'model/gltf-binary' }), label: '3D Model: Odd Wick',
   },
-  { what: 'a location background', section: 'Locations', kind: 'image', id: 'location:marsh:image:0', read: (c) => c.locations.find((l) => l.id === 'marsh')!.images?.[0]?.data, file: webp, label: 'Image 1: Marsh' },
-  { what: 'a location ambient sound', section: 'Locations › Harbor Steps', kind: 'sound', id: 'location:lamp:ambientSound', read: (c) => c.locations.find((l) => l.id === 'lamp')!.ambientSound?.data, file: audio, label: 'Ambient Sound: Lamp Room' },
+  { what: 'a location background', section: 'Locations', kind: 'image', id: 'location:marsh:image:0', read: (c) => locationImages(c.locations.find((l) => l.id === 'marsh')!, c.worldOverview.mediaList)[0]?.data, file: webp, label: 'Image 1: Marsh' },
+  { what: 'a location ambient sound', section: 'Locations › Harbor Steps', kind: 'sound', id: 'location:lamp:ambientSound', read: (c) => resolveSound(c.locations.find((l) => l.id === 'lamp')!.ambientSound, c.worldOverview.mediaList)?.data, file: audio, label: 'Ambient Sound: Lamp Room' },
   { what: 'a dictionary cover', section: 'Dictionaries', kind: 'image', id: 'dictionary:lore:thumbnail', read: (c) => c.dictionaries.find((d) => d.id === 'lore')!.thumbnail, file: webp, label: 'Cover Image: Fen Lore' },
 ];
+
+/** Slots on the Media List act through their slot (Q45): no Replace, and Remove From Slot clears them. */
+const onList = (slot: Slot) => slot.kind === 'sound' || slot.id.startsWith('location:marsh:image') || slot.id === 'world:world:thumbnail';
+const PANEL_SLOTS = SLOTS.filter((slot) => !onList(slot));
+const REMOVE_SLOTS = SLOTS.map((slot) => (onList(slot) ? { ...slot, remove: 'Remove From Slot' } : slot));
 
 const SECTIONS = mediaSections(mediaFixtureWorld());
 const sectionItems = (name: string) => SECTIONS.find((s) => sectionTitle(s) === name)!.items;
@@ -93,7 +104,7 @@ const lastLabel = (bench: ReturnType<typeof openMedia>) => {
 };
 
 describe('Media tab Remove', () => {
-  it.each(SLOTS)('clears $what, drops its card and total, and undoes in one step', async (slot) => {
+  it.each(REMOVE_SLOTS)('clears $what, drops its card and total, and undoes in one step', async (slot) => {
     const bench = openMedia();
     const was = slot.read(bench.ctx());
     const others = sectionItems(slot.section).filter((i) => i.id !== slot.id);
@@ -101,10 +112,11 @@ describe('Media tab Remove', () => {
     fireEvent.click(card(slot.section, slot.kind));
     expect(panel()).toHaveAttribute('data-media-panel', slot.id);
 
-    await step(() => fireEvent.click(panelButton('Remove')!));
+    await step(() => fireEvent.click(panelButton(slot.remove ?? 'Remove')!));
 
     expect(slot.read(bench.ctx())).toBeFalsy();
-    expect(lastLabel(bench)).toBe(`Remove ${slot.label}`);
+    // A gallery slot's Remove From Slot is the field's own edit, which carries no step label.
+    expect(lastLabel(bench)).toBe(slot.remove && slot.id.includes(':image:') ? undefined : `Remove ${slot.label}`);
     expect(cardsOf(slot.section, slot.kind)).toHaveLength(kindCards - 1);
     if (others.length) {
       expect(within(section(slot.section)!).getByRole('button', { name: sectionTotal(slot.section, others) })).toBeInTheDocument();
@@ -118,6 +130,19 @@ describe('Media tab Remove', () => {
     expect(slot.read(bench.ctx())).toBe(was);
   });
 
+  it.each([
+    ['a sound', 'Entities', 'sound'],
+    ['a gallery image', 'Locations', 'image'],
+    ['the world cover', 'World', 'image'],
+  ])('offers %s only its slot controls, with no Replace or Remove of its own', (_what, sectionName, kind) => {
+    openMedia();
+    fireEvent.click(card(sectionName, kind));
+    expect(panelButton('Replace')).toBeNull();
+    expect(panelButton('Remove')).toBeNull();
+    expect(panelButton('Remove From Slot')).not.toBeNull();
+    expect(panelButton('Delete From World')).not.toBeNull();
+  });
+
   it('offers an Avatar Replace, Download and Delete in place of Remove', () => {
     openMedia();
     fireEvent.click(card('World › Avatars', 'avatar'));
@@ -129,7 +154,7 @@ describe('Media tab Remove', () => {
 });
 
 describe('Media tab Replace', () => {
-  it.each(SLOTS)('writes the picked file into $what, keeps the card selected, and undoes in one step', async (slot) => {
+  it.each(PANEL_SLOTS)('writes the picked file into $what, keeps the card selected, and undoes in one step', async (slot) => {
     const bench = openMedia();
     const was = slot.read(bench.ctx());
     fireEvent.click(card(slot.section, slot.kind));
@@ -148,39 +173,21 @@ describe('Media tab Replace', () => {
     expect(slot.read(bench.ctx())).toBe(was);
   });
 
-  it("keeps a replaced sound's field a media record with the new file's name", async () => {
-    const bench = openMedia();
-    fireEvent.click(card('Entities', 'sound'));
-    await pickFile(audio());
-
-    await waitFor(() => expect(bench.ctx().entities.find((e) => e.id === 'wick')!.sound).toMatchObject({ name: 'new.ogg', type: 'audio/ogg' }));
-  });
-
   it('puts a replacing image through the downscale consent', async () => {
     vi.mocked(measureInWorker).mockResolvedValue(OVERSIZED);
     const bench = openMedia();
-    fireEvent.click(card('World', 'image'));
+    // A dictionary cover keeps the panel's Replace; list slots consent through their own uploader.
+    fireEvent.click(card('Dictionaries', 'image'));
 
     await pickFile(new File(['huge'], 'huge.png', { type: 'image/png' }));
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent('Large image');
     await step(() => fireEvent.click(within(dialog).getByRole('button', { name: 'Downscale' })));
 
-    await waitFor(() => expect(bench.ctx().worldOverview.thumbnail).toBe('data:image/webp;base64,c21hbGw='));
-    expect(lastLabel(bench)).toBe('Replace Thumbnail');
+    await waitFor(() => expect(bench.ctx().dictionaries.find((d) => d.id === 'lore')!.thumbnail).toBe('data:image/webp;base64,c21hbGw='));
+    expect(lastLabel(bench)).toBe('Replace Cover Image: Fen Lore');
   });
 
-  it('embeds a file over a linked image', async () => {
-    const world = mediaFixtureWorld();
-    world.locations.find((l) => l.id === 'marsh')!.images = [{ data: 'https://example.com/marsh.png' }];
-    const bench = renderMediaTab(world, 'simple');
-    fireEvent.click(card('Locations', 'image'));
-    expect(panel()!.querySelector('a[href="https://example.com/marsh.png"]')).toHaveTextContent('Open Link');
-
-    await pickFile(webp());
-
-    await waitFor(() => expect(bench.ctx().locations.find((l) => l.id === 'marsh')!.images?.[0]?.data).toMatch(/^data:image\/webp;base64,/));
-  });
 });
 
 describe('Media tab slot names', () => {

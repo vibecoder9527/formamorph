@@ -152,6 +152,17 @@ The menu lists these groups, in order:
 
 [Player](Scripts-Reference#player) lists every call and what closing a prompt does.
 
+## How to Show an Image in the Story
+<!-- keywords: show an image, picture in the story, image in the narration, illustration, scene picture, media list image, player.show -->
+<!-- route: worldEditorStat.code -->
+
+1. Add the image to the **Media List**, and note its name.
+2. Open a **Scripts** tab and select **Add Script**. Pick **Before the AI** to show it above the narration, **During AI Output** to show it after a sentence, or **After the AI** to show it below.
+3. Call `player.show("Harbor at Dusk")`. Add `{ size: "small" }` or `{ size: "large" }` to change its width.
+4. Select **Test Code**. The run lists the call with the image's name, size and wrap.
+
+[Player](Scripts-Reference#player) lists the options and where each timing puts the image.
+
 ## How to Let the AI Run a Script
 <!-- keywords: world tool, tool script, ai decides, ai calls my code, trigger, arm a script, on demand, filter on request, narration filter tool, reply, stack calls, timing, function calling script -->
 <!-- route: worldEditor.tools -->
@@ -215,10 +226,26 @@ A world script has no stat or trait of its own. Its templates never read `self` 
 
 World script templates share the library and the pack file with the other templates. Each menu lists only its own kind:
 
-- A stat's or a World Tool's **Templates** menu never lists a world script template.
-- A trait's or an item's **Scripts** tab has no **Templates** button.
+- A stat's, an item's or a World Tool's **Templates** menu never lists a world script template.
+- A trait's **Scripts** tab has no **Templates** button.
 
 To save your own, select **New Template** or **Duplicate** in a world script's menu.
+
+## How to Insert an Item Script Template
+<!-- keywords: item script template, item template, gift template, gift raises a stat, affection from gifts, gift from the player, starter item script code -->
+<!-- route: worldEditorItem.scripts -->
+
+1. Open an item's **Scripts** tab. Add a script, or open one.
+2. Select **Templates** beside the box's **Test Code** button. The menu lists the item script templates for the box's timing.
+3. Fill in the inputs, then select **Insert Code**.
+
+| Timing | Built-in templates in its menu |
+|---|---|
+| 🎁 **When Gained** | **Gift Raises a Stat** |
+
+**Gift Raises a Stat** raises a stat of whoever gets the item, when the player gives it. A buy, a sale, a gift from someone else and a script's transfer raise nothing. Type the stat's name in the **stat** input.
+
+Item script templates share the library and the pack file with the other templates. To save your own, select **New Template** or **Duplicate** in an item's menu.
 
 ## How to Review Every Script in One Place
 <!-- keywords: scripts tab, all scripts, list of scripts, run order, order of scripts, drag script, reorder scripts, which script runs first, world script, add a world script, find a script, scripts by timing -->
@@ -262,14 +289,14 @@ A script runs in a sandbox at its own point in the turn (see [The Five Timings](
 - **Read a dictionary's placeholders and entries** (see [Dictionaries](Scripts-Reference#dictionaries))
 - **Read the locations**, and the entities at each (see [Location](Scripts-Reference#location))
 - **Move the turn or an entity** to a location (see [Location](Scripts-Reference#location) and [Moving Entities](Scripts-Reference#moving-entities))
-- **Read and change items**: give an Item Copy, move it, equip it or use it (see [Items](Scripts-Reference#items))
+- **Read and change items**: give an Item Instance, move it, equip it or use it (see [Items](Scripts-Reference#items))
 - **Pass time** (see [Passing Time](Scripts-Reference#passing-time))
 - **Change the choices** after the AI (see [Change the choices](Scripts-Reference#change-the-choices))
 - **Read the memories**, pin or forget one, and add a line (see [Memory](Scripts-Reference#memory))
 - **Read the player's notes** (see [Notes](Scripts-Reference#notes))
 - **Add a line to an entity's diary** (see [Diary](Scripts-Reference#diary))
 - **Rewrite a narration sentence** when it completes (see [Narration](Scripts-Reference#narration))
-- **Tell or ask the player** (see [Player](Scripts-Reference#player))
+- **Tell or ask the player**, or show an image in the story (see [Player](Scripts-Reference#player))
 - **React when a trait switches** (see [Trait](Scripts-Reference#trait))
 - **Run when the AI decides**, from a World Tool (see [World Tools](#world-tools))
 
@@ -292,7 +319,7 @@ A script's home sets two things: what `self` is, and when the script runs.
 | A stat | The stat | Always. A stat that is off pauses its scripts: authored off, or switched off by a trait |
 | A trait | The trait's own entry. It is read-only, and a return value is ignored | While the trait is active. A global trait runs once, with `owner` empty. An entity's trait runs once for each entity that holds it, with that entity as `owner` |
 | The world | An empty object. A return value and a write to `self` are ignored | Always |
-| An item | The item's entry in `items`, plus `event`. It is read-only, and a return value is ignored | On the events of its Item Copies only. `owner` is the entity that owns the Item Copy. It is empty while the Item Copy lies at a location |
+| An item | The item's entry in `items`, plus `event`. It is read-only, and a return value is ignored | On the events of its Item Instances only. `owner` is the entity that owns the Item Instance. It is empty while the Item Instance lies at a location |
 
 A Blueprint stat's script runs once for each owner, in every timing.
 
@@ -304,9 +331,9 @@ A turn runs scripts at five points:
 | --- | --- | --- | --- |
 | **Before the AI** | At the start of a turn, before the prompt is built | In that turn's prompt | `player` |
 | **After the AI** | After the AI's changes and Regen apply | When the turn ends | `player` |
-| **During AI Output** | Once for each narration sentence, when it completes | The sentence, then the stats with the After the AI scripts | `narration` |
+| **During AI Output** | Once for each narration sentence, when it completes | The sentence, then the stats with the After the AI scripts | `narration`, and `player` with `show` only |
 | **At Game Start** | Once, on the opening turn of a new game, before the Before the AI scripts | In the opening prompt | `player` |
-| **When a Trait Switches** | Each time a trait turns on or off during a game | At once | `player` and `trait` |
+| **When a Trait Switches** | Each time a trait turns on or off during a game | At once | `player`, `trait` and `args.by` |
 
 A timing adds names to the ones every script reads. The editor's **Variable** menu lists them in one group near the top: **Narration**, **Player** and **Switched Trait**. The group comes after **This Stat** (or **This Trait**) and **Owner**. In a trait's script, **This Trait** replaces **This Stat**. A world script has neither.
 
@@ -368,25 +395,32 @@ The script runs once for each trait that turns on or off during a game, whatever
 Setup picks and a loaded save skip these scripts. So does a trait that switches and switches back inside one script, or across one reply in During AI Output.
 
 - A script in this timing reads `trait`: the trait that switched, with `enabled` set to its new state (see [Trait](Scripts-Reference#trait)).
+- `args.by` tells what switched it: `'player'` for the player's switch in the **Traits** tab, `'script'` for a script, and `'rule'` for every other source. A trait a group switched off with the player's pick reads `'rule'`.
 - A trait's own script also has `self`. It runs on its own switch-off too. That is the one time a trait's script runs while the trait is off.
 - Several switches from one action run one at a time, the switch-offs first. Each run reads the state the run before it left.
 - A switch that a script makes runs its own scripts, to a depth of 8. Past that depth, the switch applies, no script runs, and the browser console warns.
 
 #### Item Timings
 
-An item's scripts use five timings of their own. Each one runs once for each event of one of the item's Item Copies. The cause of the event does not matter: the Inventory pass, the **Inventory** panel or a script.
+An item's scripts use five timings of their own. Each one runs once for each event of one of the item's Item Instances, whatever caused it: the story, the **Inventory** panel, a script or a rule. `args.by` tells them apart.
 
 | Timing | When it runs |
 | --- | --- |
-| **When Gained** | An owner or a location gains an Item Copy. A pickup, a gift and a drop each count |
-| **When Lost** | An owner or a location loses an Item Copy. A drop is When Lost for the owner, then When Gained at the location |
-| **When Equipped** | An Item Copy is equipped. To equip one from a stack runs it once |
-| **When Unequipped** | An Item Copy is unequipped: by hand, by a full slot, or by a requirement that stops holding |
-| **When Used** | An Item Copy is used. The last use runs this timing only, not When Lost. A **Becomes** result runs its own When Gained |
+| **When Gained** | An owner or a location gains an Item Instance. A pickup, a gift and a drop each count |
+| **When Lost** | An owner or a location loses an Item Instance. A drop is When Lost for the owner, then When Gained at the location |
+| **When Equipped** | An Item Instance is equipped. To equip one from a stack runs it once |
+| **When Unequipped** | An Item Instance is unequipped: by hand, by a full slot, or by a requirement that stops holding |
+| **When Used** | An Item Instance is used. The last use runs this timing only, not When Lost. A **Becomes** result runs its own When Gained |
 
-- `self.event` holds `timing`, `quantity` (the number the event moved) and `copy` (the Item Copy's entry). After the Item Copy is gone, `copy` reads it as it was before the event.
-- On **When Used**, `self.event.target` is the entry of the Item Copy the item was used on, such as the lantern the oil went into. It is `null` when the story named no other item, or when that Item Copy is gone.
-- The item timings are skipped for a reveal of an Item Copy, a write to its uses, a write to its State, and starting items.
+- `self` is the item. `instance` is the entry of the Item Instance the event happened to. After the Item Instance is gone, `instance` reads it as it was before the event (see [Instance](Scripts-Reference#instance)).
+- `args.quantity` is the number the event moved.
+- `args.by` is what caused the event: `'story'`, `'player'` (the **Inventory** panel), `'script'` or `'rule'`. A script's own write reads `'script'`, even when the story started the chain. A **Becomes** result and an unequip forced by a full slot, a Body change or a requirement read `'rule'`.
+- On **When Gained**, `args.from` is the entry the Item Instance came from: `persona`, an entity or a location. It is `null` for a new one. `args.from === persona` means the player gave it.
+- On **When Lost**, `args.to` is the entry the Item Instance went to, or `null` when it is gone for good.
+- On **When Gained** and **When Lost**, `args.purchase` is `{ price, currency }` when the story bought it, and `null` otherwise. A sale by the player reads `args.from === persona` too, so a gift script checks both.
+- On **When Used**, `args.target` is the entry of the Item Instance the item was used on, such as the lantern the oil went into. It is `null` when the story named no other item, or when that Item Instance is gone.
+- The script's own timing tells it which event ran. `args` has no timing field.
+- The item timings are skipped for a reveal of an Item Instance, a write to its uses, a write to its State, and starting items.
 - Their writes apply when each script ends, not when the turn ends. A script's inventory write runs the item timings it causes, to a depth of 3. Past that depth, the write still applies, no timing runs, and the turn log says so.
 
 ### When Your Code Runs
@@ -477,7 +511,7 @@ The sketch matches the exact name only. The drone world has the full **lock_targ
 - The code is plain JavaScript in a sandbox. Its only globals are the script objects, `console.log` and the standard built-ins, such as `Math`, `JSON` and `Object`.
 - Code writes `value`, `min`, `max`, `regen` and `hidden` only. Every other field of a stat entry is read-only on every path.
 - A write is ignored and reported when its target is an entity that is not in the game, an unknown stat, or a stat a trait switched off.
-- A stat's, a world script's or a World Tool's **Templates** menu lists only the templates that work at its timing.
+- A stat's, a world script's, an item's or a World Tool's **Templates** menu lists only the templates that work at its timing.
 
 **Test Code** runs one box with no player traits:
 

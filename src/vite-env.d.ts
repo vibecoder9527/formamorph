@@ -9,6 +9,18 @@ declare const __BUILD_TARGET__: string;
 /** The build's `FORMAMORPH_AVATARS` value. */
 declare const __AVATAR_SET__: string;
 
+/** The installed version's Release Summary markdown, or null when `docs/whats-new/` has none (vite.config.js). */
+declare module 'virtual:whats-new-summary' {
+  const text: string | null;
+  export default text;
+}
+
+/** The Recent Changes tab's markdown: bold leads for the installed version and the two releases before it. */
+declare module 'virtual:whats-new-recent' {
+  const text: string;
+  export default text;
+}
+
 /**
  * The community server's address, in each build mode.
  *
@@ -24,4 +36,6 @@ interface ImportMetaEnv {
   readonly VITE_DEV_ROUTE?: string;
   /** DEV only: hold HMR updates until the page applies them (see `heldUpdatesBanner.ts`). */
   readonly VITE_FM_HOLD_UPDATES?: string;
+  /** The Character Mentions model manifest, in place of the published one. */
+  readonly VITE_COREF_MANIFEST_URL?: string;
 }

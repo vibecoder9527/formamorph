@@ -1,14 +1,22 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsProvider, useSettings } from '@/contexts/SettingsContext';
-import { demoAITurnCount, engineTurnCount, isDemoAICardSeen, isEngineCardSeen, markDemoAICardSeen, markEngineCardSeen } from '@/lib/firstTimeFlowStore';
+import type { CharacterMentionsState } from '@/lib/coref/characterMentions';
+import type { Contributor } from '@/lib/coref/correctionContribution';
+import {
+  demoAITurnCount, engineTurnCount, isContributeAsked, isDemoAICardSeen, markContributeAsked, isEngineCardSeen, isMentionsCardSeen, isMentionsOfferAccepted, markDemoAICardSeen,
+  markEngineCardSeen, markMentionsCardSeen, mentionsTurnCount,
+} from '@/lib/firstTimeFlowStore';
 import { hostedSession } from '@/lib/hostedAi/hostedSession';
 import { HOSTED_STATE_URL } from '@/lib/hostedAi/hostedUrls';
 import { BUILTIN_ENGINE_PRESET_ID, DEFAULT_TEXT_PRESET_ID } from '@/lib/textEndpointPresets';
 import type { VramClass } from '@/lib/vramClass';
 import AuthService from '@/services/AuthService';
 import { funnelPosts } from '@/test/funnelPosts';
-import { useCardTurnCounts, useDemoAIOfferAvailable, useDemoAIStoryCard, useEngineStoryCard, type CommittedTurn } from './useDemoAIOffer';
+import {
+  useCardTurnCounts, useDemoAIOfferAvailable, useDemoAIStoryCard, useEngineStoryCard, useMentionsStoryCard, useStoryCards,
+  type CommittedTurn,
+} from './useDemoAIOffer';
 
 // The hosted build: the Default preset is the Demo AI.
 vi.hoisted(() => { vi.stubEnv('VITE_DEFAULT_ENDPOINT', ''); });
@@ -19,6 +27,16 @@ vi.mock('@/lib/vramClass', async (orig) => ({
   ...(await orig<typeof import('@/lib/vramClass')>()),
   useVramClass: () => vram.vramClass,
 }));
+
+// The Character Mentions controller's state; the download itself is `characterMentions.test.ts`'s concern.
+const mentions = vi.hoisted(() => ({ state: null as CharacterMentionsState | null }));
+vi.mock('@/lib/coref/characterMentionsApp', () => ({
+  useCharacterMentionsState: () => mentions.state ?? { status: 'off', progress: null, error: null, model: null, version: null },
+}));
+
+// Who may contribute corrections at this device.
+const viewer = vi.hoisted(() => ({ contributor: { access: 'signedOut', accountId: null } as Contributor }));
+vi.mock('@/lib/coref/useContributeAccess', () => ({ useContributeAccess: () => viewer.contributor }));
 
 const STATE = {
   state: 'ready', window: 24000, maxTokens: 600, tokenMargin: 800,
@@ -60,6 +78,8 @@ async function readState(state: Record<string, unknown>) {
 
 beforeEach(() => {
   localStorage.clear();
+  mentions.state = null;
+  viewer.contributor = { access: 'signedOut', accountId: null };
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline (test)'))));
 });
 
@@ -196,7 +216,17 @@ describe('useCardTurnCounts', () => {
   ])('counts nothing for %s', (_, change) => {
     render(<Counts />);
     act(() => counts.countTurn({ ...turn, narrationIsBuiltInEngine: true, ...change }));
-    expect([counts.demoAI, counts.engine]).toEqual([0, 0]);
+    expect([counts.demoAI, counts.engine, counts.mentions]).toEqual([0, 0, 0]);
+  });
+
+  it('counts every new turn for the Character Mentions card, on any AI, until its card is seen', () => {
+    render(<Counts />);
+    act(() => counts.countTurn({ ...turn, narrationIsDemoAI: false }));
+    act(() => counts.countTurn(turn));
+    expect([counts.mentions, mentionsTurnCount()]).toEqual([2, 2]);
+    markMentionsCardSeen();
+    act(() => counts.countTurn(turn));
+    expect(counts.mentions).toBe(2);
   });
 });
 
@@ -275,5 +305,185 @@ describe('useEngineStoryCard', () => {
     view.unmount();
     mountEngine(20, true);
     expect(showing()).toBe(false);
+  });
+});
+
+describe('useMentionsStoryCard', () => {
+  let card: ReturnType<typeof useMentionsStoryCard>;
+  function MentionsOffer({ turnCount, settled, yieldTo }: { turnCount: number; settled: boolean; yieldTo: boolean }) {
+    settings = useSettings();
+    card = useMentionsStoryCard({ turnCount, settled, yieldTo });
+    return <span data-testid="showing">{String(card.showing)}</span>;
+  }
+  const mountMentions = (turnCount = 3, settled = true, yieldTo = false) => {
+    const tree = (count: number, done: boolean, other: boolean) => (
+      <SettingsProvider><MentionsOffer turnCount={count} settled={done} yieldTo={other} /></SettingsProvider>
+    );
+    const view = render(tree(turnCount, settled, yieldTo));
+    return { ...view, update: (count: number, done: boolean, other = false) => view.rerender(tree(count, done, other)) };
+  };
+  const download = (status: CharacterMentionsState['status']) => {
+    mentions.state = { status, progress: null, error: null, model: null, version: null };
+  };
+
+  it('shows once at 3 settled turns, writes its seen record, and sends no funnel step', () => {
+    const view = mountMentions(2, true);
+    expect(showing()).toBe(false);
+    view.update(3, false);
+    expect(showing()).toBe(false);
+    view.update(3, true);
+    expect(showing()).toBe(true);
+    expect(isMentionsCardSeen()).toBe(true);
+    expect(funnelPosts()).toEqual([]);
+  });
+
+  it('never shows again after Not Now, in this view or a later one', () => {
+    const view = mountMentions();
+    act(() => card.dismiss());
+    expect(showing()).toBe(false);
+    view.update(4, true);
+    expect(showing()).toBe(false);
+    view.unmount();
+    mountMentions(9, true);
+    expect(showing()).toBe(false);
+  });
+
+  it('never shows for an AI Language other than English', () => {
+    const view = mountMentions(2, true);
+    act(() => settings.setLanguage('French'));
+    view.update(5, true);
+    expect(showing()).toBe(false);
+    expect(isMentionsCardSeen()).toBe(false);
+  });
+
+  it('never shows when Character Mentions is already on', () => {
+    const view = mountMentions(2, true);
+    act(() => settings.setCharacterMentions(true));
+    view.update(5, true);
+    expect(showing()).toBe(false);
+    expect(isMentionsCardSeen()).toBe(false);
+  });
+
+  it('yields to a Formamorph AI card on its turn and shows on the next settled turn', () => {
+    const view = mountMentions(3, true, true);
+    expect(showing()).toBe(false);
+    expect(isMentionsCardSeen()).toBe(false);
+    // The other card's Not Now leaves this turn to it.
+    view.update(3, true, false);
+    expect(showing()).toBe(false);
+    view.update(4, true, false);
+    expect(showing()).toBe(true);
+  });
+
+  it('Turn On turns the setting on, records the accept, shows the download, and closes once the model is ready', () => {
+    const view = mountMentions();
+    act(() => card.accept());
+    expect(settings.characterMentions).toBe(true);
+    expect(isMentionsOfferAccepted()).toBe(true);
+    expect([showing(), card.accepted]).toEqual([true, true]);
+    download('downloading');
+    view.update(3, true);
+    expect(showing()).toBe(true);
+    download('ready');
+    view.update(3, true);
+    expect(showing()).toBe(false);
+    expect(funnelPosts()).toEqual([]);
+  });
+
+  it('closes after Turn On when Character Mentions is turned off again in Settings', () => {
+    mountMentions();
+    act(() => card.accept());
+    download('downloading');
+    act(() => settings.setCharacterMentions(false));
+    expect(showing()).toBe(false);
+  });
+
+  describe('the ask-once question (Q64)', () => {
+    const readyAfterTurnOn = () => {
+      const view = mountMentions();
+      expect(card.asking).toBe(false);
+      act(() => card.accept());
+      download('ready');
+      view.update(3, true);
+      return view;
+    };
+
+    it('asks a signed-in, attested player after Turn On and stays open past ready until a yes opts in', () => {
+      viewer.contributor = { access: 'ready', accountId: 'acct-a' };
+      readyAfterTurnOn();
+      expect([card.asking, showing()]).toEqual([true, true]);
+      expect(settings.contributeCorrections).toBeNull();
+      act(() => { card.answer(true); });
+      expect(settings.contributeCorrections).toBe('acct-a');
+      expect(isContributeAsked('acct-a')).toBe(true);
+      expect([card.asking, showing()]).toEqual([false, false]);
+      expect(funnelPosts()).toEqual([]);
+    });
+
+    it('a no records the answer and leaves the opt-in off', () => {
+      viewer.contributor = { access: 'ready', accountId: 'acct-a' };
+      readyAfterTurnOn();
+      act(() => { card.answer(false); });
+      expect(settings.contributeCorrections).toBeNull();
+      expect(isContributeAsked('acct-a')).toBe(true);
+      expect(showing()).toBe(false);
+    });
+
+    it('never asks an account that already answered', () => {
+      viewer.contributor = { access: 'ready', accountId: 'acct-a' };
+      markContributeAsked('acct-a');
+      readyAfterTurnOn();
+      expect([card.asking, showing()]).toEqual([false, false]);
+    });
+
+    it('never asks a player who is signed out or not attested, and closes at ready', () => {
+      for (const contributor of [{ access: 'signedOut', accountId: null }, { access: 'unattested', accountId: 'acct-a' }] as Contributor[]) {
+        localStorage.clear();
+        viewer.contributor = contributor;
+        const view = readyAfterTurnOn();
+        expect([card.asking, showing()]).toEqual([false, false]);
+        expect(isContributeAsked('acct-a')).toBe(false);
+        view.unmount();
+      }
+    });
+  });
+});
+
+describe('useStoryCards', () => {
+  let cards: ReturnType<typeof useStoryCards>;
+  function Cards({ demoAI, mentions, settled }: { demoAI: number; mentions: number; settled: boolean }) {
+    settings = useSettings();
+    cards = useStoryCards({ turns: { demoAI, engine: 0, mentions }, settled });
+    return null;
+  }
+  const mountCards = (demoAI: number, mentionsTurns: number) => {
+    const tree = (d: number, m: number) => <SettingsProvider><Cards demoAI={d} mentions={m} settled /></SettingsProvider>;
+    const view = render(tree(demoAI, mentionsTurns));
+    return { update: (d: number, m: number) => view.rerender(tree(d, m)) };
+  };
+  const onScreen = () => [cards.demo.showing, cards.mentions.showing];
+
+  it('gives a turn both cards are due on to the Formamorph AI card, and the mentions card the next turn after it', () => {
+    const view = mountCards(5, 5);
+    expect(onScreen()).toEqual([true, false]);
+    expect(isMentionsCardSeen()).toBe(false);
+    act(() => cards.demo.dismiss());
+    expect(onScreen()).toEqual([false, false]);
+    view.update(6, 6);
+    expect(onScreen()).toEqual([false, true]);
+  });
+
+  it('keeps the slot for an open mentions card: a Formamorph AI card due later waits for the turn after it closes', () => {
+    const view = mountCards(3, 3);
+    expect(onScreen()).toEqual([false, true]);
+    view.update(5, 5);
+    expect(onScreen()).toEqual([false, true]);
+    expect(isDemoAICardSeen()).toBe(false);
+    expect(funnelPosts()).toEqual([]);
+    act(() => cards.mentions.dismiss());
+    expect(onScreen()).toEqual([false, false]);
+    view.update(6, 6);
+    expect(onScreen()).toEqual([true, false]);
+    expect(funnelPosts()).toEqual(['demo_offer_shown']);
   });
 });

@@ -100,6 +100,31 @@ export const SETTINGS_COPY = {
 
 Pick a suggestion or type your own. A **style** works too, like *formal English* or *pirate speak*.`,
   },
+  characterMentions: {
+    label: 'Character Mentions',
+    description: 'Links each name and pronoun in the narration to its entity',
+    experimental: true,
+    info: `Tells who “she”, “he” or “the courier” is in each passage once it finishes.
+
+- Runs a model **on your device**
+- One-time download when you turn it on
+- English stories only
+- Turning it off deletes the download`,
+  },
+  characterMentionsModel: {
+    label: 'Mentions Model',
+    description: 'Chooses the model that reads the narration',
+  },
+  contributeCorrections: {
+    label: 'Share Corrections',
+    description: 'Shares corrected passages; accepted ones are kept',
+    info: `Your corrections help the model link names and quotes to the right speaker for everyone.
+
+- Each time you make a pick in **Wrong character?**, sends the **whole passage** and your corrections for it
+- Staff review each passage. Accepted passages are kept for training, even after you delete your account.
+- Needs a signed-in account and your 18+ confirmation
+- Turning it off stops future sends`,
+  },
   paragraphLimit: {
     label: 'Paragraph Limit',
     description: 'Caps how many paragraphs the model writes each turn',
@@ -812,6 +837,8 @@ export const SETTINGS_BUTTONS = {
 
 /** Status text the modal draws where a group of controls would be. */
 export const SETTINGS_NOTES = {
+  characterMentionsEnglishOnly: 'Works only when “AI Language” is English',
+  contributeAgeGate: 'Confirm you’re 18 or older to contribute',
   imageGenerationOff: 'Image generation is off. Select “Enable Image Generation” to turn it on.',
   imageModelFromWorkflow: `Shows the model the workflow loads. Change it in **${SETTINGS_COPY.imageWorkflow.label}** under **Advanced**.`,
   imageFileNameNoPrefix: `Add \`%prefix%\` to the save node in **${SETTINGS_COPY.imageWorkflow.label}** to use this setting`,
@@ -860,6 +887,11 @@ export const SETTINGS_OPTIONS = {
     { value: 'light', label: 'Light', help: 'Always uses the light color scheme' },
     { value: 'dark', label: 'Dark', help: 'Always uses the dark color scheme' },
     { value: 'system', label: 'System', recommended: true, help: 'Follows your operating system’s light or dark setting' },
+  ],
+  characterMentionsModel: [
+    { value: 'auto', label: 'Auto', recommended: true, help: 'Picks “Big” when your graphics card runs it fast enough, “Small” otherwise' },
+    { value: 'big', label: 'Big', help: 'Reads most accurately, with a larger download and a fast graphics card' },
+    { value: 'small', label: 'Small', help: 'Runs well on any device, with a smaller download' },
   ],
   paragraphLimit: [
     {

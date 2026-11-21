@@ -9,6 +9,7 @@ import EntityStorageService from '@/services/EntityStorageService';
 import { readWorldPersona } from '@/lib/personaPick';
 import { useResolvedWorld } from '@/lib/useResolvedWorld';
 import type { Entity, PersonaRef } from '@/types';
+import { entityImages } from '@/lib/entityImages';
 
 vi.mock('@/views/VRMViewer', () => import('@/test/stubs/vrmViewer'));
 vi.mock('@/lib/useTtsPlayback', () => import('@/test/stubs/ttsPlayback'));
@@ -40,6 +41,31 @@ beforeEach(async () => {
   for (const meta of await EntityStorageService.getEntityMetadata()) await EntityStorageService.deleteEntity(meta.id);
 });
 
+describe('the persona row with a persona saved from a Supporter Copy', () => {
+  const marker = { listingId: 'L1', accountId: 'A1', revision: 1, sourceWorldId: 'w-source' };
+  const storeMarked = () => EntityStorageService.storeEntity({ id: wren.id, name: wren.name, data: wren, supporterCopy: marker });
+
+  it("offers it disabled in another world's game", async () => {
+    await storeMarked();
+    const h = renderRightPanel({}, { turns: [{ narration: 'You meet Vos.', summary: 'The player met Vos.' }] });
+    await act(async () => { h.gameData().setWorldId('w-other'); });
+
+    const dialog = await openPicker();
+
+    expect(await within(dialog).findByRole('radio', { name: 'Wren' })).toBeDisabled();
+  });
+
+  it('offers it enabled in its source world', async () => {
+    await storeMarked();
+    const h = renderRightPanel({}, { turns: [{ narration: 'You meet Vos.', summary: 'The player met Vos.' }] });
+    await act(async () => { h.gameData().setWorldId('w-source'); });
+
+    const dialog = await openPicker();
+
+    expect(await within(dialog).findByRole('radio', { name: 'Wren' })).toBeEnabled();
+  });
+});
+
 describe('the persona row', () => {
   it('shows None for a save from before personas, and a Change gives it one', async () => {
     await store(wren);
@@ -56,7 +82,7 @@ describe('the persona row', () => {
     expect(h.gameplay().personaRef).toEqual(ref);
     expect(readWorldPersona('w1')).toEqual(ref);
     await waitFor(() => expect(within(row()).getByText('Wren')).toBeTruthy());
-    expect(row().querySelector('img')?.getAttribute('src')).toBe(wren.images?.[0].data);
+    expect(row().querySelector('img')?.getAttribute('src')).toBe(entityImages(wren)[0]?.data);
     // No re-attribution: the memory written before the change keeps its words.
     expect(h.gameplay().fullMessageHistory).toBe(history);
     expect(warn).not.toHaveBeenCalled();

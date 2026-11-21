@@ -23,6 +23,11 @@ import { MediaName, MediaSize, MediaThumb } from './MediaGallery';
 import { MediaActionRow } from './MediaActionRow';
 import { actsInItemPanel, useMediaItemActions } from './useMediaItemActions';
 import { AvatarNameField, useAvatarDelete, useAvatarStore } from './AvatarStore';
+import { MediaSoundSlot } from './MediaSoundSlot';
+import { MUSIC_SUBJECT } from '@/lib/mediaSounds';
+import { BODY_SUBJECT, COVER_SUBJECT } from '@/lib/mediaImages';
+import { LinkedImageUpload } from './MediaPicker';
+import { labelPlaceholders } from '@/lib/placementLetters';
 
 /** How many items a summary lists as the largest. */
 const LARGEST_COUNT = 5;
@@ -60,7 +65,8 @@ function AvatarPreview({ value }: { value: string }) {
   return url ? <VRMViewer key={url} modelUrl={url} /> : <Hint className="m-auto">Loading Avatar…</Hint>;
 }
 
-function Preview({ item }: { item: MediaItem }) {
+/** A large preview by kind. */
+export function Preview({ item }: { item: MediaItem }) {
   switch (item.kind) {
     case 'image':
       return <RemoteImg src={item.value} alt="" className="mx-auto max-h-[50vh] max-w-full rounded object-contain" />;
@@ -127,8 +133,28 @@ export function MediaItemPanel({ item, placeholders, onGoTo }: {
   onGoTo: (parent: MediaParent) => void;
 }) {
   const titled = !namedBySlot(item);
-  const { replace, remove } = useMediaItemActions();
+  const { replace, remove, writeSound, writeImageLink } = useMediaItemActions();
   if (item.kind === 'avatar') return <AvatarPanel key={item.id} item={item} placeholders={placeholders} onGoTo={onGoTo} />;
+  // The cover and a Body's Custom Image are on the list, so they hold their picker slot (Q45).
+  const isCover = item.parent.kind === 'world' && item.key === 'thumbnail';
+  const imageSlot = (isCover || (item.parent.kind === 'body' && item.key === 'backdrop')) && (
+    <LinkedImageUpload
+      id={`media-${item.id}`}
+      value={item.mediaId ? { mediaId: item.mediaId } : item.value || null}
+      subject={isCover ? COVER_SUBJECT : labelPlaceholders(item.parent.name || BODY_SUBJECT, placeholders)}
+      cap={mediaParentSpec(item.parent.kind).cap}
+      onChange={(link, data) => void trackWork(writeImageLink(item, link, data))}
+    />
+  );
+  // A sound panel holds the field's own slot, as its editor does (Q43).
+  const soundSlot = item.kind === 'sound' && (
+    <MediaSoundSlot
+      id={`media-${item.id}`}
+      value={item.mediaId ? { mediaId: item.mediaId } : item.value}
+      subject={item.parent.kind === 'world' ? MUSIC_SUBJECT : labelPlaceholders(item.parent.name, placeholders)}
+      onChange={(next) => void writeSound(item, next ?? null)}
+    />
+  );
   return (
     <div className="space-y-4" data-media-panel={item.id}>
       <div>
@@ -150,13 +176,13 @@ export function MediaItemPanel({ item, placeholders, onGoTo }: {
             </MediaFacts>
           )}
       </div>
-      {!item.blank && <div className="flex justify-center rounded-md bg-muted/40 p-2"><Preview item={item} /></div>}
+      {soundSlot || imageSlot || (!item.blank && <div className="flex justify-center rounded-md bg-muted/40 p-2"><Preview item={item} /></div>)}
       <div className="flex flex-wrap gap-2">
         <MediaActionRow
           className="contents"
           item={item}
           placeholders={placeholders}
-          {...(actsInItemPanel(item) ? { onReplace: (media: MediaAsset) => void replace(item, media), ...(item.blank ? {} : { onRemove: () => void remove(item) }) } : {})}
+          {...(actsInItemPanel(item) && !soundSlot && !imageSlot ? { onReplace: (media: MediaAsset) => void replace(item, media), ...(item.blank ? {} : { onRemove: () => void remove(item) }) } : {})}
         />
         <GoToButton parent={item.parent} placeholders={placeholders} onGoTo={onGoTo} />
       </div>

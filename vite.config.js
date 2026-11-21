@@ -7,12 +7,16 @@ import { readFileSync, realpathSync } from 'fs'
 import { createRequire } from 'module'
 import { releasedMinorChangelog } from './src/lib/docs/changelogSlice.ts'
 import { zhTwPlugin } from './scripts/zhTw.mjs'
+import { recentChanges } from './scripts/recentChangesSlice.mjs'
 import { shipBundledWorlds } from './scripts/shipBundledWorlds.mjs'
 import { stripSeededWorlds } from './scripts/stripSeededWorlds.mjs'
 import { bundledWorldHashes } from './scripts/bundledWorldHashes.mjs'
 import { shipNotices } from './scripts/shipNotices.mjs'
 import { bundledAvatarCheck } from './scripts/bundledAvatarCheck.mjs'
 import { espeakCheck } from './scripts/espeakCheck.mjs'
+import { corefDevManifest } from './scripts/corefDevManifest.mjs'
+import { remoteOrtRuntime } from './scripts/remoteOrtRuntime.mjs'
+import { stashSourceMaps } from './scripts/stashSourceMaps.mjs'
 
 const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf-8'))
 // The ONNX runtime's dist folder, which its package exports do not expose (src/lib/embeddingWorker.ts).
@@ -90,6 +94,40 @@ const docsIndexMarkdown = {
   },
 }
 
+// `virtual:whats-new-summary`: the installed version's Release Summary text, or null when the build has none.
+// Only that one file ships (src/components/whatsNew/WhatsNewHost.tsx).
+const WHATS_NEW_ID = 'virtual:whats-new-summary'
+const whatsNewSummary = {
+  name: 'whats-new-summary',
+  resolveId(id) {
+    return id === WHATS_NEW_ID ? `\0${WHATS_NEW_ID}` : null
+  },
+  load(id) {
+    if (id !== `\0${WHATS_NEW_ID}`) return null
+    const file = path.resolve(import.meta.dirname, 'docs/whats-new', `${pkg.version}.md`)
+    this.addWatchFile(file)
+    let text = null
+    try { text = readFileSync(file, 'utf-8') } catch { /* no summary for this version */ }
+    return `export default ${JSON.stringify(text)}`
+  },
+}
+
+// `virtual:whats-new-recent`: the Recent Changes tab's markdown, cut from the changelog for the installed
+// version and the two releases before it (scripts/recentChangesSlice.mjs).
+const RECENT_ID = 'virtual:whats-new-recent'
+const whatsNewRecent = {
+  name: 'whats-new-recent',
+  resolveId(id) {
+    return id === RECENT_ID ? `\0${RECENT_ID}` : null
+  },
+  load(id) {
+    if (id !== `\0${RECENT_ID}`) return null
+    const file = path.resolve(import.meta.dirname, 'docs/Changelog.md')
+    this.addWatchFile(file)
+    return `export default ${JSON.stringify(recentChanges(readFileSync(file, 'utf-8'), pkg.version))}`
+  },
+}
+
 // Pure CommonJS files that main and the renderer both load. Dev serves a .cjs raw, so wrap each as an ES
 // module with the names from its `module.exports = { ... }` statement.
 const SHARED_CJS = ['/electron/cacheTypes.cjs', '/electron/engineDevice.cjs']
@@ -111,9 +149,11 @@ const shippedWorlds = shipBundledWorlds(import.meta.dirname)
 const notices = shipNotices(import.meta.dirname)
 
 export default defineConfig({
-  plugins: [zhTwPlugin(), react(), directSyncAppModules, holdUpdates, docsIndexMarkdown, sharedCjs, shippedWorlds, stripSeededWorlds(), bundledWorldHashes(shippedWorlds.api.shippedText), notices, bundledAvatarCheck(), espeakCheck()],
+  plugins: [zhTwPlugin(), react(), directSyncAppModules, holdUpdates, docsIndexMarkdown, whatsNewSummary, whatsNewRecent, sharedCjs, shippedWorlds, stripSeededWorlds(), bundledWorldHashes(shippedWorlds.api.shippedText), notices, stashSourceMaps(), bundledAvatarCheck(), espeakCheck(), corefDevManifest(import.meta.dirname), remoteOrtRuntime(ortDist, process.env.FORMAMORPH_BUILD === 'web')],
   cacheDir: process.env.E2E_SYNC_APP ? path.resolve(import.meta.dirname, 'node_modules/.vite-sync-app') : devCacheDir,
   base: './',
+  // Maps for reading crash stacks; stashSourceMaps moves them out of the shipped output.
+  build: { sourcemap: 'hidden' },
   // Expose the package.json version to the app (single source of truth for the app/world/save stamp).
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
@@ -147,7 +187,7 @@ export default defineConfig({
     ],
   },
   worker: {
-    plugins: () => [notices.api.workerPlugin()],
+    plugins: () => [notices.api.workerPlugin(), remoteOrtRuntime(ortDist, process.env.FORMAMORPH_BUILD === 'web')],
     // The image-encode worker lazily `import()`s wasm-webp; under the default iife worker format that dynamic
     // import would force code-splitting (unsupported for iife). Inlining folds it into the single worker chunk.
     // No-op for the other workers (they have no dynamic imports).
@@ -178,6 +218,7 @@ export default defineConfig({
               path.resolve(import.meta.dirname, '.claude/worktrees/**').replace(/\\/g, '/'),
               '**/.scratch/**',
               '**/dist/**',
+              '**/sourcemaps/**',
             ],
           },
         }),
@@ -194,8 +235,12 @@ export default defineConfig({
       'vite.config.js',
       'scripts/zhTw.mjs',
       'src/lib/docs/changelogSlice.ts',
+      'scripts/recentChangesSlice.mjs',
       'scripts/bundledAvatarCheck.mjs',
       'scripts/espeakCheck.mjs',
+      'scripts/corefDevManifest.mjs',
+      'scripts/remoteOrtRuntime.mjs',
+      'scripts/stashSourceMaps.mjs',
       'scripts/shipBundledWorlds.mjs',
       'scripts/stripSeededWorlds.mjs',
       'scripts/shipNotices.mjs',

@@ -48,7 +48,7 @@ describe('executeStatCode memories', () => {
   });
 
   it('never reads back a line the run added', async () => {
-    const res = await read('memories.add("Seen."); memories.pin("Kept."); return memories.length;');
+    const res = await read('memories.append("Seen."); memories.pin("Kept."); return memories.length;');
     expect(res.value).toBe(4);
     expect(res.worldWrites).toEqual({ memory: ['Seen.'], pins: ['Kept.'] });
   });
@@ -64,7 +64,7 @@ describe('executeStatCode memories', () => {
   });
 
   it('names the new call in a bad line’s error', async () => {
-    expect((await read('memories.add(" ");')).error).toMatch(/memories\.add needs a line as text/);
+    expect((await read('memories.append(" ");')).error).toMatch(/memories\.append needs a line as text/);
     expect((await read('memories.pin(5);')).error).toMatch(/memories\.pin needs a line as text/);
   });
 
@@ -73,9 +73,9 @@ describe('executeStatCode memories', () => {
       ...entry(`t${i}`, i + 1, 'night'), original: `ORIGINAL ${'x'.repeat(200)}`, importance: 3,
     }));
     const res = await read(`const text = JSON.stringify(memories);
-      return Object.keys(memories[0]).length === 11 && !text.includes('ORIGINAL') && !text.includes('importance') ? text.length : -1;`, held);
+      return Object.keys(memories[0]).length === 12 && !text.includes('ORIGINAL') && !text.includes('importance') ? text.length : -1;`, held);
     expect(res.value).toBeGreaterThan(0);
-    expect(res.value).toBeLessThan(400 * 170);
+    expect(res.value).toBeLessThan(400 * 180);
   });
 
   it('has no `memory` alias', async () => {

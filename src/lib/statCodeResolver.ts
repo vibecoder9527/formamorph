@@ -64,7 +64,7 @@ export type CodeValue =
   | { is: 'listed'; path: string };
 
 /** The element shapes an array can hold: a `memories` entry, an entity entry as `present` holds, or an exit. */
-export type ArrayElement = 'memory' | 'entity' | 'exit';
+export type ArrayElement = 'memory' | 'entity' | 'exit' | 'genericInstance';
 
 export type CodeStatValue = Extract<CodeValue, { is: 'stat' }>;
 type ArrayValue = Extract<CodeValue, { is: 'array' }>;
@@ -286,6 +286,7 @@ export function codeResolver(
     if (key === 'stats') return { is: 'statMap', owner };
     if (key === 'traits') return { is: 'traitMap', owner };
     if (key === 'placeholders') return { is: 'placeholders', owner, path: [] };
+    if (key === 'instances') return { is: 'array', of: 'genericInstance', path: null };
     return null;
   }
 
@@ -329,6 +330,8 @@ export function codeResolver(
     const base = object ? valueOf(object) : null;
     const stepped = base && stepValue(base, key?.name ?? null);
     if (stepped) return stepped;
+    // A text key that is no list member reads a memory by its name: `memories["Nursery"]`.
+    if (array?.of === 'memory' && bracket && key) return { is: 'element', of: 'memory' };
     const path = dottedPath(node, code);
     return path !== null && surface.members.has(path) ? { is: 'listed', path } : null;
   }

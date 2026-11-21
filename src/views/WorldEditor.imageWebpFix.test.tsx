@@ -40,11 +40,14 @@ vi.mock('@/lib/imageOptimWorkerClient', () => ({
 
 import { toast } from 'react-toastify';
 import { encodeInWorker } from '@/lib/imageOptimWorkerClient';
+import { entityImages } from '@/lib/entityImages';
+import { coverData } from '@/lib/mediaImages';
 
 const image = (mime: string, seed = 'A') => `data:${mime};base64,${seed.repeat(64)}`;
+// Distinct bytes per file: identical bytes are one file, which the Media List stores once.
 const PNG = image('image/png');
-const JPEG = image('image/jpeg');
-const GIF = image('image/gif');
+const JPEG = image('image/jpeg', 'J');
+const GIF = image('image/gif', 'G');
 const WEBP = image('image/webp', 'B');
 
 /** A portrait a WebP conversion improves and a photo it doesn't, so every run has something to leave alone.
@@ -77,7 +80,8 @@ type WorldPayload = Omit<World, 'id' | 'version'>;
 
 const imagesOf = (ctx: () => { getWorldData: () => WorldPayload }) => {
   const world = ctx().getWorldData();
-  return { portrait: world.entities[0].images?.[0].data, background: world.locations[0].images?.[0]?.data };
+  const media = world.worldOverview.mediaList;
+  return { portrait: entityImages(world.entities[0], media)[0]?.data, background: entityImages(world.locations[0], media)[0]?.data };
 };
 
 beforeEach(() => {
@@ -201,9 +205,10 @@ describe('WorldEditor — a world whose pictures live in more than one place', (
     await act(async () => { fireEvent.click(button); });
 
     const world = ctx().getWorldData();
-    expect(world.worldOverview.thumbnail).toBe(WEBP);
-    expect(world.entities[0].images).toEqual([{ data: WEBP }, { data: WEBP }]);
-    expect(world.locations[0].images?.[0]?.data).toBe(WEBP);
+    expect(coverData(world.worldOverview)).toBe(WEBP);
+    const media = world.worldOverview.mediaList;
+    expect(entityImages(world.entities[0], media).map((img) => img.data)).toEqual([WEBP, WEBP]);
+    expect(entityImages(world.locations[0], media)[0]?.data).toBe(WEBP);
   });
 
   it('writes a converted item image back and clears its row', async () => {
@@ -214,7 +219,8 @@ describe('WorldEditor — a world whose pictures live in more than one place', (
 
     await act(async () => { fireEvent.click(button); });
 
-    expect(ctx().getWorldData().items?.[0].images).toEqual([{ data: WEBP }]);
+    const data = ctx().getWorldData();
+    expect(entityImages(data.items![0], data.worldOverview.mediaList).map((img) => img.data)).toEqual([WEBP]);
     await waitFor(() => expect(screen.queryByRole('button', { name: /^Fix/ })).toBeNull());
   });
 
@@ -251,7 +257,7 @@ describe('WorldEditor — converting a GIF the browser can’t re-encode as anim
 
     await act(async () => { fireEvent.click(button); });
 
-    expect(ctx().getWorldData().locations[0].images?.[0]?.data).toBe(GIF);
+    expect(entityImages(ctx().getWorldData().locations[0], ctx().getWorldData().worldOverview.mediaList)[0]?.data).toBe(GIF);
     expect(encodeInWorker).not.toHaveBeenCalled();
     // Said as the reason it actually is: this GIF isn't one WebP couldn't shrink, it is one this browser
     // can't convert without costing the author the animation.
@@ -267,6 +273,6 @@ describe('WorldEditor — converting a GIF the browser can’t re-encode as anim
 
     await act(async () => { fireEvent.click(button); });
 
-    expect(ctx().getWorldData().locations[0].images?.[0]?.data).toBe(WEBP);
+    expect(entityImages(ctx().getWorldData().locations[0], ctx().getWorldData().worldOverview.mediaList)[0]?.data).toBe(WEBP);
   });
 });

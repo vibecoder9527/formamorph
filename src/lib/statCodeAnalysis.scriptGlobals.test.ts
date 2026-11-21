@@ -60,20 +60,24 @@ describe.each(HOMES)('narration in a %s script', (home) => {
 });
 
 describe.each(HOMES)('player in a %s script', (home) => {
-  it.each(NOT_OUTPUT)('completes in %s as a global, with its five calls after the dot', (timing) => {
+  it.each(NOT_OUTPUT)('completes in %s as a global, with its six calls after the dot', (timing) => {
     expect(labelsAt('play|', box(home, timing))).toContain('player');
-    expect(labelsAt('player.|', box(home, timing))).toEqual(['tell', 'toast', 'confirm', 'ask', 'input']);
+    expect(labelsAt('player.|', box(home, timing))).toEqual(['tell', 'toast', 'show', 'confirm', 'ask', 'input']);
   });
 
   it.each(NOT_OUTPUT)('reads clean in %s', (timing) => {
-    expect(errors('player.tell("Hi"); const ok = player.confirm("Sure?");', box(home, timing))).toEqual([]);
+    expect(errors('player.tell("Hi"); player.show("Harbor", { size: "small" }); const ok = player.confirm("Sure?");', box(home, timing))).toEqual([]);
   });
 
-  it('is unknown in During AI Output: not offered, flagged and with no card', () => {
+  it('holds show alone in During AI Output: the other calls are flagged, and the card says so (Q29)', () => {
     const options = box(home, 'output');
-    expect(labelsAt('play|', options)).not.toContain('player');
-    expect(errors('player.tell("Hi");', options)).toHaveLength(1);
-    expect(cardAt('play|er.tell', options)).toBeNull();
+    expect(labelsAt('play|', options)).toContain('player');
+    expect(labelsAt('player.|', options)).toEqual(['show']);
+    expect(errors('player.show("Harbor", { wrap: "left" });', options)).toEqual([]);
+    for (const call of ['tell("Hi")', 'toast("Hi")', 'confirm("Sure?")', 'ask("Which?", ["a"])', 'input("Name?")']) {
+      expect(errors(`player.${call};`, options)).toHaveLength(1);
+    }
+    expect(cardAt('play|er.show', options)?.description).toMatch(/only player\.show runs/);
   });
 
   it('shows a card for player and a method card for a call', () => {

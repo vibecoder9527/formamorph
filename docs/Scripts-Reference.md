@@ -12,33 +12,35 @@ A script can use only these objects. In the table, a word in angle brackets is a
 | --- | --- | --- | --- |
 | `self` | `id`, `name`, `type`, `description`, `enabled`, `min`, `max`, `value`, `regen`, `hidden`, `descriptor`, `previous`, `delta` | `self.value` | `self.value = <n>` |
 | `stats` | `id`, `name`, `type`, `description`, `enabled`, `min`, `max`, `value`, `regen`, `hidden`, `descriptor`, `previous`, `delta` | `stats.<Stat>.value` | `stats.<Stat>.value = <n>` |
-| `owner` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `owner.stats.<Stat>.value` | `owner.stats.<Stat>.value = <n>` |
+| `owner` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `image`, `sound`, `instances`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `owner.stats.<Stat>.value` | `owner.stats.<Stat>.value = <n>` |
 | `clock` | `day`, `daypart`, `hour`, `minute`, `deltaHours`, `elapsedHours`, `previous`, `advance()` | `clock.day` | `clock.advance(<n>)` |
 | `turn` | `action`, `number`, `narration`, `choices` | `turn.number` | `turn.choices = [<text>]`, After the AI only |
-| `locations` | `id`, `name`, `description`, `summary`, `starting`, `present`, `parent`, `children`, `exits`, `items` | `locations.<Location>.present` | Read-only |
-| `location` | `id`, `name`, `description`, `summary`, `starting`, `present`, `parent`, `children`, `exits`, `items`, `move()` | `location.name` | `location.move("<Location>")` |
+| `locations` | `id`, `name`, `description`, `summary`, `starting`, `present`, `parent`, `children`, `exits`, `items`, `image`, `ambience` | `locations.<Location>.present` | `locations.<Location>.image = "<Image>"` |
+| `location` | `id`, `name`, `description`, `summary`, `starting`, `present`, `parent`, `children`, `exits`, `items`, `image`, `ambience`, `move()` | `location.name` | `location.move("<Location>")` |
 | `discover` | — | — | `discover(<text>)` |
-| `memories` | `id`, `turn`, `timestamp`, `day`, `daypart`, `text`, `custom`, `kept`, `inContext`, `pinned`, `forgotten`, `add()`, `pin()`, `forget()`, `edit()`, `remove()` | `memories.length` | `memories.pin(<text>)` |
+| `memories` | `id`, `turn`, `timestamp`, `day`, `daypart`, `text`, `name`, `custom`, `kept`, `inContext`, `pinned`, `forgotten`, `append()`, `pin()`, `forget()`, `edit()`, `remove()` | `memories.length` | `memories.pin(<text>)` |
 | `notes` | — | `notes` | Read-only |
 | `traits` | `enabled`, `acquired`, `id`, `name`, `mode`, `available`, `group`, `playerToggle` | `traits.<Trait>.enabled` | `traits.<Trait>.enabled = true` |
-| `persona` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body` | `persona.traits.<Trait>.enabled` | `persona.traits.<Trait>.enabled = true` |
-| `entities` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `entities.<Entity>.stats.<Stat>.value` | `entities.<Entity>.traits.<Trait>.enabled = true` |
+| `persona` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `image`, `sound`, `instances` | `persona.traits.<Trait>.enabled` | `persona.traits.<Trait>.enabled = true` |
+| `entities` | `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `image`, `sound`, `instances`, `move()`, `follow()`, `unfollow()`, `meet()`, `diary()` | `entities.<Entity>.stats.<Stat>.value` | `entities.<Entity>.traits.<Trait>.enabled = true` |
 | `placeholders` | `id`, `name`, `value`, `values`, `text`, `roll()`, `pin()`, `unpin()` | `placeholders.<Placeholder>.text` | `placeholders.<Placeholder>.pin(<text>)` |
 | `dictionaries` | `id`, `name`, `enabled`, `entries`, `placeholders` | `dictionaries.<Dictionary>.enabled` | `dictionaries.<Dictionary>.enabled = true` |
-| `items` | `id`, `name`, `unidentifiedName`, `unidentifiedDescription`, `placeholders`, `copies`, `give()` | `items.<Item>.copies.length` | `items.<Item>.give(persona)` |
+| `items` | `id`, `name`, `unidentifiedName`, `unidentifiedDescription`, `placeholders`, `instances`, `give()` | `items.<Item>.instances.length` | `items.<Item>.give(persona)` |
 | `currencies` | `id`, `name`, `kind`, `balance()`, `pay()` | `currencies.<Currency>.balance(persona)` | `currencies.<Currency>.pay(persona, null, <n>)` |
 | `options` | — | `options.<Option>` | `options.<Option> = true` |
+| `world` | `music` | `world.music` | `world.music = "<Sound>"` |
 | `console` | `log()` | — | `console.log(<text>)` |
 
-A timing adds one name to those objects. A script reads only the name its own timing adds:
+A timing adds names to those objects. A script reads only the names its own timing adds:
 
 | Name | Timing | Members | Read | Write |
 | --- | --- | --- | --- | --- |
 | **`narration`** | During AI Output only | `sentence`, `sent`, `buffered`, `full`, `index` | `narration.sentence` | `narration.sentence = <text>` |
-| **`player`** | Every timing but During AI Output | `tell()`, `toast()`, `confirm()`, `ask()`, `input()` | `player.confirm(<text>)` | Calls, not writes |
+| **`player`** | Every timing. During AI Output has `show()` only | `tell()`, `toast()`, `show()`, `confirm()`, `ask()`, `input()` | `player.confirm(<text>)` | Calls, not writes |
 | **`trait`** | When a Trait Switches only | `enabled`, `acquired`, `id`, `name`, `mode`, `available`, `group`, `playerToggle`, `owner` | `trait.enabled` | Read-only |
+| **`instance`** | The five item timings only | `id`, `item`, `owner`, `location`, `quantity`, `equipped`, `slot`, `hidden`, `unidentified`, `uses`, `state`, `image`, `lose()`, `moveTo()`, `equip()`, `unequip()`, `use()`, `reveal()`, `setUses()`, `setState()` | `instance.quantity` | Verbs, and an image name |
 
-A [World Tool](ScriptsGuide#world-tools)'s script also reads `args`, the values the AI sent, such as `args.<Parameter>`. It is read-only.
+`args` holds what started the run (see [Args](#args)). A [World Tool](ScriptsGuide#world-tools)'s script reads the values the AI sent, such as `args.<Parameter>`.
 
 Follow these rules:
 
@@ -50,7 +52,8 @@ Follow these rules:
 - **Another entity's stats are under `entities.<Entity>.stats`.** The played persona's are under `persona.stats`.
 - **"After N days" is `clock.day > <n>`.** `clock.day` starts at 1. For timing in hours, use `clock.elapsedHours`. The time of day is `clock.daypart`.
 - **`self` and every `stats` entry take writes to `value`, `min`, `max`, `regen` and `hidden`.** So does every stat entry under `owner.stats`, `entities.<Entity>.stats` and `persona.stats`. Their other fields are read-only.
-- **A name that its timing does not add is unknown.** The editor underlines `narration` in a Before the AI script, and `player` in a During AI Output script, as errors. A `narration` read fails the run with "not defined". A `player` call in During AI Output throws "can't run in During AI Output".
+- **A name that its timing does not add is unknown.** The editor underlines `narration` in a Before the AI script as an error. A `narration` read fails the run with "not defined".
+- **During AI Output can only show an image.** The editor underlines `player.tell`, `toast`, `confirm`, `ask` and `input` there. Each one throws "can't run in During AI Output".
 
 ## Writing Scripts
 
@@ -93,7 +96,7 @@ Each entry has the [same members as `self`](#stat-properties). Each entry takes 
 <!-- keywords: own stats, read the entity's other stats, script on a monster's stat, this entity, entity's own stat, self entity, creature code, npc code, blueprint owner, empty owner, owner is blank, owner stats, owner traits, owner placeholders -->
 <!-- route: worldEditorStat.code -->
 
-`owner` is the entity that owns the running stat. It has the same members as an [entity entry](#entities): `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `move()`, `follow()`, `unfollow()`, `meet()` and `diary()`.
+`owner` is the entity that owns the running stat. It has the same members as an [entity entry](#entities): `id`, `name`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `traits`, `placeholders`, `stats`, `items`, `body`, `image`, `sound`, `instances`, `move()`, `follow()`, `unfollow()`, `meet()` and `diary()`.
 
 The entity's own stats are under `owner.stats`, its own traits under `owner.traits`, and its own placeholders under `owner.placeholders`.
 
@@ -498,7 +501,7 @@ A write to an unknown trait name is ignored. **Test Code** and the **Test Bench*
 | `placeholders` | The placeholders the persona owns. See [Owned Placeholders](#owned-placeholders) |
 | `stats` | The persona's own stats by name, as an [entity's `stats`](#entities). Entries take writes |
 
-`persona` also has the `id`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `items` and `body` of an [entity entry](#entities).
+`persona` also has the `id`, `type`, `pronouns`, `inScene`, `met`, `location`, `following`, `waiting`, `kind`, `action`, `held`, `knownIn`, `knownInPlaces`, `description`, `summary`, `aliases`, `items`, `body`, `image`, `sound` and `instances` of an [entity entry](#entities).
 
 - `inScene` and `met` are always true for the played persona.
 - `location` is where the player is. `following` is always false.
@@ -558,8 +561,11 @@ When the player plays no entity, `persona` is an empty entry:
 | `traits` | The entity's own traits by name, owned or linked |
 | `placeholders` | The placeholders the entity owns. See [Owned Placeholders](#owned-placeholders) |
 | `stats` | The entity's own stats by name. Entries take writes |
-| `items` | The Item Copies the entity owns. See [Items](#items). Read-only |
+| `items` | The Item Instances the entity owns. See [Items](#items). Read-only |
 | `body` | The entity's Body in force, or `null`. Assign a Body name to set its base Body. See [Bodies](#bodies) |
+| `image` | The name of the Media List image the entity shows first, or `null`. Assign an image's name to show it. See [Media](#media) |
+| `sound` | The name of the Media List sound the entity plays, or `null`. Assign a sound's name to play it. See [Media](#media) |
+| `instances` | A Generic entity's copies, one per Start, each with its own `image` and `sound`. Empty for any other entity. See [Media](#media) |
 | `move()` | Moves a Unique entity to a location. Ignored on a Generic entity. See [Moving Entities](#moving-entities) |
 | `follow()` | Makes a Unique entity follow the player. Ignored on a Generic entity |
 | `unfollow()` | Stops a Unique entity following or waiting, so it goes back to its usual places. Ignored on a Generic entity |
@@ -752,17 +758,17 @@ if (traits["Vault Key"].enabled) dictionaries.Lore.entries["Sealed Vault"].enabl
 - **A user Tool cannot write it.** The write is ignored and reported, as is every user Tool write.
 
 ### Items
-<!-- keywords: items, item copies, inventory, give item, take item, who owns, has key, equip from code, recharge, set uses, set state, use from code, reveal item, identify item, unidentified, item script, when gained, when lost, when equipped, when unequipped, when consumed -->
+<!-- keywords: items, item instances, inventory, give item, take item, who owns, has key, equip from code, recharge, set uses, set state, use from code, reveal item, identify item, unidentified, item script, when gained, when lost, when equipped, when unequipped, when consumed -->
 
-`items` holds every item of the world by code name. Each entry has `id`, `name`, `unidentifiedName`, `unidentifiedDescription`, its own `placeholders`, and `copies`: its Item Copies in the game. An unidentified field is `''` when the item leaves it blank.
+`items` holds every item of the world by code name. Each entry has `id`, `name`, `unidentifiedName`, `unidentifiedDescription`, its own `placeholders`, and `instances`: its Item Instances in the game. An unidentified field is `''` when the item leaves it blank.
 
-Each Item Copy has these members. They are read-only.
+Each Item Instance has these members. They are read-only, except `image`.
 
 | Member | What it is |
 | --- | --- |
 | `id` | Unique identifier |
 | `item` | Code name of its item, a key of `items` |
-| `owner` | Code name of the entity that owns it, the persona included. It is `''` while the Item Copy lies at a location, or when the persona has no code name |
+| `owner` | Code name of the entity that owns it, the persona included. It is `''` while the Item Instance lies at a location, or when the persona has no code name |
 | `location` | Code name of the location it lies at, or `''` while an entity owns it |
 | `quantity` | How many it holds |
 | `equipped` and `slot` | Whether it is equipped, and the slot's name. An **All of** item reads its first listed slot |
@@ -770,35 +776,36 @@ Each Item Copy has these members. They are read-only.
 | `unidentified` | True when the player sees the item's unidentified face |
 | `uses` | Uses left, or `null` when the item has no **Uses** |
 | `state` | Its **State** word, or `null` when it has none |
+| `image` | The name of the Media List image it shows, or `null`. Assign an image's name to show it. See [Media](#media) |
 
-An entity's entry, `persona` and a location's entry each have `items`: the Item Copies that it holds.
+An entity's entry, `persona` and a location's entry each have `items`: the Item Instances that it holds.
 
 ```javascript
 // The cellar door opens for whoever carries the key.
-const hasKey = persona.items.some((copy) => copy.item === 'Cellar Key');
+const hasKey = persona.items.some((entry) => entry.item === 'Cellar Key');
 ```
 
 Change the inventory through verbs. A target is an entity, the persona or a location, as an entry or by name:
 
 | Verb | What it does |
 | --- | --- |
-| `items.<Item>.give(to, n?)` | Gives `to` a new Item Copy, or `n` of them. `n` is 1 when left out |
-| `copy.lose(n?)` | Removes the Item Copy, or `n` of it |
-| `copy.moveTo(to, n?)` | Moves the Item Copy, or `n` of it, to `to` |
-| `copy.equip(slot?)` and `copy.unequip()` | Equips or unequips it, as the panel does. `slot` is a slot's name from the item's list; left out, the first free one |
-| `copy.use()` | Uses it once, as **Use** does |
-| `copy.reveal(n?)` | Makes a hidden Item Copy visible. On a visible unidentified one, identifies it |
-| `copy.setUses(n)` | Sets its uses left, from 0 up to the item's **Uses** |
-| `copy.setState(word)` | Sets its **State**. `''` clears it |
+| `items.<Item>.give(to, n?)` | Gives `to` a new Item Instance, or `n` of them. `n` is 1 when left out |
+| `instance.lose(n?)` | Removes the Item Instance, or `n` of it |
+| `instance.moveTo(to, n?)` | Moves the Item Instance, or `n` of it, to `to` |
+| `instance.equip(slot?)` and `instance.unequip()` | Equips or unequips it, as the panel does. `slot` is a slot's name from the item's list; left out, the first free one |
+| `instance.use()` | Uses it once, as **Use** does |
+| `instance.reveal(n?)` | Makes a hidden Item Instance visible. On a visible unidentified one, identifies it |
+| `instance.setUses(n)` | Sets its uses left, from 0 up to the item's **Uses** |
+| `instance.setState(word)` | Sets its **State**. `''` clears it |
 
 - **The writes apply when the script ends**, in run order, through the same checks as the panel. A check that fails skips that write and logs the reason.
-- **The next script reads the Item Copies with these writes applied.** A `give` in one script is in `items` and `persona.items` in the scripts below it. So is an equip, and any item that unequips as a result.
+- **The next script reads the Item Instances with these writes applied.** A `give` in one script is in `items` and `persona.items` in the scripts below it. So is an equip, and any item that unequips as a result.
 - **The item scripts a write fires run before the next script.** **When Gained** and the other item timings run at once, up to 3 levels deep. One action runs item scripts at most 100 times in all, counting the runs it starts between turns. Past either limit, the write still applies and no item script runs. The log says so.
-- **During AI Output waits.** Scripts read the Item Copies from sentence to sentence, but item scripts run once, when the reply ends. A stopped reply applies none of it.
-- **An item's stat effects and granted traits wait for the end of the turn.** A later script reads the new Item Copy, but not the effects it brings.
+- **During AI Output waits.** Scripts read the Item Instances from sentence to sentence, but item scripts run once, when the reply ends. A stopped reply applies none of it.
+- **An item's stat effects and granted traits wait for the end of the turn.** A later script reads the new Item Instance, but not the effects it brings.
 - **An equip's requirement reads what the scripts above it wrote.** A script can raise a stat, and the next script can equip the item that needs it.
 - **An equip fits the Body that a script above it wrote.** A script can set `persona.body`, then equip an item in a slot of that Body. Items the new Body has no slot for unequip at once.
-- **Bound stops the player only.** A script can remove or move a **Bound** Item Copy.
+- **Bound stops the player only.** A script can remove or move a **Bound** Item Instance.
 - **A script can give to an entity that is not present.**
 - **Under a library persona, the Custom Persona entity means the player.** A `give` or a `pay` that names it reaches the player.
 - **An unknown target stops the script with an error.** So does `give` on an unknown item name.
@@ -806,8 +813,22 @@ Change the inventory through verbs. A target is an entity, the persona or a loca
 
 ```javascript
 // Resting at the shrine refills every wand the player carries.
-if (location.name === 'Shrine') for (const copy of persona.items) if (copy.item === 'Wand') copy.setUses(3);
+if (location.name === 'Shrine') for (const entry of persona.items) if (entry.item === 'Wand') entry.setUses(3);
 ```
+
+#### Instance
+<!-- keywords: instance, item instance the event happened to, item script instance, self.event.copy, gone item, lost item quantity, item event -->
+
+`instance` is the Item Instance an item script's event happened to. It exists in the five item timings only. It has the members and verbs of every Item Instance entry. `self` is the item.
+
+After the Item Instance is gone, `instance` reads it as it was before the event. Its verbs then name an Item Instance the game no longer has.
+
+```javascript
+// When Lost: count the coins that left.
+stats.Spent.value += instance.quantity;
+```
+
+**Test Code** reads a sample: one Item Instance of the item at the persona, with a quantity of 1.
 
 ### Currencies
 <!-- keywords: currencies, money, balance, pay, toll, gold, items, price, afford, fee, bribe, income, change, refuse -->
@@ -875,7 +896,7 @@ if (turn.action.includes('lever')) options["Vault Open"] = true;
 | `name` | The Body's name. Read-only |
 | `slots` | The Body's slots, in the Body's order. A list. Read-only |
 
-Each slot has `name`, `capacity` and `items`: the Item Copies equipped in it. An **All of** item is listed under every slot it takes. They have the [members of an Item Copy](#items).
+Each slot has `name`, `capacity` and `items`: the Item Instances equipped in it. An **All of** item is listed under every slot it takes. They have the [members of an Item Instance](#items).
 
 ```javascript
 // A curse turns the player into a wolf for good.
@@ -888,6 +909,43 @@ persona.body = "Wolf";
 - **The write settles at once.** Items in a slot the new Body lacks, or past a smaller capacity, unequip and stay carried. Their effects reverse, **When Unequipped** runs and the log names the Body and the items. This holds in a **When a Trait Switches** script and an item script.
 - **`body` reads the new Body in the same run,** with the items equipped in its slots.
 - **The base Body is saved with the game.** A script cannot return the base to the Body the world picked. Assign that Body's name.
+
+### Media
+<!-- keywords: change picture, swap image, show image from code, change portrait, wounded portrait, change outfit, set sound, change music, change ambience, media list, override image, clear image, per guard image -->
+
+A script shows or plays any entry of the world's **Media List** by naming it, the way `persona.body = "Wolf"` sets a Body.
+
+| Member | On | Takes |
+| --- | --- | --- |
+| `image` | An entity's entry, `persona`, `owner`, each entry of `instances`, a location's entry, `location`, each Item Instance | An image's name |
+| `sound` | An entity's entry, `persona`, `owner`, each entry of `instances` | A sound's name |
+| `ambience` | A location's entry, `location` | A sound's name |
+| `music` | `world` | A sound's name |
+
+```javascript
+// Mira looks hurt while her Health is low.
+entities.Mira.image = stats.Health.value < 20 ? "Mira Wounded" : null;
+
+// The storm rolls in.
+locations["Old Mill"].ambience = "Thunder";
+world.music = "Storm Theme";
+```
+
+- **Reading gives the name of the entry shown, or `null`.** With nothing assigned, `image` reads the first image the [Visibility rules](World-Editor-Entities) show, and the other members read the entry the field links. A picture or sound kept in the world, not on the Media List, reads `null`.
+- **Assign a name to show that entry.** It shows first, over every Visibility rule, wherever the image appears. The rule-picked images follow it, so the player can still page to them.
+- **Assign `null` to clear it.** The Visibility rules and the authored sound return.
+- **Names match exactly.** A name the Media List has no entry for stops the script with an error that names it. So does an image's name on `sound`, `ambience` or `music`, or a sound's name on `image`.
+- **The member reads the new name in the same run.**
+- **The change is saved with the game,** and a rewind past its turn undoes it. It holds the entry, not its name, so renaming the entry keeps it. When the entry is deleted from the world, the owner goes back to its rules.
+- **An Item Instance's image is its own.** Two Item Instances of one item can show different images.
+- **`image` and `sound` on a Generic entity set every copy of it.** A Generic entity runs one copy per Start. To set one copy, use its entry in `instances`, which wins over the entity's. Each entry has `id`, its Start's id, and `location`, the code name of the place it stands, or `''`. The panel shows the copy standing where the player is.
+- **An entity the player plays keeps its own image and sound apart.** While the player plays an entity, `persona` and that entity's entry set the persona's, and the entity's own come back when the player plays someone else.
+
+```javascript
+// The guard at the gate wears the captain's armor; the others keep theirs.
+const atGate = entities.Guard.instances.find((guard) => guard.location === "Gate");
+if (atGate) atGate.image = "Captain";
+```
 
 ### Narration
 <!-- keywords: rewrite a sentence, sentence hook, during ai output, narration object, narration sentence, sent, buffered, full, index, filter narration, replace words in the story, narration is not defined, error underline on narration -->
@@ -916,15 +974,16 @@ narration.sentence = narration.sentence.replace('door', '[door](https://example.
 **Test Code** reads a sample. The **Sample Sentence** field gives `sentence`. `sent` and `buffered` are empty, and `index` is `0`.
 
 ### Player
-<!-- keywords: ask the player, tell the player, toast, confirm, ask, input, prompt, dialog, choice, pick one, pick several, multiple, text field, question, answer, wait for the player, await, canceled prompt, player is not defined, message that stays in history -->
+<!-- keywords: ask the player, tell the player, toast, show an image, picture in the story, image in the narration, confirm, ask, input, prompt, dialog, choice, pick one, pick several, multiple, text field, question, answer, wait for the player, await, canceled prompt, player is not defined, message that stays in history -->
 <!-- route: worldEditorStat.code -->
 
-`player` is the human who plays, not the entity they play. `persona` is that entity. `player` has five calls. It exists in every timing except **During AI Output**, where a call fails the script.
+`player` is the human who plays, not the entity they play. `persona` is that entity. `player` has six calls. In **During AI Output**, only `player.show` runs. Any other call fails the script, since a sentence can't wait for the player.
 
 | Call | Returns | Shows |
 | --- | --- | --- |
-| `player.tell(text)` | Nothing | A message line under the turn's narration. The save keeps it with the turn. The AI never gets it |
+| `player.tell(text)` | Nothing | A message line under the turn's narration. It persists with the turn. The AI never gets it |
 | `player.toast(text)` | Nothing | A toast. It is not saved |
+| `player.show(name, { size, wrap })` | Nothing | The Media List image named `name`, in the story. Selecting it opens it full size. It persists with the turn. The AI never gets it |
 | `player.confirm(question)` | `true` or `false` | The question with two buttons |
 | `player.ask(question, options, { multiple })` | The picked value. With `multiple`, a list | Up to four options as buttons, five or more as a dropdown. With `multiple`, toggle buttons and **OK** |
 | `player.input(question, placeholder)` | The typed text | The question with a text field and **OK** |
@@ -940,24 +999,45 @@ const path = player.ask('Which road do you take?', [
 placeholders.Route.pin(path);
 ```
 
+`player.show` places the image by its timing:
+
+- **At Game Start and Before the AI** show it above the turn's narration, while the reply loads.
+- **During AI Output** shows it right after the sentence that just completed. It appears when the reveal reaches that sentence. A sentence inside a quote holds the image until the quote ends.
+- **Every other timing** shows it below the narration, in call order with the messages.
+- **An item script** shows it below the narration when the item changes at the end of the reply, or between turns. An item change that a Tool call makes during the turn runs before the narration, so it shows above.
+- **A World Tool's On Call script** follows when it runs. Called during the turn, before the narration starts, it shows above. A Tool set to run After the AI shows below.
+- **Several images on one sentence** show in call order. Blocks stack. Two floats on one side sit side by side, and a block after a float sits beside it.
+- **A stopped reply** keeps none of its During AI Output images. **Regenerate** shows the new reply's images in their place.
+- **`size`** is `'small'`, `'medium'` or `'large'`. The default is `'medium'`.
+- **`wrap`** is `'block'`, `'left'` or `'right'`. `'block'` stands on its own line and breaks the text. `'left'` and `'right'` float the image to that side, and the text after it wraps around it. Above and below the narration, the image is always on its own line.
+- **A `'large'` image is always a block,** since it fills the column. On a narrow screen, every float is a block.
+- **A name with no image fails the script.** So does a sound's name, or a `size` or `wrap` outside its list. A `try` does not stop the failure.
+- **An image removed from the Media List** no longer shows in the turns that showed it.
+
+```javascript
+// Open the scene on its picture.
+player.show('Harbor at Dusk', { size: 'large' });
+```
+
 - **Closing a prompt fails the script.** Cancel, or Escape inside the prompt, fails it as canceled. Its writes are discarded, as on any error. The turn goes on, and the other scripts in the timing still apply.
-- **A prompt needs a screen.** With no game screen to answer, `ask`, `confirm` and `input` fail as canceled at once. `tell` and `toast` do nothing.
+- **A prompt needs a screen.** With no game screen to answer, `ask`, `confirm` and `input` fail as canceled at once. `tell`, `toast` and `show` do nothing.
 - **A bad call throws a TypeError in the script.** A bad call is a message, question or placeholder that is not text, an `ask` with no options, or an option that is neither text nor `{ label, value }`.
 - **A multiple pick with nothing chosen** returns an empty list. A single `ask` always returns one value.
 - **Prompts show one at a time.** An open prompt holds every later script in its timing until you answer it, including a script that never names `player`.
 - **The timeout pauses** while a prompt is open. The one-second limit counts the script's own work.
 - **Write `player.` by name.** A script that reads `player` another way, such as `const p = player;`, fails with "player is not defined".
 
-A message belongs to the turn that runs when the script makes it:
+A message or an image belongs to the turn that runs when the script makes it:
 
 - A message from At Game Start goes with the opening turn.
 - A message from a trait switch goes with the latest turn on screen.
-- A re-roll of a turn's stats replaces the messages from the timings it runs again. It keeps the During AI Output messages.
+- A re-roll of a turn's stats replaces the messages and images from the timings it runs again. Item scripts and trait switches count too. The re-roll puts the items and traits back as they were before the turn, then makes the turn's changes again. It keeps the During AI Output ones.
+- A re-roll keeps the messages and images that a World Tool's On Call script made, with those of the scripts its writes set off. The re-roll applies that script's saved writes again without running it, and the scripts they set off show nothing new.
 
-**Test Code** and the **Test Bench** show the real question, one after another, as in a game. An edit to the code, or a close of the editor, closes an open prompt. `tell` and `toast` show as lines in the report.
+**Test Code** and the **Test Bench** show the real question, one after another, as in a game. An edit to the code, or a close of the editor, closes an open prompt. `tell`, `toast` and `show` show as lines in the report. A `show` line names the image, its size and its wrap.
 
 ### Trait
-<!-- keywords: trait that switched, switch script, trait switched on, trait switched off, trait enabled, which trait changed, when a trait switches, trait is not defined, trait read-only, error underline on trait -->
+<!-- keywords: trait that switched, switch script, trait switched on, trait switched off, trait enabled, which trait changed, when a trait switches, trait is not defined, trait read-only, error underline on trait, who switched the trait, player toggle or script, args.by switch cause -->
 <!-- route: worldEditorStat.code -->
 
 `trait` is the trait that switched, in its state after the switch. It exists in a **When a Trait Switches** script only. In any other timing, the name is unknown. It is read-only. The editor underlines a write to it as an error. In a run, the write is ignored and reported.
@@ -976,14 +1056,82 @@ if (trait.name === 'Wounded' && trait.enabled) stats.Vigor.value -= 5;
 
 A stat or world script sees every switch through `trait`. A trait's own script sees its own switches, with `self` as the trait and `trait` as the same entry.
 
+`args.by` tells what switched the trait:
+
+| `args.by` | Cause |
+| --- | --- |
+| `'player'` | The player switched this trait in the **Traits** tab |
+| `'script'` | A script switched this trait, a World Tool's included |
+| `'rule'` | Anything else: a gate, a trait that turns its siblings off, a trait that turns off with another, a World Option change or a persona change |
+
+Only the trait the player or the script named reads `'player'` or `'script'`. A sibling that turned off with it reads `'rule'`.
+
+```javascript
+// Only the player's own switch costs Gold.
+if (trait.name === 'Rage' && trait.enabled && args.by === 'player') stats.Gold.value -= 10;
+```
+
 When a script switches a trait, its **When a Trait Switches** scripts run at once, before the next script in the list. The next script reads their full result. A switch that one of these scripts makes runs the same way, up to 8 levels deep. One action runs these scripts at most 100 times in all, counting the runs it starts between turns. Past either limit, the switch still applies, its scripts are skipped, and the console reports it. See [Order of Effects](#order-of-effects).
 
-**Test Code** reads a sample. In a trait's own script, `trait` is that trait. In other scripts, it is the world's first trait in tree order, read as switched on, or a blank trait.
+**Test Code** reads a sample. In a trait's own script, `trait` is that trait. In other scripts, it is the world's first trait in tree order, read as switched on, or a blank trait. `args.by` reads `'player'`.
+
+### Args
+<!-- keywords: args, arguments, trigger, what started the run, item event quantity, use target, who gave it, gift from player, where it came from, where it went, cause, by story player script rule, purchase, bought, sold, price paid, shop buy, sale not a gift, self.event, args empty, args read-only -->
+
+`args` holds what started the run. It's read-only, and it exists in every script.
+
+| Script | `args` holds |
+| --- | --- |
+| A [World Tool](ScriptsGuide#world-tools) script | The values the AI sent, such as `args.<Parameter>` |
+| An item script | The fields of the item event, below |
+| A **When a Trait Switches** script | `by`: what switched the trait (see [Trait](#trait)) |
+| Any other script | Nothing. It's an empty object |
+
+An item script's `args`:
+
+| Field | Timings | What it is |
+| --- | --- | --- |
+| `by` | All five | What caused the event: `'story'`, `'player'`, `'script'` or `'rule'` (table below) |
+| `from` | When Gained | Where the Item Instance came from: the `persona` entry, an entity's entry or a location's entry. `null` when it is new |
+| `to` | When Lost | Where the Item Instance went, as `from` reads it. `null` when it is gone for good |
+| `purchase` | When Gained, When Lost | The buy that moved it, as `{ price, currency }`. `null` when no one bought it |
+| `quantity` | All five | How many the event moved |
+| `target` | When Used | The Item Instance the use acted on, or `null` when none or gone |
+
+| `args.by` | Cause |
+| --- | --- |
+| `'story'` | The story changed the inventory |
+| `'player'` | The player used the **Inventory** panel |
+| `'script'` | A script wrote it, a World Tool's included. This holds even when the story started the chain |
+| `'rule'` | An automatic change: a **Becomes** result, or an unequip forced by a full slot, a Body change or a requirement |
+
+A field is absent in a timing it doesn't apply to. `args.target` in a **When Gained** script reads `undefined`.
+
+```javascript
+// When Gained: only a gift from the player counts, not a sale or a script's transfer.
+if (args.from !== persona || args.purchase || args.by === 'script') return;
+stats.Affection.value += 5;
+```
+
+```javascript
+// When Used: oil lights the lantern it went into.
+if (args.target && args.target.item === 'Lantern') args.target.setState('lit');
+```
+
+A pickup from the ground reads the location as `args.from`. A drop reads it as `args.to`.
+
+Only the story buys. A buy runs When Gained for the buyer and, when the seller's Item Instance moved, When Lost for the seller. Both read the same `args.purchase`:
+
+- `price` is what the whole buy cost, in the Currency's base unit. A buy of 2 that runs When Gained twice reads the same price both times. `currency` is the Currency's name.
+- Both are `null` when the buy moved no money: the story set no price, the item's **Value** is 0, or the Currency is **Name Only**.
+- A sale by the player reads `args.from === persona` with a purchase. Check `args.purchase` to tell a sale from a gift.
+
+**Test Code** gives an item script a sample event: a quantity of 1, `by` as `'story'`, `from` and `to` as `null`, no purchase, and no target.
 
 ### Order of Effects
 <!-- keywords: which script wins, priority, precedence, conflict, race condition, execution sequence, overwrite each other, see other scripts changes -->
 
-Each timing is a separate run. Within one run, scripts run one by one, in the order of the **Scripts** tab (see [Run Order](ScriptsGuide#run-order)). Each script reads what the scripts above it wrote: stats, trait switches, placeholder pins, dictionary entries, Item Copies, Currency balances, the sentence in During AI Output and `turn.choices` in After the AI.
+Each timing is a separate run. Within one run, scripts run one by one, in the order of the **Scripts** tab (see [Run Order](ScriptsGuide#run-order)). Each script reads what the scripts above it wrote: stats, trait switches, placeholder pins, dictionary entries, Item Instances, Currency balances, the sentence in During AI Output and `turn.choices` in After the AI.
 
 Two scripts that each write `stats.Health.value -= 5` take 10 from Health.
 
@@ -1088,7 +1236,7 @@ An After the AI script can change the choices the player sees. Edit `turn.choice
 - **A stats re-roll starts again.** It runs the scripts on the AI's own choices. Edits never add up. The save keeps both lists.
 - **Regenerate Choices runs the scripts again.** They read the new list and the AI's stat changes for the turn. Only their choice edits apply. The new list shows once they finish.
 - **Regenerate Choices reads items as the turn did.** The scripts read the items from Before the AI, On Call Tools and the story's item changes. They don't read an item that a During AI Output script wrote.
-- **A `player` call shows nothing on that run.** `tell` and `toast` show nothing, `confirm` answers `false`, `ask` answers `null` (`[]` with `multiple`), and `input` answers `""`. The script runs on.
+- **A `player` call shows nothing on that run.** `tell`, `toast` and `show` show nothing, `confirm` answers `false`, `ask` answers `null` (`[]` with `multiple`), and `input` answers `""`. The script runs on.
 
 ```js
 // Once the bridge is down, no choice crosses it.
@@ -1098,7 +1246,7 @@ if (stats.Bridge.value === 0) turn.choices = turn.choices.filter((choice) => !/b
 ### Location
 <!-- keywords: move player, teleport, change scene, travel, where am i, current place, go to -->
 
-`locations` holds every location of the world by its code name, as `entities` holds the entities. A name with a space needs brackets: `locations["Old Mill"]`. `location` is the entry of the location the turn is at. Both have the same fields. All fields are read-only.
+`locations` holds every location of the world by its code name, as `entities` holds the entities. A name with a space needs brackets: `locations["Old Mill"]`. `location` is the entry of the location the turn is at. Both have the same fields. All fields are read-only, except `image` and `ambience`.
 
 | Field | What it is |
 | --- | --- |
@@ -1111,7 +1259,9 @@ if (stats.Bridge.value === 0) turn.choices = turn.choices.filter((choice) => !/b
 | `parent` | The code name of the location that holds this one. Empty at the top level |
 | `children` | The code names of the locations inside this one, in the editor's order |
 | `exits` | The direct ways out of here, each with a `name` (a code name), a `hint` (the Connection's travel hint, or empty), a `distance` (`'nearby'`, or `'far'` across a Far Connection) and `oneWay` (true when the Connection runs this way only). A parent, child or sibling with no Connection is `'nearby'` and two-way. A move can carry the player further than these |
-| `items` | The Item Copies lying at the location. See [Items](#items) |
+| `items` | The Item Instances lying at the location. See [Items](#items) |
+| `image` | The name of the Media List image the location shows first, or `null`. Assign an image's name to show it. See [Media](#media) |
+| `ambience` | The name of the Media List sound the location plays, or `null`. Assign a sound's name to play it. See [Media](#media) |
 
 In a world with no location, `location.id` and `location.name` are empty, and `location.present` is an empty list. An unknown location name reads as a blank entry.
 
@@ -1172,12 +1322,36 @@ if (stats.Energy.value <= 0) location.move("Camp");
 
 Two calls add to it. Each takes one line of text.
 
-- **`memories.add(<text>)`** adds a line to this turn's memory, after the AI's summary of the turn. The AI still writes its summary. Recall finds both on later turns when they fit. The line is not sent with every request.
+- **`memories.append(<text>)`** adds a line to this turn's memory, after the AI's summary of the turn. The AI still writes its summary. Recall finds both on later turns when they fit. The line is not sent with every request.
 - **`memories.pin(<text>)`** adds a memory that is sent with every request, like one you write in the Memory Manager. It shows there under **Custom**, where the player can edit or delete it.
 - **Both clear with their turn.** A regenerate or a stopped turn discards them.
 - **A blank or non-text line throws a TypeError.** Lines are trimmed.
 
 > ℹ️ **A pinned summary can still lose to the memory limit. A pinned line never does.** A summary that `pin()` keeps still competes for the room that the memory limit sets. A line that `memories.pin` adds is sent on every request, whatever the limit.
+
+#### Named Memories
+
+A name lets a script find the same Custom memory again on a later turn. Use it to keep one memory current in place of a new line for each event.
+
+- **`memories.pin(<name>, <text>)`** adds a memory under that name. When a memory with that name already exists, it overwrites its text instead.
+- **`memories["<Name>"]`** resolves to the memory with that name. Names match with outer spaces removed and in any case, so `memories["nursery "]` resolves to **Nursery**.
+- **An unknown name reads as a blank entry.** Its `id`, `name` and `text` are `""`, and every flag is false. Test with `memories["Nursery"].id` to see whether the memory exists.
+- **Calls on a blank entry are ignored.** **Test Code** and the **Test Bench** list the name, and so does the turn's warning in play.
+- **A named pin reads under its name in the scripts below it** in the same turn. A second named pin in the turn overwrites the first.
+- **A named write rewinds with its turn**, and so do `edit(text)` and `remove()` on the entry. A rewind restores the text from before that turn. Rewinding the turn that created the memory removes it.
+- **A removed named memory keeps its name.** The next named pin brings it back with the same `id`.
+- **Scripts read the player's edit.** The next named write replaces it, and rewinding that write brings the edit back.
+- **A player's delete frees the name.** The next named pin makes a new memory. A restore while another memory has the name brings the old one back unnamed.
+- **The memory's place in the timeline is its latest write.** It moves back when that write rewinds.
+- **The AI reads the text only, never the name.** The Memory Manager shows the name as a label on the Custom row.
+- **A blank or non-text name or text throws a TypeError.** So does a name that `memories` already reads as a list member, such as `length`, `filter` or `3`.
+
+```js
+// One memory lists every child at the nursery.
+const nursery = memories["Nursery"].text;
+const child = player.input("Name the child");
+memories.pin("Nursery", nursery ? `${nursery} ${child} lives there too.` : `${child} lives at the nursery.`);
+```
 
 #### Memory Entries
 
@@ -1191,23 +1365,24 @@ Each memory in the list has these fields. All are read-only.
 | `day` | Day number at that time |
 | `daypart` | Time of day at that time. It is one of the six `clock.daypart` words |
 | `text` | The text as the Memory panel shows it, edits included |
+| `name` | The name a script pinned the memory under, or `""` |
 | `custom` | True for a **Custom** memory |
 | `kept` | True when the story keeps the memory. Recall can still leave it out of a turn |
 | `inContext` | True when the memory went to the AI on the last turn |
 | `pinned` | True when the memory is pinned to stay |
 | `forgotten` | True when the memory is pinned to go |
 
-Four calls on a memory write the Memory panel's verdicts. The writes apply when the turn ends. A later call in the same turn overwrites an earlier one. A line that `memories.add` made reads in the scripts below it as the turn's own memory, and a line that `memories.pin` made reads as a Custom memory. A verdict or an edit on either one applies to it when the turn ends.
+Four calls on a memory write the Memory panel's verdicts. The writes apply when the turn ends. A later call in the same turn overwrites an earlier one. A line that `memories.append` made reads in the scripts below it as the turn's own memory, and a line that `memories.pin` made reads as a Custom memory. A verdict or an edit on either one applies to it when the turn ends.
 
 | Call | What it does |
 | --- | --- |
 | `pin()` | Pins the memory to stay, as **Pin This Memory** does |
 | `forget()` | Pins the memory to go, as **Forget This Memory** does |
 | `edit(text)` | Rewrites the memory, as an edit in the Memory Manager does. A summary keeps its original and is pinned to stay |
-| `remove()` | Erases the memory, as **Delete This Memory** does. The player can restore it in the Memory Manager |
+| `remove()` | Erases the memory, as **Delete This Memory** does. The player can restore it in the Memory Manager. A named memory keeps its name |
 
 - **`pin()` and `forget()` are ignored on a Custom memory.** The run lists each one as ignored. `edit(text)` and `remove()` work on a Custom memory.
-- **A verdict, an edit or a removal persists through a rewind**, as the player's does.
+- **A verdict, an edit or a removal persists through a rewind**, as the player's does, except an edit or a removal on a [named memory](#named-memories).
 - **A World Tool can write a verdict too.** An On Call Tool's verdict applies when the turn ends. An After the AI Tool's verdict applies with the After the AI scripts.
 
 ```js

@@ -47,9 +47,9 @@ describe('the on-demand script check', () => {
       ...base([stat({ id: 'seen', name: 'Seen' })]), items: [gem],
       scripts: [{ id: 'w1', timing: 'after', code: 'items.Gem.give(locations["Harbor Steps"]);' }, { id: 'w2', timing: 'after', code: second }],
     });
-    expect(await checkScripts(world('if (items.Gem.copies.length !== 1) throw new Error("copies"); if (stats.Seen.value !== 0) throw new Error("fired");'))).toEqual([]);
+    expect(await checkScripts(world('if (items.Gem.instances.length !== 1) throw new Error("copies"); if (stats.Seen.value !== 0) throw new Error("fired");'))).toEqual([]);
     // The control: the same read throws when the copy is there, so the clean run above did read it.
-    const [found] = await checkScripts(world('if (items.Gem.copies.length === 1) throw new Error("copies");'));
+    const [found] = await checkScripts(world('if (items.Gem.instances.length === 1) throw new Error("copies");'));
     expect(found?.ruleId).toBe(SCRIPT_EXECUTION.id);
   });
 
@@ -74,7 +74,7 @@ describe('the on-demand script check', () => {
     const world = (code: string): RuleWorld => ({
       ...base([]), entities: [{ id: 'tor', name: 'Tor', description: '' } as Entity], scripts: [{ id: 'w', timing: 'after', code }],
     });
-    expect(await checkScripts(world('memories.add("The gate fell."); memories.pin("Tor lied."); entities.Tor.diary("I lied.");'))).toEqual([]);
+    expect(await checkScripts(world('memories.append("The gate fell."); memories.pin("Tor lied."); entities.Tor.diary("I lied.");'))).toEqual([]);
     const rows = async (code: string) => (await checkScripts(world(code))).map((f) => [f.ruleId, f.message]);
     expect(await rows('entities.Mira.diary("Hello.");')).toEqual([[
       SCRIPT_UNKNOWN_NAME.id, '“World · After the AI” writes a diary for “Mira”, a name no entity has yet. An entity with that name can appear during play.',
@@ -85,6 +85,19 @@ describe('the on-demand script check', () => {
     expect(await rows('entities.Mira.diary("Hello."); traits.Bold.enabled = true;')).toEqual([[
       SCRIPT_UNKNOWN_NAME.id,
       '“World · After the AI” writes to unknown names. Writes ignored: no trait is named “Bold”. It also writes a diary for “Mira”, a name no entity has yet. An entity with that name can appear during play.',
+    ]]);
+  });
+
+  it('reports an edit or remove through a memory name as a maybe, never as an unknown name (Q12, Q25)', async () => {
+    const world = (code: string): RuleWorld => ({ ...base([]), scripts: [{ id: 'w', timing: 'after', code }] });
+    const rows = async (code: string) => (await checkScripts(world(code))).map((f) => [f.ruleId, f.message]);
+    expect(await rows('memories.pin("Nursery", "Ash.");')).toEqual([]);
+    expect(await rows('memories.Nursery.edit("Ash.");')).toEqual([[
+      SCRIPT_UNKNOWN_NAME.id, '“World · After the AI” writes to the memory “Nursery”, a name no memory has yet. A script can pin it during play.',
+    ]]);
+    expect(await rows('memories.Nursery.edit("Ash."); memories.Stable.remove(); entities.Mira.diary("Hi.");')).toEqual([[
+      SCRIPT_UNKNOWN_NAME.id,
+      '“World · After the AI” writes a diary for “Mira”, a name no entity has yet. An entity with that name can appear during play. It also writes to the memories “Nursery”, “Stable”, names no memory has yet. A script can pin them during play.',
     ]]);
   });
 

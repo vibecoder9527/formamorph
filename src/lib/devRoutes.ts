@@ -25,9 +25,11 @@ export type DevView = (typeof DEV_VIEWS)[number];
  *  on a sample Body; the real rows are at `modal=worldEditor&tab=items&subtab=equipment&fixture=items`.
  *  `road` shows the full-screen scene on the level `tab=` names (`supporter`, `supporter_plus`, `supporter_top`). `tab=checklist` opens the support checklist, and `subtab=` picks a canned state
  *  (`start`, `signedIn`, `visited`, `noPledge`, `linked`, `finished`).
+ *  `supporterEnd` opens the Supporter-only schedule dialog on a three-stage listing; `tab=none` opens it on one with no schedule.
+ *  `supporterSchedule` shows a Supporter-only card with a three-stage tier schedule; `tab=details` opens its details window.
  *  `mailHistory` takes `tab=marked|unmarked|empty|failed` for canned history (`devMailHistorySample.ts`).
  *  Players never navigate to these. */
-export const DEV_PANE_MODALS = ['customCode', 'eventForm', 'podium', 'sentMessages', 'mailHistory', 'suspend', 'feedbackForm', 'feedbackEdit', 'feedbackThread', 'listingComment', 'changelogEntry', 'fontTune', 'revealDemo', 'presetImport', 'generateImage', 'placeholderPicker', 'rootCrash', 'pendingUpdate', 'bodyLayout'] as const;
+export const DEV_PANE_MODALS = ['customCode', 'eventForm', 'podium', 'sentMessages', 'mailHistory', 'suspend', 'feedbackForm', 'feedbackEdit', 'feedbackThread', 'listingComment', 'changelogEntry', 'fontTune', 'revealDemo', 'presetImport', 'generateImage', 'placeholderPicker', 'rootCrash', 'pendingUpdate', 'bodyLayout', 'supporterEnd', 'supporterSchedule'] as const;
 export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
 
 /** Modals the router can open via `#dev?modal=…`. `settings` opens from MainMenu or GameViewer; `menu`,
@@ -52,9 +54,9 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  to have a world worth traveling in; `fixture=entityFollowers` puts met entities on its Map and a follower
  *  in the Entities tab. `editText` is in game (GameViewer) and
  *  opens the narration editor on the current page's text — empty before any turn, which is enough to reach
- *  its full-screen toggle, the one editor that grows in place instead of raising a window. `changelog` opens
- *  MainMenu's What's New popout on a canned sample (`devChangelogSample.ts`) rather than the live GitHub
- *  fetch, so its typography is checkable offline and always shows every shape the notes can take.
+ *  its full-screen toggle, the one editor that grows in place instead of raising a window. `whatsNew` opens
+ *  MainMenu's What's New dialog on the 3.7.0 seed summary rather than the live GitHub fetch; `tab=…` picks the build: `web`, `upToDate`
+ *  (a desktop build with no update) or `update` (a desktop build with v3.8.0 available).
  *  `eventAck` opens the running-event acknowledge poster on a canned event (`devEventSample.ts`) instead of
  *  the events poll, so both it and the main menu's event banner are checkable without a live event; `tab=…`
  *  picks which phase, an opening or an ending. `publish` opens MainMenu's publish dialog on a canned world
@@ -63,6 +65,7 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  MainMenu's read-only Custom Prompts viewer; with no world selected it renders a canned sample
  *  override, so it's reachable on an empty library. `aiContext` is in game (GameViewer) and opens the
  *  AI Context inspector — empty before any turn, so pair it with `fixture=…` for real captured turns.
+ *  `mentionReading` is in game (GameViewer) and shows the newest turn's Character Mentions reading.
  *  `tts` is in game (GameViewer) and opens Text to Speech on its Load Model screen.
  *  `ageGate` raises the community age attestation on demand, so its copy stays checkable on a profile
  *  that has already accepted it. `likers` opens Community Creations, its first listing's details, and the
@@ -73,7 +76,8 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  without the sample the prompt would have nothing to render before the cutover.
  *  `auth` raises the login/register dialog, behind the age gate's check. `designSystem` opens the live reference
  *  showcase without mounting it in production. `enterWorld` starts normal entry for the stored world
- *  named by `tab` (or the first installed world).
+ *  named by `tab` (or the first installed world); with `fixture=…` it stores that fixture's world and enters it
+ *  (`fixture=enterOptions` is Emberwatch with World Options).
  *  `deleteAccount` opens the account-deletion flow at its first step, and `deletionCancelled` the notice
  *  a sign-in raises when it calls a pending deletion off. Neither is reachable by clicking without an
  *  account in the matching state — one needs a real password, the other a request already standing.
@@ -102,7 +106,8 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  closes it and writes nothing. `savedElsewhere` and `deletedElsewhere` open the World Editor and raise
  *  the question another tab's save or delete of the open world asks. Either answer closes it and writes nothing.
  *  `deleteWorldAvatar` opens the World Editor and raises an Avatar store delete on canned entities, which
- *  writes nothing; add `tab=media` to show the Media tab's Avatars section under it. `appearancePreview` opens the
+ *  writes nothing; add `tab=media` to show the Media tab's Avatars section under it. `deleteMediaEntry` opens the
+ *  World Editor and raises Delete From World for an image on canned uses, which writes nothing. `appearancePreview` opens the
  *  World Editor and a trait's Preview on canned rows and the library's first Avatar, or the bundled one. `statAppearancePreview` opens a stat's Preview the same way. Save closes it and writes nothing. `demoAI` is in game (GameViewer) and opens the Demo AI dialog whatever the
   narration endpoint and the seen-key say, so it is reachable on a build that overrides the default endpoint.
  *  `persona` is in game (GameViewer) and opens the right panel's Change Persona picker. On mobile that panel
@@ -124,8 +129,8 @@ export type DevPaneModal = (typeof DEV_PANE_MODALS)[number];
  *  and the compare view over it, on a canned edit of the Narration prompt. `chipOptions` opens Settings and
  *  Chip Options over it, on a canned Entities chip. `scriptPrompt` is in game (GameViewer) and fires one
  *  canned `player.*` request through the live prompt store once the game has a turn; `tab=…` picks the shape
- *  (`devScriptPromptSamples.ts`). Pair it with `fixture=…`. `item` opens the first Item Copy's popup; pair it with `fixture=items&tab=inventory`. `road` opens the levels scene over any view, and `tab=<tier>` picks its level. `storyCard` is in game (GameViewer) and shows the Formamorph AI card whatever the turn count and seen record say; `tab=engine` shows the built-in engine card. `profileMerge` raises the AppData merge dialog on MainMenu at the step `tab=…` names, on canned rows (`devProfileMergeSample.ts`); its buttons close it and write nothing. `DEV_PANE_MODALS` follow. */
-export const DEV_MODALS = ['settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'firstRun', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'changelog', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'usernameRename', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'appearancePreview', 'statAppearancePreview', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt', 'stranger', 'item', 'credits', 'unreadableWorlds', 'tts', 'road', 'storyCard', 'profileMerge', ...DEV_PANE_MODALS] as const;
+ *  (`devScriptPromptSamples.ts`). Pair it with `fixture=…`. `item` opens the first Item Instance's popup; pair it with `fixture=items&tab=inventory`. `road` opens the levels scene over any view, and `tab=<tier>` picks its level. `storyCard` is in game (GameViewer) and shows the Formamorph AI card whatever the turn count and seen record say; `tab=engine` shows the built-in engine card, `tab=mentions` the Character Mentions card, `tab=mentionsAsk` that card after Turn On with the Contribute Corrections question, `tab=mentionsPreview` that card with its larger preview open. `profileMerge` raises the AppData merge dialog on MainMenu at the step `tab=…` names, on canned rows (`devProfileMergeSample.ts`); its buttons close it and write nothing. `DEV_PANE_MODALS` follow. */
+export const DEV_MODALS = ['settings', 'entity', 'export', 'menu', 'worldEditor', 'intro', 'firstRun', 'avatar', 'backup', 'aiSetup', 'entityEditor', 'dictionaryEditor', 'modelDetails', 'community', 'memoryManager', 'profile', 'auth', 'feedbackHub', 'adminPanel', 'editText', 'location', 'whatsNew', 'eventAck', 'publish', 'worldPrompts', 'aiContext', 'mentionReading', 'ageGate', 'likers', 'privacyPolicy', 'deleteAccount', 'deletionCancelled', 'updateRequired', 'usernameRename', 'exitApp', 'designSystem', 'enterWorld', 'connectReferences', 'manageAddons', 'componentUpdates', 'worldUpdate', 'importComponent', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'deleteMediaEntry', 'appearancePreview', 'statAppearancePreview', 'demoAI', 'persona', 'likePrompt', 'errorDetails', 'imageSetup', 'formaquestion', 'formaquestionSettings', 'formaquestionCompare', 'formaquestionAiContext', 'formaquestionWikiConfirm', 'settingsCompare', 'chipOptions', 'scriptPrompt', 'stranger', 'item', 'credits', 'unreadableWorlds', 'tts', 'road', 'storyCard', 'profileMerge', ...DEV_PANE_MODALS] as const;
 export type DevModal = (typeof DEV_MODALS)[number];
 
 /** The `attach=…` value that stages sample attachments on the game view. */
@@ -139,6 +144,7 @@ export const DEV_HISTORY_OPEN = 'open';
 export const DEV_MODAL_TABS = {
   // The Context Menu reference exposes both production group dialogs with isolated data.
   designSystemGroupPicker: ['picker', 'create'],
+  // `tab=display&fixture=contribute` shows Contribute Corrections for a signed-in, attested player (Character Mentions on).
   settings: ['display', 'output', 'prompts', 'tools', 'endpoints', 'data'],
   // Settings → Tools opens a New Tool draft on its edit tab with `subtab=…`
   // (`#dev?modal=settings&tab=tools&subtab=handler`). The Tools tab is Advanced only.
@@ -147,7 +153,7 @@ export const DEV_MODAL_TABS = {
   // `tagPrompt` is Advanced only and hidden while image generation is off. `fixture=fai-<state>` shows the
   // Formamorph AI preset in one of its states and selects nothing (`#dev?modal=settings&tab=endpoints&subtab=text&fixture=fai-locked`). `fixture=fai-notice-75`, `fai-notice-90` and `fai-notice-exhausted` raise the allowance notices.
   settingsEndpoints: ['text', 'image', 'tagPrompt'],
-  worldEditor: ['overview', 'openings', 'media', 'entities', 'locations', 'items', 'traits', 'stats', 'options', 'dictionary', 'placeholders', 'scripts', 'tools'],
+  worldEditor: ['overview', 'openings', 'media', 'entities', 'locations', 'items', 'traits', 'stats', 'dictionary', 'placeholders', 'scripts', 'tools', 'options'],
   // Community Creations browses one kind per tab, plus Contest — a view over the worlds already in the
   // catalog rather than a fourth kind (see lib/browseTabs). `tab=contest` serves canned contests, so the
   // tab is reachable whether or not one is really running. `fixture=review` shows the viewer as an admin
@@ -175,6 +181,7 @@ export const DEV_MODAL_TABS = {
   // `tab=serverSettings` is the Server tab: one box per server setting, read from the live server, so
   // against a server without the settings routes each row reports that it went unanswered.
   // `fixture=serverSettings` serves every row from memory (`devServerSettingsStub.ts`); a Burst Size under 2 is refused.
+  // `tab=moderation&subtab=mentions&fixture=review` serves a canned Mentions queue (`devMentionsStub.ts`).
   // `fixture=hostedAi` adds the Formamorph AI panel over canned routes (`devHostedAiSample.ts`).
   // `tab=usage&fixture=usage` draws the Usage tab over canned figures (`devUsageSample.ts`).
   // `tab=mail` with `fixture=mail` (healthy) or `fixture=mailReview` (SES under review) draws the Mail tab over canned figures (`devMailSample.ts`).
@@ -264,9 +271,11 @@ export const DEV_MODAL_TABS = {
   // `pick=<item id>` opens one item's dialog
   // (`#dev?modal=adminPanel&tab=moderation&subtab=review&fixture=review&pick=dev-review-new`;
   // `subtab=auto` lands on the auto-approvals).
-  adminPanelModeration: ['reports', 'review', 'auto'],
+  adminPanelModeration: ['reports', 'review', 'auto', 'mentions'],
   // The acknowledge poster renders one of an event's two phases; `tab=…` picks which the canned event is at.
   eventAck: ['start', 'end'],
+  // What's New's canned builds (`whatsNewDevStates.ts`).
+  whatsNew: ['web', 'upToDate', 'update'],
   // `player.*` prompt shapes on the game view (`#dev?view=gameViewer&fixture=whiteRoom&modal=scriptPrompt&tab=askLong`).
   scriptPrompt: ['confirm', 'ask', 'askLong', 'askMulti', 'input', 'tell', 'toast'],
   // MainMenu's library card-type switcher. Not a modal: reached with `tab=…` and no `modal=…`, i.e.

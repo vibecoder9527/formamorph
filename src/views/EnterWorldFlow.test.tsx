@@ -13,8 +13,10 @@ import { toastTexts } from '@/test/toastText';
 import { readWorldPersona, rememberWorldPersona, setDefaultPersona } from '@/lib/personaPick';
 import { saveWorldAdditionDefaults } from '@/lib/worldAdditionDefaults';
 import { buildInitialSelection } from '@/lib/dictionarySelection';
-import type { Dictionary, GameLocation, PersonaRef, WorldOverview } from '@/types';
+import type { Dictionary, GameLocation, PersonaRef, WorldOption, WorldOverview } from '@/types';
 import { oneRoutine } from '@/test/routines';
+import { phValues } from '@/test/placeholderValues';
+import { encodePlaceholderToken } from '@/lib/placeholders';
 
 vi.mock('react-toastify', () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -852,6 +854,25 @@ describe("an entity's owned traits at world entry", () => {
     expect(onStartGame.mock.calls[0][7]).toEqual({ wolf: ['tamed'] });
   });
 
+  it('names a pick whose stat gate a removed pick held up (Q26e)', async () => {
+    const record = world();
+    record.data.stats = [{ id: 'str', name: 'Strength', type: 'number', description: '', min: 0, max: 20, value: 4, regen: 0, descriptors: [] }];
+    record.data.traits = [
+      { id: 'bodybuilder', name: 'Bodybuilder', groupId: 'group', statChanges: [{ statId: 'str', type: 'starting', value: 3 }] },
+      { id: 'carry', name: 'Carry Capacity', groupId: 'group', statChanges: [], requires: [{ all: [{ kind: 'stat', id: 'str', operator: '>=', value: 7, unit: 'raw' }] }] },
+    ];
+    await WorldStorageService.storeWorld(record);
+    renderEnterWorld({ onStartGame: vi.fn() });
+    await enter();
+    fireEvent.click(screen.getByRole('button', { name: /Other traits/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Bodybuilder' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Carry Capacity' }));
+    expect(screen.getByRole('checkbox', { name: 'Carry Capacity' })).toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Bodybuilder' }));
+    expect(screen.getByRole('checkbox', { name: 'Carry Capacity' })).not.toBeChecked();
+    expect(within(screen.getByRole('main')).getByText(/^Turned off/)).toHaveTextContent('Turned off Carry Capacity, because of Bodybuilder.');
+  });
+
   it('brings back a "playing as" pick when the player switches persona away and back', async () => {
     const record = world();
     record.data.entities = [
@@ -880,5 +901,295 @@ describe("an entity's owned traits at world entry", () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start Game' }));
     await waitFor(() => expect(onStartGame).toHaveBeenCalledOnce());
     expect(onStartGame.mock.calls[0][7]).toEqual({ ash: ['guard'] });
+  });
+});
+
+describe('a Preset Option at world entry', () => {
+  beforeEach(async () => {
+    const record = world();
+    const options: WorldOption[] = [
+      { id: 'lit', name: 'Lanterns Lit', type: 'boolean', shownToPlayer: true, midGame: false, default: true },
+      { id: 'heat', name: 'Heat', type: 'number', shownToPlayer: true, midGame: false, min: 0, max: 10, default: 3 },
+      {
+        id: 'start', name: 'Start', type: 'preset', mode: 'overlay',
+        values: [
+          { id: 'dark', name: 'Dark Start', description: 'The lanterns are out and the air is hot', rows: [
+            { kind: 'option', optionId: 'lit', value: false }, { kind: 'option', optionId: 'heat', value: 9 },
+          ] },
+          { id: 'mild', name: 'Mild Start', description: 'Cool air', rows: [{ kind: 'option', optionId: 'heat', value: 1 }] },
+        ],
+      },
+    ];
+    Object.assign(record.data, { options });
+    // The torch needs the lanterns lit.
+    record.data.traits = [
+      ...record.data.traits,
+      { id: 'torch', name: 'Torch', statChanges: [], requires: [{ all: [{ kind: 'option', id: 'lit' }] }] },
+    ];
+    await WorldStorageService.storeWorld(record);
+  });
+
+  it('applies a value in one click, selects its radio, and clears it when a listed Option changes', async () => {
+    const onStartGame = vi.fn();
+    renderEnterWorld({ onStartGame });
+    await enter();
+    const nav = () => within(screen.getByRole('navigation', { name: 'World setup categories' }));
+    fireEvent.click(nav().getByRole('button', { name: /^General/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Torch' }));
+    expect(screen.getByRole('checkbox', { name: 'Torch' })).toBeChecked();
+
+    fireEvent.click(nav().getByRole('button', { name: /^World Options/ }));
+    const dark = screen.getByRole('radio', { name: 'Dark Start' });
+    expect(dark).not.toBeChecked();
+    expect(screen.getByText('The lanterns are out and the air is hot')).toBeInTheDocument();
+    fireEvent.click(dark);
+    expect(screen.getByRole('radio', { name: 'Dark Start' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Lanterns Lit' })).not.toBeChecked();
+    expect(screen.getByRole('slider', { name: 'Heat' })).toHaveAttribute('aria-valuenow', '9');
+    fireEvent.click(nav().getByRole('button', { name: /^General/ }));
+    expect(screen.getByRole('checkbox', { name: 'Torch' })).not.toBeChecked();
+    expect(screen.getByRole('status')).toHaveTextContent('Applied Dark Start. Turned off Torch.');
+
+    fireEvent.click(nav().getByRole('button', { name: /^World Options/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Lanterns Lit' }));
+    expect(screen.getByRole('radio', { name: 'Dark Start' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Mild Start' })).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Game' }));
+    await waitFor(() => expect(onStartGame).toHaveBeenCalledOnce());
+    expect(onStartGame.mock.calls[0][8]).toEqual({ lit: true, heat: 9 });
+  });
+});
+
+describe('a default trait gated on a World Option', () => {
+  beforeEach(async () => {
+    const record = world();
+    const options: WorldOption[] = [
+      { id: 'lit', name: 'Lanterns Lit', type: 'boolean', shownToPlayer: true, midGame: false, default: true },
+    ];
+    Object.assign(record.data, { options });
+    record.data.traits = [
+      ...record.data.traits,
+      { id: 'torch', name: 'Torch', isDefault: true, statChanges: [], requires: [{ all: [{ kind: 'option', id: 'lit' }] }] },
+    ];
+    await WorldStorageService.storeWorld(record);
+  });
+
+  it('starts on in setup when the Option default opens its gate', async () => {
+    renderEnterWorld({ onStartGame: vi.fn() });
+    await enter();
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'World setup categories' })).getByRole('button', { name: /^General/ }));
+    expect(screen.getByRole('checkbox', { name: 'Torch' })).toBeChecked();
+  });
+
+  it('starts on with Quick Start when the Option default opens its gate', async () => {
+    const onStartGame = vi.fn();
+    renderEnterWorld({ onStartGame });
+    fireEvent.click(await screen.findByText('Entry World'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Quick Start' }));
+    await waitFor(() => expect(onStartGame).toHaveBeenCalledOnce());
+    expect(onStartGame.mock.calls[0][0]).toEqual(['default', 'torch']);
+  });
+});
+
+describe('a Preset with trait rows at world entry', () => {
+  beforeEach(async () => {
+    const record = world();
+    const options: WorldOption[] = [{
+      id: 'start', name: 'Start', type: 'preset', mode: 'overlay',
+      values: [{ id: 'raider', name: 'Raider', description: 'An orc who serves no one', rows: [
+        { kind: 'trait', traitId: 'orc', on: true }, { kind: 'trait', traitId: 'evil', on: true },
+        { kind: 'trait', traitId: 'default', on: false }, { kind: 'trait', traitId: 'gone', on: true },
+        { kind: 'trait', traitId: 'feral', ownerId: 'wolf', on: true },
+      ] }],
+    }];
+    // The wolf is Persona-Only and not played, so it is out of the cast.
+    const wolf = {
+      id: 'wolf', name: 'Wolf', playerDescription: '', aiDescription: '', aiSummary: '', persona: true, personaOnly: true,
+      traits: [{ id: 'feral', name: 'Feral', statChanges: [] }],
+    };
+    Object.assign(record.data, { options, entities: [wolf] });
+    // Elf blocks Evil, so by hand the player must swap Elf for Orc first.
+    record.data.traitGroups = [...(record.data.traitGroups ?? []), { id: 'race', name: 'Race', minPicks: 1, maxPicks: 1 }];
+    record.data.traits = [
+      ...record.data.traits,
+      { id: 'elf', name: 'Elf', groupId: 'race', isDefault: true, statChanges: [] },
+      { id: 'orc', name: 'Orc', groupId: 'race', statChanges: [] },
+      { id: 'evil', name: 'Evil', groupId: 'group', statChanges: [], requires: [{ all: [{ kind: 'trait', id: 'elf', not: true }] }] },
+    ];
+    await WorldStorageService.storeWorld(record);
+  });
+
+  it('changes picks in other categories and names them in the notice on the World Options page', async () => {
+    renderEnterWorld({ onStartGame: vi.fn() });
+    await enter();
+    const nav = () => within(screen.getByRole('navigation', { name: 'World setup categories' }));
+    fireEvent.click(nav().getByRole('button', { name: /^Race/ }));
+    expect(screen.getByRole('radio', { name: 'Elf' })).toBeChecked();
+
+    fireEvent.click(nav().getByRole('button', { name: /^World Options/ }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Raider' }));
+    expect(screen.getByRole('radio', { name: 'Raider' })).toBeChecked();
+    const notice = screen.getByRole('status');
+    expect(notice).toHaveTextContent(/^Applied Raider\. Turned on Orc and Evil\. Turned off (Default trait and Elf|Elf and Default trait)\. Couldn’t apply Wolf: Feral\.Dismiss$/);
+
+    fireEvent.click(nav().getByRole('button', { name: /^Race/ }));
+    expect(screen.getByRole('radio', { name: 'Orc' })).toBeChecked();
+    fireEvent.click(nav().getByRole('button', { name: /^Other traits/ }));
+    expect(screen.getByRole('checkbox', { name: 'Evil' })).toBeChecked();
+  });
+});
+
+describe('a Preset over placeholder names and a linked Blueprint trait at world entry', () => {
+  // One value each, so every roll reads the same.
+  const kin = { id: 'ph-kin', name: 'Kin', values: phValues(['Fox']) };
+  const place = { id: 'ph-place', name: 'Place', values: phValues(['Den']) };
+  const tokenOf = (id: string) => encodePlaceholderToken({ id, mode: 'world', placementId: `pl-${id}` });
+  beforeEach(async () => {
+    const record = world();
+    const options: WorldOption[] = [{
+      id: 'start', name: 'Start', type: 'preset', mode: 'overlay', values: [
+        { id: 'hunt', name: 'Hunt', description: '', rows: [
+          { kind: 'trait', traitId: 'smite', ownerId: 'hound', on: true },
+          { kind: 'trait', traitId: 'howl', ownerId: 'hound', on: true },
+        ] },
+        { id: 'stalk', name: 'Stalk', description: '', rows: [
+          { kind: 'persona', entityId: 'stalker' }, { kind: 'location', locationId: 'den' },
+        ] },
+      ],
+    }];
+    const person = { playerDescription: '', aiDescription: '', aiSummary: '' };
+    // The hound owns Howl and links Smite from Blueprints; the stalker is a world persona.
+    const hound = {
+      id: 'hound', name: tokenOf('ph-kin'), ...person,
+      traits: [{ id: 'howl', name: `${tokenOf('ph-kin')} Howl`, statChanges: [] }],
+      traitLinks: [{ id: 'l-smite', originalId: 'smite', kind: 'trait' as const, originalName: 'Smite', groupId: null }],
+    };
+    const stalker = { id: 'stalker', name: `${tokenOf('ph-kin')} Stalker`, ...person, persona: true };
+    Object.assign(record.data, { options, entities: [hound, stalker], placeholders: [kin, place] });
+    record.data.traitGroups = [...(record.data.traitGroups ?? []), { id: 'bp', name: 'Blueprints', system: 'blueprints' }];
+    record.data.traits = [...record.data.traits, { id: 'smite', name: 'Smite', groupId: 'bp', statChanges: [] }];
+    record.data.locations = [...record.data.locations, { id: 'den', name: tokenOf('ph-place'), isStarting: true }];
+    await WorldStorageService.storeWorld(record);
+  });
+
+  const pick = async (value: string) => {
+    renderEnterWorld({ onStartGame: vi.fn() });
+    await enter();
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'World setup categories' })).getByRole('button', { name: /^World Options/ }));
+    fireEvent.click(screen.getByRole('radio', { name: value }));
+    return screen.getByRole('status');
+  };
+
+  it('turns on the linked trait and names owner and traits resolved (Q42)', async () => {
+    expect(await pick('Hunt')).toHaveTextContent(/^Applied Hunt\. Turned on Fox: Smite and Fox: Fox Howl\.Dismiss$/);
+  });
+
+  it('names the persona and Starting Location resolved (Q42)', async () => {
+    expect(await pick('Stalk')).toHaveTextContent(/^Applied Stalk\. Persona set to Fox Stalker\. Starting Location set to Den\.Dismiss$/);
+  });
+});
+
+describe("Option stat rows on an entity's stat at world entry (Q15, Q27, Q28)", () => {
+  const fury = { id: 'ph-fury', name: 'Fury', values: phValues(['Wary']) };
+  const furyToken = encodePlaceholderToken({ id: 'ph-fury', mode: 'world', placementId: 'pl-fury' });
+  beforeEach(async () => {
+    const record = world();
+    // Easy raises the Dragon's Health into its high band; Hard raises it too but switches the stat off.
+    const raise = { statId: 'health', ownerId: 'dragon', type: 'starting' as const, value: 20 };
+    const options: WorldOption[] = [{
+      id: 'diff', name: 'Difficulty', type: 'choice', shownToPlayer: true, midGame: false, default: 'normal', values: [
+        { id: 'normal', name: 'Normal' },
+        { id: 'easy', name: 'Easy', statChanges: [raise] },
+        { id: 'hard', name: 'Hard', statChanges: [raise], statToggles: [{ statId: 'health', ownerId: 'dragon', enabled: false }] },
+      ],
+    }];
+    const health = {
+      id: 'health', name: 'Health', type: 'number', description: '', min: 0, max: 100, value: 50, regen: 0,
+      descriptors: [
+        { id: 'low', threshold: 60, description: 'Low' },
+        { id: 'high', threshold: 100, description: 'High', placeholderPins: [{ placeholderId: 'ph-fury', value: 'Fierce' }] },
+      ],
+    };
+    const dragon = { id: 'dragon', name: 'Dragon', playerDescription: '', aiDescription: '', aiSummary: '', stats: [health] };
+    Object.assign(record.data, { options, entities: [dragon], placeholders: [fury] });
+    record.data.locations = [{ id: 'harbor', name: `${furyToken} Harbor`, isStarting: true }, { id: 'hill', name: 'Hill', isStarting: true }];
+    await WorldStorageService.storeWorld(record);
+  });
+
+  const harborAfter = async (value: string) => {
+    renderEnterWorld({ onStartGame: vi.fn() });
+    await enter();
+    const nav = within(screen.getByRole('navigation', { name: 'World setup categories' }));
+    fireEvent.click(nav.getByRole('button', { name: /^World Options/ }));
+    fireEvent.click(screen.getByRole('radio', { name: value }));
+    fireEvent.click(nav.getByRole('button', { name: 'Starting Location' }));
+    return screen.getByRole('radio', { name: /Harbor$/ });
+  };
+
+  it("reads the Dragon's band from Health as the picked value's starting row leaves it", async () => {
+    expect(await harborAfter('Easy')).toHaveAccessibleName('Fierce Harbor');
+  });
+
+  it('leaves the band unpinned below it, and when the Option switches the stat off', async () => {
+    expect(await harborAfter('Normal')).toHaveAccessibleName('Wary Harbor');
+    cleanup();
+    expect(await harborAfter('Hard')).toHaveAccessibleName('Wary Harbor');
+  });
+});
+
+describe('a Preset with persona and location rows at world entry', () => {
+  beforeEach(async () => {
+    const record = world();
+    const options: WorldOption[] = [{
+      id: 'start', name: 'Start', type: 'preset', mode: 'snapshot',
+      values: [{ id: 'watch', name: 'Night Watch', description: 'Keep the harbor', rows: [
+        { kind: 'persona', entityId: 'keeper' }, { kind: 'location', locationId: 'harbor' },
+      ] }, { id: 'lamp', name: 'Lamplighter', description: '', rows: [
+        { kind: 'persona', entityId: 'keeper' }, { kind: 'trait', traitId: 'lantern', ownerId: 'keeper', on: true },
+      ] }, { id: 'lost', name: 'Lost Watch', description: '', rows: [
+        { kind: 'persona', entityId: 'deleted' }, { kind: 'location', locationId: 'harbor' },
+      ] }],
+    }];
+    // The keeper starts on the hill, so the location row must win over the persona's own start.
+    const keeper = {
+      id: 'keeper', name: 'Harbor Keeper', playerDescription: '', aiDescription: '', aiSummary: '', persona: true, locations: ['hill'],
+      traits: [{ id: 'lantern', name: 'Lantern', statChanges: [] }],
+    };
+    Object.assign(record.data, { options, entities: [keeper] });
+    await WorldStorageService.storeWorld(record);
+  });
+
+  it('picks the persona and Starting Location, names both, and starts the game with them', async () => {
+    const onStartGame = vi.fn();
+    renderEnterWorld({ onStartGame });
+    await enter();
+    const nav = within(screen.getByRole('navigation', { name: 'World setup categories' }));
+    fireEvent.click(nav.getByRole('button', { name: /^World Options/ }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Night Watch' }));
+    expect(screen.getByRole('radio', { name: 'Night Watch' })).toBeChecked();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /^Applied Night Watch\. Persona set to Harbor Keeper\. Starting Location set to Harbor\.Dismiss$/,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start Game' }));
+    await waitFor(() => expect(onStartGame).toHaveBeenCalledOnce());
+    expect(onStartGame.mock.calls[0][3]).toBe('harbor');
+    expect(onStartGame.mock.calls[0][6]).toEqual({ ref: { source: 'world', entityId: 'keeper' } });
+  });
+
+  it('names the new persona’s own traits without an owner, since that persona is now played', async () => {
+    renderEnterWorld({ onStartGame: vi.fn() });
+    await enter();
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'World setup categories' })).getByRole('button', { name: /^World Options/ }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Lamplighter' }));
+    expect(screen.getByRole('status')).toHaveTextContent(/^Applied Lamplighter\. Turned on Lantern\. Persona set to Harbor Keeper\./);
+  });
+
+  it('leaves a row whose persona was deleted out of the notice', async () => {
+    renderEnterWorld({ onStartGame: vi.fn() });
+    await enter();
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'World setup categories' })).getByRole('button', { name: /^World Options/ }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Lost Watch' }));
+    expect(screen.getByRole('status')).toHaveTextContent(/^Applied Lost Watch\. Starting Location set to Harbor\.Dismiss$/);
   });
 });

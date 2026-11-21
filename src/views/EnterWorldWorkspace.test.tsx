@@ -13,7 +13,7 @@ import { scoped } from '@/lib/scope';
 import { cascadeOffInput } from '@/lib/traitRuntime';
 import type { TraitCascade } from '@/components/game/SetupTraitList';
 import { offeredStartLocations, personaStartLocation, withoutPersona } from '@/lib/personaPick';
-import type { Entity, EntityMetadata, GameLocation, PersonaRef, Stat, Trait, WorldOption } from '@/types';
+import type { Entity, EntityMetadata, GameLocation, Item, PersonaRef, Placement, Stat, Trait, WorldOption } from '@/types';
 
 const identity = (text: string) => text;
 const traitIdentity = (_trait: Trait, text: string) => text;
@@ -220,12 +220,12 @@ describe('EnterWorldWorkspace', () => {
     render(<Harness />);
 
     const navigation = screen.getByRole('navigation', { name: 'World setup categories' });
-    const current = within(navigation).getByRole('button', { name: /Culture/ });
+    const current = within(navigation).getByRole('button', { name: /^Culture/ });
     expect(current).toHaveClass('bg-primary', 'text-primary-foreground', 'font-medium');
     expect(current).not.toHaveClass('bg-muted', 'font-semibold', 'hover:bg-accent');
     // The pick count sits on the fill, so it takes the fill's text color.
-    expect(within(current).getByLabelText('1 of 2 selected')).toHaveClass('text-primary-foreground');
-    const other = within(navigation).getByRole('button', { name: /Practice/ });
+    expect(within(current).getByLabelText('1 of 3 selected')).toHaveClass('text-primary-foreground');
+    const other = within(navigation).getByRole('button', { name: /^Practice/ });
     expect(other).toHaveClass('hover:bg-accent', 'hover:text-foreground', 'text-muted-foreground');
     expect(other).not.toHaveClass('bg-primary');
   });
@@ -234,12 +234,13 @@ describe('EnterWorldWorkspace', () => {
     render(<Harness />);
 
     const navigation = screen.getByRole('navigation', { name: 'World setup categories' });
-    expect(within(navigation).getByText('Origin').closest('button')).toBeNull();
-    expect(within(navigation).getByRole('button', { name: /Culture/ })).toHaveAttribute('aria-current', 'page');
-    expect(within(navigation).getByLabelText('1 of 2 selected')).toHaveTextContent('1/2');
-    expect(within(navigation).getByText('Calling').closest('button')).toBeNull();
-    expect(within(navigation).getByText('Discipline').closest('button')).toBeNull();
-    expect(within(navigation).getByRole('button', { name: /Practice/ })).toBeInTheDocument();
+    expect(within(navigation).getByRole('button', { name: /^Origin/ })).toBeInTheDocument();
+    const culture = within(navigation).getByRole('button', { name: /^Culture/ });
+    expect(culture).toHaveAttribute('aria-current', 'page');
+    expect(within(culture).getByLabelText('1 of 3 selected')).toHaveTextContent('1/3');
+    expect(within(navigation).getByRole('button', { name: /^Calling/ })).toBeInTheDocument();
+    expect(within(navigation).getByRole('button', { name: /^Discipline/ })).toBeInTheDocument();
+    expect(within(navigation).getByRole('button', { name: /^Practice/ })).toBeInTheDocument();
     expect(within(navigation).queryByText('Empty branch')).not.toBeInTheDocument();
     expect(within(navigation).queryByText('General')).not.toBeInTheDocument();
     expect(within(navigation).queryByText(/Selected|Folder/)).not.toBeInTheDocument();
@@ -254,7 +255,7 @@ describe('EnterWorldWorkspace', () => {
     expect(shaped.closest('main')).not.toBeNull();
     expect(within(screen.getByRole('main')).queryByText(/\*\*shaped\*\*/)).not.toBeInTheDocument();
 
-    fireEvent.click(within(navigation).getByRole('button', { name: /Practice/ }));
+    fireEvent.click(within(navigation).getByRole('button', { name: /^Practice/ }));
     expect(screen.getByRole('heading', { name: 'Practice' })).toBeInTheDocument();
     expect(screen.getByText('Artisan')).toBeInTheDocument();
   });
@@ -287,6 +288,23 @@ describe('EnterWorldWorkspace', () => {
 
     onTraitSelect.mockClear();
     await user.click(screen.getByRole('checkbox', { name: 'Artisan' }));
+    expect(onTraitSelect).toHaveBeenLastCalledWith('artisan', null);
+    expect(onTraitSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles a trait from the row frame itself, not only its indicator and text', async () => {
+    const user = userEvent.setup();
+    const onTraitSelect = vi.fn();
+    render(<Harness onTraitSelect={onTraitSelect} />);
+
+    // The frame is the indicator's parent: a click on its padding lands on it, not on a child.
+    await user.click(screen.getByRole('radio', { name: 'Local' }).parentElement!);
+    expect(onTraitSelect).toHaveBeenLastCalledWith('local', null);
+    expect(onTraitSelect).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: /Practice/ }));
+    onTraitSelect.mockClear();
+    await user.click(screen.getByRole('checkbox', { name: 'Artisan' }).parentElement!);
     expect(onTraitSelect).toHaveBeenLastCalledWith('artisan', null);
     expect(onTraitSelect).toHaveBeenCalledTimes(1);
   });
@@ -561,7 +579,7 @@ describe('EnterWorldWorkspace', () => {
     expect(content).not.toContainElement(continueButton);
 
     await user.click(screen.getByRole('radio', { name: 'Local' }));
-    expect(screen.getByLabelText('0 of 2 selected')).toHaveTextContent('0/2');
+    expect(within(screen.getByRole('button', { name: /^Culture/ })).getByLabelText('0 of 3 selected')).toHaveTextContent('0/3');
 
     await user.click(within(dialog).getByRole('button', { name: 'Read Introduction' }));
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -569,6 +587,313 @@ describe('EnterWorldWorkspace', () => {
     expect(onIntroduction).toHaveBeenCalledOnce();
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onContinue).toHaveBeenCalledOnce();
+  });
+});
+
+describe('subtree pages', () => {
+  const nav = () => screen.getByRole('navigation', { name: 'World setup categories' });
+  const main = () => screen.getByRole('main');
+  const separators = () => within(main()).queryAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+
+  it("opens a world parent group on its own traits, then each descendant group under a path separator", () => {
+    render(<Harness />);
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Culture' })).toBeInTheDocument();
+    expect(within(main()).getByText('Local')).toBeInTheDocument();
+    expect(separators()).toEqual(['Calling / Discipline / Practice']);
+    expect(within(main()).getByText('Artisan')).toBeInTheDocument();
+  });
+
+  it('opens a leaf group on only that group', () => {
+    render(<Harness />);
+    fireEvent.click(within(nav()).getByRole('button', { name: /^Practice/ }));
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Practice' })).toBeInTheDocument();
+    expect(within(main()).getByText('Artisan')).toBeInTheDocument();
+    expect(within(main()).queryByText('Local')).not.toBeInTheDocument();
+    expect(separators()).toEqual([]);
+  });
+
+  it('opens a label-only group on its name and description, then its descendants, each with only its own description', () => {
+    render(<Harness />);
+    const origin = within(nav()).getByRole('button', { name: /^Origin/ });
+    fireEvent.click(origin);
+    expect(origin).toHaveAttribute('aria-current', 'page');
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Origin' })).toBeInTheDocument();
+    expect(within(main()).getAllByText('Where you came from.')).toHaveLength(1);
+    expect(within(main()).getByText('shaped', { selector: '[data-streamdown="strong"]' })).toBeInTheDocument();
+    expect(separators()).toEqual(['Culture', 'Culture / Calling / Discipline / Practice']);
+    expect(within(main()).getByText('Local')).toBeInTheDocument();
+    expect(within(main()).getByText('Artisan')).toBeInTheDocument();
+    expect(within(nav()).getByRole('button', { name: /^Practice/ })).toBeInTheDocument();
+  });
+
+  it("heads a nested label-only page with its whole group path's descriptions", () => {
+    render(<Harness />);
+    fireEvent.click(within(nav()).getByRole('button', { name: /^Calling/ }));
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Calling' })).toBeInTheDocument();
+    expect(within(main()).getByText('Where you came from.')).toBeInTheDocument();
+    expect(within(main()).getByText('shaped', { selector: '[data-streamdown="strong"]' })).toBeInTheDocument();
+    expect(separators()).toEqual(['Discipline / Practice']);
+  });
+
+  it('names a label-only page on the phone category button', async () => {
+    mockPhoneViewport();
+    const user = userEvent.setup();
+    render(<Harness />);
+    const disclosure = screen.getByRole('button', { name: /Categories/ });
+    await user.click(disclosure);
+    await user.click(within(nav()).getByRole('button', { name: /^Origin/ }));
+    expect(disclosure).toHaveTextContent('Origin');
+  });
+
+  it("opens an entity on its heading, then every one of its groups in authored order under paths below the entity", () => {
+    const wolf: Entity = {
+      id: 'wolf', name: 'Wolf', playerDescription: 'A grey wolf.',
+      traitGroups: [
+        { id: 'temper', name: 'Temper', parentId: null, order: 0 },
+        { id: 'martial', name: 'Martial', parentId: null, order: 1, playerDescription: 'How it fights.' },
+        { id: 'style', name: 'Weapon Style', parentId: 'martial', order: 0, playerDescription: 'Its weapon.' },
+        { id: 'footwork', name: 'Footwork', parentId: 'martial', order: 1, playerDescription: 'How it moves.' },
+      ],
+      traits: [
+        { id: 'calm', name: 'Calm', groupId: 'temper', statChanges: [] },
+        { id: 'claws', name: 'Claws', groupId: 'style', statChanges: [] },
+        { id: 'pounce', name: 'Pounce', groupId: 'footwork', statChanges: [] },
+      ],
+    };
+    render(<Harness traitEntities={[wolf]} />);
+    fireEvent.click(within(nav()).getByRole('button', { name: /^Wolf/ }));
+    expect(within(main()).getByRole('heading', { level: 2, name: /^Wolf/ })).toBeInTheDocument();
+    expect(within(main()).getByText('A grey wolf.')).toBeInTheDocument();
+    expect(separators()).toEqual(['Temper', 'Martial / Weapon Style', 'Martial / Footwork']);
+    expect(within(main()).getByText('Calm')).toBeInTheDocument();
+    expect(within(main()).getByText('Claws')).toBeInTheDocument();
+    expect(within(within(nav()).getByRole('button', { name: /^Wolf/ })).getByLabelText('0 of 3 selected')).toBeInTheDocument();
+    // A label-only group's description shows once, on the first section under it, before that section's own.
+    const sections = within(main()).getAllByRole('heading', { level: 3 }).map((h) => h.closest('section')!);
+    expect(within(main()).getAllByText('How it fights.')).toHaveLength(1);
+    expect(sections[1]).toHaveTextContent(/How it fights\..*Its weapon\./);
+    expect(sections[2]).toHaveTextContent('How it moves.');
+    expect(sections[2]).not.toHaveTextContent('How it fights.');
+  });
+
+  it("updates a section's hint, its parents' counts and markers, and Begin when a subtree page pick meets a minimum", async () => {
+    const user = userEvent.setup();
+    const counted = groups.map((g) => (g.id === 'practice' ? { ...g, minPicks: 1 } : g));
+    render(<Harness traitGroups={counted} />);
+    const row = (name: RegExp) => within(nav()).getByRole('button', { name });
+    const begin = screen.getByRole('button', { name: 'Start Game' });
+    expect(within(main()).getByText('Choose 1 more trait')).toBeInTheDocument();
+    for (const name of [/^Origin/, /^Culture/, /^Practice/]) {
+      expect(within(row(name)).getByRole('img', { name: 'Needs more picks' })).toBeInTheDocument();
+    }
+    expect(begin).toBeDisabled();
+
+    await user.click(within(main()).getByRole('checkbox', { name: 'Artisan' }));
+    expect(within(main()).queryByText('Choose 1 more trait')).not.toBeInTheDocument();
+    expect(within(nav()).queryByRole('img', { name: 'Needs more picks' })).not.toBeInTheDocument();
+    expect(within(row(/^Culture/)).getByLabelText('2 of 3 selected')).toBeInTheDocument();
+    expect(within(row(/^Origin/)).getByLabelText('2 of 3 selected')).toBeInTheDocument();
+    expect(begin).toBeEnabled();
+  });
+
+  it('shows the cascade notice once on a page of several sections', () => {
+    render(<Harness traitCascade={{ off: ['Outsider'], because: 'Local' }} onDismissTraitCascade={vi.fn()} />);
+    fireEvent.click(within(nav()).getByRole('button', { name: /^Origin/ }));
+    expect(within(main()).getAllByText(/Turned off/)).toHaveLength(1);
+  });
+});
+
+describe('collapsible nav', () => {
+  const nav = () => screen.getByRole('navigation', { name: 'World setup categories' });
+  const main = () => screen.getByRole('main');
+  const rowNames = () => within(nav()).getAllByRole('button')
+    .filter((button) => !/^(Collapse|Expand) /.test(button.getAttribute('aria-label') ?? ''))
+    .map((button) => button.textContent!.replace(/\d+\/\d+$/, ''));
+  const row = (name: string) => within(nav()).getByRole('button', { name: new RegExp(`^${name}`) });
+  const chevron = (name: RegExp) => within(nav()).getByRole('button', { name });
+
+  it('gives parent rows a chevron and leaf rows an empty slot of the same width', () => {
+    render(<Harness />);
+    expect(chevron(/^Collapse Origin$/)).toHaveAttribute('aria-expanded', 'true');
+    // Like every other expander, hover lights only the icon, never a fill behind it.
+    expect(chevron(/^Collapse Origin$/)).toHaveClass('hover:text-foreground');
+    expect(chevron(/^Collapse Origin$/).className).not.toMatch(/hover:bg-/);
+    expect(within(nav()).queryByRole('button', { name: /Practice$/, expanded: true })).not.toBeInTheDocument();
+    const leadOf = (name: string) => row(name).previousElementSibling!;
+    expect(leadOf('Origin')).toHaveClass('w-6');
+    expect(leadOf('Practice')).toHaveClass('w-6');
+    expect(leadOf('Practice').tagName).toBe('SPAN');
+  });
+
+  it('folds and unfolds a row from its chevron without opening its page', () => {
+    render(<Harness />);
+    fireEvent.click(chevron(/^Collapse Calling$/));
+    expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Library Additions']);
+    expect(chevron(/^Expand Calling$/)).toHaveAttribute('aria-expanded', 'false');
+    expect(row('Culture')).toHaveAttribute('aria-current', 'page');
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Culture' })).toBeInTheDocument();
+    fireEvent.click(chevron(/^Expand Calling$/));
+    expect(rowNames()).toContain('Practice');
+  });
+
+  it('opens a folded row on its whole page and leaves it folded', () => {
+    render(<Harness />);
+    fireEvent.click(chevron(/^Collapse Calling$/));
+    fireEvent.click(row('Calling'));
+    expect(row('Calling')).toHaveAttribute('aria-current', 'page');
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Calling' })).toBeInTheDocument();
+    expect(within(main()).getByText('Artisan')).toBeInTheDocument();
+    expect(chevron(/^Expand Calling$/)).toBeInTheDocument();
+    expect(rowNames()).not.toContain('Practice');
+  });
+
+  it('folds to the top-level rows with Collapse All, highlights the folded row that holds the page, and opens every level with Expand All', () => {
+    render(<Harness />);
+    fireEvent.click(within(nav()).getByRole('button', { name: 'Collapse All' }));
+    expect(rowNames()).toEqual(['Origin', 'Library Additions']);
+    // The page stays Culture, so its folded ancestor carries the highlight without claiming to be the page.
+    expect(row('Origin')).toHaveClass('bg-primary');
+    expect(row('Origin')).not.toHaveAttribute('aria-current');
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Culture' })).toBeInTheDocument();
+    fireEvent.click(within(nav()).getByRole('button', { name: 'Expand All' }));
+    expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Practice', 'Library Additions']);
+    expect(within(nav()).getByRole('button', { name: 'Collapse All' })).toBeInTheDocument();
+  });
+
+  it('keeps the folds while the player switches pages', () => {
+    render(<Harness />);
+    fireEvent.click(chevron(/^Collapse Calling$/));
+    fireEvent.click(row('Origin'));
+    fireEvent.click(row('Culture'));
+    expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Library Additions']);
+  });
+
+  it('starts fully open in a fresh setup', () => {
+    const { unmount } = render(<Harness />);
+    fireEvent.click(within(nav()).getByRole('button', { name: 'Collapse All' }));
+    unmount();
+    render(<Harness />);
+    expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Practice', 'Library Additions']);
+  });
+
+  it('shows a folded row its whole subtree count and the short marker of a group hidden inside it', () => {
+    const counted = groups.map((g) => (g.id === 'practice' ? { ...g, minPicks: 1 } : g));
+    render(<Harness traitGroups={counted} />);
+    fireEvent.click(chevron(/^Collapse Origin$/));
+    expect(rowNames()).not.toContain('Practice');
+    expect(within(row('Origin')).getByLabelText('1 of 3 selected')).toBeInTheDocument();
+    expect(within(row('Origin')).getByRole('img', { name: 'Needs more picks' })).toBeInTheDocument();
+  });
+
+  it('offers Expand All once every parent the player can see is folded', () => {
+    render(<Harness />);
+    fireEvent.click(chevron(/^Collapse Origin$/));
+    expect(within(nav()).queryByRole('button', { name: 'Collapse All' })).not.toBeInTheDocument();
+    fireEvent.click(within(nav()).getByRole('button', { name: 'Expand All' }));
+    expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Practice', 'Library Additions']);
+  });
+
+  it('ends a clicked page once the index leaves it, so an outside index later opens its own node', () => {
+    const { rerender } = render(<Harness categoryIndex={0} />);
+    fireEvent.click(row('Origin'));
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Origin' })).toBeInTheDocument();
+    rerender(<Harness categoryIndex={2} />);
+    rerender(<Harness categoryIndex={1} />);
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Practice' })).toBeInTheDocument();
+    expect(row('Practice')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('offers no Collapse All when no row has children', () => {
+    render(<Harness traitGroups={[{ id: 'culture', name: 'Culture', parentId: null, order: 0 }]} />);
+    expect(within(nav()).queryByRole('button', { name: /^(Collapse|Expand) All$/ })).not.toBeInTheDocument();
+  });
+
+  describe('fitted to the sidebar', () => {
+    // Every nav line is 40 px tall; the sidebar's height is `available`.
+    const ROW = 40;
+    let available = 1000;
+    const mockNavLayout = () => {
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function height(this: HTMLElement) {
+        if (this.tagName === 'NAV') return ROW * this.children.length;
+        return this.parentElement?.tagName === 'NAV' ? ROW : 0;
+      });
+      vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function height(this: Element) {
+        const navigation = document.querySelector('nav');
+        return navigation && this !== navigation && this.contains(navigation) ? available : 0;
+      });
+    };
+    const resize = (height: number) => {
+      available = height;
+      act(() => { window.dispatchEvent(new Event('resize')); });
+    };
+
+    // Expanded: 3 fixed lines + 5 rows = 320. Folding Calling's level leaves 240; Culture's leaves 200.
+    it('folds the deepest levels until the nav fits, and refits on every resize before any toggle', () => {
+      available = 250;
+      mockNavLayout();
+      render(<Harness />);
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Library Additions']);
+      resize(1000);
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Practice', 'Library Additions']);
+      resize(250);
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Library Additions']);
+    });
+
+    it("never folds the current page's ancestors, even when the nav still scrolls", () => {
+      available = 120;
+      mockNavLayout();
+      render(<Harness />);
+      expect(chevron(/^Collapse Origin$/)).toBeInTheDocument();
+      expect(chevron(/^Expand Culture$/)).toBeInTheDocument();
+      expect(row('Culture')).toHaveAttribute('aria-current', 'page');
+    });
+
+    it('leaves the nav alone on a resize once the player has toggled a chevron', () => {
+      available = 250;
+      mockNavLayout();
+      render(<Harness />);
+      fireEvent.click(chevron(/^Expand Calling$/));
+      // The fitted folds carry over, so Discipline, folded with Calling's level, stays folded.
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Library Additions']);
+      resize(1000);
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Library Additions']);
+      resize(100);
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Library Additions']);
+    });
+
+    it('fits the closed phone drawer to its capped height, so it opens already fitted', () => {
+      // The sidebar's height would fit everything, so only the drawer's own cap can fold rows.
+      available = 1000;
+      mockPhoneViewport();
+      mockNavLayout();
+      // The drawer's 45% cap is its max-height; its 1 px top border takes from the room.
+      const real = window.getComputedStyle;
+      vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+        const style = real(element, pseudo);
+        if (!(element as Element).contains(document.querySelector('nav')) || element === document.querySelector('nav')) return style;
+        // 240 px would just fit Calling's level folded; the border leaves 239, so Culture's level folds too.
+        const drawer: Record<string, string> = { maxHeight: '240px', borderTopWidth: '1px', borderBottomWidth: '0px' };
+        return new Proxy(style, {
+          get: (target, key) => (typeof key === 'string' && key in drawer
+            ? drawer[key]
+            : Reflect.get(target, key, target) as unknown),
+        });
+      });
+      render(<Harness />);
+      fireEvent.click(screen.getByRole('button', { name: /Categories/ }));
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Library Additions']);
+    });
+
+    it('opens what a page set from outside needs, and folds nothing back when the page moves on', () => {
+      available = 250;
+      mockNavLayout();
+      const { rerender } = render(<Harness categoryIndex={0} />);
+      expect(rowNames()).not.toContain('Practice');
+      rerender(<Harness categoryIndex={1} />);
+      expect(row('Practice')).toHaveAttribute('aria-current', 'page');
+      rerender(<Harness categoryIndex={0} />);
+      expect(rowNames()).toEqual(['Origin', 'Culture', 'Calling', 'Discipline', 'Practice', 'Library Additions']);
+    });
   });
 });
 
@@ -1110,8 +1435,9 @@ describe('EnterWorldWorkspace cast pages', () => {
     expect(text.indexOf('Practice')).toBeLessThan(text.indexOf('Ash'));
     expect(text.indexOf('Ash')).toBeLessThan(text.indexOf('Bob'));
     const ashRow = within(nav()).getByRole('button', { name: /^Ash/ });
-    expect(ashRow).toHaveStyle({ paddingLeft: '20px' });
-    expect(within(nav()).getByRole('button', { name: /^Bob/ })).toHaveStyle({ paddingLeft: '8px' });
+    // The row and its leading slot indent together, 12 px per depth level.
+    expect(ashRow.parentElement).toHaveStyle({ paddingLeft: '12px' });
+    expect(within(nav()).getByRole('button', { name: /^Bob/ }).parentElement).toHaveStyle({ paddingLeft: '0px' });
     expect(ashRow.querySelector('svg.lucide-user')).not.toBeNull();
   });
 
@@ -1255,6 +1581,71 @@ describe('EnterWorldWorkspace World Options', () => {
     expect(screen.getByRole('radio', { name: 'Lush' })).toBeChecked();
     expect(screen.getByText('How replies read')).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Heat' })).toHaveAttribute('aria-valuenow', '3');
+  });
+
+  it('lists each value’s stat rows under it in the trait-list form and leaves out hidden stats', () => {
+    const stat = (id: string, name: string, hidden = false) => ({ id, name, type: 'number', min: 0, max: 100, value: 0, hidden } as unknown as Stat);
+    const rowed: WorldOption[] = [{
+      id: 'o-diff', name: 'Difficulty', type: 'choice', shownToPlayer: true, midGame: false, default: 'v-easy',
+      values: [
+        { id: 'v-easy', name: 'Easy', statChanges: [{ statId: 'gold', type: 'starting', value: 100 }, { statId: 'luck', type: 'starting', value: 5 }] },
+        { id: 'v-hard', name: 'Hard', statChanges: [{ statId: 'gold', type: 'regen', value: -1 }, { statId: 'gone', type: 'max', value: 1 }] },
+      ],
+    }, {
+      id: 'o-mode', name: 'Hardcore', type: 'boolean', shownToPlayer: true, midGame: false, default: false,
+      onStatChanges: [{ statId: 'hp', type: 'regen', value: -2, ownerId: 'wolf' }, { statId: 'hp', type: 'max', value: 9, ownerId: 'ghost' }],
+    }];
+    const wolf = { id: 'wolf', name: 'Wolf', stats: [stat('hp', 'Health')] } as unknown as Entity;
+    render(<Harness options={rowed} stats={[stat('gold', 'Gold'), stat('luck', 'Luck', true)]} traitEntities={[wolf]} onOptionChange={vi.fn()} />);
+    const lines = (name: string) => Array.from(screen.getByRole('radio', { name }).closest('label')!.querySelectorAll('li')).map((li) => li.textContent);
+    expect(lines('Easy')).toEqual(['Gold: +100']);
+    expect(lines('Hard')).toEqual(['Gold: -1 (regen)']);
+    expect(screen.getByRole('checkbox', { name: /Hardcore/ }).closest('label')!.textContent).toMatch(/Wolf: Health: -2 \(regen\)$/);
+  });
+
+  it("lists each value's Starting Items after its stat rows, by recipient, and leaves out hidden and broken rows", () => {
+    const give = (itemId: string, quantity: number, where: Placement['where'] = { kind: 'you' }, hidden?: boolean): Placement =>
+      ({ id: `${itemId}-${quantity}`, where, quantity, source: { kind: 'item', itemId }, ...(hidden && { hidden }) });
+    const items = [
+      { id: 'potion', name: 'Potion' }, { id: 'rope', name: 'Rope' }, { id: 'orb', name: 'Orb', unidentifiedName: 'Strange Sphere' },
+    ] as Item[];
+    const kit: WorldOption[] = [{
+      id: 'o-kit', name: 'Kit', type: 'choice', shownToPlayer: true, midGame: false, default: 'v-full',
+      values: [{
+        id: 'v-full', name: 'Full', statChanges: [{ statId: 'gold', type: 'starting', value: 5 }],
+        placements: [
+          give('potion', 3), give('rope', 1, { kind: 'entity', id: 'wolf' }), give('rope', 2, { kind: 'location', id: 'den' }),
+          give('orb', 1), give('potion', 9, { kind: 'you' }, true), give('gone', 1), give('rope', 1, { kind: 'entity', id: 'ghost' }),
+        ],
+      }],
+    }];
+    const gold = { id: 'gold', name: 'Gold', type: 'number', min: 0, max: 100, value: 0 } as unknown as Stat;
+    const wolf = { id: 'wolf', name: 'Wolf' } as Entity;
+    render(
+      <Harness
+        options={kit} stats={[gold]} traitEntities={[wolf]} items={items}
+        allLocations={[{ id: 'den', name: 'Den' } as GameLocation]} onOptionChange={vi.fn()}
+      />,
+    );
+    const lines = Array.from(screen.getByRole('radio', { name: 'Full' }).closest('label')!.querySelectorAll('li')).map((li) => li.textContent);
+    expect(lines).toEqual(['Gold: +5', 'Potion ×3', 'Wolf: Rope', 'Den: Rope ×2', 'Strange Sphere']);
+  });
+
+  it("lists a Starting Item where the new game puts it under the picked persona, and drops one an out-of-play entity would get", () => {
+    const rope = { id: 'rope', name: 'Rope' } as Item;
+    const toWolf: Placement = { id: 'w', where: { kind: 'entity', id: 'wolf' }, quantity: 1, source: { kind: 'item', itemId: 'rope' } };
+    const toShade: Placement = { ...toWolf, id: 's', where: { kind: 'entity', id: 'shade' } };
+    const kit: WorldOption[] = [{
+      id: 'o-kit', name: 'Kit', type: 'choice', shownToPlayer: true, midGame: false, default: 'v-full',
+      values: [{ id: 'v-full', name: 'Full', placements: [toWolf, toShade] }],
+    }];
+    const wolf = { id: 'wolf', name: 'Wolf', persona: true } as Entity;
+    const shade = { id: 'shade', name: 'Shade', persona: true, personaOnly: true } as Entity;
+    const lines = () => Array.from(screen.getByRole('radio', { name: 'Full' }).closest('label')!.querySelectorAll('li')).map((li) => li.textContent);
+    const { rerender } = render(<Harness options={kit} traitEntities={[wolf, shade]} items={[rope]} onOptionChange={vi.fn()} />);
+    expect(lines()).toEqual(['Wolf: Rope']);
+    rerender(<Harness options={kit} traitEntities={[wolf, shade]} items={[rope]} persona={{ source: 'world', entityId: 'wolf' }} onOptionChange={vi.fn()} />);
+    expect(lines()).toEqual(['Rope']);
   });
 
   it('never shows an Option that is not Shown to Player', () => {

@@ -1,5 +1,6 @@
 import { getAllReadable, openDatabase, promisifyRequest, transactionDone, writeAfterRead } from '@/lib/idb';
-import type { CommunityLink, LibraryDetails } from '@/types';
+import { isHiddenCopy } from '@/lib/supporterCopyVisibility';
+import type { CommunityLink, LibraryDetails, LibrarySupporterCopyMarker } from '@/types';
 
 /**
  * The wrapper shape every local library record shares: identity and library timestamps around an opaque
@@ -13,6 +14,8 @@ export interface StoredRecord<T> extends CommunityLink {
   lastAccessed?: string;
   data: T;
   libraryDetails?: LibraryDetails;
+  /** Local-only: set when the item was saved from a Supporter Copy. Once set it never clears. */
+  supporterCopy?: LibrarySupporterCopyMarker;
 }
 
 /** A selected library record no longer exists by the time its full data is requested. */
@@ -82,11 +85,15 @@ export class LibraryStore<T, M> {
     return this.db!.transaction([this.storeName], mode).objectStore(this.storeName);
   }
 
-  /** List stored records as grid metadata, projected by `toMetadata`. */
-  async getMetadata(): Promise<M[]> {
+  /**
+   * List stored records as grid metadata, projected by `toMetadata`.
+   *
+   * @param options.includeHidden - Also list copies marked for another account; only the Supporter Copy sync asks
+   */
+  async getMetadata({ includeHidden = false }: { includeHidden?: boolean } = {}): Promise<M[]> {
     await this.ensureInitialized();
     const records = await getAllReadable<StoredRecord<T>>(this.db!, this.storeName);
-    return records.map((record) => this.toMetadata(record));
+    return records.filter((record) => includeHidden || !isHiddenCopy(record.supporterCopy)).map((record) => this.toMetadata(record));
   }
 
   /** How many records are stored, without reading them. */
@@ -119,6 +126,8 @@ export class LibraryStore<T, M> {
         name: record.name,
         data: record.data,
         libraryDetails: record.libraryDetails ?? existing?.libraryDetails,
+        // Read-merged and never cleared, so an editor save or a plain re-save can't unmark the item.
+        supporterCopy: existing?.supporterCopy ?? record.supporterCopy,
         createdAt: existing?.createdAt ?? record.createdAt ?? new Date().toISOString(),
         lastAccessed: new Date().toISOString(),
         // Community link (publish/download): read-merged so an editor save that passes only id/name/data

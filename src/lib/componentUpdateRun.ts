@@ -5,6 +5,7 @@
  * world that fails keeps the content it had while the rest of the batch stands.
  */
 
+import { supporterCopyBlock, type SupporterCopyTarget } from '@/lib/supporterCopy';
 import {
   applyLibraryUpdate, routinePlacesOf, unlink, type LibrarySource, type LinkableContent, type RoutinePlaces,
 } from '@/lib/linkedContent';
@@ -15,8 +16,10 @@ import WorldStorageService from '@/services/WorldStorageService';
 import { traitWorldOf, type TraitWorld } from '@/lib/portableTraits';
 import { loadLibraryVrms, storeHashes } from '@/lib/libraryVrm';
 import { libraryPickIds, placeLibraryPicks, type LibraryVrm } from '@/lib/vrmPickMatch';
+import { galleryData, loadMediaHashes, NO_MEDIA_HASHES, placeEntityMedia } from '@/lib/libraryMedia';
+import type { MediaHashes } from '@/lib/mediaList';
 import type {
-  ContentLink, Dictionary, Entity, GameLocation, Placeholder, PlaceholderGroup, Stat, StatGroup, Trait, TraitGroup, WorldOverview, WorldVrmStore,
+  ContentLink, Dictionary, Entity, GameLocation, MediaList, Placeholder, PlaceholderGroup, Stat, StatGroup, Trait, TraitGroup, WorldOverview, WorldVrmStore,
 } from '@/types';
 
 /**
@@ -47,6 +50,9 @@ export interface LiveWorld {
    *  entity's library Avatar is embedded in it. */
   getVrmStore?: () => WorldVrmStore | undefined;
   setVrmStore?: (store: WorldVrmStore | undefined) => void;
+  /** The world's Media List as it stands now. An updated entity's embedded pictures are placed in it. */
+  getMediaList?: () => MediaList | undefined;
+  setMediaList?: (list: MediaList | undefined) => void;
   writeItem: (item: LinkableContent) => void;
   addPlaceholder: (placeholder: Placeholder) => void;
 }
@@ -82,7 +88,9 @@ function toRow({ link, ...held }: Candidate, source: LibrarySource): UpdateRow |
 }
 
 /** Every copy of `source` that is behind it, the in-memory worlds first. */
-export async function affectedCopies(source: LibrarySource, live: LiveWorld[] = []): Promise<UpdateRow[]> {
+export async function affectedCopies(
+  source: LibrarySource & SupporterCopyTarget, live: LiveWorld[] = [],
+): Promise<UpdateRow[]> {
   const inMemory: Candidate[] = live.flatMap((world) => liveCopies(world).map(({ item, kind }) => ({
     worldId: world.id, worldName: world.name, itemId: item.id, itemName: item.name, kind, link: item.link,
   })));
@@ -92,7 +100,8 @@ export async function affectedCopies(source: LibrarySource, live: LiveWorld[] = 
 
   return [...inMemory, ...stored]
     .map((candidate) => toRow(candidate, source))
-    .filter((row): row is UpdateRow => !!row);
+    // A source saved from a Supporter Copy reaches no world but the one it came from.
+    .filter((row): row is UpdateRow => !!row && !supporterCopyBlock(source, { addToWorld: row.worldId }));
 }
 
 /** The in-memory world one row names, where the review was given it. */
@@ -135,6 +144,15 @@ function placeInStore(
   return { item: placed.entities[0], store: placed.store };
 }
 
+/** The copy with its embedded gallery placed in `list`. A dictionary, or a world without a list, comes back as it is. */
+function placeInList(
+  item: LinkableContent, list: MediaList | undefined, hashes: MediaHashes,
+): { item: LinkableContent; list: MediaList | undefined } {
+  if ('entries' in item) return { item, list };
+  const placed = placeEntityMedia(item, list, hashes);
+  return { item: placed.entity, list: placed.list };
+}
+
 /**
  * Apply one row's action to the world it names.
  *
@@ -160,16 +178,27 @@ export async function applyUpdate(
     const hashes = vrms.size ? await storeHashes(world.getVrmStore?.()) : new Map<string, string>();
     const store = world.getVrmStore?.();
     const placed = placeInStore(revised.item, store, hashes, vrms);
-    world.writeItem(placed.item);
+    const list = world.getMediaList?.();
+    const media = action === 'update' && list
+      ? placeInList(placed.item, list, await loadMediaHashes([placed.item as Entity], list))
+      : { item: placed.item, list };
+    world.writeItem(media.item);
     if (placed.store !== store) world.setVrmStore?.(placed.store);
+    if (media.list !== list) world.setMediaList?.(media.list);
     revised.toAdd.forEach(world.addPlaceholder);
     return;
   }
 
-  const stored = vrms.size
-    ? (await WorldStorageService.getWorldData(row.worldId) as { worldOverview?: WorldOverview }).worldOverview?.vrmStore
+  // Incoming pictures are hashed ahead of the write, against the list as it stands now.
+  const incomingMedia = action === 'update' && sourceData && !('entries' in sourceData) && galleryData([sourceData], undefined).length > 0;
+  const overviewNow = vrms.size || incomingMedia
+    ? (await WorldStorageService.getWorldData(row.worldId) as { worldOverview?: WorldOverview }).worldOverview
     : undefined;
+  const stored = vrms.size ? overviewNow?.vrmStore : undefined;
   const hashes = await storeHashes(stored);
+  const mediaHashes = incomingMedia && overviewNow?.mediaList
+    ? await loadMediaHashes([sourceData as Entity], overviewNow.mediaList)
+    : NO_MEDIA_HASHES;
   await WorldStorageService.updateWorldContent(row.worldId, (data) => {
     const listKey = row.kind === 'dictionary' ? 'dictionaries' : 'entities';
     const list = (data[listKey] ?? []) as LinkableContent[];
@@ -180,13 +209,19 @@ export async function applyUpdate(
     const revised = revisedCopy(list[index], action, source, sourceData, shared, places, traitWorldOf(data as Parameters<typeof traitWorldOf>[0]));
     const overview = data.worldOverview as WorldOverview | undefined;
     const placed = placeInStore(revised.item, overview?.vrmStore, hashes, vrms);
+    const media = action === 'update' ? placeInList(placed.item, overview?.mediaList, mediaHashes) : { item: placed.item, list: overview?.mediaList };
     const next = [...list];
-    next[index] = placed.item;
+    next[index] = media.item;
+    const overviewChanged = overview && (placed.store !== overview.vrmStore || media.list !== overview.mediaList);
     return {
       ...data,
       [listKey]: next,
       ...(revised.toAdd.length ? { placeholders: [...shared, ...revised.toAdd] } : {}),
-      ...(overview && placed.store !== overview.vrmStore ? { worldOverview: { ...overview, vrmStore: placed.store } } : {}),
+      ...(overviewChanged ? {
+        worldOverview: {
+          ...overview, ...(placed.store !== overview.vrmStore && { vrmStore: placed.store }), ...(media.list !== overview.mediaList && { mediaList: media.list }),
+        },
+      } : {}),
     };
   });
 }

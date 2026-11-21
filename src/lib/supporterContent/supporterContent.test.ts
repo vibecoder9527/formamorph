@@ -5,6 +5,8 @@ import {
   type SupporterItemRef, type SupporterSession,
 } from './supporterContent';
 import { createSupporterCache } from './cache';
+import { formatSupporterDate } from '@/lib/supporterEndDate';
+import { seedSampleTierNames } from '@/test/tierNames';
 
 const API = 'https://api.test/api';
 const DAY = 24 * 60 * 60 * 1000;
@@ -17,10 +19,17 @@ const contentFor = (id: string, revision: number) => ({ name: `${id} r${revision
 class FakeServer {
   qualifies = true;
   listed: SupporterItemRef[] = [];
+  expired: SupporterItemRef[] = [];
   offline = false;
   entitlementStatus = 200;
   gatedStatus = 200;
+  /** The tier the entitlement reply names; omitted when null, as an older server does. */
+  tier: string | null = null;
+  /** A gated-route refusal body for a tier that isn't open yet. */
+  tierRefusal: { requiredTier: string; opensAt: string | null } | null = null;
   revisions = new Map<string, number>();
+  /** The kind the gated route serves per id; `mascot` when unset. */
+  kinds = new Map<string, string>();
   requests: { url: string; authorization: string | undefined }[] = [];
 
   list(...items: [id: string, revision: number][]) {
@@ -34,7 +43,7 @@ class FakeServer {
     if (this.offline) throw new TypeError('Failed to fetch');
     if (url === `${API}/supporter-content/entitlement`) {
       return Response.json(
-        { success: true, data: { qualifies: this.qualifies, items: this.qualifies ? this.listed : [] } },
+        { success: true, data: { qualifies: this.qualifies, ...(this.tier ? { tier: this.tier } : {}), items: this.qualifies ? this.listed : [], expired: this.expired } },
         { status: this.entitlementStatus },
       );
     }
@@ -42,8 +51,11 @@ class FakeServer {
     if (gated) {
       const id = decodeURIComponent(gated[1]);
       const revision = this.revisions.get(id) ?? 1;
+      if (this.tierRefusal) {
+        return Response.json({ success: false, error: 'open to supporter_top now', ...this.tierRefusal }, { status: 403 });
+      }
       if (this.gatedStatus !== 200) return Response.json({ success: false }, { status: this.gatedStatus });
-      return Response.json({ success: true, data: { id, kind: 'mascot', revision, contentData: contentFor(id, revision) } });
+      return Response.json({ success: true, data: { id, kind: this.kinds.get(id) ?? 'mascot', revision, contentData: contentFor(id, revision) } });
     }
     return Response.json({ success: false }, { status: 404 });
   });
@@ -111,6 +123,34 @@ describe('the start check', () => {
     expect(await storedKeys()).toEqual(['other@1']);
   });
 
+  it('keeps an installed Mascot whose listing a good check lists as expired', async () => {
+    server.list(['excl', 1], ['gone', 1]);
+    const first = await startAndCheck();
+    await first.install('excl');
+    await first.install('gone');
+
+    server.list();
+    server.expired = [{ id: 'excl', kind: 'mascot', revision: 1 }];
+    const next = await startAndCheck();
+
+    expect(installedIds(next)).toEqual(['excl@1']);
+    expect(await storedKeys()).toEqual(['excl@1']);
+  });
+
+  it('removes an installed item of another kind whose listing is expired', async () => {
+    server.list(['world', 1]);
+    server.kinds.set('world', 'world');
+    const first = await startAndCheck();
+    await first.install('world');
+    expect(installedIds(first)).toEqual(['world@1']);
+
+    server.list();
+    server.expired = [{ id: 'world', kind: 'world', revision: 1 }];
+    const next = await startAndCheck();
+
+    expect(installedIds(next)).toEqual([]);
+  });
+
   it('removes everything when the pledge ended', async () => {
     server.list(['excl', 1]);
     await (await startAndCheck()).install('excl');
@@ -161,6 +201,89 @@ describe('the start check', () => {
     expect(seen).toContain('checking');
     expect(seen.at(-1)).toBe('ready');
     expect(app.getSnapshot()).not.toBe(before);
+  });
+});
+
+describe('fetching a world', () => {
+  it('returns the scrambled content, its revision and the account, and caches nothing', async () => {
+    server.list(['sw', 3]);
+    const app = await startAndCheck();
+
+    const download = await app.fetchWorld('sw');
+
+    expect(download).toEqual({ accountId: 'acct-a', revision: 3, contentData: contentFor('sw', 3) });
+    expect(app.getSnapshot().installed).toEqual([]);
+    expect(await storedKeys()).toEqual([]);
+    expect(server.requests.at(-1)?.authorization).toBe('Bearer token-a');
+  });
+
+  it('refuses a listing the account is not entitled to, without asking the gated route', async () => {
+    server.list(['other', 1]);
+    const app = await startAndCheck();
+
+    await expect(app.fetchWorld('sw')).rejects.toMatchObject({ reason: 'not-entitled' });
+    expect(server.requests.some((r) => r.url.includes('/worlds/'))).toBe(false);
+  });
+
+  it('refuses when signed out', async () => {
+    session = null;
+    const app = await startAndCheck();
+
+    await expect(app.fetchWorld('sw')).rejects.toMatchObject({ reason: 'signed-out' });
+  });
+
+  it('fails when the gated route answers with an error', async () => {
+    server.list(['sw', 1]);
+    const app = await startAndCheck();
+    server.gatedStatus = 500;
+
+    await expect(app.fetchWorld('sw')).rejects.toThrow('status 500');
+  });
+
+  it('reports a tier that is not open yet by display name and date, never the route\'s raw error', async () => {
+    seedSampleTierNames();
+    server.list(['sw', 1]);
+    const app = await startAndCheck();
+    server.tierRefusal = { requiredTier: 'supporter_top', opensAt: '2026-11-20T12:00:00.000Z' };
+
+    const failure = await app.fetchWorld('sw').catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SupporterContentError);
+    expect(failure).toMatchObject({ reason: 'tier-not-open' });
+    const message = (failure as Error).message;
+    expect(message).toContain('Supporter++');
+    expect(message).toContain(formatSupporterDate(new Date('2026-11-20T12:00:00.000Z')));
+    expect(message).not.toContain('supporter_top');
+  });
+
+  it('says the tier is not scheduled when the account\'s own tier never opens', async () => {
+    seedSampleTierNames();
+    server.list(['sw', 1]);
+    const app = await startAndCheck();
+    server.tierRefusal = { requiredTier: 'supporter_plus', opensAt: null };
+
+    await expect(app.fetchWorld('sw')).rejects.toThrow(/^This listing is open to the Supporter\+ tier now\. Your tier isn't scheduled yet\.$/);
+  });
+});
+
+describe('the account tier', () => {
+  it('comes from the entitlement reply and stays null when the reply names none or a tier this build does not know', async () => {
+    server.list(['sw', 1]);
+    server.tier = 'supporter_plus';
+    expect((await startAndCheck()).getSnapshot().tier).toBe('supporter_plus');
+
+    server.tier = 'supporter_mega';
+    expect((await startAndCheck()).getSnapshot().tier).toBeNull();
+
+    server.tier = null;
+    expect((await startAndCheck()).getSnapshot().tier).toBeNull();
+  });
+
+  it('is null for an account that does not qualify', async () => {
+    server.qualifies = false;
+    server.tier = 'supporter';
+
+    expect((await startAndCheck()).getSnapshot().tier).toBeNull();
   });
 });
 
@@ -258,6 +381,63 @@ describe('request time limits', () => {
 
     expect(state.aborted).toBe(1);
     expect(installedIds(app)).toEqual(['two@1']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('finishes a slow download that keeps sending bytes past the time limit', async () => {
+    server.list(['big', 1]);
+    const payload = new TextEncoder().encode(JSON.stringify({
+      success: true, data: { id: 'big', kind: 'world', revision: 1, contentData: contentFor('big', 1) },
+    }));
+    const app = appWith(((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!/\/worlds\/big\/supporter-content$/.test(String(input))) return server.fetch(input, init);
+      let sent = 0;
+      // One byte every 10 seconds: far past 60 seconds in total, never 60 seconds idle.
+      const body = new ReadableStream<Uint8Array>({
+        pull: (controller) => new Promise<void>((resolve) => setTimeout(() => {
+          if (sent < payload.length) controller.enqueue(payload.slice(sent, ++sent));
+          else controller.close();
+          resolve();
+        }, 10_000)),
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    }) as typeof fetch);
+    await app.check();
+
+    const installing = app.install('big');
+    await vi.advanceTimersByTimeAsync((payload.length + 1) * 10_000);
+    await installing;
+
+    expect(installedIds(app)).toEqual(['big@1']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('ends a download whose body stops arriving partway', async () => {
+    server.list(['big', 1]);
+    let aborted = 0;
+    const app = appWith(((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!/\/worlds\/big\/supporter-content$/.test(String(input))) return server.fetch(input, init);
+      const body = new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          controller.enqueue(new TextEncoder().encode('{"success":'));
+          init?.signal?.addEventListener('abort', () => {
+            aborted += 1;
+            controller.error(new DOMException('Aborted', 'AbortError'));
+          });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    }) as typeof fetch);
+    await app.check();
+
+    const rejected = expect(app.install('big')).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(aborted).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+
+    expect(aborted).toBe(1);
+    expect(installedIds(app)).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
   });
 

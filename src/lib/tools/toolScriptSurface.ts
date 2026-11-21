@@ -24,7 +24,7 @@ export function argEntry(param: ToolParam): SurfaceEntry {
 
 /** The script globals a user Tool reads, in the order an author meets them (spec: Surface). */
 const USER_TOOL_GLOBALS = [
-  'stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'items', 'currencies', 'options', 'console',
+  'stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'items', 'currencies', 'options', 'world', 'console',
 ];
 
 const fieldsOnly = (entries: readonly SurfaceEntry[]) => entries.filter((entry) => !isMethodEntry(entry));
@@ -39,7 +39,7 @@ const USER_TOOL_GLOBAL: Readonly<Record<string, Partial<SurfaceEntry>>> = {
     info: 'The story’s memories as the Memory panel lists them, oldest first. Each entry has its id, turn, day, daypart, text, Custom flag and pins. It’s empty in the World Editor and with no world open.',
   },
   notes: { info: 'The player’s notes. It’s empty in the World Editor and with no world open.' },
-  items: { info: 'Every item in the world by name, with its own placeholders and every Item Copy of it. Use items["Two Words"] for a name with a space.' },
+  items: { info: 'Every item in the world by name, with its own placeholders and every Item Instance of it. Use items["Two Words"] for a name with a space.' },
   currencies: { info: 'Every Currency in the world by name. Call currencies.Gold.balance to read what an entity or the persona has. A Tool can’t pay. Use currencies["Two Words"] for a name with a space.' },
   options: {
     access: 'readOnly',

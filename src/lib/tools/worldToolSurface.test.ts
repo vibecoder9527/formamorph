@@ -56,7 +56,7 @@ describe('the World Tool script surface', () => {
   });
 
   it('accepts every write a World Tool can make', () => {
-    expect(messages('location.move(args.place); clock.advance(5); discover("Tor"); memories.add("x"); memories.pin("y"); entities.Tor.diary("z");')).toEqual([]);
+    expect(messages('location.move(args.place); clock.advance(5); discover("Tor"); memories.append("x"); memories.pin("y"); entities.Tor.diary("z");')).toEqual([]);
   });
 
   it('lists a turn.choices write as read-only at every timing, an After the AI Tool included', () => {
@@ -66,11 +66,12 @@ describe('the World Tool script surface', () => {
     }
   });
 
-  it('gives a During AI Output Tool narration and no player, and the other timings the reverse', () => {
+  it('gives a During AI Output Tool narration and a player with show alone, and the other timings the full player', () => {
     const names = (timing: 'call' | 'output' | 'after') => worldToolSurface(params, timing).globals.map((entry) => entry.name);
+    const calls = (timing: 'output' | 'after') => worldToolSurface(params, timing).members.get('player')?.map((entry) => entry.name);
     expect(names('output')).toContain('narration');
-    expect(names('output')).not.toContain('player');
-    expect(names('after')).toContain('player');
+    expect(calls('output')).toEqual(['show']);
+    expect(calls('after')).toEqual(['tell', 'toast', 'show', 'confirm', 'ask', 'input']);
     expect(names('call')).not.toContain('narration');
   });
 

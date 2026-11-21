@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState, type ChangeEvent, type MouseEvent, ty
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AlertTriangle, CornerDownLeft, ImagePlus, Link as LucideLink, Box as LucideBox, Music, X } from "lucide-react";
+import { AlertTriangle, CornerDownLeft, ImagePlus, Link as LucideLink, Box as LucideBox, Music, Upload, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Tip } from "@/components/ui/tooltip";
 import { Meta } from "@/components/ui/typography";
 import ModelViewer from '../views/ModelViewer';
@@ -15,10 +15,11 @@ import { ImageConvertOverlay } from '../components/ImageConvertOverlay';
 import type { ImageCap } from './imageOptim';
 import { readSdPromptFromFile } from './sdMetadata';
 import { imageHost, isRemoteImage } from './imageSource';
-import { isExpiringImageHost } from './imageBytes';
+import { isExpiringImageHost, WEB_LINK_ERROR } from './imageBytes';
 import { useRemoteImage } from './useRemoteImage';
 import { fileToDataUrl } from './imageDrop';
 import { useImageDropTarget } from './useImageDropTarget';
+import { urlFileName } from './mediaList';
 import type { MediaAsset } from '@/types';
 
 /** An uploaded media file, base64-encoded as a data URL. */
@@ -30,7 +31,7 @@ interface UploadedMedia {
 }
 
 /** Read an uploaded file into the base64 data-URL envelope the media uploaders emit. */
-function readMediaFile(file: File): Promise<UploadedMedia> {
+export function readMediaFile(file: File): Promise<UploadedMedia> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve({ name: file.name, type: file.type, size: file.size, data: reader.result as string });
@@ -95,8 +96,10 @@ export const resolveModelType = (model: Partial<MediaAsset>): ModelType => {
 /** The shared dashed "click to upload" frame for the media uploaders (image / sound / 3D model). Pass
  *  `frameClassName` to give it a fixed size (e.g. the thumbnail crop); without it the box is compact and
  *  auto-sized. The dashed look lives here so every uploader stays in sync. */
-const Dropzone = ({ htmlFor, frameClassName, dragOver, overlay, children }: {
+const Dropzone = ({ htmlFor, frameClassName, dragOver, overlay, asLabel = true, children }: {
   htmlFor: string;
+  /** False keeps a click on the frame from opening the file picker, for a frame that holds its own buttons. */
+  asLabel?: boolean;
   frameClassName?: string;
   /** A droppable drag is overhead — the frame says so rather than leaving the gesture to guesswork. */
   dragOver?: boolean;
@@ -118,11 +121,74 @@ const Dropzone = ({ htmlFor, frameClassName, dragOver, overlay, children }: {
       {overlay && <div onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{overlay}</div>}
     </div>
   );
-  return <Label htmlFor={htmlFor} className="cursor-pointer">{frame}</Label>;
+  return asLabel ? <Label htmlFor={htmlFor} className="cursor-pointer">{frame}</Label> : frame;
 };
 
-export const ImageUpload = ({ onChange, id, value, cap, previewClassName, objectFit = 'contain', onPromptExtracted, onFiles, onFile }: {
+/** A link box with its commit cell and a held error line, for a media slot that takes an http(s) URL. */
+export const UrlCommitField = ({ noun, value, onChange, onCommit, error }: {
+  noun: 'image' | 'sound';
+  value: string;
   onChange: (value: string) => void;
+  onCommit: () => void;
+  error: string | null;
+}) => {
+  // Lit only once the draft is a link the slot could take.
+  const committable = isRemoteImage(value.trim());
+  return (
+    <div className="w-full space-y-1">
+      {/* Field and button are one widget: the button fills the field's right edge, divided from it by a
+          border rather than a gap, so it reads as a second cell and not a second control. `pr-10` keeps
+          typed text clear of it. */}
+      <div className="group relative">
+        <Input
+          type="url"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onCommit(); } }}
+          placeholder={`Or paste ${noun === 'image' ? 'an image' : 'a sound'} URL`}
+          aria-label={noun === 'image' ? 'Image URL' : 'Sound URL'}
+          // The focus ring is drawn by the overlay below instead, so it covers both cells rather than
+          // being covered by the button along the edge they share.
+          className="pr-10 focus-visible:ring-0"
+        />
+        {/* Icon-only: the Enter key already commits, and the icon says so. Inert until the draft is a link,
+            so the cell says whether pressing it would do anything. */}
+        <Tip tip={`Use this ${noun} URL`}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={!committable}
+            className={cn(
+              // Only the divider edge is bordered, so the cell shares the field's own frame on its other three
+              // sides. `disabled:opacity-100` keeps that divider at full strength while inert — the muted
+              // foreground carries the off state on its own.
+              'absolute inset-y-0 right-0 h-auto w-10 rounded-l-none border-y-0 border-r-0 border-l border-l-input disabled:opacity-100',
+              committable
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'bg-transparent text-muted-foreground',
+            )}
+            onClick={onCommit}
+          >
+            <CornerDownLeft className="h-4 w-4" />
+          </Button>
+        </Tip>
+        {/* Last child, so the focus ring paints over the button cell too and reads as one widget's glow
+            rather than stopping at the divider. Inert to the pointer, so it never eats a click. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-md ring-ring ring-inset group-focus-within:ring-2"
+        />
+      </div>
+      {/* The line is held whether or not it says anything, so a rejected link doesn't shift the box either. */}
+      <p className="min-h-4 text-meta text-destructive">{error}</p>
+    </div>
+  );
+};
+
+export const ImageUpload = ({ onChange, id, value, cap, previewClassName, objectFit = 'contain', onPromptExtracted, onFiles, onFile, choose }: {
+  /** A picked file's name rides along, for a slot that names its picture. */
+  onChange: (value: string, fileName?: string) => void;
   // Several pictures arriving at once (a multi-file drop). A caller holding more than one slot takes them
   // all; without this the first file is used and the rest are ignored, which is right for a single slot.
   onFiles?: (files: File[]) => void;
@@ -138,6 +204,9 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
   // Takes files only, for a slot that stores blobs: a file arrives here as is, the link field hides, and a
   // dropped link is refused. `onChange` still receives the empty string on remove.
   onFile?: (file: File) => void;
+  // A Media List slot's Choose control. Set, the empty frame offers Import and Choose above the link field,
+  // and a filled one drops its remove button for the host's Unlink.
+  choose?: ReactNode;
 }) => {
   const { promptImage, dialog } = useDownscalePrompt();
   const [zoomOpen, setZoomOpen] = useState(false);
@@ -153,20 +222,17 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
   // Known before any request, so this shows the instant the link is pasted.
   const expiring = isExpiringImageHost(value);
 
-  // Whether the draft is something the slot could take, which lights the commit button.
-  const urlCommittable = isRemoteImage(urlDraft.trim());
-
   // A pasted link is stored verbatim — no downscale pass, since a remote image costs the payload nothing.
   const commitUrl = useCallback(() => {
     const trimmed = urlDraft.trim();
     if (!trimmed) return;
     if (!isRemoteImage(trimmed)) {
-      setUrlError('Enter a link starting with http:// or https://');
+      setUrlError(WEB_LINK_ERROR);
       return;
     }
     setUrlError(null);
     setUrlDraft('');
-    onChange(trimmed);
+    onChange(trimmed, urlFileName(trimmed));
   }, [urlDraft, onChange]);
 
   /** Store one picked or dropped file into this slot. */
@@ -175,14 +241,14 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
     // Parse the raw file for an embedded SD prompt before the FileReader/optimize path re-encodes it.
     if (onPromptExtracted) void readSdPromptFromFile(file).then((p) => { if (p) onPromptExtracted(p); });
     const dataUrl = await fileToDataUrl(file);
-    if (!cap) { onChange(dataUrl); return; }
+    if (!cap) { onChange(dataUrl, file.name); return; }
     // The overlay shows the file itself, not the data URL about to be encoded — an <img> given a
     // multi-megabyte base64 string blocks the main thread long enough to swallow the overlay whole.
     const thumb = URL.createObjectURL(file);
     try {
       // Offer to downscale before storing when the image exceeds its budget. The overlay is raised from
       // inside the prompt, once a choice is made — not here, or it would sit behind the consent dialog.
-      onChange(await promptImage(dataUrl, cap, () => setEncoding(thumb)));
+      onChange(await promptImage(dataUrl, cap, () => setEncoding(thumb)), file.name);
     } finally {
       setEncoding(null);
       URL.revokeObjectURL(thumb);
@@ -207,11 +273,11 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
   // works. Dropping onto a picture and silently replacing it is the hard gesture to take back.
   const { dragOver, dropProps } = useImageDropTarget({
     enabled: !value,
-    onUrl: onFile ? () => setUrlError("This slot doesn't take links. Drop an image file instead.") : onChange,
+    onUrl: onFile ? () => setUrlError("This slot doesn't take links. Drop an image file instead.") : (url) => onChange(url, urlFileName(url)),
     onFiles: takeDropped,
   });
 
-  const removeButton = (
+  const removeButton = !choose && (
     <Tip tip="Remove image">
       <button
         type="button"
@@ -232,54 +298,14 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
     // picker is the label's default action for the click, so halting the React event does not cancel it.
     // The input and the button are exempt already — a label never activates for interactive content — but
     // the gap between them and the line held for an error are not.
-    <div className="w-full space-y-1" onClick={(e) => e.preventDefault()}>
-      {/* Field and button are one widget: the button fills the field's right edge, divided from it by a
-          border rather than a gap, so it reads as a second cell and not a second control. `pr-10` keeps
-          typed text clear of it. */}
-      <div className="group relative">
-        <Input
-          type="url"
-          value={urlDraft}
-          onChange={(e) => { setUrlDraft(e.target.value); setUrlError(null); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitUrl(); } }}
-          placeholder="Or paste an image URL"
-          aria-label="Image URL"
-          // The focus ring is drawn by the overlay below instead, so it covers both cells rather than
-          // being covered by the button along the edge they share.
-          className="pr-10 focus-visible:ring-0"
-        />
-        {/* Icon-only: the label was the width of the word for an action the Enter key already performs, and
-            the icon says so. Lit only once the draft is a link it can take — until then it's inert, so the
-            cell says whether pressing it would do anything. */}
-        <Tip tip="Use this image URL">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={!urlCommittable}
-            className={cn(
-              // Only the divider edge is bordered, so the cell shares the field's own frame on its other three
-              // sides. `disabled:opacity-100` keeps that divider at full strength while inert — the muted
-              // foreground carries the off state on its own.
-              'absolute inset-y-0 right-0 h-auto w-10 rounded-l-none border-y-0 border-r-0 border-l border-l-input disabled:opacity-100',
-              urlCommittable
-                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                : 'bg-transparent text-muted-foreground',
-            )}
-            onClick={commitUrl}
-          >
-            <CornerDownLeft className="h-4 w-4" />
-          </Button>
-        </Tip>
-        {/* Last child, so the focus ring paints over the button cell too and reads as one widget's glow
-            rather than stopping at the divider. Inert to the pointer, so it never eats a click. */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-md ring-ring ring-inset group-focus-within:ring-2"
-        />
-      </div>
-      {/* The line is held whether or not it says anything, so a rejected link doesn't shift the box either. */}
-      <p className="min-h-4 text-meta text-destructive">{urlError}</p>
+    <div className="w-full" onClick={(e) => e.preventDefault()}>
+      <UrlCommitField
+        noun="image"
+        value={urlDraft}
+        onChange={(v) => { setUrlDraft(v); setUrlError(null); }}
+        onCommit={commitUrl}
+        error={urlError}
+      />
     </div>
   );
 
@@ -290,6 +316,20 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
 
   // A file-only slot has no link field, only the line that refuses a dropped link.
   const linkSlot = onFile ? <p className="min-h-4 text-meta text-destructive">{urlError}</p> : urlBox;
+
+  // A Media List slot: Import (a label on the file input) and Choose side by side, the link field below.
+  const pickerSlot = (
+    <div className="flex w-full max-w-[280px] flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2">
+        <Label htmlFor={`image-upload-${id}`} className={cn(buttonVariants({ variant: 'outline' }), 'cursor-pointer')}>
+          <Upload className="mr-2 h-4 w-4" />Import
+        </Label>
+        {choose}
+      </div>
+      {dragOver && <span className="text-label text-muted-foreground">Drop to add</span>}
+      {linkSlot}
+    </div>
+  );
 
   // Marks a filled slot as pointing somewhere rather than carrying its own bytes, and says when that link
   // comes with a catch. An expiring host outranks an unreadable one: it breaks everything, just later.
@@ -354,6 +394,7 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
         htmlFor={`image-upload-${id}`}
         frameClassName={previewClassName}
         dragOver={dragOver}
+        asLabel={!choose || !!value}
         overlay={encoding && <ImageConvertOverlay thumb={encoding} done={0} total={1} objectFit={objectFit} />}
       >
         {previewClassName ? (
@@ -376,7 +417,9 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
             // The link field lives in the empty frame rather than under it: the frame is already this tall,
             // so nothing below the slot moves when an empty one comes into view.
             // The overlay's thumbnail is dimmed rather than opaque, so anything left underneath shows through it.
-            encoding ? null : (
+            encoding ? null : choose ? (
+              <div className="absolute inset-0 flex items-center justify-center p-3">{pickerSlot}</div>
+            ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center text-muted-foreground">
                 <span className="text-label">
                   {dragOver ? 'Drop to add' : 'Click to upload image'}
@@ -403,7 +446,7 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
               {removeButton}
             </div>
           ) : (
-            encoding ? null : (
+            encoding ? null : choose ? pickerSlot : (
               <>
                 <ImagePlus className="mr-2" />
                 <span>{dragOver ? 'Drop to add' : 'Add Image'}</span>
@@ -421,7 +464,7 @@ export const ImageUpload = ({ onChange, id, value, cap, previewClassName, object
         </p>
       )}
       {/* A frame sized by its caller holds this inside itself; a compact box has no room, so it sits below. */}
-      {!value && !previewClassName && !encoding && linkSlot}
+      {!value && !previewClassName && !choose && !encoding && linkSlot}
     </div>
   );
 };

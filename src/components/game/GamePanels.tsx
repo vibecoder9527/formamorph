@@ -1,7 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRequestKey } from '@/lib/surface/useRequestKey';
 import { useGameplay } from '@/contexts/GameplayContext';
 import { useGameplayText, setGameplayText } from '@/lib/gameplayTextStore';
+import { turnCardTriggers } from './MentionCards';
+import type { LiveQuotes } from '@/lib/coref/streamingQuotes';
+import type { SpeakerColors } from '@/lib/quoteSegments';
 import { revealActive, revealAnimName, revealVars } from '@/lib/narrationRevealConfig';
 import { usePlaceholderResolver } from '@/lib/usePlaceholderResolver';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -43,7 +46,7 @@ import { Button } from "@/components/ui/button";
 import { Send, RefreshCw, Loader2, Headphones, Square, ChevronUp, X, MoreHorizontal, Check, SlidersHorizontal } from "lucide-react";
 import { WorldOptionsTab } from '@/components/game/WorldOptionsTab';
 import { midGameOptions } from '@/lib/worldOptions';
-import type { WorldOption, WorldOptionValueOf } from '@/types';
+import type { ValuedWorldOption, WorldOptionValueOf } from '@/types';
 import type { StoryWidth } from "@/lib/gamePanelPrefs";
 import { AvatarIcon, ItemIcon, LocationIcon, StatIcon, TraitIcon } from '@/lib/elementIcons';
 import { balanceRows } from '@/lib/currency';
@@ -86,7 +89,8 @@ import { HelpButton } from '../HelpButton';
 import { AllowanceRing } from './AllowanceRing';
 import { EditTextModal } from '../modals/EditTextModal';
 import { visibleItemImage } from '@/lib/imageVisibility';
-import type { Entity, ItemCopy, PersonaRef, Stat, StatGroup, Trait } from '@/types';
+import { useViewedMediaOverrides } from '@/lib/useMediaOverrides';
+import type { Entity, ItemInstance, PersonaRef, Stat, StatGroup, Trait } from '@/types';
 import { gateStates } from '@/lib/traitGates';
 import { worldEntitiesOf } from '@/lib/persona';
 import type { TraitCascade } from './SetupTraitList';
@@ -116,8 +120,11 @@ import { useStatPanelEntity, type StatPanelOwner } from './useStatPanelEntity';
 
 import { parseSavedReasoning } from '@/lib/savedReasoning';
 import { scriptPrompts } from '@/lib/scriptPrompts';
-import { turnTells } from '@/lib/scriptTells';
-import { ScriptPromptLine, ScriptTellLines } from './ScriptPromptLine';
+import { liveTurnTells, NO_SHOWS, placeTells, type ScriptImageTell } from '@/lib/scriptTells';
+import { TurnNarration } from './InlineNarration';
+import { ScriptImagesAbove, ScriptPromptLine, ScriptTellLines } from './ScriptPromptLine';
+import { shownTells } from './ScriptImage';
+import { useMediaList } from '@/lib/useMediaList';
 
 /** The Entity View slide, on the nav rail's curve. */
 const ENTITY_VIEW_SLIDE_MS = 200;
@@ -574,6 +581,10 @@ export const MiddlePanel = ({
   sceneImages,
   sceneTags,
   sceneTurnId,
+  liveTurnId,
+  liveShows = NO_SHOWS,
+  speakerColors,
+  liveQuotes = null,
   sceneImageJob,
   sceneImageProgress,
   sceneImagePreview,
@@ -633,6 +644,14 @@ export const MiddlePanel = ({
   /** The viewed page's committed turn id (undefined while none) — there is something to draw or tag,
    *  and the scene panel is remounted per turn so its tag draft can't leak across page navigation. */
   sceneTurnId?: string;
+  /** The sent turn's id while it runs, before its narration is in the history. */
+  liveTurnId?: string;
+  /** The running reply's During AI Output images, until the reply lands. */
+  liveShows?: readonly ScriptImageTell[];
+  /** Each cast entity's quote color, by id. */
+  speakerColors: SpeakerColors;
+  /** The live turn's quotes read while it streams (Q72); null with none. */
+  liveQuotes?: LiveQuotes | null;
   /** Which half of the scene pipeline is running, or null. */
   sceneImageJob: 'tags' | 'image' | null;
   sceneImageProgress: number | null;
@@ -700,9 +719,10 @@ export const MiddlePanel = ({
     pendingAttachments,
     setPendingAttachments,
     scriptTells,
+    correctedReadings,
   } = useGameplay();
   const gameplayText = useGameplayText();
-  const { ttsHighlight, choicesEnabled, setChoicesEnabled, continueChoiceMode, statUpdatesEnabled, revealSpec, revealEasing, showReasoning, memoryDigests, setMemoryDigests } = useSettings();
+  const { ttsHighlight, choicesEnabled, setChoicesEnabled, continueChoiceMode, statUpdatesEnabled, revealSpec, revealEasing, showReasoning, memoryDigests, setMemoryDigests, characterMentions } = useSettings();
   const imageAttachments = useImageAttachments();
   // On mobile the focused field takes Help's and the ring's room; Send stays.
   const isMobileWidth = useIsMobile();
@@ -848,6 +868,7 @@ export const MiddlePanel = ({
     else if (!isRevealingNarration) setPagedAway(false);
   }, [isViewingPast, isRevealingNarration]);
   const pageNarration = pageLive ? gameplayText : currentAssistantMessage ? parseAssistantMessage(currentAssistantMessage.content) : '';
+  const pageTriggers = turnCardTriggers(pageLive, characterMentions, correctedReadings, speakerColors, sceneTurnId, pageNarration, liveQuotes);
   const pageReasoningLive = !isViewingPast && !!liveReasoning.text;
   const pageReasoning = pageReasoningLive
     ? liveReasoning
@@ -857,6 +878,9 @@ export const MiddlePanel = ({
     index: currentPage - 1, isLatest: !isViewingPast, live: false, hasImage: sceneImages.length > 0, text: pageNarration,
   }) : [];
   const pageChromeHeld = pageLive && !narrationSettled;
+  // The latest page's sent turn has no id in the history until its narration lands.
+  const mediaList = useMediaList();
+  const pageTells = placeTells(liveTurnTells(scriptTells, sceneTurnId ?? (isViewingPast ? undefined : liveTurnId), liveTurnId, liveShows));
   // The turn is live from submit, before its narration exists, until the reveal ends.
   const actionLineActions = actionLine === undefined ? [] : playerActionsFor({
     index: currentPage - 1, live: !isViewingPast && (pageLive || (isWaitingForAI && !currentAssistantMessage)), text: actionLine,
@@ -940,7 +964,7 @@ export const MiddlePanel = ({
       {gameplayText && (
         <div data-testid="preview-narration">
           {/* A reused renderer keeps the last run's shown text and would show the next run's first sentence at once. */}
-          <MarkdownRenderer key={commandRunId} text={gameplayText} animate={revealOn} animation={revealAnim} easing={revealEasing} dialogue fitShown />
+          <MarkdownRenderer key={commandRunId} text={gameplayText} animate={revealOn} animation={revealAnim} easing={revealEasing} dialogue fitShown {...turnCardTriggers(true, characterMentions, correctedReadings, speakerColors, undefined, gameplayText, liveQuotes)} />
         </div>
       )}
     </TurnCard>
@@ -1043,6 +1067,10 @@ export const MiddlePanel = ({
               ) : (
               <ChatNarration
                 parseAssistantMessage={parseAssistantMessage}
+                liveTurnId={liveTurnId}
+                liveShows={liveShows}
+                speakerColors={speakerColors}
+                liveQuotes={liveQuotes}
                 actionsFor={actionsFor}
                 playerActionsFor={playerActionsFor}
                 onDeleteSceneImage={onDeleteSceneImage}
@@ -1080,7 +1108,7 @@ export const MiddlePanel = ({
                 {commandPreviewChoices}
               </>
             )}
-            {!commandPreview && (actionLine !== undefined || currentAssistantMessage || (showReasoning && pageReasoning?.text)) && (
+            {!commandPreview && (actionLine !== undefined || currentAssistantMessage || (showReasoning && pageReasoning?.text) || shownTells(pageTells.above, mediaList).length > 0) && (
               <TurnCard actions={pageActions} turnNumber={currentPage} live={pageChromeHeld} style={revealStyle}>
                 {sceneTurnId && (
                   <ScenePlate
@@ -1098,24 +1126,23 @@ export const MiddlePanel = ({
                 {showReasoning && pageReasoning?.text && (
                   <ReasoningBlock text={pageReasoning.text} ms={pageReasoning.ms} active={pageReasoningLive && liveReasoning.active} />
                 )}
+                <ScriptImagesAbove images={pageTells.above} className="mb-3" />
                 {currentAssistantMessage && pageNarration && (
                   <div ref={narrationRef} data-testid="narration">
-                    {/* Streamdown memoizes on source position, not text, so committed text keys by its content. */}
-                    <MarkdownRenderer
-                      key={pageLive ? 'live' : `committed:${pageNarration}`}
+                    <TurnNarration
+                      turnId={sceneTurnId}
                       text={pageNarration}
-                      animate={pageLive && revealOn}
-                      resume={pagedAway}
-                      fitShown
-                      animation={revealAnim}
-                      easing={revealEasing}
-                      dialogue
+                      images={pageTells.inline}
+                      live={pageLive}
+                      revealOn={revealOn}
+                      resumed={pagedAway}
+                      triggers={pageTriggers}
                     />
                   </div>
                 )}
               </TurnCard>
             )}
-            {!commandPreview && <ScriptTellLines tells={turnTells(scriptTells, sceneTurnId)} className="mt-3" />}
+            {!commandPreview && <ScriptTellLines tells={pageTells.below} className="mt-3" />}
             {!commandPreview && sceneImagesAvailable && (
               <SceneImagePanel
                 // Keyed by turn: paging to another turn remounts the panel, so the tag draft and open
@@ -1380,7 +1407,7 @@ export const RightPanel = ({
   /** Script runs of an earlier panel action still go, so a listed action waits. */
   actionsBusy?: boolean;
   /** Set a mid-game World Option; owned by GameViewer, which lists the change. */
-  onChangeWorldOption: (option: WorldOption, value: WorldOptionValueOf) => void;
+  onChangeWorldOption: (option: ValuedWorldOption, value: WorldOptionValueOf) => void;
   /** Settle the traits after the player picks another persona. `name` is that persona's; null for None. */
   onPersonaChange: (ref: PersonaRef, name: string | null) => void;
   /** What the player's last trait switch or persona change turned off. */
@@ -1412,13 +1439,14 @@ export const RightPanel = ({
     viewTraits: savedTraits,
     viewDisabledTraitIds,
     viewOwnedTraits,
+    viewAppliedTraitValues,
     viewEntityStatChanges,
     viewEntityStats,
     viewStatChanges,
     statDeltas,
     personaRef,
     setSelectedEntityId,
-    itemCopies,
+    itemInstances,
     viewWorldOptionValues,
   } = useGameplay();
   const worldItems = useGameDataOptional()?.items;
@@ -1498,12 +1526,12 @@ export const RightPanel = ({
   const daypart = daypartAt(gameTime, calendar);
   const gateWorld = React.useMemo<TraitWorld>(() => ({
     traits, groups: traitGroups, entities: worldEntitiesOf(cast, persona), persona: personaRef ?? { source: 'none' }, daypart,
-    ...(worldItems ? { items: worldItems } : {}), itemCopies, options: worldOptions, optionValues: viewWorldOptionValues,
+    ...(worldItems ? { items: worldItems } : {}), itemInstances, options: worldOptions, optionValues: viewWorldOptionValues,
     ...inPlayOwners(ownerWorld, personaRef, traitLibrary),
-  }), [traits, traitGroups, cast, persona, personaRef, daypart, worldItems, itemCopies, worldOptions, viewWorldOptionValues, ownerWorld, traitLibrary]);
+  }), [traits, traitGroups, cast, persona, personaRef, daypart, worldItems, itemInstances, worldOptions, viewWorldOptionValues, ownerWorld, traitLibrary]);
   const viewTraitState = React.useMemo(
-    () => ({ traits: globalTraits, disabledTraitIds: viewDisabledTraitIds, ownedTraits: viewOwnedTraits }),
-    [globalTraits, viewDisabledTraitIds, viewOwnedTraits],
+    () => ({ traits: globalTraits, disabledTraitIds: viewDisabledTraitIds, ownedTraits: viewOwnedTraits, appliedValues: viewAppliedTraitValues }),
+    [globalTraits, viewDisabledTraitIds, viewOwnedTraits, viewAppliedTraitValues],
   );
   // The stats a trait switched off stay off under the global traits and every entity's global rows.
   const statEnabled = React.useMemo(
@@ -1516,16 +1544,17 @@ export const RightPanel = ({
     [viewTraitState, globalStats, viewEntityStats, gateWorld],
   );
   const traitGates = React.useMemo(() => gateStates(gateInput), [gateInput]);
+  const mediaOverrides = useViewedMediaOverrides();
   // Each entity's own traits switch its stats on and off, on the viewed turn.
   const entityInForce = React.useCallback(
     (ownerId: string) => entityStatTraitsInForce(viewOwnedTraits, gateWorld, ownerId),
     [viewOwnedTraits, gateWorld],
   );
-  const itemImageOf = React.useCallback((copy: ItemCopy) => {
-    const ref = copy.item;
+  const itemImageOf = React.useCallback((instance: ItemInstance) => {
+    const ref = instance.item;
     const item = ref.kind === 'item' ? worldItems?.find((i) => i.id === ref.itemId) : undefined;
-    return item && visibleItemImage(item, copy, gateInput);
-  }, [worldItems, gateInput]);
+    return item && visibleItemImage(item, instance, gateInput, gameData?.worldOverview.mediaList, mediaOverrides.item(instance.id));
+  }, [worldItems, gateInput, gameData?.worldOverview.mediaList, mediaOverrides]);
   const inventory = useInventoryPanel(inventorySettle, itemImageOf);
   // Listed actions wait while a turn or an earlier action's scripts run (Q13).
   const actionsBlocked = isWaitingForAI || actionsBusy;
@@ -1543,7 +1572,7 @@ export const RightPanel = ({
   // The listed entities the player doesn't play. Each tab shows the picker only when one of them has something there.
   const otherOptions = entityOptions.filter((option) => !playedOwners.some((owner) => owner.entity.id === option.id));
   const entitiesShowTraits = otherOptions.some((option) => traitTree.entityNodes.has(option.id));
-  const entitiesShowWorn = otherOptions.some((option) => visibleWorn(itemCopies, { kind: 'entity', id: option.id }).length > 0);
+  const entitiesShowWorn = otherOptions.some((option) => visibleWorn(itemInstances, { kind: 'entity', id: option.id }).length > 0);
   // Only listed entities follow the pick: a library owner out of the scene has no picker row to reach it by.
   const hiddenTraitOwners = new Set(otherOptions.filter((option) => option.id !== shownEntity?.id).map((option) => option.id));
   const entityPicker = (
@@ -1574,10 +1603,10 @@ export const RightPanel = ({
     .filter(({ stat }) => statEnabled[stat.id] !== false && stat.hidden !== true);
   // Only stats the player can see count here, so a hidden or switched-off backing stat has no row.
   const balances = balanceRows(inventory.currencies ?? [], {
-    copies: inventory.copies, placements: [], globalStats: visibleStats.map(({ stat }) => stat), statsOf: () => playedOwners.flatMap((owner) => owner.rows),
+    instances: inventory.instances, placements: [], globalStats: visibleStats.map(({ stat }) => stat), statsOf: () => playedOwners.flatMap((owner) => owner.rows),
   }, inventory.items);
   // A world with no items and no money keeps its three tabs.
-  const hasInventory = inventory.items.length > 0 || inventory.copies.length > 0 || balances.length > 0;
+  const hasInventory = inventory.items.length > 0 || inventory.instances.length > 0 || balances.length > 0;
   // Whether the descriptor line is part of this world's stat list at all. Held across every row so the list
   // keeps its shape as values move in and out of bands; a world that names none of them pays nothing, and a
   // stat the player never sees can't put the line there for the ones they do.
@@ -1586,6 +1615,10 @@ export const RightPanel = ({
   // A world with no Option flagged for change during play gets no Options tab.
   const playOptions = midGameOptions(gameData?.options);
   const hasOptions = playOptions.length > 0;
+  const optionRows = useMemo(
+    () => ({ world: { stats: gameData?.stats ?? NO_AUTHORED_STATS, statGroups: gameData?.statGroups ?? NO_STAT_GROUPS, entities: cast } }),
+    [gameData?.stats, gameData?.statGroups, cast],
+  );
   const shownTab = (!hasShownStats && activeTab === 'stats') || (!hasInventory && activeTab === 'inventory') || (!hasOptions && activeTab === 'options')
     ? 'traits' : activeTab;
   // The rail lists the same tabs as the panel.
@@ -1806,7 +1839,7 @@ export const RightPanel = ({
                     entity
                     className="mt-2"
                   >
-                    {visibleWorn(itemCopies, { kind: 'entity', id: entitySection.entity.id }).length === 0 ? (
+                    {visibleWorn(itemInstances, { kind: 'entity', id: entitySection.entity.id }).length === 0 ? (
                       <p role="status" className="px-2 py-2 text-label text-muted-foreground">Nothing equipped.</p>
                     ) : (
                       <div className="px-2 py-1"><EntityEquipped entity={entitySection.entity} /></div>
@@ -1838,6 +1871,7 @@ export const RightPanel = ({
               disabled={actionsBlocked || isViewingPast}
               onChange={onChangeWorldOption}
               resolveText={resolvePH}
+              rows={optionRows}
             />
           </TabsContent>
         )}

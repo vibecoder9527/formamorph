@@ -3,6 +3,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { EntityVisual } from './EntityVisual';
 import { hasEntityVisual, type EntityVisualSource } from '@/lib/entityVisual';
+import { useMediaList } from '@/lib/useMediaList';
+import { resolveSound } from '@/lib/mediaSounds';
+import { soundWithOverride } from '@/lib/mediaOverrides';
+import { useViewedMediaOverrides } from '@/lib/useMediaOverrides';
 import AudioPlayer from './AudioPlayer';
 import type { Entity } from '@/types';
 
@@ -37,10 +41,13 @@ export function EntityCardBody({ entity, children, sideBySide = false, images, a
   children: ReactNode;
   sideBySide?: boolean;
 } & Pick<ComponentProps<typeof EntityVisual>, 'images' | 'avatar' | 'preference' | 'onPreferenceChange' | 'imageIndex' | 'onImageStep' | 'morphValues' | 'onMorphNames'>) {
+  const media = useMediaList();
+  const overrides = useViewedMediaOverrides();
+  const sound = resolveSound(soundWithOverride(entity.sound, entity.id ? overrides.entity(entity.id, 'sound') : undefined), media);
   return (
     <div className={cn('flex-grow min-h-0 flex flex-col gap-4 p-4', sideBySide && 'lg:flex-row lg:gap-6')}>
       {/* Picture takes 3/4 of the height, or 3/5 of the width side by side (aspect ratio preserved). */}
-      {(hasEntityVisual(entity) || !!avatar) && (
+      {(hasEntityVisual(entity, media) || !!avatar) && (
         <div className="flex-[3] min-h-0 min-w-0 flex items-center justify-center">
           <EntityVisual
             className={sideBySide ? 'lg:items-start' : undefined}
@@ -62,9 +69,7 @@ export function EntityCardBody({ entity, children, sideBySide = false, images, a
         <div className={cn('min-h-full flex flex-col justify-center', sideBySide && 'lg:justify-start')}>
           <div className="flex flex-col gap-4">
             {children}
-            {entity.sound && (
-              <AudioPlayer src={entity.sound.data} className="w-full" />
-            )}
+            {sound && <AudioPlayer src={sound.data} className="w-full" />}
           </div>
         </div>
       </ScrollArea>

@@ -1,7 +1,7 @@
 import type { ChatMessage } from '@/types';
 import { parseTurns } from './turnBanding';
 import { milestoneCandidates, agedMilestoneCandidates, resolveMilestoneKeep, type MemoryPinMap, type MilestoneSelection } from './milestoneMemory';
-import { applyMemoryOverrides, type MemoryOverrides } from './memoryOverrides';
+import { applyMemoryOverrides, isRemoved, type MemoryOverrides } from './memoryOverrides';
 import { dayAndHour, daypart, formatStampPlain, hoursByPosition, type WorldCalendar } from './gameClock';
 import type { SandboxMemory } from './statCodeExecutor';
 
@@ -16,6 +16,8 @@ export interface MemoryRow {
   text: string;
   /** True for a player-written memory (never judged, never trimmed, keeps until deleted). */
   isNote: boolean;
+  /** The name a script keeps a Custom memory under. */
+  name?: string;
   /** The AI's original summary, when the row's text is an override of it. */
   original?: string;
   /** How the row's text came to differ from the AI's first summary. */
@@ -189,12 +191,14 @@ export function buildMemoryLedger(args: {
     });
   }
   for (const n of overrides.notes ?? []) {
+    const gone = deletedSet.has(n.id) || isRemoved(n);
     rows.push({
       id: n.id,
       text: n.text,
       isNote: true,
-      kept: !deletedSet.has(n.id),
-      deleted: deletedSet.has(n.id),
+      ...(n.name ? { name: n.name } : {}),
+      kept: !gone,
+      deleted: gone,
       turnNumber: 0,
       pos: n.anchorTurn,
       inContext: false,
@@ -259,7 +263,7 @@ export function scriptMemories(ledger: MemoryLedger, history: ChatMessage[], cal
     const { day, hour } = dayAndHour(timestamp, calendar);
     return {
       id: row.id, turn: Math.ceil(row.pos / 2), timestamp, day, daypart: daypart(hour, calendar), text: row.text,
-      custom: row.isNote, kept: row.kept, inContext: row.inContext, pinned: row.pin === 'keep', forgotten: row.pin === 'drop',
+      ...(row.name ? { name: row.name } : {}), custom: row.isNote, kept: row.kept, inContext: row.inContext, pinned: row.pin === 'keep', forgotten: row.pin === 'drop',
     };
   });
 }

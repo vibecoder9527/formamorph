@@ -28,6 +28,7 @@ import {
   allPlaceholders, mapAllPlaceholders, placeholderOwners, withoutPlaceholders, type PlaceholderSlices,
 } from '@/lib/placeholderHomes';
 import { matchKey } from '@/lib/entityMatch';
+import { mediaNameKeys } from '@/lib/codeRenameChains';
 import { activeDescriptor } from '@/lib/statContext';
 import {
   describeInThresholdUnits, describeThreshold, descriptorSpans, isThresholdOutOfRange, sortedDescriptors,
@@ -42,8 +43,8 @@ import {
 } from '@/lib/statCodeTargets';
 import { rowKeyOf, runRowPlace, scriptEntryKey, worldScriptList, type ListedScript, type ScriptTreeWorld } from '@/lib/worldScripts';
 import { estimateTokens } from '@/lib/memoryUtils';
-import { entityImages } from '@/lib/entityImages';
-import { locationImages } from '@/lib/locationImages';
+import { entityImages, galleryLinks } from '@/lib/entityImages';
+import { locationLinks, mapEmbeddedGallery, mapMediaImages } from '@/lib/mediaGallery';
 import {
   dataUrlBytes, dataUrlMime, dataUrlRealMime, imageFormatLabel, isConvertibleImage,
   relabelDataUrl, sniffDataUrlMime,
@@ -66,13 +67,14 @@ import {
   unstableCycles, type GateScopeTree, type GateInput, type GateOwner, type GateState, type GateStat, type GateStatSet, type GateStates, type GateStats, type GateTraitRef,
 } from '@/lib/traitGates';
 import { startingGateStats } from '@/lib/gateStats';
+import { setupStatsOf } from '@/lib/setupGateStats';
 import { ruleText, rowText } from '@/lib/traitGateLine';
 import { conditionsOf } from '@/lib/requirementRows';
 import { isAlwaysOn } from '@/lib/traitEffects';
 import { blueprintItemIds, offeredWorldTraits, statRows, statRowSide, type StatRow } from '@/lib/traitTree';
 import { globalStatsOf, resolvedEntityStats } from '@/lib/statLinks';
 import type {
-  DictionaryEntry, Entity, GalleryImage, GameLocation, PersonaRef, Placeholder, PlaceholderPin, PlaceholderValue, Script, Stat, StatDescriptor,
+  DictionaryEntry, Entity, GalleryImage, GalleryLink, GameLocation, PersonaRef, Placeholder, PlaceholderPin, PlaceholderValue, Script, Stat, StatDescriptor,
   StatRequirement, Trait, TraitGroup, TraitLink, TraitRequirement, TraitRequirementRow, World,
 } from '@/types';
 
@@ -1185,6 +1187,21 @@ const scriptUnknownBody: Rule = {
   },
 };
 
+const scriptUnknownMedia: Rule = {
+  id: 'script-unknown-media',
+  severity: 'warning',
+  section: 'stats',
+  advanced: true,
+  summary: (count) => `${count} scripts name media the world doesn’t have`,
+  // Judged on the literals, so a branch no run reaches is read too.
+  check: (world) => {
+    const known = new Set(Object.values(world.worldOverview?.mediaList ?? {}).map((entry) => entry.name));
+    return ruleScripts(world).flatMap(({ listed, label, item }) => [...new Set(mediaNameKeys(listed.box.code).map((key) => key.name))]
+      .filter((name) => !known.has(name))
+      .map((name) => scriptFinding(scriptUnknownMedia, `${label} names the unknown media entry ${quote(name)}`, item)));
+  },
+};
+
 // A read of a stat's `delta`, in either lookup form. A bare `delta` is nothing the sandbox injects, so only
 // a member read counts — which also leaves an author's own variable of that name alone.
 const DELTA_READ = /\??\.\s*delta\b|\[\s*(["'`])delta\1\s*\]/;
@@ -2246,7 +2263,7 @@ interface DeadCondition {
   stat: boolean;
 }
 
-/** A trait whose gate reads a stat the trait changes. */
+/** A trait whose gate reads a stat whose regen the trait changes. */
 interface OwnStatRead {
   gate: HeldGate;
   /** The stat's name, unquoted. */
@@ -2284,7 +2301,7 @@ interface GateReport {
   offDefaults: OffDefault[];
   /** Groups whose minimum an owner can't meet, under every persona choice that holds the owner. */
   picks: PickShortfall[];
-  /** One per trait and stat: the gate reads a stat the trait's own effects change. */
+  /** One per trait and stat: the gate reads a stat whose regen the trait changes. */
   ownStatReads: OwnStatRead[];
   /** Percent Conditions on a stat whose minimum equals its maximum. */
   zeroSpans: ZeroSpanCondition[];
@@ -2320,7 +2337,7 @@ const gateReportOf = (world: RuleWorld): GateReport => {
     (gate?.rows ?? []).map((row) => row.conditions.map((c) => labelOf(c.text, world)));
   const quotedRules = (rows: string[][]) => ruleText(rows.map((row) => row.map(quote)));
 
-  // Stat Conditions read each stat's authored start, as Enter World does (Q23).
+  // Stat Conditions read each stat's authored start, as the editor's authoring readers do (Q31).
   const stats = startingGateStats({ stats: world.stats, statGroups: world.statGroups, entities: world.entities ?? [] });
   const readOwners = (gate: HeldGate, req: StatRequirement): OwnerId[] => statReadOwners(world, stats, gate.owner.id, req);
   const statsRead = (gate: HeldGate, req: StatRequirement): GateStat[] => statsReadBy(world, stats, gate.owner.id, req);
@@ -2375,7 +2392,8 @@ const gateReportOf = (world: RuleWorld): GateReport => {
   const zeroSpans: ZeroSpanCondition[] = [];
   for (const gate of held) {
     const overridden = !!gate.link?.overrides?.[gate.trait.id]?.requires;
-    const effects = [...(gate.trait.statChanges ?? []), ...(gate.trait.statToggles ?? [])];
+    // A gate leaves its trait's own rows out (Q32), but regen keeps moving the value turn by turn (Q34).
+    const effects = (gate.trait.statChanges ?? []).filter((row) => row.type === 'regen');
     const reported = new Set<string>();
     (gate.trait.requires ?? []).forEach((row, i) => row.all.forEach((req, j) => {
       if (req.kind !== 'stat' || (gate.link && (!overridden || inOriginal(gate, req)))) return;
@@ -2426,7 +2444,7 @@ const gateReportOf = (world: RuleWorld): GateReport => {
         requirements: quotedRules(rowsOf(gateOf(states, r.ownerId, r.traitId))),
       };
     };
-    return { owners: byId, gate, named };
+    return { owners: byId, gate, named, persona };
   };
 
   const openable = ownerWorldOf(world, { traits: openTraits, links: openLinks });
@@ -2472,6 +2490,11 @@ const gateReportOf = (world: RuleWorld): GateReport => {
   const everOff = new Set<string>();
   const everOn = new Set<string>();
   const overridden = new Map<string, GateTraitRef>();
+  // Defaults settle on the stats a new game starts with: the picks' rows count, each Option at its default.
+  const setupGate = (gate: Omit<GateInput, 'active'>, persona: PersonaRef): Omit<GateInput, 'active'> => {
+    const statsOf = setupStatsOf({ ...world, entities: world.entities ?? [] }, persona);
+    return { ...gate, statsOf, stats: statsOf(NO_ACTIVE) };
+  };
   const settleInto = (gate: Omit<GateInput, 'active'>, linkOf: (ownerId: OwnerId, traitId: string) => TraitLink | undefined) => {
     const settled = settleDefaults(gate);
     const keyOf = (ownerId: OwnerId, traitId: string) => {
@@ -2486,9 +2509,9 @@ const gateReportOf = (world: RuleWorld): GateReport => {
     }
     return settled;
   };
-  const settledByPass = passes.map((pass) => settleInto(pass.gate, (ownerId, traitId) =>
+  const settledByPass = passes.map((pass) => settleInto(setupGate(pass.gate, pass.persona), (ownerId, traitId) =>
     (ownerId === null ? undefined : pass.owners.get(ownerId)?.linkOf.get(traitId))).active);
-  for (const persona of personaChoices(world)) settleInto({ ...input, persona }, (ownerId, traitId) => linksOf.get(ownerId)?.get(traitId));
+  for (const persona of personaChoices(world)) settleInto(setupGate({ ...input, persona }, persona), (ownerId, traitId) => linksOf.get(ownerId)?.get(traitId));
   const isOff = (key: string) => !stuckIds.has(key) && everOff.has(key) && !everOn.has(key);
   const offDefaults: OffDefault[] = [
     ...traits.filter((t) => isOff(t.id)).map((t) => ({ traitId: t.id, requirements: requirementTexts.get(t.id) ?? '' })),
@@ -2664,14 +2687,13 @@ const traitGateReadsOwnStat: Rule = {
   id: 'trait-gate-reads-own-stat',
   severity: 'warning',
   section: 'traits',
-  summary: (count) => `${count} traits require a stat that they change themselves`,
-  // Any stat effect counts: a value, a min or max (percent reads the effective max), or a stat toggle.
+  summary: (count) => `${count} traits require a stat whose regen they change`,
   check: (world) => gateReportOf(world).ownStatReads.map(({ gate, stat }) => {
     const item = heldItem(gate, world);
     const subject = subjectOf(gate, item, world);
     return finding(
       traitGateReadsOwnStat,
-      `${subject} requires ${quote(stat)} and changes ${quote(stat)}, so its own effect can turn the requirement off. Base the requirement on another stat.`,
+      `${subject} requires ${quote(stat)} and changes the Regen of ${quote(stat)}. Its own Regen can switch it off. Base the requirement on another stat.`,
       [item],
     );
   }),
@@ -2753,7 +2775,7 @@ const imageReportsByWorld = new WeakMap<RuleWorld, ImageRuleReport>();
 const imageReportOf = (world: RuleWorld): ImageRuleReport => {
   let report = imageReportsByWorld.get(world);
   if (report) return report;
-  const ruled = (world.entities ?? []).map((entity) => ({ entity, images: entityImages(entity) }))
+  const ruled = (world.entities ?? []).map((entity) => ({ entity, images: entityImages(entity, world.worldOverview?.mediaList) }))
     .filter(({ images }) => images.some((img) => img.requires?.length));
   const stats = startingGateStats({ stats: world.stats, statGroups: world.statGroups, entities: world.entities ?? [] });
   const imageId = (entity: Entity, i: number) => `image\u0000${entity.id}\u0000${i}`;
@@ -3824,21 +3846,21 @@ const imageMislabeled: Rule = {
   // Format decisions everywhere already read the bytes, so the label is corrected, never trusted.
   fix: (world) => {
     const thumb = world.worldOverview?.thumbnail;
-    const nextThumb = thumb ? relabelDataUrl(thumb) : thumb;
-    let out = nextThumb === thumb ? world
-      : { ...world, worldOverview: { ...world.worldOverview, thumbnail: nextThumb } };
-    const relabelGalleries = <T extends { images?: GalleryImage[] }>(list: T[], imagesOf: (record: T) => GalleryImage[]): T[] =>
+    const nextThumb = typeof thumb === 'string' && thumb ? relabelDataUrl(thumb) : thumb;
+    const media = world.worldOverview?.mediaList;
+    const nextMedia = mapMediaImages(media, relabelDataUrl);
+    let out = nextThumb === thumb && nextMedia === media ? world
+      : { ...world, worldOverview: { ...world.worldOverview, thumbnail: nextThumb, ...(nextMedia ? { mediaList: nextMedia } : {}) } };
+    // A linked picture is relabeled once, through its Media List entry above.
+    const relabelGalleries = <T extends { images?: GalleryLink[] }>(list: T[], imagesOf: (record: T) => GalleryLink[]): T[] =>
       mapChanged(list, (record) => {
         const images = imagesOf(record);
-        const next = mapChanged(images, (img) => {
-          const data = relabelDataUrl(img.data);
-          return data === img.data ? img : { ...img, data };
-        });
+        const next = mapEmbeddedGallery(images, relabelDataUrl);
         return next === images ? record : { ...record, images: next };
       });
-    out = withSlice(out, 'entities', relabelGalleries(world.entities ?? [], entityImages));
-    out = withSlice(out, 'locations', relabelGalleries(world.locations ?? [], locationImages));
-    out = withSlice(out, 'items', relabelGalleries(world.items ?? [], entityImages));
+    out = withSlice(out, 'entities', relabelGalleries(world.entities ?? [], galleryLinks));
+    out = withSlice(out, 'locations', relabelGalleries(world.locations ?? [], locationLinks));
+    out = withSlice(out, 'items', relabelGalleries(world.items ?? [], galleryLinks));
     return out;
   },
 };
@@ -3847,7 +3869,7 @@ const imageMislabeled: Rule = {
 export const RULES: readonly Rule[] = [
   aliasLeadingArticle, entityMatchCollision, aliasSelfDuplicate,
   entityLocationOrphan, linkConnectionBroken, traitToggleMissingStat, itemBecomesMissingItem, placeholderPinBroken,
-  chipUnknownPlaceholder, placeholderUnused, placeholderPinnedUnused, scriptUnknownStat, scriptUnknownBlueprintOwnerStat, scriptUnknownBody,
+  chipUnknownPlaceholder, placeholderUnused, placeholderPinnedUnused, scriptUnknownStat, scriptUnknownBlueprintOwnerStat, scriptUnknownBody, scriptUnknownMedia,
   scriptBeforeReadsDelta, scriptTwoWriters,
   entrySecondaryWithoutPrimary, entryInert, entryRegexInvalid,
   noStartingLocation, legacyStartLocation, entityNowhere, entityRowUnreachable, entityNoCodeName, statDisabledForever,

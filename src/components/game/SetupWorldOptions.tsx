@@ -4,26 +4,34 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Slider } from '@/components/ui/slider';
 import { Hint, Meta } from '@/components/ui/typography';
 import { choiceRowClass } from '@/components/game/setupChoiceRow';
+import { OptionStatRowList, type OptionRowsView } from '@/components/game/OptionStatRowList';
 import { optionRange, optionStep, optionValue, snapNumber } from '@/lib/worldOptions';
-import type { WorldOption, WorldOptionValueOf, WorldOptionValues } from '@/types';
+import type { PresetWorldOption, ValuedWorldOption, WorldOption, WorldOptionValueOf, WorldOptionValues } from '@/types';
 
 interface SetupWorldOptionsProps {
   /** The shown Options, in Options-tab order. */
   options: readonly WorldOption[];
   values: WorldOptionValues;
   onChange: (optionId: string, value: WorldOptionValueOf) => void;
+  /** The value of `preset` the setup matches, or null. */
+  presetMatch: (preset: PresetWorldOption) => string | null;
+  onPreset: (preset: PresetWorldOption, valueId: string) => void;
   resolveText: (text: string) => string;
+  /** The world the value rows read their stats from; absent lists none. */
+  rows?: OptionRowsView;
 }
 
 /** One Option's control: radio rows for a choice, a check row for a boolean, a slider for a number.
  *  With `commitOnRelease`, a slider reports once when the player lets go, not on every step. */
-export function OptionControl({ option, value, onChange, resolveText, disabled, commitOnRelease }: {
-  option: WorldOption;
+export function OptionControl({ option, value, onChange, resolveText, disabled, commitOnRelease, rows }: {
+  option: ValuedWorldOption;
   value: WorldOptionValueOf;
   onChange: (value: WorldOptionValueOf) => void;
   resolveText: (text: string) => string;
   disabled?: boolean;
   commitOnRelease?: boolean;
+  /** Lists each choice value's and boolean state's stat rows and Starting Items under it; absent lists none. */
+  rows?: OptionRowsView;
 }) {
   const [drag, setDrag] = useState<number | null>(null);
   useEffect(() => setDrag(null), [value]);
@@ -34,16 +42,18 @@ export function OptionControl({ option, value, onChange, resolveText, disabled, 
     const checked = value === true;
     const id = `setup-option-${option.id}`;
     return (
-      <div className={choiceRowClass(checked)}>
+      <label htmlFor={id} className={choiceRowClass(checked)}>
         <Checkbox
           id={id} checked={checked} onCheckedChange={(next) => onChange(next === true)}
           aria-describedby={descriptionId} className="mt-0.5 shrink-0" disabled={disabled}
         />
-        <label htmlFor={id} className="min-w-0 flex-1 cursor-pointer">
+        <span className="block min-w-0 flex-1">
           <strong className="block break-words text-label font-semibold">{name}</strong>
           {description && <Hint as="span" id={descriptionId} className="mt-1 block">{description}</Hint>}
-        </label>
-      </div>
+          <OptionStatRowList rows={option.onStatChanges} items={option.onPlacements} view={rows} resolveText={resolveText} lead="When On" />
+          <OptionStatRowList rows={option.offStatChanges} items={option.offPlacements} view={rows} resolveText={resolveText} lead="When Off" />
+        </span>
+      </label>
     );
   }
   const heading = (trailing?: string) => (
@@ -84,12 +94,51 @@ export function OptionControl({ option, value, onChange, resolveText, disabled, 
         {option.values.map((v) => {
           const id = `setup-option-${option.id}-${v.id}`;
           return (
-            <div key={v.id} className={choiceRowClass(value === v.id)}>
+            <label key={v.id} htmlFor={id} className={choiceRowClass(value === v.id)}>
               <RadioGroupItem id={id} value={v.id} aria-label={resolveText(v.name)} className="mt-0.5 shrink-0" />
-              <label htmlFor={id} className="min-w-0 flex-1 cursor-pointer break-words text-label font-semibold">
-                {resolveText(v.name)}
-              </label>
-            </div>
+              <span className="block min-w-0 flex-1">
+                <strong className="block break-words text-label font-semibold">{resolveText(v.name)}</strong>
+                <OptionStatRowList rows={v.statChanges} items={v.placements} view={rows} resolveText={resolveText} />
+              </span>
+            </label>
+          );
+        })}
+      </RadioGroup>
+    </div>
+  );
+}
+
+/** A Preset's radio rows, each with its description. The selected row is the value the setup matches. */
+export function PresetControl({ preset, selected, onPick, resolveText }: {
+  preset: PresetWorldOption;
+  selected: string | null;
+  onPick: (valueId: string) => void;
+  resolveText: (text: string) => string;
+}) {
+  const name = resolveText(preset.name);
+  const description = preset.playerDescription?.trim() ? resolveText(preset.playerDescription) : '';
+  const descriptionId = description ? `setup-option-${preset.id}-description` : undefined;
+  return (
+    <div>
+      <div className="mb-2">
+        <strong className="min-w-0 break-words text-label font-semibold">{name}</strong>
+        {description && <Hint id={descriptionId} className="mt-1">{description}</Hint>}
+      </div>
+      <RadioGroup value={selected ?? ''} onValueChange={onPick} aria-label={name} aria-describedby={descriptionId} className="space-y-2">
+        {preset.values.map((v) => {
+          const id = `setup-option-${preset.id}-${v.id}`;
+          const text = v.description.trim() ? resolveText(v.description) : '';
+          return (
+            <label key={v.id} htmlFor={id} className={choiceRowClass(selected === v.id)}>
+              <RadioGroupItem
+                id={id} value={v.id} aria-label={resolveText(v.name)} aria-describedby={text ? `${id}-description` : undefined}
+                className="mt-0.5 shrink-0"
+              />
+              <span className="block min-w-0 flex-1">
+                <strong className="block break-words text-label font-semibold">{resolveText(v.name)}</strong>
+                {text && <Hint as="span" id={`${id}-description`} className="mt-1 block">{text}</Hint>}
+              </span>
+            </label>
           );
         })}
       </RadioGroup>
@@ -98,19 +147,24 @@ export function OptionControl({ option, value, onChange, resolveText, disabled, 
 }
 
 /** The World Options page of the setup screen: every shown Option, each on its current value. */
-export function SetupWorldOptions({ options, values, onChange, resolveText }: SetupWorldOptionsProps) {
+export function SetupWorldOptions({ options, values, onChange, presetMatch, onPreset, resolveText, rows }: SetupWorldOptionsProps) {
   return (
     <>
       <Meta as="p" className="mb-1 font-medium tracking-wide">World Setup</Meta>
       <h2 className="mb-3 text-heading font-semibold">World Options</h2>
       <Hint className="mb-4">Choose how this world plays</Hint>
       <div className="space-y-6">
-        {options.map((option) => (
+        {options.map((option) => (option.type === 'preset' ? (
+          <PresetControl
+            key={option.id} preset={option} selected={presetMatch(option)}
+            onPick={(valueId) => onPreset(option, valueId)} resolveText={resolveText}
+          />
+        ) : (
           <OptionControl
             key={option.id} option={option} value={optionValue(option, values)}
-            onChange={(next) => onChange(option.id, next)} resolveText={resolveText}
+            onChange={(next) => onChange(option.id, next)} resolveText={resolveText} rows={rows}
           />
-        ))}
+        )))}
       </div>
     </>
   );

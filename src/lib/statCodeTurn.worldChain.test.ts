@@ -63,6 +63,19 @@ describe('a later script reads an earlier script’s world write', () => {
     expect(out.worldWrites?.bodies).toEqual([{ owner: 'bram', pick: { kind: 'body', id: 'b-wolf' } }]);
   });
 
+  it('reads a media write, and the turn hands every write on in order', async () => {
+    const media = {
+      entries: [{ id: 'm-calm', name: 'Calm', kind: 'image' as const }, { id: 'm-hurt', name: 'Hurt', kind: 'image' as const }],
+      overrides: {}, defaults: () => ({ entities: { bram: { image: 'm-calm' } } }),
+    };
+    const code = 'stats.Echo.value = entities.Bram.image === "Hurt" ? 1 : 0;';
+    const chained = await read({ media }, 'entities.Bram.image = "Hurt";', code);
+    const control = await read({ media }, code);
+    expect(echoOf(control)).toBe(0);
+    expect(echoOf(chained)).toBe(1);
+    expect(chained.mediaWrites).toEqual([{ owner: { kind: 'entity', id: 'bram' }, field: 'image', mediaId: 'm-hurt' }]);
+  });
+
   it('reads a location write, with who is present and the exits from there', async () => {
     const code = 'stats.Echo.value = (location.name === "Hill" ? 1000 : 0) + location.present.length * 100 + location.exits.length;';
     const chained = await read({}, 'location.move("Hill");', code);
@@ -91,7 +104,7 @@ describe('a later script reads an earlier script’s world write', () => {
   it('reads a memory line on the turn’s own row, and a row verb on it names the id the turn commits', async () => {
     const out = await read(
       { memories: [] },
-      'memories.add("Tor lied.");',
+      'memories.append("Tor lied.");',
       'const row = memories[memories.length - 1]; stats.Echo.value = memories.length * 10 + (row.text === "Tor lied." ? 1 : 0); row.pin();',
     );
     expect(echoOf(out)).toBe(11);
@@ -154,7 +167,7 @@ describe('a stat re-roll’s chain', () => {
     // The write is in the result for the caller, GameViewer, to drop; it never reaches the state a run is handed.
     expect(moved.worldWrites?.location).toBe('dock');
     // A Tool call's saved writes carry no scene write, so its replay never moves the kept location, clock or cast.
-    const scene = 'location.move("Hill"); clock.advance(60); memories.add("Tor lied."); entities.Bram.diary("Hid."); discover("Wick", "A courier."); entities.Bram.move("Dock");';
+    const scene = 'location.move("Hill"); clock.advance(60); memories.append("Tor lied."); entities.Bram.diary("Hid."); discover("Wick", "A courier."); entities.Bram.move("Dock");';
     const called = await runStatCodeTurn(turnOf({ triggers: [{ name: 'Tool', code: `${scene} stats.Echo.value = 5;`, args: {} }] }));
     expect(called.worldWrites?.location).toBe('hill');
     const replayed = await runStatCodeTurn(turnOf({

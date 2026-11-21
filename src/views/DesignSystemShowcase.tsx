@@ -9,6 +9,7 @@ import { RoutineSentenceReference } from '@/components/design-system/RoutineSent
 import { FormaquestionReference } from '@/components/design-system/FormaquestionReference';
 import { FeedbackFilterRowReference } from '@/components/design-system/FeedbackFilterRowReference';
 import { SupporterFlairReference } from '@/components/design-system/SupporterFlairReference';
+import { PatreonMarkReference } from '@/components/design-system/PatreonMarkReference';
 import { PresetHeaderReference } from '@/components/design-system/PresetHeaderReference';
 import { LandingPulseReference } from '@/components/design-system/LandingPulseReference';
 import { PanelCrashCardReference } from '@/components/design-system/PanelCrashCardReference';
@@ -55,6 +56,10 @@ import { LocationsCanvasReference } from '@/components/design-system/LocationsCa
 import { ContextMenuReferences } from '@/components/design-system/ContextMenuReferences';
 import { FooterActionOrderReference } from '@/components/design-system/FooterActionOrderReference';
 import { NarrationTurnReference } from '@/components/design-system/NarrationTurnReference';
+import { SpeakerQuotesReference } from '@/components/design-system/SpeakerQuotesReference';
+import { WhatsNewTilesReference } from '@/components/design-system/WhatsNewTilesReference';
+import { MentionCardsReference } from '@/components/design-system/MentionCardsReference';
+import { InlineScriptImageReference } from '@/components/design-system/InlineScriptImageReference';
 import { ScriptPromptLineReference } from '@/components/design-system/ScriptPromptLineReference';
 import { RequestStatusStripReference } from '@/components/design-system/RequestStatusStripReference';
 import { PanelTabStripReference } from '@/components/design-system/PanelTabStripReference';
@@ -441,10 +446,28 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     Component: NarrationTurnReference,
   },
   {
+    id: 'speaker-quotes',
+    label: 'Speaker Quote Colors',
+    description: 'Each speaker’s quotes in their own palette color',
+    Component: SpeakerQuotesReference,
+  },
+  {
+    id: 'mention-cards',
+    label: 'Mention Cards',
+    description: 'A card for whoever a name or quote in narration refers to',
+    Component: MentionCardsReference,
+  },
+  {
     id: 'prompt-line',
     label: 'Inline Prompt Line',
     description: 'A script’s question or message in the turn column',
     Component: ScriptPromptLineReference,
+  },
+  {
+    id: 'inline-script-image',
+    label: 'Inline Script Image',
+    description: 'A shown image in the narration: block, left and right, in three sizes',
+    Component: InlineScriptImageReference,
   },
   {
     id: 'status-strip',
@@ -505,6 +528,12 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     label: 'Supporter Flair',
     description: 'Tier colors, badges, names, and Profile Image rings',
     Component: SupporterFlairReference,
+  },
+  {
+    id: 'patreon-mark',
+    label: 'Patreon Mark',
+    description: 'The Patreon heart on every item that comes with Patreon support',
+    Component: PatreonMarkReference,
   },
   {
     id: 'preset-header',
@@ -571,6 +600,12 @@ const DESIGN_SYSTEM_REFERENCES: readonly ReferenceDefinition[] = [
     label: 'Body Layout',
     description: 'A figure with movable, sizable boxes beside the rows they belong to',
     Component: BodyLayoutReference,
+  },
+  {
+    id: 'paired-tiles',
+    label: 'Paired Tiles',
+    description: 'What’s New highlights: big changes with an accent edge and icon, each beside a related change',
+    Component: WhatsNewTilesReference,
   },
 ];
 

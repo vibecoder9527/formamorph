@@ -18,11 +18,12 @@ import { defaultNarrationUserPrompt, defaultSystemPrompt } from '@/components/ga
 import { copyLookup, readerFor, type CopyLookup } from '@/lib/blueprints';
 import { ownerPins, ownerPriming } from '@/lib/ownedTraitsInPlay';
 import { resolveOwners } from '@/lib/owners';
-import { startingGateStats } from '@/lib/gateStats';
-import { seedEntityStats } from '@/lib/entityStats';
+import { setupStatsOf } from '@/lib/setupGateStats';
+import { seedEntityStats } from '@/lib/entityStatSeed';
 import { allPlaceholders } from '@/lib/placeholderHomes';
 import { playStatWorld, globalStatsOf } from '@/lib/statLinks';
-import { settle, settleDefaults } from '@/lib/traitGates';
+import { settle, settleDefaults, type GateActive } from '@/lib/traitGates';
+import { scoped } from '@/lib/scope';
 import { DEFAULT_MAX_TOKENS } from '@/contexts/settingsDefaults';
 import { authoredChipScene } from '@/lib/chipValues/authoredScene';
 import { chipValues } from '@/lib/chipValues/chipValues';
@@ -52,7 +53,6 @@ import { startTravelGate } from '@/lib/inPlayWorld';
 import { lensActiveTraits, lensPersonaPicks, lensPersonaRef, lensPinBlueprints, lensStartingStats, resolveLensText, type BenchLens } from './lens';
 import { ownerWorldOf, chipBearingTexts, type RuleWorld } from './rules';
 import { scannedEntries } from './triggers';
-import { optionPinLists } from '@/lib/worldOptions';
 
 /** The instrument reads the whole authored world — the first prompt pulls from every slice. */
 export type OpeningWorld = RuleWorld;
@@ -219,14 +219,25 @@ function openingStart(world: OpeningWorld, lens: BenchLens, startLocationId?: st
   };
 }
 
+/** The slices the start picks read. */
+type PicksWorld = Pick<
+  OpeningWorld, 'worldOverview' | 'stats' | 'statGroups' | 'locations' | 'entities' | 'traits' | 'traitGroups' | 'placeholders' | 'options'
+>;
+
+/** The traits a fresh game under `lens` starts with, as the start gates read them. */
+export function lensStartPicks(world: PicksWorld, lens: BenchLens): GateActive {
+  const persona = lensPersonaRef(lens.persona?.id ?? null);
+  const { traits, owned } = openingPicks(world, lensActiveTraits(world, lens), persona, lens.state.optionValues);
+  return scoped(traits, owned);
+}
+
 /** The picks Enter World starts from under `persona`: the lens's traits, each owner's default picks, and the
  *  lens's World Option values. The played entity holds its own picks among them (Q33). */
-function openingPicks(world: OpeningWorld, active: readonly Trait[], persona: PersonaRef, optionValues?: WorldOptionValues): OpeningPicks {
+function openingPicks(world: PicksWorld, active: readonly Trait[], persona: PersonaRef, optionValues?: WorldOptionValues): OpeningPicks {
   const { gate: ownerGate } = resolveOwners(ownerWorldOf(world), persona);
-  // Stat Conditions read the authored start, as Enter World's do (Q23); Option Conditions the lens's picks (Q25).
-  const gate = {
-    ...ownerGate, stats: startingGateStats({ ...world, entities: world.entities ?? [] }), ...(optionValues && { optionValues }),
-  };
+  // Stat Conditions read the stats the picks start with, as Enter World's do (Q26); Option Conditions the lens's picks (Q25).
+  const statsOf = setupStatsOf({ ...world, entities: world.entities ?? [] }, persona, [], optionValues);
+  const gate = { ...ownerGate, statsOf, ...(optionValues && { optionValues }) };
   const custom = lensPersonaPicks(world, active, persona.source === 'world' ? persona.entityId : null);
   const defaults = settleDefaults(gate).active;
   const owned = settle({
@@ -256,8 +267,8 @@ const openingPins = (world: OpeningWorld, start: OpeningStart, rolls: Placeholde
     sharedPlaceholders: world.placeholders ?? [],
     entityStats: Object.fromEntries((start.state.owners ?? []).map((owner) => [owner.id, owner.stats])),
     blueprints: lensPinBlueprints(world),
+    optionStats: { options: world.options, optionValues: start.optionValues },
   }, {
-    options: optionPinLists(world.options, start.optionValues),
     location: start.location, stats: globalStatsOf(start.settled, world.statGroups ?? []), placeholders: allPlaceholders(world), rolls,
   }).world;
 };
@@ -338,7 +349,9 @@ function collisionChance(chances: number[], draws: number): number {
 
 /** Every stat a fresh game as the lens PC starts with, settled, including any the PC switches off. */
 export function settledOpeningStats(world: OpeningWorld, lens: BenchLens): PlayerStat[] {
-  return lensStartingStats(world, globalStatsOf(world.stats ?? [], world.statGroups ?? []), lensActiveTraits(world, lens), lens.persona?.id ?? null);
+  return lensStartingStats(
+    world, globalStatsOf(world.stats ?? [], world.statGroups ?? []), lensActiveTraits(world, lens), lens.persona?.id ?? null, lens.state.optionValues,
+  );
 }
 
 /** What the author picked to look at: a start from the start pool and a row from its opening pool. */
@@ -463,14 +476,15 @@ export function buildOpening(
   // The turn-one assembly, through the game's own builders: the chip values of this opening's scene, the
   // narration prompt over them with the real lore scan, and the cue framed as the opening user turn.
   // The scene has no notes and no clock yet, so both chips read as the uniform "none".
-  const canEnter = startTravelGate(
-    { ...world, entities: world.entities ?? [], locations: world.locations ?? [] }, lens.persona?.id ?? null, lens.state.optionValues,
-  );
+  const startWorld = { ...world, entities: worldEntities, locations: world.locations ?? [] };
+  const startPicks = scoped(start.active.map((t) => t.id), start.owned);
+  const canEnter = startTravelGate(startWorld, lens.persona?.id ?? null, lens.state.optionValues, startPicks);
   const ctx = chipValues({
     ...authoredChipScene(world, {
       location,
       activeTraitIds: active.map((t) => t.id),
       stats: liveStats,
+      ...(lens.state.optionValues && { optionValues: lens.state.optionValues }),
       resolve,
       resolveEntity,
       persona: openingPersonaOf(personaRef),
@@ -484,7 +498,7 @@ export function buildOpening(
     worldEntities, overview: world.worldOverview, locations: world.locations ?? [], startingLocationId: location?.id, picked: [],
     placesOf: samplePlacement(
       worldEntities, { locations: world.locations ?? [], connections: world.connections ?? [] }, location?.id,
-      startRoutinePick({ ...world, entities: worldEntities, locations: world.locations ?? [] }, lens.persona?.id ?? null, lens.state.optionValues),
+      startRoutinePick(startWorld, lens.persona?.id ?? null, lens.state.optionValues, startPicks),
     ),
   });
   const chances = poolChances(entries);

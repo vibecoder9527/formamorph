@@ -365,10 +365,10 @@ describe('two scripts on one item event', () => {
         { id: 'b', timing: 'gained', code: READ },
       ],
     };
-    const event: ItemScriptEvent = { timing: 'gained', itemId: 'gem', copyId: 'c', where: { kind: 'you' }, quantity: 1 };
-    const apply: ApplyInventory = (copies, ops) => applyInventoryOps(copies, ops, { world: { items: [gem] }, source: 'script', newId: () => 'new' });
+    const event: ItemScriptEvent = { timing: 'gained', itemId: 'gem', instanceId: 'c', where: { kind: 'you' }, quantity: 1, by: 'story' };
+    const apply: ApplyInventory = (instances, ops) => applyInventoryOps(instances, ops, { world: { items: [gem] }, source: 'script', newId: () => 'new' });
     const out = await runItemScripts(
-      turnOf({ stats: [hp(), echo()], items: [gem], itemCopies: [{ id: 'c', item: { kind: 'item', itemId: 'gem' }, where: { kind: 'you' }, quantity: 1, visibility: 'visible' }] }),
+      turnOf({ stats: [hp(), echo()], items: [gem], itemInstances: [{ id: 'c', item: { kind: 'item', itemId: 'gem' }, where: { kind: 'you' }, quantity: 1, visibility: 'visible' }] }),
       [event], { items: [gem], apply, itemNameOf: (item) => item.name },
     );
     expect(valueOf(out.result?.stats, 'echo')).toBe(45);

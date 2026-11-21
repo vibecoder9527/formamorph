@@ -4,14 +4,17 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useGameplay } from '@/contexts/GameplayContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useGameplayText } from '@/lib/gameplayTextStore';
+import type { SpeakerColors } from '@/lib/quoteSegments';
 import { useLiveReasoning } from '@/lib/reasoningStreamStore';
-import { revealActive, revealAnimName, revealVars } from '@/lib/narrationRevealConfig';
+import { revealActive, revealVars } from '@/lib/narrationRevealConfig';
 import { parseTurnContent } from '@/lib/turnDigest';
 import { parseSavedReasoning, type SavedReasoning } from '@/lib/savedReasoning';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { NARRATION_END_SPACE, NARRATION_FADE, NARRATION_FADE_UNDER_STRIP, useEdgeFades } from './narrationFade';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { turnCardTriggers } from './MentionCards';
+import type { LiveQuotes } from '@/lib/coref/streamingQuotes';
 import { useChatPin } from './useChatPin';
 import { useReadingLine } from './useReadingLine';
 import { READING_LINE } from '@/lib/chatReadingLine';
@@ -22,8 +25,9 @@ import { TurnCard } from './TurnCard';
 import { ScenePlate } from './ScenePlate';
 import { AttachmentThumbs } from './AttachmentThumbs';
 import { turnAttachments } from '@/lib/actionAttachments';
-import { turnTells } from '@/lib/scriptTells';
-import { ScriptTellLines } from './ScriptPromptLine';
+import { liveTurnTells, NO_SHOWS, placeTells, type ScriptImageTell } from '@/lib/scriptTells';
+import { TurnNarration } from './InlineNarration';
+import { ScriptImagesAbove, ScriptTellLines } from './ScriptPromptLine';
 import type { BubbleAction } from '@/lib/bubbleActions';
 import type { ChatMessage } from '@/types';
 
@@ -81,8 +85,16 @@ export const PLAYER_ACTION_BUBBLE = 'ml-auto w-fit max-w-[85%] rounded-2xl round
  * right and the narration as a full-width block. Opens at the latest turn. `latestFooter` renders under the
  * latest turn's narration.
  */
-export function ChatNarration({ parseAssistantMessage, latestFooter, actionsFor, playerActionsFor, onDeleteSceneImage, fadeUnderStrip = false }: {
+export function ChatNarration({ parseAssistantMessage, liveTurnId, liveShows = NO_SHOWS, speakerColors, liveQuotes = null, latestFooter, actionsFor, playerActionsFor, onDeleteSceneImage, fadeUnderStrip = false }: {
   parseAssistantMessage: (content: string) => string;
+  /** The sent turn's id while it runs, before its narration is in the history. */
+  liveTurnId?: string;
+  /** The running reply's During AI Output images, until the reply lands. */
+  liveShows?: readonly ScriptImageTell[];
+  /** Each cast entity's quote color, by id. */
+  speakerColors: SpeakerColors;
+  /** The live turn's quotes read while it streams (Q72). */
+  liveQuotes?: LiveQuotes | null;
   latestFooter?: React.ReactNode;
   /** The actions of one committed narration bubble. */
   actionsFor?: (turn: ChatBubbleTurn) => BubbleAction[];
@@ -93,12 +105,11 @@ export function ChatNarration({ parseAssistantMessage, latestFooter, actionsFor,
   /** Fades the turns out above the request status strip, which floats over the bottom. */
   fadeUnderStrip?: boolean;
 }) {
-  const { fullMessageHistory, isRevealingNarration, narrationSettled, isWaitingForAI, sceneImages, actionAttachments, scriptTells, currentPage, totalPages, setUserPage } = useGameplay();
-  const { revealSpec, revealEasing, showReasoning } = useSettings();
+  const { fullMessageHistory, isRevealingNarration, narrationSettled, isWaitingForAI, sceneImages, actionAttachments, scriptTells, correctedReadings, currentPage, totalPages, setUserPage } = useGameplay();
+  const { revealSpec, showReasoning, characterMentions } = useSettings();
   const gameplayText = useGameplayText();
   const liveReasoning = useLiveReasoning();
   const revealOn = revealActive(revealSpec);
-  const revealAnim = revealAnimName(revealSpec);
   const revealStyle = revealVars(revealSpec) as React.CSSProperties;
 
   const turns = useMemo(() => chatTurns(fullMessageHistory), [fullMessageHistory]);
@@ -191,6 +202,8 @@ export function ChatNarration({ parseAssistantMessage, latestFooter, actionsFor,
             const reasoning = reasoningLive ? liveReasoning : turn.reasoning;
             const narrationText = liveReveal ? gameplayText : turn.narration ? parseAssistantMessage(turn.narration.content) : '';
             const { turnId } = turn;
+            const triggers = turnCardTriggers(liveReveal, characterMentions, correctedReadings, speakerColors, turnId, narrationText, isLatest ? liveQuotes : null);
+            const tells = placeTells(liveTurnTells(scriptTells, turnId ?? (isLatest ? liveTurnId : undefined), liveTurnId, liveShows));
             const images = (!liveReveal && turnId && sceneImages[turnId]) || [];
             // The card holds its actions while live, so its row can open in place once the narration settles.
             const narrationActions = (turn.narration && actionsFor?.({
@@ -226,6 +239,7 @@ export function ChatNarration({ parseAssistantMessage, latestFooter, actionsFor,
                 {turn.action !== null && (
                   <AttachmentThumbs attachments={turnAttachments(actionAttachments, turnId)} className="mb-3 justify-end" />
                 )}
+                <ScriptImagesAbove images={tells.above} layout="chat" className="mb-3" />
                 {(turn.narration || (showReasoning && reasoning?.text)) && (
                   <TurnCard actions={narrationActions} turnNumber={item.index + 1} live={chromeHeld} style={revealStyle}>
                     {showReasoning && reasoning?.text && (
@@ -233,15 +247,13 @@ export function ChatNarration({ parseAssistantMessage, latestFooter, actionsFor,
                     )}
                     {turn.narration && (
                       <div data-testid="narration">
-                        {/* Streamdown memoizes on source position, not text, so committed text keys by its content. */}
-                        <MarkdownRenderer
-                          key={liveReveal ? 'live' : `committed:${narrationText}`}
+                        <TurnNarration
+                          turnId={turnId}
                           text={narrationText}
-                          animate={liveReveal && revealOn}
-                          fitShown
-                          animation={revealAnim}
-                          easing={revealEasing}
-                          dialogue
+                          images={tells.inline}
+                          live={liveReveal}
+                          revealOn={revealOn}
+                          triggers={triggers}
                         />
                       </div>
                     )}
@@ -255,7 +267,7 @@ export function ChatNarration({ parseAssistantMessage, latestFooter, actionsFor,
                     )}
                   </TurnCard>
                 )}
-                <ScriptTellLines tells={turnTells(scriptTells, turnId)} layout="chat" className="mt-3" />
+                <ScriptTellLines tells={tells.below} layout="chat" className="mt-3" />
                 {isLatest && latestFooter}
                 {isLatest && <div aria-hidden className={NARRATION_END_SPACE} />}
                 <div data-content-end />

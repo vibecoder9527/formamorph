@@ -5,10 +5,12 @@
  * Every write goes through {@link putWorldRecord} or {@link deleteWorldRecord} inside one transaction over
  * both stores, so a list read never sees a world without its metadata, or the reverse.
  */
-import type { ContentLink, WorldMetadata } from '@/types';
+import type { ContentLink, MediaList, MediaRef, SupporterCopyMarker, WorldMetadata } from '@/types';
+import { coverData } from './mediaImages';
 import { describePlaceholders } from './placeholders';
 import { allPlaceholders, type PlaceholderHomesWorld } from './placeholderHomes';
 import { migrateCarriedPlaceholders } from './version';
+import { atCaller } from './callerStack';
 import { getAllReadable, isReadable, promisifyRequest, readOrNull, transactionDone } from './idb';
 import { announceWorldSaved } from './worldChangeSignal';
 
@@ -46,6 +48,7 @@ interface StoredWorldShape {
   sourceUpdatedAt?: string;
   sourceAuthorId?: string;
   sourceHash?: string;
+  supporterCopy?: SupporterCopyMarker;
   createdAt?: string;
   lastAccessed?: string;
   data?: object;
@@ -53,7 +56,7 @@ interface StoredWorldShape {
 
 /** The parts of a world's content its metadata reads. */
 interface ContentShape {
-  worldOverview?: { thumbnail?: string | null; tags?: string[] } | null;
+  worldOverview?: { thumbnail?: string | MediaRef | null; mediaList?: MediaList; tags?: string[] } | null;
   placeholders?: unknown;
   entities?: unknown;
   dictionaries?: unknown;
@@ -79,7 +82,7 @@ function describeBlurb(record: StoredWorldShape): string {
     const data = { ...content, placeholders: migrateCarriedPlaceholders(content.placeholders) };
     return describePlaceholders(text, allPlaceholders(data));
   } catch {
-    // A malformed def must not abort the upgrade transaction it runs in.
+    // A malformed def must not abort the transaction it runs in.
     return text;
   }
 }
@@ -100,7 +103,7 @@ export function worldMetaOf(record: StoredWorldShape): WorldMetaRecord {
     // A remote thumbnail can't render offline and is blocked cross-origin, so the embedded one wins over a URL.
     thumbnail: (record.thumbnail && !/^https?:\/\//i.test(record.thumbnail))
       ? record.thumbnail
-      : (overview?.thumbnail || record.thumbnail || ''),
+      : (coverData(overview ? { thumbnail: overview.thumbnail ?? null, mediaList: overview.mediaList } : undefined) || record.thumbnail || ''),
     tags: overview?.tags || [],
     sourceId: record.sourceId,
     dirty: record.dirty,
@@ -109,6 +112,7 @@ export function worldMetaOf(record: StoredWorldShape): WorldMetaRecord {
     sourceUpdatedAt: record.sourceUpdatedAt,
     sourceAuthorId: record.sourceAuthorId,
     sourceHash: record.sourceHash,
+    ...(record.supporterCopy ? { supporterCopy: record.supporterCopy } : {}),
     createdAt: record.createdAt,
     lastAccessed: record.lastAccessed,
     linkedCopies: [
@@ -124,45 +128,38 @@ export function listFieldsOf(meta: WorldMetaRecord): WorldMetadata {
   return fields;
 }
 
-/** Fill the metadata store from the world store, one record at a time, inside the upgrade transaction. */
-function fillMetadata(transaction: IDBTransaction): void {
-  const meta = transaction.objectStore(WORLD_META_STORE);
-  const cursor = transaction.objectStore(WORLD_STORE).openCursor();
-  cursor.onsuccess = () => {
-    const at = cursor.result;
-    if (!at) return;
-    // A value the browser can't read back comes out null; listing it would abort the upgrade.
-    if (at.value && typeof at.value === 'object') meta.put(worldMetaOf(at.value as StoredWorldShape));
-    at.continue();
-  };
-}
-
 /**
  * Open the library at the current version, creating or upgrading its stores.
  *
+ * The upgrade reads no worlds: a refused read aborts it, so a new metadata store is filled after the open.
  * The connection closes itself when another connection asks for a newer version, so this tab never
  * blocks that upgrade.
  *
  * @param onBlocked - Called when an open connection at an older version holds the upgrade back
  */
 export function openWorldLibrary(onBlocked?: () => void): Promise<IDBDatabase> {
+  const origin = new Error();
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(WORLD_LIBRARY_DB, WORLD_LIBRARY_VERSION);
+    let metaCreated = false;
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(WORLD_STORE)) db.createObjectStore(WORLD_STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(WORLD_META_STORE)) {
         db.createObjectStore(WORLD_META_STORE, { keyPath: 'id' });
-        fillMetadata(request.transaction!);
+        metaCreated = true;
       }
     };
     request.onblocked = () => onBlocked?.();
     request.onsuccess = () => {
       const db = request.result;
       db.addEventListener('versionchange', () => db.close());
-      resolve(db);
+      // Saves read sticky fields from metadata, so it is filled before anyone gets the connection.
+      // A failed fill leaves the gaps to the list read, which rebuilds them.
+      if (!metaCreated) resolve(db);
+      else readAllWorldMeta(db).catch(() => {}).then(() => resolve(db));
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(atCaller(origin, request.error, 'Could not open the world library'));
   });
 }
 

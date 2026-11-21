@@ -11,8 +11,9 @@
 //   that trait reverses it, rather than the authored number.
 
 import type { ItemScriptEvent } from './inventory';
+import type { SwitchCause } from './triggerArgs';
 import type {
-  BodyRuntime, CascadeOffTraitIds, CodeBoundDeltas, CodeBounds, Daypart, EntityStatValues, ItemCopy, ItemEffectLedger, LegacyCodeBoundsStat, OwnedTraitPicks, OwnedTraitStates, PersonaRef,
+  BodyRuntime, CascadeOffTraitIds, CodeBoundDeltas, CodeBounds, Daypart, EntityStatValues, ItemInstance, ItemEffectLedger, LegacyCodeBoundsStat, OwnedTraitPicks, OwnedTraitStates, PersonaRef,
   PlayerStat, Stat, StatChange, Trait, TraitGroup,
 } from '@/types';
 import { clamp } from './utils';
@@ -23,9 +24,10 @@ import { activeStatEnabled, exclusiveSiblings, inAuthoredOrder, isAlwaysOn, isHi
 import { hasStatEffects, offeredWorldTraits, type StatRow } from './traitTree';
 import {
   gateOf, gateStates, modeRefuses, overfills, settle, underfills, type GateEntity, type GateInput, type GateOwner, type GateStat,
-  type GateStates, type GateStats, type GateTraitRef, type GateTree,
+  type GateStates, type GateStatSet, type GateStats, type GateTraitRef, type GateTree,
 } from './traitGates';
 import { mapScoped, partOf, playedEntityIds, scoped, scopedEntries, type OwnerId, type Scoped } from './scope';
+import { optionStatTraits } from './worldOptions';
 
 /** What a trait's last switch actually moved: record key → stat id → value delta, keyed as `recordKey` and
  *  `ownStatsRecordKey` (lib/ownedTraitState) spell it. */
@@ -59,8 +61,8 @@ export type TraitWorld = {
   daypart?: Daypart;
   /** The authored items an item Condition names. Absent ⇒ every item Condition is unresolved. */
   items?: GateInput['worldItems'];
-  /** Every Item Copy in play, hidden ones included. Absent ⇒ no one owns anything. */
-  itemCopies?: readonly ItemCopy[];
+  /** Every Item Instance in play, hidden ones included. Absent ⇒ no one owns anything. */
+  itemInstances?: readonly ItemInstance[];
   /** The world's Options an Option Condition reads. Absent ⇒ every Option Condition is unresolved. */
   options?: GateInput['worldOptions'];
   /** The playthrough's Option values. Absent ⇒ each Option's default. */
@@ -78,7 +80,7 @@ export function activeTraits(traits: readonly Trait[], disabledTraitIds: readonl
   return traits.filter((t) => !off.has(t.id));
 }
 
-/** The slice the traits in force are read from; a saved or viewed copy fits as well as the live state. */
+/** The slice the traits in force are read from; a saved or viewed instance fits as well as the live state. */
 export interface TraitForceState {
   traits: readonly Trait[];
   disabledTraitIds: readonly string[];
@@ -154,11 +156,20 @@ function globalRowTraitsByOwner(state: Pick<TraitForceState, 'ownedTraits' | 'en
 export const globalRowTraits = (state: Pick<TraitForceState, 'ownedTraits' | 'entityStats'>, world: TraitWorld): Trait[] =>
   globalRowTraitsByOwner(state, world).map(([, t]) => t);
 
-/** Every trait whose stat effects are in force on global stats: the held global traits, then every entity's
- *  active traits cut to their global rows. Bounds derive from this set, and so do stat toggles. */
-export function statTraitsInForce(state: TraitForceState, world: TraitWorld): Trait[] {
-  return [...heldGlobalTraits(activeTraits(state.traits, state.disabledTraitIds), world), ...globalRowTraits(state, world)];
+/** Every source whose stat effects are in force on global stats: the Option values' rows, the held global traits,
+ *  then every entity's active traits cut to their global rows. Bounds derive from this set, and so do stat toggles,
+ *  a trait's toggle winning over an Option's. `skip` leaves out an owner's trait. */
+export function statTraitsInForce(state: TraitForceState, world: TraitWorld, skip: SkipTrait = NO_SKIP): Trait[] {
+  return [
+    ...optionStatTraits(world),
+    ...heldGlobalTraits(activeTraits(state.traits, state.disabledTraitIds), world).filter((t) => !skip(null, t.id)),
+    ...globalRowTraitsByOwner(state, world).filter(([ownerId, t]) => !skip(ownerId, t.id)).map(([, t]) => t),
+  ];
 }
+
+/** Whether a stat source list leaves out `ownerId`'s `traitId`. */
+type SkipTrait = (ownerId: OwnerId, traitId: string) => boolean;
+const NO_SKIP: SkipTrait = () => false;
 
 /** Each owner's traits among its `active` ids that change its own stats, in its tree order; none for an owner
  *  with no tree. */
@@ -172,10 +183,16 @@ export function treeStatTraits(
   };
 }
 
-/** An entity owner's active traits that change stats, owned or linked, in its tree order. None for an
- *  entity that isn't an owner in play. */
-export const entityStatTraitsInForce = (ownedTraits: OwnedTraitStates | undefined, world: TraitWorld, ownerId: string): Trait[] =>
+/** An entity's own trait sources in force, owned or linked, in its tree order; none for an entity that isn't an
+ *  owner in play. */
+const ownTreeStatTraits = (ownedTraits: OwnedTraitStates | undefined, world: TraitWorld, ownerId: string): Trait[] =>
   treeStatTraits(entityOwners(world), activeOwnedTraitIds(ownedTraits ?? {}))(ownerId);
+
+/** Every source in force on an entity's own stats: the Option values' rows on it, owner in play or not, then its
+ *  active traits that change stats, in tree order. A trait's toggle wins over an Option's. `skip` leaves out a trait. */
+export const entityStatTraitsInForce = (
+  ownedTraits: OwnedTraitStates | undefined, world: TraitWorld, ownerId: string, skip: SkipTrait = NO_SKIP,
+): Trait[] => [...optionStatTraits(world, ownerId), ...ownTreeStatTraits(ownedTraits, world, ownerId).filter((t) => !skip(ownerId, t.id))];
 
 /** The stat traits in force for one scope's stats: global scope's are {@link statTraitsInForce}; an entity's
  *  are its own. A change on a stat the owner lacks finds nothing to move. */
@@ -308,18 +325,25 @@ export function seedNewGameStats(authored: readonly Stat[]): PlayerStat[] {
   }));
 }
 
-/** The stats a fresh playthrough holds once the held picks among `chosenInOrder` have applied, then the
- *  entities' global rows among `owned` — the fold Enter World runs, for a picker that needs the numbers
- *  before the game exists. `entityStats` holds each entity's seeded own stats, so a row whose id an entity
- *  owns stays off the global stat (Q30). */
-export function startingStatsWith(
+/** A new game's stats before its items: the Option values' starting rows, the held picks among `chosenInOrder`, every
+ *  entity's global rows among `owned`, then each entity's Option starting rows and own traits. `entityStats` holds
+ *  each entity's seeded own stats, so a row whose id an entity owns stays off the global stat (Q30). `appliedRows` is
+ *  {@link applyGlobalRowTraits}'s. */
+export function startingTraitState(
   authored: readonly Stat[], chosenInOrder: readonly Trait[], world: TraitWorld, owned: OwnedTraitPicks = {},
   entityStats: EntityStatValues = {},
-): PlayerStat[] {
-  let state: TraitRuntimeState = { stats: seedNewGameStats(authored), traits: [], disabledTraitIds: [], appliedValues: {} };
+): { state: TraitRuntimeState; appliedRows: { trait: Trait; ownerId: string }[] } {
+  let state = applyOptionStarts({ stats: seedNewGameStats(authored), traits: [], disabledTraitIds: [], appliedValues: {} }, world);
   for (const trait of heldGlobalTraits(chosenInOrder, world)) state = acquireTrait(state, trait, world).state;
-  return applyGlobalRowTraits({ ...state, ownedTraits: ownedTraitStatesFrom(owned), entityStats }, world).state.stats;
+  const rows = applyGlobalRowTraits({ ...state, ownedTraits: ownedTraitStatesFrom(owned), entityStats }, world);
+  return { state: applyOwnedStatTraits(applyOptionEntityStarts(rows.state, world), world), appliedRows: rows.appliedRows };
 }
+
+/** The global stats of {@link startingTraitState}, for a picker that needs the numbers before the game exists. */
+export const startingStatsWith = (
+  authored: readonly Stat[], chosenInOrder: readonly Trait[], world: TraitWorld, owned: OwnedTraitPicks = {},
+  entityStats: EntityStatValues = {},
+): PlayerStat[] => startingTraitState(authored, chosenInOrder, world, owned, entityStats).state.stats;
 
 /** Seed a fresh playthrough's bases from the authored bounds. */
 export function seedStatBases(stats: PlayerStat[]): PlayerStat[] {
@@ -402,6 +426,50 @@ export function settleValues(
     if (value === prev.value && stat === before[i]) return stat;
     return { ...stat, value };
   });
+}
+
+/** `stats` with the starting rows of `sources` added under bounds derived from `active`, as a trait's apply. */
+const withStartingRows = (stats: PlayerStat[], sources: readonly Trait[], active: readonly Trait[]): PlayerStat[] =>
+  settleValues(stats, deriveEffectiveStats(stats, active), valueDeltas(sources.flatMap((s) => s.statChanges)), true);
+
+/** `state` with the Option values' starting rows applied once, at a game's start. No record is kept, since
+ *  nothing ever reverses them. */
+export function applyOptionStarts(state: TraitRuntimeState, world: TraitWorld): TraitRuntimeState {
+  const sources = optionStatTraits(world);
+  if (!sources.length) return state;
+  return { ...state, stats: withStartingRows(state.stats, sources, statTraitsInForce(state, world)) };
+}
+
+/** `state` with each entity's Option starting rows applied once, at a game's start, before its own traits. */
+export function applyOptionEntityStarts(state: TraitRuntimeState, world: TraitWorld): TraitRuntimeState {
+  let entityStats = state.entityStats;
+  for (const [ownerId, stats] of Object.entries(state.entityStats ?? {})) {
+    const sources = optionStatTraits(world, ownerId);
+    if (!sources.length) continue;
+    entityStats = { ...entityStats, [ownerId]: withStartingRows(stats, sources, sources) };
+  }
+  return entityStats === state.entityStats ? state : { ...state, entityStats };
+}
+
+/** Stats re-derived under `active`, a value moving only where a new bound clamps it; the same array when none moves. */
+function rebounded(stats: PlayerStat[], active: readonly Trait[]): PlayerStat[] {
+  // A stat saved without bases gets them first, or each settle would add the traits again.
+  const based = stats.some((stat) => stat.baseMax === undefined) ? recoverStatBases(stats, active) : stats;
+  const next = settleValues(stats, deriveEffectiveStats(based, active), new Map(), false);
+  return next.every((stat, i) => stat === stats[i]) ? stats : next;
+}
+
+/** `state`'s global stats and every held entity's stats re-derived under the Option rows and traits in force (Q30).
+ *  A stat on its cap stays put under a raised one. */
+export function withDerivedBounds(state: TraitRuntimeState, world: TraitWorld): TraitRuntimeState {
+  const stats = rebounded(state.stats, statTraitsInForce(state, world));
+  let entityStats = state.entityStats;
+  for (const [ownerId, held] of Object.entries(state.entityStats ?? {})) {
+    const next = rebounded(held, entityStatTraitsInForce(state.ownedTraits, world, ownerId));
+    if (next !== held) entityStats = { ...entityStats, [ownerId]: next };
+  }
+  if (stats === state.stats && entityStats === state.entityStats) return state;
+  return { ...state, stats, ...(entityStats && { entityStats }) };
 }
 
 /** The negation of a set of movements, as the delta map `settleValues` takes. */
@@ -524,7 +592,9 @@ export function applyGlobalRowTraits(
   const on: Trait[] = [];
   for (const [ownerId, trait] of rows) {
     on.push(trait);
-    next = moveStats(next, trait, true, recordKey(ownerId, trait.id), [...activeTraits(next.traits, next.disabledTraitIds), ...on]);
+    next = moveStats(next, trait, true, recordKey(ownerId, trait.id), [
+      ...optionStatTraits(world), ...activeTraits(next.traits, next.disabledTraitIds), ...on,
+    ]);
   }
   const appliedRows = rows.filter(([ownerId]) => isPlayedOwner(world, ownerId)).map(([ownerId, trait]) => ({ trait, ownerId }));
   return { state: next, applied: appliedRows.map((row) => row.trait), appliedRows };
@@ -540,8 +610,9 @@ export function applyOwnedStatTraits(state: TraitRuntimeState, world: TraitWorld
     let stats = next.entityStats?.[owner.id];
     if (!stats) continue;
     const records: AppliedTraitValues = {};
-    const on: Trait[] = [];
-    for (const trait of entityStatTraitsInForce(next.ownedTraits, world, owner.id)) {
+    // Each trait's settle derives bounds with the Option rows; their starting rows applied earlier.
+    const on: Trait[] = optionStatTraits(world, owner.id);
+    for (const trait of ownTreeStatTraits(next.ownedTraits, world, owner.id)) {
       on.push(trait);
       if (!changesAny(trait, stats)) continue;
       const moved = settleSwitch(stats, undefined, trait, true, on);
@@ -663,6 +734,22 @@ export interface TraitSwitchEvent {
   traitId: string;
   ownerId: OwnerId;
   enabled: boolean;
+  /** Who switched it. Absent ⇒ `'rule'`. */
+  by?: SwitchCause;
+}
+
+/** A switch someone asked for by id. Absent `ownerId` ⇒ a global trait. */
+export interface CausedSwitch {
+  traitId: string;
+  enabled: boolean;
+  ownerId?: string | null;
+}
+
+/** `events` with `by` on each one `asked` names: the last ask per trait, where the trait ended that way. Every other
+ *  event keeps its cause, so a sibling or cascade it brought along reads `'rule'` (Q12). Order is unchanged. */
+export function causedSwitches(events: readonly TraitSwitchEvent[], by: SwitchCause, asked: readonly CausedSwitch[]): TraitSwitchEvent[] {
+  const last = new Map(asked.map((ask) => [recordKey(ask.ownerId ?? null, ask.traitId), ask.enabled]));
+  return events.map((event) => (last.get(recordKey(event.ownerId, event.traitId)) === event.enabled ? { ...event, by } : event));
 }
 
 /** The traits whose in-force state differs from `before` under `beforeWorld` to `after` under `world`: offs
@@ -695,7 +782,11 @@ function ownerGateStats(stats: readonly PlayerStat[], inForce: readonly Trait[])
 }
 
 /** The slice the gates' stats are read from. */
-export type GateStatState = TraitForceState & { stats: readonly PlayerStat[] };
+export type GateStatState = TraitForceState & {
+  stats: readonly PlayerStat[];
+  /** What each trait's switches moved, which its own gate leaves out (Q32). Absent ⇒ only its bounds and toggles. */
+  appliedValues?: AppliedTraitValues;
+};
 
 /** Every live stat as gates read it: the global stats, and each entity's under its id, on their effective
  *  bounds. */
@@ -707,6 +798,87 @@ export function gateStatsOf(state: GateStatState, world: TraitWorld): GateStats 
   );
 }
 
+/** A gate read with one held trait's own contribution taken out (Q32). */
+export type OwnRowsOut = NonNullable<GateInput['statsWithout']>;
+
+/** The ids a trait's rows and its record name. */
+const touchedIds = (trait: Trait, record: Record<string, number> | undefined): Set<string> =>
+  new Set([...trait.statChanges.map((c) => c.statId), ...(trait.statToggles ?? []).map((t) => t.statId), ...Object.keys(record ?? {})]);
+
+/** One scope's stats read twice: under every source in force, and with one trait left out, whose record moved them. */
+interface ScopeWithout {
+  stats: readonly PlayerStat[];
+  inForce: readonly Trait[];
+  without: readonly Trait[];
+  record: Record<string, number> | undefined;
+}
+
+/** `set` with each stat in `ids` moved from reading `inForce` to reading `without`: the record taken off the value,
+ *  the bounds shifted by what the left-out rows set, the on/off state re-read, the value clamped to the new bounds. */
+function statSetWithout<S extends GateStatSet | undefined>(set: S, { stats, inForce, without, record }: ScopeWithout, ids: ReadonlySet<string>): S | GateStatSet {
+  if (!set || !ids.size) return set;
+  const withAll = new Map(deriveEffectiveStats([...stats], inForce).map((s) => [s.id, s]));
+  const withLess = new Map(deriveEffectiveStats([...stats], without).map((s) => [s.id, s]));
+  const onAll = activeStatEnabled(stats, inForce);
+  const onLess = activeStatEnabled(stats, without);
+  const out: Record<string, GateStat> = { ...set };
+  for (const id of ids) {
+    const stat = set[id];
+    if (!stat) continue;
+    const a = withAll.get(id);
+    const b = withLess.get(id);
+    const min = stat.min + (a && b ? b.min - a.min : 0);
+    const max = stat.max + (a && b ? b.max - a.max : 0);
+    const { inert: _inert, ...rest } = stat;
+    const inert = onAll[id] === onLess[id] ? stat.inert : onLess[id] === false;
+    out[id] = { ...rest, min, max, value: clamp(stat.value - (record?.[id] ?? 0), min, max), ...(inert ? { inert: true } : {}) };
+  }
+  return out;
+}
+
+/**
+ * `base`, read from `state`, with one held trait's own contribution taken out for its own gate (Q32): its min and
+ * max rows, its toggles and the value its records moved, on global stats and on its owner's own. Every other source
+ * stays in. A trait not in force reads `base` unchanged.
+ */
+export function ownRowsOut(base: GateStats, state: GateStatState, world: TraitWorld): OwnRowsOut {
+  const force = traitForceScope(state, world);
+  return (ownerId, traitId) => {
+    const trait = (ownerId === null ? force.global : force.owners[ownerId] ?? []).find((t) => t.id === traitId);
+    if (!trait) return base;
+    const skip: SkipTrait = (owner, id) => owner === ownerId && id === traitId;
+    const records = state.appliedValues ?? {};
+    const globalRows = ownerId === null ? trait : withoutOwnStatRows(trait, ownStatIds(state, ownerId));
+    const globalRecord = records[recordKey(ownerId, traitId)];
+    const global = statSetWithout(base.global, {
+      stats: state.stats, inForce: statTraitsInForce(state, world), without: statTraitsInForce(state, world, skip), record: globalRecord,
+    }, touchedIds(globalRows, globalRecord));
+    if (ownerId === null) return { ...base, global };
+    const ownRecord = records[ownStatsRecordKey(ownerId, traitId)];
+    const own = statSetWithout(base.owners[ownerId], {
+      stats: state.entityStats?.[ownerId] ?? [], record: ownRecord,
+      inForce: entityStatTraitsInForce(state.ownedTraits, world, ownerId), without: entityStatTraitsInForce(state.ownedTraits, world, ownerId, skip),
+    }, touchedIds(withoutGlobalRows(trait), ownRecord));
+    return { global, owners: { ...base.owners, ...(own ? { [ownerId]: own } : {}) } };
+  };
+}
+
+/** Each commit snapshot's own-rows reader, built from the state the snapshot was read from. */
+const snapshotOwnRows = new WeakMap<GateStats, OwnRowsOut>();
+
+/** `stats` as a commit's snapshot read from `state` (Q19): every settle that reads it takes a trait's own rows out
+ *  against `state`, so a switch later in the commit never moves them twice. */
+export function gateSnapshot(stats: GateStats, state: GateStatState, world: TraitWorld): GateStats {
+  snapshotOwnRows.set(stats, ownRowsOut(stats, state, world));
+  return stats;
+}
+
+/** The stats gates read, and the same with one trait's own rows out: the commit's snapshot when there is one. */
+function gateReads(state: GateStatState, world: TraitWorld): Pick<GateInput, 'stats' | 'statsWithout'> {
+  const stats = world.gateStats ?? gateStatsOf(state, world);
+  return { stats, statsWithout: (world.gateStats && snapshotOwnRows.get(world.gateStats)) ?? ownRowsOut(stats, state, world) };
+}
+
 /** Every scope's traits, active set and stats, as the gate module reads them. */
 export const traitGateInput = (state: GateStatState, world: TraitWorld): GateInput => ({
   global: world.global ?? offeredWorldTraits(world.traits, world.groups),
@@ -715,10 +887,10 @@ export const traitGateInput = (state: GateStatState, world: TraitWorld): GateInp
     heldGlobalTraits(activeTraits(state.traits, state.disabledTraitIds), world).map((t) => t.id),
     activeOwnedTraitIds(state.ownedTraits ?? {}),
   ),
-  stats: world.gateStats ?? gateStatsOf(state, world),
+  ...gateReads(state, world),
   ...(world.daypart ? { daypart: world.daypart } : {}),
   ...(world.items ? { worldItems: world.items } : {}),
-  ...(world.itemCopies ? { itemCopies: world.itemCopies } : {}),
+  ...(world.itemInstances ? { itemInstances: world.itemInstances } : {}),
   ...(world.options ? { worldOptions: world.options } : {}),
   ...(world.optionValues ? { optionValues: world.optionValues } : {}),
   ...grantInput(state.ownedTraits),
@@ -954,13 +1126,13 @@ export interface GatedTraitResult {
   cascadeNames: string[];
   /** What a settle that ran the inventory settle left. Absent ⇒ unchanged. */
   items?: {
-    copies: readonly ItemCopy[];
+    instances: readonly ItemInstance[];
     ledger: ItemEffectLedger;
     bodies: BodyRuntime;
     /** The Body change lines, apart from `log` (Q41, Q42). */
     bodyLog: readonly string[];
     bodyUnequipped: number;
-    /** The When Unequipped events of the copies it unequipped. */
+    /** The When Unequipped events of the instances it unequipped. */
     events: readonly ItemScriptEvent[];
   };
 }
@@ -972,14 +1144,15 @@ export type TraitSettle = (state: TraitRuntimeState, world: TraitWorld, nameOf: 
  * Settle every owner's traits against every gate: traits whose gate stopped holding switch off, dependents
  * first, each world trait reversed through its record; traits a cascade turned off switch back on once
  * their gate holds again. An Always On world trait the player lacks is acquired as it turns on. The same
- * state comes back when nothing moves.
+ * state comes back when nothing moves. Every bound re-derives first, so an Option change settles here.
  */
 export function settleTraits(
-  state: TraitRuntimeState,
+  unbounded: TraitRuntimeState,
   world: TraitWorld,
   nameOf: (trait: Trait) => string = (trait) => trait.name,
   by?: string,
 ): GatedTraitResult {
+  const state = withDerivedBounds(unbounded, world);
   const result = settle(traitGateInput(state, world), cascadeOffInput(state.cascadeOffTraitIds));
   const held = (refs: GateTraitRef[]) => refs.flatMap(({ ownerId, traitId }) => {
     const trait = ownerId === null

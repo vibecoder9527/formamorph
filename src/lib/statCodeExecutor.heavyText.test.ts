@@ -30,7 +30,7 @@ const wren: SandboxEntity = { id: 'wren', name: 'Wren', traits: [], description:
 const keeper: SandboxEntity = { id: 'keeper', name: 'Keeper', traits: [], description: TEXT.keeper, summary: '' };
 
 const memory = (id: string, text: string): SandboxMemory => ({
-  id, turn: 1, timestamp: 1, day: 1, daypart: 'morning', text, custom: false, kept: true, inContext: true, pinned: false, forgotten: false,
+  id, turn: 1, timestamp: 1, day: 1, daypart: 'morning', text, name: '', custom: false, kept: true, inContext: true, pinned: false, forgotten: false,
 });
 
 const lore: SandboxDictionary = {
@@ -93,10 +93,10 @@ describe('heavy text in the sandbox', () => {
         Object.keys(dictionaries.Lore), Object.keys(dictionaries.Lore.entries), Object.keys(dictionaries.Lore.entries.Tides),
         JSON.stringify(memories[1]), JSON.stringify(dictionaries.Lore.entries.Tides), Object.values(locations.Hill).slice(0, 5),
       ];`)).toEqual([
-        ['id', 'name', 'type', 'pronouns', 'inScene', 'met', 'location', 'following', 'waiting', 'kind', 'action', 'held', 'knownIn', 'knownInPlaces', 'description', 'summary', 'aliases', 'traits', 'placeholders', 'stats', 'items', 'body', 'move', 'follow', 'unfollow', 'meet', 'diary'],
-        ['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits', 'items'],
-        ['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits', 'items', 'move'],
-        ['id', 'turn', 'timestamp', 'day', 'daypart', 'text', 'custom', 'kept', 'inContext', 'pinned', 'forgotten'],
+        ['id', 'name', 'type', 'pronouns', 'inScene', 'met', 'location', 'following', 'waiting', 'kind', 'action', 'held', 'knownIn', 'knownInPlaces', 'description', 'summary', 'aliases', 'traits', 'placeholders', 'stats', 'items', 'body', 'image', 'sound', 'instances', 'move', 'follow', 'unfollow', 'meet', 'diary'],
+        ['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits', 'items', 'image', 'ambience'],
+        ['id', 'name', 'description', 'summary', 'starting', 'present', 'parent', 'children', 'exits', 'items', 'image', 'ambience', 'move'],
+        ['id', 'turn', 'timestamp', 'day', 'daypart', 'text', 'name', 'custom', 'kept', 'inContext', 'pinned', 'forgotten'],
         ['id', 'name', 'enabled', 'entries', 'placeholders'],
         ['Tides', 'The Wreck'],
         ['id', 'name', 'keys', 'value', 'enabled', 'constant'],
@@ -159,25 +159,29 @@ describe('heavy text in the sandbox', () => {
   });
 
   describe('asks the host', () => {
-    it('never for a run that reads no heavy field', async () => {
+    it('only to load entries for a run that reads no heavy field', async () => {
       await read(`return [entities.Mira.name, locations.Dock.id, location.starting, memories[0].turn, dictionaries.Lore.id,
         Object.keys(entities), Object.keys(dictionaries)];`);
-      expect(hostCalls).toEqual([]);
+      // Mira's, Dock's and Lore's entries load on their first reads; each listing loads the rest of its map in one call.
+      expect(hostCalls).toHaveLength(5);
     });
 
     it('once for a field read twice', async () => {
       await read('return [entities.Mira.description, entities.Mira.description, memories[1].text, memories[1].text];');
-      expect(hostCalls).toHaveLength(2);
+      // One call loads Mira's entry; each text is one more.
+      expect(hostCalls).toHaveLength(3);
     });
 
     it('once for one text two paths read', async () => {
       await read('return [location.description, locations.Dock.description];');
-      expect(hostCalls).toHaveLength(1);
+      // One call loads Dock's entry; the text is one more.
+      expect(hostCalls).toHaveLength(2);
     });
 
     it('once for a book’s entries and once per value read', async () => {
       await read('const e = dictionaries.Lore.entries; return [e.Tides.value, e.Tides.value, Object.keys(dictionaries.Lore.entries)];');
-      expect(hostCalls).toHaveLength(2);
+      // One call loads Lore's entry; its entries and the value are one more each.
+      expect(hostCalls).toHaveLength(3);
     });
   });
 });

@@ -45,7 +45,7 @@ const gameplay = () => {
   return live;
 };
 const statNow = (id: string) => gameplay().globalStats.find((s) => s.id === id)?.value;
-const moneyOf = (where: string) => Object.fromEntries(gameplay().itemCopies
+const moneyOf = (where: string) => Object.fromEntries(gameplay().itemInstances
   .filter((c) => (c.where.kind === 'entity' ? c.where.id : c.where.kind) === where)
   .map((c) => [c.item.kind === 'item' ? c.item.itemId : '', c.quantity]));
 
@@ -250,7 +250,7 @@ describe('a buy at the turn commit', () => {
     await playOneTurn(shop(2), buy());
     await waitFor(() => expect(moneyOf('you')).toEqual({ sword: 1, copper: 50 }));
     expect(moneyOf('merchant')).toEqual({});
-    await waitFor(() => expect(statNow('vigor')).toBeLessThan(50));
+    await waitFor(() => expect(statNow('vigor')).toBe(49));
   });
 
   it('counts a stated price over Value', async () => {

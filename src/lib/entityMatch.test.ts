@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchNames, findNameMatches, findEntityNames, findEntityMatches, matchNamesLoose, sameCharacterName, stripQuotedSpeech, resolveEntityByName } from './entityMatch';
+import { matchNames, findNameMatches, findEntityNames, findEntityMatches, matchNamesLoose, sameCharacterName, sameNameSpelling, stripQuotedSpeech, resolveEntityByName } from './entityMatch';
 import type { Entity } from '@/types';
 
 const ent = (name: string): Entity => ({ id: name, name });
@@ -42,6 +42,43 @@ describe('matchNames — multi-word names (no capital guard)', () => {
   it('does not match words scattered across unrelated clauses', () => {
     expect(matchNames('iron bars rust beside the gate', ['Iron Gate'])).toEqual([]);
     expect(matchNames('The old woman is gone; a young man tends the mill.', ['Old Man'])).toEqual([]);
+  });
+
+  it('does not read a possessive inside the name as the name', () => {
+    expect(matchNames("The weathered paper in the Captain's Hall announced it.", ['Captain Hall'])).toEqual([]);
+    expect(matchNames('The weathered paper in the Captain’s Hall announced it.', ['Captain Hall'])).toEqual([]);
+    expect(matchNames("The Captains' Hall is quiet.", ['Captain Hall'])).toEqual([]);
+  });
+
+  it('still matches a name whose last word takes the possessive', () => {
+    expect(matchNames("Captain Hall's sword gleams.", ['Captain Hall'])).toEqual(['Captain Hall']);
+    expect(matchNames('Captain Hall nods.', ['Captain Hall'])).toEqual(['Captain Hall']);
+  });
+
+  it('keeps a lone possessive word a partial reference when no proper noun follows', () => {
+    expect(matchNames("Vashti's sword gleams.", ['Vashti Guard'])).toEqual(['Vashti Guard']);
+  });
+
+  it("keeps a partial reference whose possessive opens a word outside the name", () => {
+    expect(matchNames("Emily's Mom waves.", ['Emily Foster'])).toEqual(['Emily Foster']);
+  });
+
+  it('keeps a name that is itself possessive', () => {
+    expect(matchNames("Mary's Tavern is loud.", ["Mary's Tavern"])).toEqual(["Mary's Tavern"]);
+  });
+
+  it("does not hide a partial reference behind another person's possessive", () => {
+    expect(matchNames("Bob's Captain nods.", ['Captain Hall'])).toEqual(['Captain Hall']);
+  });
+
+  it('keeps a single-word name matching with its possessive', () => {
+    expect(matchNames("Vashti's sword gleams.", ['Vashti'])).toEqual(['Vashti']);
+  });
+
+  it('holds for a multi-word alias', () => {
+    const e = withAliases('Hallkeeper', ['Captain Hall']);
+    expect(findEntityNames("The Captain's Hall is quiet.", [e])).toEqual([]);
+    expect(findEntityNames("Captain Hall's sword gleams.", [e])).toEqual(['Hallkeeper']);
   });
 
   it('excludes a candidate when a word is missing', () => {
@@ -351,6 +388,28 @@ describe('findEntityMatches — Stranger Name', () => {
     expect(findEntityMatches('Sylvie Thornwhistle nods.', [both])[0].via).toBe('name');
     expect(findEntityNames('the matron nods.', [both])).toEqual([]);
     expect(findEntityMatches('The Matron nods.', [both])[0].via).toBe('alias');
+  });
+});
+
+describe('sameNameSpelling (Q76)', () => {
+  it('joins a word subset and a close spelling of each word', () => {
+    expect(sameNameSpelling('Zorvak', 'Anthro Zorvak')).toBe(true);
+    expect(sameNameSpelling('Zorvac', 'Zorvak')).toBe(true);
+    expect(sameNameSpelling('Zorvac', 'Anthro Zorvak')).toBe(true);
+    expect(sameNameSpelling('Zorvaak', 'Zorvk')).toBe(true);
+  });
+
+  it('allows two edits from 5 letters up and one below', () => {
+    expect(sameNameSpelling('Tessaly', 'Tesily')).toBe(true);
+    expect(sameNameSpelling('Tessaly', 'Tesil')).toBe(false);
+    expect(sameNameSpelling('Mira', 'Mika')).toBe(true);
+    expect(sameNameSpelling('Mia', 'Max')).toBe(false);
+    expect(sameNameSpelling('Ann', 'Amy')).toBe(false);
+  });
+
+  it('keeps two different people apart', () => {
+    expect(sameNameSpelling('Anna Smith', 'John Smith')).toBe(false);
+    expect(sameNameSpelling('Zorvak', 'Tessaly')).toBe(false);
   });
 });
 

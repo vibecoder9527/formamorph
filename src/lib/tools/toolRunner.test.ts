@@ -389,7 +389,7 @@ describe('runToolCall: Script', () => {
   });
 
   it.each([
-    ['memories.add("A line.")'], ['memories.pin("A line.")'], ['location.move("Far Bank")'], ['entities.Bram.move("Far Bank")'],
+    ['memories.append("A line.")'], ['memories.pin("A line.")'], ['location.move("Far Bank")'], ['entities.Bram.move("Far Bank")'],
     ['entities.Bram.follow()'], ['entities.Bram.meet()'], ['entities.Bram.diary("A line.")'], ['clock.advance(30)'], ['placeholders.Anything.pin("x")'],
   ])('has no verb: %s fails as not a function', async (call) => {
     const result = await runToolCall(script(`${call}; return "ran";`, []), '{}', s);
@@ -397,12 +397,9 @@ describe('runToolCall: Script', () => {
     expect(errorOf(result.text)).toMatch(/not a function/);
   });
 
-  it('has no world, scene, self, owner, discover or player', async () => {
-    const code = 'return [typeof world, typeof scene, typeof self, typeof owner, typeof discover, typeof player].join(",");';
-    expect(await runToolCall(script(code, []), '{}', s)).toEqual({ text: 'undefined,undefined,undefined,undefined,undefined,undefined' });
-    const read = await runToolCall(script('return world.entities;', []), '{}', s);
-    expect(read.failure).toBe('script');
-    expect(errorOf(read.text)).toMatch(/world/);
+  it('has no scene, self, owner, discover or player, and a world that holds only music (Q55)', async () => {
+    const code = 'return [typeof scene, typeof self, typeof owner, typeof discover, typeof player, Object.keys(world)].join(",");';
+    expect(await runToolCall(script(code, []), '{}', s)).toEqual({ text: 'undefined,undefined,undefined,undefined,undefined,music' });
   });
 
   it('lets the code declare a name the surface hides', async () => {

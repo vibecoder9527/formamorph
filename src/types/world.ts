@@ -34,7 +34,7 @@ export type RegenUnit = 'minutes' | 'hours' | 'days' | 'weeks';
  *  narration sentence, once at a new playthrough's start, when a trait switches in play, or on an item's events. */
 export type ScriptTiming = 'before' | 'after' | 'output' | 'start' | 'switch' | ItemScriptTiming;
 
-/** When an item's script runs: its Item Copy is gained, lost, equipped, unequipped or used (Q33). */
+/** When an item's script runs: its Item Instance is gained, lost, equipped, unequipped or used (Q33). */
 export type ItemScriptTiming = 'gained' | 'lost' | 'equipped' | 'unequipped' | 'used';
 
 /** One box of code with a timing, on a stat, a trait, the world or an item. */
@@ -268,10 +268,10 @@ export interface OptionRequirement {
   not?: true;
 }
 
-/** An item Condition: an owner has a copy of the item, or has one equipped. `name` is the item's name when it
+/** An item Condition: an owner has an instance of the item, or has one equipped. `name` is the item's name when it
  *  was stored, so an unresolved one still reads. An owner-less one means the host's owner; on an item it is
- *  the Item Copy's owner, and never holds while the copy lies at a location. `state` and `identity` narrow it
- *  to a copy with that State word (trimmed, any case) or that identity (Q22). */
+ *  the Item Instance's owner, and never holds while the instance lies at a location. `state` and `identity` narrow it
+ *  to an instance with that State word (trimmed, any case) or that identity (Q22). */
 export interface ItemRequirement {
   kind: 'item';
   id: string;
@@ -427,12 +427,44 @@ export interface TraitBodyRow {
 /** A trait's non-Optional mode. */
 export type TraitMode = 'alwaysOn' | 'hidden';
 
-/** One picture in an entity's gallery. */
+/** One embedded picture in a gallery. */
 export interface GalleryImage {
   data: Base64Data;
+  /** The Media Entry name it carries outside a world. */
+  name?: string;
   /** The Visibility rule: in play any one row that holds shows the image. Absent or empty = always shown. */
   requires?: TraitRequirementRow[];
 }
+
+/** One gallery picture that links a Media Entry. */
+export interface LinkedGalleryImage extends MediaRef {
+  /** The Visibility rule, as on an embedded picture. */
+  requires?: TraitRequirementRow[];
+}
+
+/** One stored gallery picture: embedded, or a link to a Media Entry. Read it through `lib/entityImages`. */
+export type GalleryLink = GalleryImage | LinkedGalleryImage;
+
+/** A single media field's link to a Media Entry. */
+export interface MediaRef {
+  mediaId: string;
+}
+
+/** One named image or sound in a world's Media List. */
+export interface MediaEntry {
+  id: string;
+  name: string;
+  kind: 'image' | 'sound';
+  /** A data URL, or an http(s) URL for a linked entry. */
+  data: string;
+  /** The MIME type of the placed file. */
+  type?: string;
+  /** The embedded bytes' content hash (`lib/mediaList`). Absent on a linked entry. */
+  hash?: string;
+}
+
+/** A world's Media List, keyed by entry id. */
+export type MediaList = Record<string, MediaEntry>;
 
 /** Generic: every Start runs at once, one Generic Entity Instance each. Unique: one body, from one Start rolled per playthrough. */
 export type EntityKind = 'generic' | 'unique';
@@ -518,6 +550,8 @@ export interface Entity {
   aliases?: string[];
   /** Free text, such as "she/her". The AI's entity context shows it for any entity that has it. */
   pronouns?: string;
+  /** The swatch key its quotes take in narration (see lib/coref/speakerPalette). Absent = the auto palette. */
+  quoteColor?: string;
   /** Marks the entity as a Persona. In the library it is one of the player's personas; in a world the
    *  player can play as it. */
   persona?: boolean;
@@ -544,7 +578,7 @@ export interface Entity {
   /** The entity's gallery, in author order. Slot 0 is the primary — the one picture shown wherever only one
    *  fits (library grid, listing art, character-card pixels) — and in game the player pages through the rest.
    *  Read it through `lib/entityImages`, which also covers records written before the gallery. */
-  images?: GalleryImage[];
+  images?: GalleryLink[];
   /**
    * Listing tags, the same kind a world carries — how somebody browsing Community Creations finds this.
    *
@@ -554,7 +588,8 @@ export interface Entity {
   tags?: string[];
   /** Booru tags used for AI image generation; editor-only, not sent to the narrative AI. */
   imageTags?: string;
-  sound?: MediaAsset;
+  /** Embedded on a library entity; a Media List link in a world with a list. Read it through `lib/mediaSounds`. */
+  sound?: MediaAsset | MediaRef;
   model?: MediaAsset;
   /** The entity's Avatar. Absent = none. */
   vrmPick?: VrmPick;
@@ -652,7 +687,7 @@ export interface EntityGroup {
   order?: number;
 }
 
-/** When an item effect row acts: while its Item Copy is equipped, while it is owned, after it is used, or
+/** When an item effect row acts: while its Item Instance is equipped, while it is owned, after it is used, or
  *  once on the owner's first obtain. */
 export type ItemTiming = 'equipped' | 'owned' | 'used' | 'firstObtain';
 
@@ -699,11 +734,11 @@ export interface Currency {
   backing: CurrencyBacking;
 }
 
-/** What a copy's last use leaves: the copy at zero uses, nothing, one copy of another authored item, or the copy
+/** What an instance's last use leaves: the instance at zero uses, nothing, one instance of another authored item, or the instance
  *  at zero uses with a new State. */
 export type ItemWhenEmpty = { kind: 'stays' } | { kind: 'gone' } | { kind: 'becomes'; itemId: string } | { kind: 'changesState'; state: string };
 
-/** An authored item kind. In play the save holds Item Copies of it. */
+/** An authored item kind. In play the save holds Item Instances of it. */
 export interface Item {
   id: string;
   name: string;
@@ -713,18 +748,18 @@ export interface Item {
   aiDescription?: string;
   /** Short description sent to the AI where the full one is too long. */
   aiSummary?: string;
-  /** The name an unidentified Item Copy shows. Either unidentified field set ⇒ every copy starts unidentified (Q16). */
+  /** The name an unidentified Item Instance shows. Either unidentified field set ⇒ every instance starts unidentified (Q16). */
   unidentifiedName?: string;
-  /** The description an unidentified Item Copy shows. Blank shows `playerDescription`. */
+  /** The description an unidentified Item Instance shows. Blank shows `playerDescription`. */
   unidentifiedDescription?: string;
-  /** The item's gallery, in author order. A rule's owner-less Condition reads the Item Copy's owner. */
-  images?: GalleryImage[];
+  /** The item's gallery, in author order. A rule's owner-less Condition reads the Item Instance's owner. */
+  images?: GalleryLink[];
   /** Booru tags used for AI image generation; editor-only, not sent to the narrative AI. */
   imageTags?: string;
   /** What it shows on the doll and in rows: an icon id, or `'none'` for its image. Absent = Auto. */
   icon?: string;
   /** Placeholders of this item's own, live beside the world's through the combined view. They resolve once
-   *  per playthrough, shared by every Item Copy. */
+   *  per playthrough, shared by every Item Instance. */
   placeholders?: Placeholder[];
   /** What it's worth, in its Currency's base unit. */
   value?: number;
@@ -732,13 +767,13 @@ export interface Item {
   currencyId?: string;
   /** Absent = stackable. Never read while `uses` is 2 or more. */
   stackable?: boolean;
-  /** The uses each Item Copy starts with, from 1. Absent = unlimited. */
+  /** The uses each Item Instance starts with, from 1. Absent = unlimited. */
   uses?: number;
-  /** What a copy's last use leaves. Read only while `uses` is set; absent = Gone (Q26). */
+  /** What an instance's last use leaves. Read only while `uses` is set; absent = Gone (Q26). */
   whenEmpty?: ItemWhenEmpty;
-  /** The State each Item Copy starts with: a short free-text word. Absent = none. */
+  /** The State each Item Instance starts with: a short free-text word. Absent = none. */
   state?: string;
-  /** The player cannot drop or give its Item Copies. */
+  /** The player cannot drop or give its Item Instances. */
   bound?: boolean;
   /** The slots it equips into. Absent = not equippable. */
   slotRule?: SlotRule;
@@ -746,8 +781,23 @@ export interface Item {
   traitEffects: ItemTraitEffect[];
   /** Any one row that holds lets an owner equip it. Empty = always. */
   equipRequires: TraitRequirementRow[];
-  /** Runs on its Item Copies' events, only at the item timings. */
+  /** Runs on its Item Instances' events, only at the item timings. */
   scripts?: Script[];
+  /** The Items tab folder it sits in; null or absent = top level. */
+  groupId?: string | null;
+  /** Sibling order among the items and groups sharing the same parent. */
+  order?: number;
+}
+
+/** An editor-only folder for organizing items, nestable via `parentId`. Never sent to the AI or shown to the
+ *  player. Mirrors `EntityGroup`. */
+export interface ItemGroup {
+  id: string;
+  name: string;
+  /** null = top-level; otherwise the parent group's id. */
+  parentId: string | null;
+  /** Sibling order among the items and groups sharing the same parent. */
+  order?: number;
 }
 
 /** Which slots an item equips into. `either` takes one of them, in this order; `all` takes one unit in each. Never empty. */
@@ -771,7 +821,7 @@ export interface SlotBox {
 }
 
 /** What a Body's Slot Boxes are laid out on. */
-export type Backdrop = { kind: 'humanoid' | 'quadruped' | 'plain' } | { kind: 'image'; image: GalleryImage; /** 0 to 1. Absent = 1. */ opacity?: number };
+export type Backdrop = { kind: 'humanoid' | 'quadruped' | 'plain' } | { kind: 'image'; image: GalleryLink; /** 0 to 1. Absent = 1. */ opacity?: number };
 
 /** One slot a Body holds. */
 export interface BodyEntry {
@@ -795,16 +845,16 @@ export interface Body {
 /** An entity's Body pick. Absent = the Default Body, the world's first. */
 export type BodyPick = { kind: 'none' } | { kind: 'body'; id: string };
 
-/** Where a placement puts its Item Copies: on the played Persona, on an entity, or at a location. */
+/** Where a placement puts its Item Instances: on the played Persona, on an entity, or at a location. */
 export type PlacementWhere =
   | { kind: 'you' }
   | { kind: 'entity'; id: string }
   | { kind: 'location'; id: string };
 
-/** What a placement makes Item Copies of. */
+/** What a placement makes Item Instances of. */
 export type PlacementSource = { kind: 'item'; itemId: string };
 
-/** An authored starting Item Copy. The new-game seed is its only reader. */
+/** An authored starting Item Instance. The new-game seed is its only reader. */
 export interface Placement {
   id: string;
   where: PlacementWhere;
@@ -832,10 +882,11 @@ export interface GameLocation {
   /** The location's gallery, in author order. In play the backdrop shows the first visible image. A rule's
    *  owner-less Condition reads the played persona. Read it through `lib/locationImages`, which also covers
    *  records written before the gallery. */
-  images?: GalleryImage[];
+  images?: GalleryLink[];
   /** Booru tags used for AI image generation; editor-only, not sent to the narrative AI. */
   imageTags?: string;
-  ambientSound?: MediaAsset;
+  /** A Media List link, or an embedded file before migration. Read it through `lib/mediaSounds`. */
+  ambientSound?: MediaAsset | MediaRef;
   /** v1.2.0: a candidate starting location (one chosen at random on new game). */
   isStarting?: boolean;
   /** Parent location id for sub-location nesting; null/absent = top-level. Editor-only for now — not
@@ -1023,12 +1074,16 @@ export interface WorldOverview {
   name: string;
   description: string;
   author: string;
-  thumbnail: Base64Data | null;
-  bgm: Base64Data | null;
+  /** The world cover: embedded data, or a link to a Media Entry. Read it through `lib/mediaImages`. */
+  thumbnail: Base64Data | MediaRef | null;
+  /** A Media List link, or embedded data before migration. Read it through `lib/mediaSounds`. */
+  bgm: Base64Data | MediaRef | null;
   systemPrompt: string;
   tags: string[];
   /** The world's Avatars, keyed by id. Entities refer to one through `Entity.vrmPick`. */
   vrmStore?: WorldVrmStore;
+  /** The world's named images and sounds, which media fields link by id. Absent = empty. */
+  mediaList?: MediaList;
   /** The played side's last resort, set only by the migration of a world whose old 3D Player Avatar flag
    *  was on (see lib/legacyVrm). Never shown in the editor. */
   legacyVrmFallback?: VrmPick;
@@ -1066,7 +1121,7 @@ export interface MapFrame {
  */
 export interface MapBackground {
   /** At least one image; the field goes with the last one. */
-  images: GalleryImage[];
+  images: GalleryLink[];
   frame: MapFrame;
   /** 0 to 1. */
   opacity: number;
@@ -1125,37 +1180,57 @@ export interface World {
   scripts?: Script[];
   /** World Tools, in Tools-tab order: offered in every playthrough of this world. Absent = none. */
   tools?: Tool[];
-  /** Authored items, in Items-tab order. Absent = none. */
+  /** Authored items. The Items tab orders them by `groupId` and `order`. Absent = none. */
   items?: Item[];
+  /** Editor-only folders organizing items. Absent = none. */
+  itemGroups?: ItemGroup[];
   /** The world's money, in order. The first is the Default. Absent = none. */
   currencies?: Currency[];
   /** Equipment slots. Absent = none. */
   slots?: Slot[];
   /** Bodies, in order. The first is the Default. Absent = none, so no owner has a slot. */
   bodies?: Body[];
-  /** Starting Item Copies. Absent = none. */
+  /** Starting Item Instances. Absent = none. */
   placements?: Placement[];
   /** World Options, in Options-tab order. Absent = none. */
   options?: WorldOption[];
 }
 
-/** What every World Option carries, whatever its type. */
-interface WorldOptionBase {
+/** What every World Option carries, Presets included. */
+interface WorldOptionCore {
   id: string;
   name: string;
   /** Shown under the control at new game. Never sent to the AI. */
   playerDescription?: string;
+}
+
+/** What every World Option that holds a value carries. */
+interface WorldOptionBase extends WorldOptionCore {
   /** False keeps the Option out of every player surface; it still pins and gates. */
   shownToPlayer: boolean;
   /** True lets the player change it during play. */
   midGame: boolean;
 }
 
+/** An Option value's stat change. No `ownerId` = the global stat; else that entity's own stat. */
+export type OptionStatChange = StatChange & { ownerId?: string };
+
+/** An Option value's stat toggle, owned as {@link OptionStatChange}. */
+export type OptionStatToggle = TraitStatToggle & { ownerId?: string };
+
+/** The stat rows one Option value carries. They act on stats like a trait's and never reach the prompt. */
+export interface OptionStatRows {
+  statChanges?: OptionStatChange[];
+  statToggles?: OptionStatToggle[];
+}
+
 /** One named value of a choice Option. */
-export interface WorldOptionValue {
+export interface WorldOptionValue extends OptionStatRows {
   id: string;
   name: string;
   placeholderPins?: PlaceholderPin[];
+  /** Starting Item Instances this value adds at new game. */
+  placements?: Placement[];
 }
 
 /** Pick one of named values. `default` is a value id. */
@@ -1165,12 +1240,19 @@ export interface ChoiceWorldOption extends WorldOptionBase {
   default: string;
 }
 
-/** On or off, each state with its own pins. */
+/** On or off, each state with its own pins and stat rows. */
 export interface BooleanWorldOption extends WorldOptionBase {
   type: 'boolean';
   default: boolean;
   onPins?: PlaceholderPin[];
   offPins?: PlaceholderPin[];
+  onStatChanges?: OptionStatChange[];
+  onStatToggles?: OptionStatToggle[];
+  offStatChanges?: OptionStatChange[];
+  offStatToggles?: OptionStatToggle[];
+  /** Starting Item Instances each state adds at new game. */
+  onPlacements?: Placement[];
+  offPlacements?: Placement[];
 }
 
 /** A whole number in `min`–`max`, moved by `step`. Pins nothing. */
@@ -1183,8 +1265,34 @@ export interface NumberWorldOption extends WorldOptionBase {
   default: number;
 }
 
-/** A player-facing setup switch that acts only through placeholder pins and gates. */
-export type WorldOption = ChoiceWorldOption | BooleanWorldOption | NumberWorldOption;
+/** One setup value a Preset value sets. A trait row with no `ownerId` names a root trait. */
+export type PresetRow =
+  | { kind: 'option'; optionId: string; value: WorldOptionValueOf }
+  | { kind: 'trait'; traitId: string; ownerId?: string; on: boolean }
+  | { kind: 'location'; locationId: string }
+  | { kind: 'persona'; entityId: string };
+
+/** One value of a Preset Option: the rows one click applies. */
+export interface PresetValue {
+  id: string;
+  name: string;
+  description: string;
+  rows: PresetRow[];
+}
+
+/** A setup-only bundle of values. It stores no value, so no gate, pin or script reads it. A snapshot starts
+ *  from the defaults; an overlay starts from the player's picks. */
+export interface PresetWorldOption extends WorldOptionCore {
+  type: 'preset';
+  mode: 'snapshot' | 'overlay';
+  values: PresetValue[];
+}
+
+/** An Option that holds a value. */
+export type ValuedWorldOption = ChoiceWorldOption | BooleanWorldOption | NumberWorldOption;
+
+/** A player-facing setup switch that acts through placeholder pins, gates and stat rows, or a Preset. */
+export type WorldOption = ValuedWorldOption | PresetWorldOption;
 
 export type WorldOptionType = WorldOption['type'];
 
@@ -1322,6 +1430,20 @@ export interface CommunityLink {
   sourceAuthorName?: string;
 }
 
+/** What makes a downloaded Supporter-only world a Supporter Copy. Local-only, never part of world data. */
+export interface SupporterCopyMarker {
+  listingId: string;
+  /** The account the copy was downloaded for. */
+  accountId: string;
+  /** The listing revision the copy holds. */
+  revision: number;
+}
+
+/** A library entry saved from a Supporter Copy: the same marker, plus the world it came from. */
+export interface LibrarySupporterCopyMarker extends SupporterCopyMarker {
+  sourceWorldId: string;
+}
+
 export interface WorldMetadata extends CommunityLink {
   id: string;
   name: string;
@@ -1331,6 +1453,7 @@ export interface WorldMetadata extends CommunityLink {
   createdAt?: string;
   lastAccessed?: string;
   tags?: string[];
+  supporterCopy?: SupporterCopyMarker;
 }
 
 /** Lightweight preview record used by the main-menu dictionary-library grid (no entries). */
@@ -1348,6 +1471,8 @@ export interface DictionaryMetadata extends CommunityLink {
   lastAccessed?: string;
   /** Listing tags, shown on the library card the way a world's are. */
   tags?: string[];
+  /** Local-only: saved from a Supporter Copy, so it never exports or publishes. */
+  supporterCopy?: LibrarySupporterCopyMarker;
 }
 
 /** Creator credit and imported tags stored only on the library record. */
@@ -1374,6 +1499,8 @@ export interface EntityMetadata extends CommunityLink {
   vrmLibraryId?: string;
   /** Imported attribution and tags kept outside world content. */
   libraryDetails?: LibraryDetails;
+  /** Local-only: saved from a Supporter Copy, so it never exports or publishes. */
+  supporterCopy?: LibrarySupporterCopyMarker;
 }
 
 /** A find-bar hit handed to a detail panel, so the panel can open the tab that holds the field. `itemId`

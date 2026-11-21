@@ -14,8 +14,9 @@ import {
 } from '@/lib/statCodePaths';
 import {
   CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, CURRENCY_FIELDS, TURN_MEMBERS, LOCATION_ENTRY_FIELDS, LOCATION_EXIT_FIELDS, LOCATION_MEMBERS, MEMORY_ENTRY_FIELDS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_ENTRY_FIELDS, DICTIONARY_FIELDS, ENTITY_FIELDS, ITEM_FIELDS, NARRATION_FIELDS,
-  NARRATION_GLOBAL, PERSONA_FIELDS, PLAYER_CALL_ENTRIES, PLAYER_GLOBAL, PREVIOUS_FIELDS, SANDBOX_GLOBALS, SELF_TRAIT_FIELDS,
+  NARRATION_GLOBAL, partialPlayerCalls, PERSONA_FIELDS, PLAYER_CALL_ENTRIES, PLAYER_GLOBAL, PREVIOUS_FIELDS, SANDBOX_GLOBALS, SELF_TRAIT_FIELDS,
   STAT_CODE_SURFACE, STAT_FIELDS, SWITCHED_TRAIT_FIELDS, SWITCHED_TRAIT_GLOBAL, TRAIT_ENTRY_FIELDS, TRAIT_SCRIPT_SURFACE, placeholderEntryFields,
+  INSTANCE_GLOBAL, ITEM_INSTANCE_FIELDS, WORLD_MEMBERS,
 } from '@/lib/statCodeSurface';
 
 /** The names the tree lists, as the editor's session holds them, with each world trait in its groups. */
@@ -306,11 +307,16 @@ const traitRows = (path: Path, traits: readonly TraitPlace[]): VariableNameRow[]
     ...trait, children: fields(keyed(path, trait.name), TRAIT_ENTRY_FIELDS),
   }));
 
-/** Which of the names a script's timing adds its surface injects: `narration`, `player` and `trait`. */
+/** Which of the names a script's timing adds its surface injects: `narration`, `player`, `trait` and `instance`. */
 export interface TimingGlobals {
   narration: boolean;
   player: boolean;
+  /** The calls `player` holds in the timing, with its card line. Absent, every call. */
+  playerCalls?: { info: string; calls: readonly SurfaceEntry[] };
   trait: boolean;
+  instance?: boolean;
+  /** The timing's `args` card line and fields. Absent in a timing whose `args` is empty. */
+  args?: { info: string; fields: readonly SurfaceEntry[] };
   /** `turn`'s members with the access the timing gives them. Absent, every one is read-only. */
   turn?: readonly SurfaceEntry[];
 }
@@ -318,17 +324,27 @@ export interface TimingGlobals {
 /** The timing globals of a surface, read off the one list the editor and the menu share. */
 export const timingGlobalsOf = (surface: CodeSurface): TimingGlobals => {
   const turn = surface.members.get('turn');
+  const trait = surfaceHasGlobal(surface, 'trait');
+  const instance = surfaceHasGlobal(surface, 'instance');
+  // A timing's args come with its subject; a Tool lists its own Arguments.
+  const args = trait || instance ? surface.members.get('args') ?? [] : [];
+  const argsInfo = surface.globals.find((entry) => entry.name === 'args')?.info;
+  const player = surface.globals.find((entry) => entry.name === 'player');
+  const calls = partialPlayerCalls(surface);
   return {
     narration: surfaceHasGlobal(surface, 'narration'),
-    player: surfaceHasGlobal(surface, 'player'),
-    trait: surfaceHasGlobal(surface, 'trait'),
+    player: !!player,
+    ...(player && calls && { playerCalls: { info: player.info, calls } }),
+    trait,
+    instance,
+    ...(args.length && argsInfo !== undefined && { args: { info: argsInfo, fields: args } }),
     ...(turn && { turn }),
   };
 };
 
 /** A call on `player` inserts complete, with the caret between the quotes of its question. */
-function playerFields(): VariableNode[] {
-  return PLAYER_CALL_ENTRIES.map((entry) => {
+function playerFields(calls: readonly SurfaceEntry[]): VariableNode[] {
+  return calls.map((entry) => {
     const args = entry.name === 'ask' ? '("", [])' : '("")';
     const call = field(root('player'), entry, args);
     const caret = call.insert.length - args.length + args.indexOf('"') + 1;
@@ -340,8 +356,11 @@ function playerFields(): VariableNode[] {
 function timingGroups(globals: TimingGlobals): VariableNode[] {
   return [
     ...(globals.narration ? [{ kind: 'group' as const, label: 'Narration', info: NARRATION_GLOBAL.info, children: fields(root('narration'), NARRATION_FIELDS) }] : []),
-    ...(globals.player ? [{ kind: 'group' as const, label: 'Player', info: PLAYER_GLOBAL.info, children: playerFields() }] : []),
+    ...(globals.player ? [{ kind: 'group' as const, label: 'Player', info: globals.playerCalls?.info ?? PLAYER_GLOBAL.info, children: playerFields(globals.playerCalls?.calls ?? PLAYER_CALL_ENTRIES) }] : []),
     ...(globals.trait ? [{ kind: 'group' as const, label: 'Switched Trait', info: SWITCHED_TRAIT_GLOBAL.info, children: fields(root('trait'), SWITCHED_TRAIT_FIELDS) }] : []),
+    ...(globals.instance
+      ? [{ kind: 'group' as const, label: 'Item Instance', info: INSTANCE_GLOBAL.info, children: fields(root('instance'), ITEM_INSTANCE_FIELDS) }] : []),
+    ...(globals.args ? [{ kind: 'group' as const, label: 'Arguments', info: globals.args.info, children: fields(root('args'), globals.args.fields) }] : []),
   ];
 }
 
@@ -483,6 +502,8 @@ export function buildVariableTree(
     { kind: 'group', label: 'Turn', info: globalInfo('turn'), children: fields(root('turn'), timing.turn ?? TURN_MEMBERS) },
     nameList('Locations', locationRows, 'No locations in this world', globalInfo('locations')),
     { kind: 'group', label: 'Location', info: globalInfo('location'), children: locationFields() },
+    // `world` holds one member, so the menu offers it as a field of its own.
+    { ...field(root('world'), WORLD_MEMBERS[0]), label: 'Music' },
     { kind: 'group', label: 'Discover', info: globalInfo('discover'), children: [topCallField('discover', '"Name"')] },
     { kind: 'group', label: 'Memories', info: globalInfo('memories'), children: memoryFields() },
     { kind: 'field', label: 'notes', detail: 'string', info: globalInfo('notes') ?? '', access: 'readOnly', insert: 'notes' },

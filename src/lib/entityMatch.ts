@@ -2,6 +2,7 @@ import pluralize from 'pluralize-esm';
 import commonWordsCore from 'wordlist-english/english-words-10.json';
 import commonWordsExtra from 'wordlist-english/english-words-20.json';
 import type { Entity } from '@/types';
+import { editDistance } from './editDistance';
 import { escapeRegExp } from './utils';
 
 /**
@@ -137,7 +138,9 @@ export function findNameMatches(
     if (!allowPartial) continue;
     // Partial reference: a distinctive word used as a proper noun (e.g. "Emily" for "Emily Foster").
     for (const word of distinctiveWords(trimmed)) {
-      const spans = wordSpans(text, word, { capitalizedOnly: requireCapital });
+      const spans = wordSpans(text, word, { capitalizedOnly: requireCapital }).filter(
+        (s) => !isSplitByPossessive(text.slice(Math.max(0, s.start - 40), s.start), text.slice(s.end, s.end + 40), trimmed, word),
+      );
       if (!spans.length) continue;
       matches.push({ name, matched: word, via: 'partial', spans });
       found.add(name);
@@ -368,7 +371,26 @@ export const distinctiveWords = (name: string): string[] => {
 function inOrderSpans(text: string, words: string[]): TextSpan[] {
   const gap = String.raw`(?:\W+\w+){0,${MAX_NAME_GAP_WORDS}}\W+`;
   const parts = words.map((w) => `(?:${wordForms(w).map(escapeRegExp).join('|')})`);
-  return regexSpans(text, new RegExp(`\\b${parts.join(gap)}\\b`, 'gi'));
+  const spans = regexSpans(text, new RegExp(`\\b${parts.join(gap)}\\b`, 'gi'));
+  // A name that is itself possessive ("Mary's Tavern") keeps its own apostrophe.
+  return words.some((w) => /['’]/.test(w)) ? spans : spans.filter((span) => !INNER_POSSESSIVE_RE.test(span.text));
+}
+
+// A possessive closing a word inside a phrase ("the Captain's Hall"): it names a different thing than
+// the name. Only the last word of a name may take one.
+const INNER_POSSESSIVE_RE = /(?:\w['’]s|s['’])\s/i;
+
+const POSSESSIVE_THEN_WORD_RE = /^(?:['’]s|['’])\s+([A-Z][\w-]*)/;
+const WORD_THEN_POSSESSIVE_RE = /([A-Z][\w-]*?)(?:['’]s|['’])\s+$/;
+
+// Whether a partial hit on `word` is half of "Captain's Hall": a possessive joins it to another word of
+// the same `name`. That pair reads as one other thing, so neither word refers to the name. `before` and
+// `after` are the text around the hit.
+function isSplitByPossessive(before: string, after: string, name: string, word: string): boolean {
+  const others = name.split(/\s+/).filter((w) => w.toLowerCase() !== word.toLowerCase());
+  const isOther = (neighbor: string | undefined) =>
+    !!neighbor && others.some((w) => new RegExp(`^(?:${wordForms(w).map(escapeRegExp).join('|')})$`, 'i').test(neighbor));
+  return isOther(POSSESSIVE_THEN_WORD_RE.exec(after)?.[1]) || isOther(WORD_THEN_POSSESSIVE_RE.exec(before)?.[1]);
 }
 
 /**
@@ -390,6 +412,26 @@ export function sameCharacterName(a: string, b: string): boolean {
   const [small, large] = aw.size <= bw.size ? [aw, bw] : [bw, aw];
   for (const w of small) if (!large.has(w)) return false;
   return true;
+}
+
+/** The fewest letters a word needs to stay one spelling two edits away instead of one (Q76). */
+const LONG_SPELLING_LENGTH = 5;
+const spellingSlack = (a: string, b: string): number => (Math.min(a.length, b.length) < LONG_SPELLING_LENGTH ? 1 : 2);
+
+/**
+ * Whether two names are spellings of one name (Q76): `sameCharacterName`, or every significant word of the
+ * name with fewer words within a few edits of a word of the other ("Miensao" of "Anthro Mienshao").
+ */
+export function sameNameSpelling(a: string, b: string): boolean {
+  if (sameCharacterName(a, b)) return true;
+  const aw = [...new Set(significantWords(a))];
+  const bw = [...new Set(significantWords(b))];
+  if (aw.length === 0 || bw.length === 0) return false;
+  const [small, large] = aw.length <= bw.length ? [aw, bw] : [bw, aw];
+  return small.every((w) => large.some((v) => {
+    const slack = spellingSlack(w, v);
+    return editDistance(w, v, slack) <= slack;
+  }));
 }
 
 /**

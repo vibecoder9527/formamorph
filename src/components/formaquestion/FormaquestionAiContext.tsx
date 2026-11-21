@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Pager } from '@/components/ui/pagination';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tip } from '@/components/ui/tooltip';
+import { aiContextExportBlock, useHelpWorld } from '@/lib/formaquestion/helpWorld';
 import type { HelpQueryTrace, HelpRequestTrace, HelpTrace, HelpTraceSource } from '@/lib/formaquestion/helpTrace';
 import { isWorldSource, sourceKey } from '@/lib/formaquestion/helpWorldSource';
 import type { SurfaceRoute } from '@/lib/surface/surfaceRoute';
@@ -129,6 +130,11 @@ export function FormaquestionAiContext({ open, onOpenChange, exchanges }: {
   const isOpen = (key: string) => !collapsed[key];
   const setOpen = (key: string, next: boolean) => setCollapsed((prev) => ({ ...prev, [key]: !next }));
   const exportData = traced.map(({ question, trace }) => ({ question, trace }));
+  // A trace holds the excerpts of the world its question was asked in, so a Supporter Copy blocks it now or later.
+  // In play, a loaded Supporter save blocks it too, as in the game view's export.
+  const openWorld = useHelpWorld();
+  const exportBlock = traced.find((exchange) => exchange.exportBlock)?.exportBlock
+    ?? aiContextExportBlock(openWorld);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -146,7 +152,7 @@ export function FormaquestionAiContext({ open, onOpenChange, exchanges }: {
             {allCollapsed ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
             {allCollapsed ? AI_CONTEXT_COPY.expandAll : AI_CONTEXT_COPY.collapseAll}
           </Button>
-          <AiContextExportButton data={exportData} name="formaquestion" tip={AI_CONTEXT_COPY.export} disabled={traced.length === 0} />
+          <AiContextExportButton data={exportData} name="formaquestion" tip={AI_CONTEXT_COPY.export} disabled={traced.length === 0} blockedReason={exportBlock} />
         </div>
         <div className="min-h-0 flex-grow">
           <ScrollArea className="h-full">

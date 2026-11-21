@@ -195,12 +195,12 @@ Everyone here the player would see if they looked around: In Scene first, then t
 _Avoid_: scene list, roster
 
 **Item**:
-An authored kind of object in the world's Items list, such as a sword or a potion. It has the entity description fields, images and placeholders, and its own Value in a Currency, Stackable, Uses, When Empty, State, Bound, Slot, Unidentified Name and Unidentified Description. An Item never joins the roster or the stat pass. Its placeholders roll once per playthrough, shared by every Item Copy.
+An authored kind of object in the world's Items list, such as a sword or a potion. It has the entity description fields, images and placeholders, and its own Value in a Currency, Stackable, Uses, When Empty, State, Bound, Slot, Unidentified Name and Unidentified Description. An Item never joins the roster or the stat pass. Its placeholders roll once per playthrough, shared by every Item Instance.
 _Avoid_: object, thing, entity (for an item)
 
-**Item Copy**:
+**Item Instance**:
 One item in play, kept in the save. It has an Owner or lies at a location, a quantity, an equipped state, a visibility, its uses left, its State and whether it is unidentified. Always written in full.
-_Avoid_: copy (that is a placeholder Copy), instance
+_Avoid_: Item Copy, copy (that is a placeholder Copy)
 
 **Action List**:
 The player's panel actions since the last turn, newest last, shown in a tray above the action box. Its shown entries go to the narrator with the next action; the list then closes. Only the newest entry can be undone.
@@ -211,27 +211,27 @@ One entry in the Action List: a panel action's facts, a hidden flag, a count of 
 _Avoid_: action log entry, pending action
 
 **Use**:
-The one action on an Item Copy: drink, read, blow, spend. It runs the item's After Use effects and When Used scripts, then spends one of the copy's Uses when the item has them. An item can be used when it has Uses, After Use effects or a When Used script. A runtime item's use removes one.
+The one action on an Item Instance: drink, read, blow, spend. It runs the item's After Use effects and When Used scripts, then spends one of the instance's Uses when the item has them. An item can be used when it has Uses, After Use effects or a When Used script. A runtime item's use removes one.
 _Avoid_: consume, activate
 
 **Uses**:
-How many times one Item Copy can be used before it is empty. Blank means unlimited. Each copy counts its own; an item with Uses 2 or more never stacks.
+How many times one Item Instance can be used before it is empty. Blank means unlimited. Each instance counts its own; an item with Uses 2 or more never stacks.
 _Avoid_: charges, doses
 
 **When Empty**:
-What a copy's last use leaves: Stays (the copy at zero uses, ready for a recharge), Gone (removed), Becomes (one carried copy of another authored item for the same owner) or Changes State (the copy at zero uses with a new State). It applies only while Uses is set; blank reads as Gone.
+What an instance's last use leaves: Stays (the instance at zero uses, ready for a recharge), Gone (removed), Becomes (one carried instance of another authored item for the same owner) or Changes State (the instance at zero uses with a new State). It applies only while Uses is set; blank reads as Gone.
 _Avoid_: consumable, on empty
 
 **State**:
-A short free-text word one Item Copy holds, like an entity's Type: sealed, lit, soaked. The Item holds the starting State. The Inventory pass and scripts change it; the Inventory tab only shows it. Copies with different States never stack; the compare ignores case and surrounding spaces. Blank means none.
+A short free-text word one Item Instance holds, like an entity's Type: sealed, lit, soaked. The Item holds the starting State. The Inventory pass and scripts change it; the Inventory tab only shows it. Instances with different States never stack; the compare ignores case and surrounding spaces. Blank means none.
 _Avoid_: status, condition (that is a Requirement Row's)
 
 **Unidentified**:
-An Item Copy that shows the player its item's unidentified face: the Unidentified Name and Unidentified Description, each falling back to the normal value when blank. An item with either field starts every copy unidentified. It is apart from visibility, so a hidden copy can be unidentified too. A reveal on a visible unidentified copy identifies it. Its effects apply; the narrator sees both faces.
+An Item Instance that shows the player its item's unidentified face: the Unidentified Name and Unidentified Description, each falling back to the normal value when blank. An item with either field starts every instance unidentified. It is apart from visibility, so a hidden instance can be unidentified too. A reveal on a visible unidentified instance identifies it. Its effects apply; the narrator sees both faces.
 _Avoid_: unknown, mystery, disguised
 
 **Placement**:
-An authored starting Item Copy: where it goes (the Persona, an entity or a location), a quantity, Hidden, and a source. The source is one item. A new game's seed turns each Placement into Item Copies.
+An authored starting Item Instance: where it goes (the Persona, an entity or a location), a quantity, Hidden, and a source. The source is one item. A new game's seed turns each Placement into Item Instances.
 _Avoid_: spawn, starting item
 
 **Currency**:
@@ -246,14 +246,14 @@ A row of an Items-backed Currency: a Stackable item and its worth in the base un
 _Avoid_: denomination
 
 **Balance**:
-What an owner holds in a Currency, or that the owner is untracked, which is never the same as 0. Currency Items count the visible, identified copies at the owner, and the player always tracks them. An entity tracks them when a Placement of one of the Currency Items starts at it. A stat counts for whoever has it, and a Global Stat counts for the player alone. A name-only Currency tracks no one. Players read it as **Money**.
+What an owner holds in a Currency, or that the owner is untracked, which is never the same as 0. Currency Items count the visible, identified instances at the owner, and the player always tracks them. An entity tracks them when a Placement of one of the Currency Items starts at it. A stat counts for whoever has it, and a Global Stat counts for the player alone. A name-only Currency tracks no one. Players read it as **Money**.
 _Avoid_: wallet, funds
 
 **Slot**:
-A name in the world's slot list where an item is equipped, such as Main Hand or Ring. A slot has no capacity of its own: each Body that holds it gives it one, and one capacity unit holds one Item Copy. One list serves every Body, so an item's slot works in any Body that has it.
+A name in the world's slot list where an item is equipped, such as Main Hand or Ring. A slot has no capacity of its own: each Body that holds it gives it one, and one capacity unit holds one Item Instance. One list serves every Body, so an item's slot works in any Body that has it.
 
 **Slot Rule**:
-An item's slots, in order, and a mode. **Either of** takes one of them, the first free or the one named. **All of** takes one unit in each, and the owner's Body must hold them all. An Item Copy stores the chosen slot, or the first listed under All of; the rule says which slots it occupies. An item without one can't be equipped.
+An item's slots, in order, and a mode. **Either of** takes one of them, the first free or the one named. **All of** takes one unit in each, and the owner's Body must hold them all. An Item Instance stores the chosen slot, or the first listed under All of; the rule says which slots it occupies. An item without one can't be equipped.
 _Avoid_: slot size, two-handed flag
 
 **Body**:
@@ -338,6 +338,10 @@ _Avoid_: perks, rewards, supporter status
 **Supporters wall**:
 The list of linked accounts with a tier, Supporter+ first and longer tenure first. It is a page on formamorph.ai and a tab of the Credits dialog, and both render one component. It never lists a Patreon member who did not link.
 _Avoid_: hall of fame, donor list, credits
+
+**Supporter Copy**:
+A world downloaded from a Supporter-only listing, or a library entry saved from one. It plays and edits like any copy, but nothing exports, duplicates, publishes or downloads its media, and backups leave it out. A local-only marker on the stored record carries the listing, the account and the revision.
+_Avoid_: locked world, protected world, install (as a noun)
 
 **Patreon link**:
 The tie between one Formamorph account and one Patreon user, made in the account settings after the member approves it on Patreon. Unlink removes it at once.
@@ -487,8 +491,12 @@ _Avoid_: linter (internal only), validator
 The Test Bench instrument where an author pastes prose and sees what would fire — entity presence and dictionary activation — including non-activations with their near-miss reason.
 _Avoid_: matcher preview, dry run
 
+**Media List**:
+A world's one store of images and sounds, each a **Media Entry** with a unique name. Entity, location, item, map, backdrop, cover and music fields link an entry by id, so one file can serve many places. Scripts switch what a field shows or plays by naming an entry. Library entities, cards and published entities keep their files embedded; a world converts at the boundary, the way it does Avatars. **Remove From Slot** unlinks one place; **Delete From World** removes the entry everywhere.
+_Avoid_: asset list, media library (the library is the player's local collection), unlink (names a library entity's linked copy)
+
 **Media tab**:
-The World Editor tab that lists every media item in a world (images, sounds, 3D Models and Avatars) with its stored size. A view over the fields that keep them, not a store. Copy names the entity, location or dictionary that keeps an item by its name, never as its owner; "owner" is the glossary term for traits, stats and placeholders.
+The World Editor tab that lists every media item in a world (images, sounds, 3D Models and Avatars) with its stored size. It shows and manages two stores, the Media List and the Avatar store, plus the fields that still embed their files (3D Models, dictionary covers). Copy names the entity, location or dictionary that keeps an item by its name, never as its owner; "owner" is the glossary term for traits, stats and placeholders.
 _Avoid_: assets tab, files, owner (for the entity, location or dictionary that keeps a media item)
 
 **Authoring Tour**:
@@ -510,6 +518,10 @@ _Avoid_: turn config
 **Turn Commit**:
 The computed state delta a finished turn applies — history, clock, stats, discoveries.
 _Avoid_: turn state, commit object
+
+**Turn Landing**:
+The ordered application of a Turn Commit to the game: output-script writes, the Inventory pass, stat changes and stat code, time, follower placement, the stored turn, script memory, settle, item events, the snapshot. One module with two modes, the live turn and the stat re-roll.
+_Avoid_: apply step, turn apply, commit handler
 
 **Stat Request**:
 The stat pass's request, which asks the AI how a turn moved each owner's stats. It has three owner kinds, each with its own reply key: the played entities (`Player Character`), the Global Stats no one owns (`Global Stats`), and each present entity that owns stats (its name). A persona with no stats has no block and no key. Owner keys stay unique across all three kinds. The stat pass renames each owned stat to its request key before any chip renders; narration keeps raw names.
@@ -562,8 +574,12 @@ A source holding a Placeholder at one fixed value while the source is active: a 
 _Avoid_: override, lock, fixed value
 
 **World Option**:
-A player-facing setup switch on the world, authored on the Options tab: a choice of named values, a boolean, or a whole number between a min and a max. The player sets the shown ones at new game; a hidden one serves as script and gate state. It acts only through Pins (a choice value's or a boolean state's) and gates, never through AI text. A playthrough keeps one value per Option; a missing or no-longer-valid value reads the Option's default.
+A player-facing setup switch on the world, authored on the Options tab: a choice of named values, a boolean, a whole number between a min and a max, or a Preset. The player sets the shown ones at new game; a hidden one serves as script and gate state. It acts only through Pins (a choice value's or a boolean state's) and gates, never through AI text. A playthrough keeps one value per Option except a Preset, which keeps none; a missing or no-longer-valid value reads the Option's default.
 _Avoid_: setting (the app's own), preference, toggle trait
+
+**Preset**:
+A World Option type whose values each set a bundle of setup values in one click. A snapshot Preset first resets the unlisted values to the world's defaults; an overlay Preset keeps them. It shows at new game only and stores no value, so no gate, Pin or script reads it. Its selected value is the one the current setup matches.
+_Avoid_: macro, template, start profile
 
 **Enabled** (entity):
 An entity's gate: Requirement Rows that keep it in play while any row holds; with no rows it is always on. A Condition with no owner reads the entity itself. Off, the entity is hidden from the player and the AI and inert: its stats, regen, traits, scripts and routine pause and resume where they paused. Every gate is read in one pass against committed state, an off entity's own state frozen. The played persona is always on.
@@ -662,7 +678,7 @@ The Timing that runs once for each trait that turns on or off in play, whatever 
 _Avoid_: on toggle, trait hook, trait event
 
 **Item timings**:
-The five Timings of an item's scripts: When Gained, When Lost, When Equipped, When Unequipped and When Used. Each runs once for each event of one of the item's Item Copies, from the Inventory pass, the panel or a script. `self` is the item and `owner` is the Item Copy's Owner, empty while it lies at a location. A script's inventory write runs item timings up to 3 levels deep; past that the write still lands and no timing runs. Starting items run none.
+The five Timings of an item's scripts: When Gained, When Lost, When Equipped, When Unequipped and When Used. Each runs once for each event of one of the item's Item Instances, from the Inventory pass, the panel or a script. `self` is the item and `owner` is the Item Instance's Owner, empty while it lies at a location. A script's inventory write runs item timings up to 3 levels deep; past that the write still lands and no timing runs. Starting items run none.
 _Avoid_: item hook, item trigger, on pickup
 
 **Original**:
@@ -690,7 +706,7 @@ A Condition that compares an owner's stat to a number with one of six operators 
 _Avoid_: stat gate, stat requirement, threshold (a descriptor's word)
 
 **Item Condition**:
-A Condition that holds while an owner has an Item Copy of an item, owned (carried or equipped, hidden copies included) or equipped. Traits and image Visibility rules share it. With no owner it reads the host's owner; on a global trait or a location rule that is the Persona. On an item's rule it reads the Item Copy's owner, and never holds while the copy lies at a location, Not included. It can also require a State word (trimmed, any case) and require the copy identified or unidentified. Owner, status, State and identity must all hold on one copy. Its text reads the checks in parentheses after the name, "owning Lantern (lit)", and names the item's unidentified face while the owner holds no visible identified copy.
+A Condition that holds while an owner has an Item Instance of an item, owned (carried or equipped, hidden instances included) or equipped. Traits and image Visibility rules share it. With no owner it reads the host's owner; on a global trait or a location rule that is the Persona. On an item's rule it reads the Item Instance's owner, and never holds while the instance lies at a location, Not included. It can also require a State word (trimmed, any case) and require the instance identified or unidentified. Owner, status, State and identity must all hold on one instance. Its text reads the checks in parentheses after the name, "owning Lantern (lit)", and names the item's unidentified face while the owner holds no visible identified instance.
 _Avoid_: item gate, inventory check
 
 **Time Condition**:

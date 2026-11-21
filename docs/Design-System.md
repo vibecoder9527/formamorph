@@ -1528,6 +1528,93 @@ The live reference renders the production card, plate, action line, rows, and St
 - The pair's labels and tooltips come from `StatsActions`, and the action line's menu from `playerBubbleActions`, so the reference and the game cannot drift.
 - **Unverified:** the description's "Right-click a card or the action line for its menu", the past page's "The Stats panel actions are disabled", and the "Stats Panel" label have terminology review only; vocabulary and grammar evidence is not recorded. The sample action text is creative prose and exempt.
 
+## Pattern: Speaker Quote Colors
+
+Speaker Quote Colors give each character's quotes their own color, so the player can tell who speaks at a glance. Character Mentions finds the speaker.
+
+### Composition
+
+- 🎨 **Eight palette tokens.** `--speaker-0` to `--speaker-7`: orange, green, violet, rose, teal, ochre, olive and indigo. One set for light mode and one for dark. They stay the same in every palette, so a character keeps one color when the player changes the palette.
+- 🔑 **A stable slot.** The entity's place in the cast picks the slot: world entities first, then runtime characters in the order they joined. The player takes no slot. A character keeps its color in every turn and after a reload, and the first eight never share one. Reordering the world's entities changes the colors.
+- 💬 **The whole quote.** The color covers the quote and its marks, across bold and italic inside it.
+- ⚪ **Unresolved quotes.** A quote with no speaker keeps the player's Quote Color, or the palette's dialogue color.
+
+### When to use it
+
+- Use it only on story narration that Character Mentions has read.
+- Quote Color in Display › Accessibility turns it off with every other quote color.
+- A speaker's color beats the player's own custom quote color.
+- Don't use the speaker tokens for anything that is not about that character.
+
+### States
+
+The color is static. It shows once the turn's reading arrives, and changes no layout. It has no hover, focus, or disabled state of its own.
+
+### Contrast
+
+Each token meets 4.5:1 as text on the background and card surface of every palette, in its mode. Lightness differs by hue, so every color sits near the same contrast. [`speakerPalette.test.ts`](../src/lib/coref/speakerPalette.test.ts) reads [`src/index.css`](../src/index.css) and checks every palette.
+
+### Production mapping
+
+| Part | Source |
+| --- | --- |
+| Tokens and the quote rule | [`src/index.css`](../src/index.css) |
+| Slot and color of each cast entity | [`speakerPalette.ts`](../src/lib/coref/speakerPalette.ts), built once in [`GameViewer.tsx`](../src/views/GameViewer.tsx) |
+| A turn's speakers | [`quoteSpeakers.ts`](../src/lib/coref/quoteSpeakers.ts) |
+| Quote spans and their speakers | [`rehypeQuoteSpans.ts`](../src/lib/rehypeQuoteSpans.ts) and [`quoteSegments.ts`](../src/lib/quoteSegments.ts) |
+| Renderer | `MarkdownRenderer`'s `speakers` prop in [`MarkdownRenderer.tsx`](../src/components/game/MarkdownRenderer.tsx) |
+
+Open `#dev?modal=designSystem&tab=speaker-quotes` for the light and dark panels side by side. `#dev?view=gameViewer&fixture=speakerQuotes` shows the colors in a game, with Character Mentions on.
+
+### Writing review
+
+The panel labels are "Palette" and "In a Turn". The sample narration is creative prose and exempt.
+
+## Pattern: Mention Cards
+
+Mention Cards let the player check whom or what a name, pronoun or quote in narration refers to. Character Mentions finds the link.
+
+### Composition
+
+- 🔗 **Plain-text mentions.** A linked mention reads as prose. A dotted underline in the entity's speaker color shows on hover, on keyboard focus, and while its card is open.
+- 🪪 **A small card.** The entity's picture as a 48×56 rounded portrait, cropped from the top, then the name and up to two lines of description. With no picture the player can see, a circle with the entity's initial in its speaker color takes its place. "Wrong character?" sits under them.
+- 🔁 **A pick list in the same card.** "Wrong character?" swaps the card's content for the cast: "Who said this?" for a quote, "Who is this?" for a mention. A back button returns to the card, a check marks the current pick, and the last row, "Not Listed", unlinks it. Rows are menu rows (`MENU_ROW`). Picking closes the card, and the colors and links change at once.
+- 💬 **Quotes open their speaker.** Clicking or tapping a colored quote opens its speaker's card. A mention inside a quote opens its own card.
+- 🕶️ **Player View only.** The card shows what the player knows now: a met entity's name and player description, or a stranger's label. An entity the player has never seen gets no link.
+
+### When to use it
+
+- Use it only on story narration that Character Mentions has read.
+- Don't use the card for anything the Player View does not hold.
+
+### States
+
+| State | Look |
+| --- | --- |
+| Rest | Plain text, no underline. |
+| Hover (mouse) | Dotted underline. The card opens after 300 ms and closes 200 ms after the pointer leaves both. |
+| Click or tap | The card opens and stays. A second click closes it. |
+| Keyboard focus | Focus ring and underline. The card opens and closes on blur. |
+| Enter or Space | The card opens and stays, and focus moves into it. Escape or a pick closes it and returns focus to the mention, if it is still linked. |
+
+Touch never opens a card on pass-over: only a tap does.
+
+### Production mapping
+
+| Part | Source |
+| --- | --- |
+| Mention links in the markdown | [`mentionLinks.ts`](../src/lib/coref/mentionLinks.ts), through `MarkdownRenderer`'s `links` prop |
+| Card, triggers and the one shared popover | [`MentionCards.tsx`](../src/components/game/MentionCards.tsx) |
+| Card rows from the Player View | `mentionCardRows` in [`MentionCards.tsx`](../src/components/game/MentionCards.tsx), built in [`GameViewer.tsx`](../src/views/GameViewer.tsx) |
+| Pick list | `MentionPickList` in [`MentionCards.tsx`](../src/components/game/MentionCards.tsx) |
+| Corrections over the reading | [`mentionCorrections.ts`](../src/lib/coref/mentionCorrections.ts), wired in [`GameViewer.tsx`](../src/views/GameViewer.tsx) |
+
+Open `#dev?modal=designSystem&tab=mention-cards` for the light and dark panels side by side. `#dev?view=gameViewer&fixture=speakerQuotes` shows the cards in a game, with Character Mentions on.
+
+### Writing review
+
+The panel labels are "Cards", "Pick List", "Hovered Mention" and "In a Turn". "Wrong character?", the pick-list titles and the unlink row come from the approved prototype. The sample narration and card text are creative prose and exempt.
+
 ## Pattern: Inline Prompt Line
 
 **Purpose:** Show a script's question or message as part of the turn, not as a window over it.
@@ -2075,6 +2162,43 @@ Open `#dev?modal=designSystem&tab=supporter-flair` for the light and dark panels
 
 Each badge shows its tier's Patreon name, or **Member** when no name is known. Copy says Profile Image, never avatar.
 
+## Pattern: Patreon Mark
+
+The Patreon Mark shows that an item comes with Patreon support. It is the **Patreon** button's heart, in that button's gradient. Approved for every Patreon item, in place of a lock icon.
+
+### Composition
+
+- ❤️ **One mark.** The heart icon on a small rounded square in the `orangeSoft` gradient, the same pair the **Patreon** button uses. The icon and the tone come from one module, so the mark and the button can't drift.
+- 📏 **Two sizes.** `sm` (20 px) on cards and rows. `md` (24 px) beside a heading.
+- 💬 **A tooltip.** It says what the item is and what the player can and can't do with it.
+- 🔒 **No lock.** A lock reads as "you can't open this". The heart reads as "this comes with your support".
+
+### When to use it
+
+- Use it on any item that comes with Patreon support: a Supporter world, a Supporter Mascot, the Formamorph AI preset.
+- Put it on the card's top-left badge slot in the grid layout, and at the start of the note line in the detailed layout.
+- Don't use it for a person. Supporter Flair marks people.
+- Don't use the gradient for anything else.
+
+### States
+
+The mark is static. It has no hover, focus, or disabled state of its own. It is not focusable, because it sits inside cards that are buttons. It carries an image role, a name, and the tooltip text as its description.
+
+### Production mapping
+
+| Part | Source |
+| --- | --- |
+| Mark, icon and tone | `PatreonMark`, `PatreonIcon` and `PATREON_TONE` in [`PatreonMark.tsx`](../src/components/PatreonMark.tsx) |
+| Gradient | `gradientClasses` in [`GradientButton.tsx`](../src/components/GradientButton.tsx) |
+| World card | `LibraryWorldCard` in [`LibraryWorldCard.tsx`](../src/components/LibraryWorldCard.tsx) |
+| The button it comes from | `SupporterListingButton` in [`SupporterListingButton.tsx`](../src/components/community/SupporterListingButton.tsx) |
+
+Open `#dev?modal=designSystem&tab=patreon-mark` for the light and dark panels side by side.
+
+### Writing review
+
+The name says what the item is, such as **Supporter world**. The tooltip follows the help-line test: two short sentences, second person, with a period.
+
 ## Pattern: Preset Header
 
 **Purpose:** Pick a preset and act on it with the same controls on every preset surface.
@@ -2590,14 +2714,14 @@ Editor detail panels, the game's side panels, the library editors' headers and t
 
 - 🗂️ **Owner card.** The played Persona's `PanelOwnerCard`, with the You pill. Under None it reads **You** with no pill.
 - 🛡️ **Equipped.** The [Body Layout](#pattern-body-layout) figure, with no labels, up to 320px tall. It takes a third of the width, between 120px and its full width, with the Equipped list beside it at every panel width. A Body wider than tall stacks: the figure centered, up to the panel's width, over the list.
-- 📋 **Equipped list.** One row per Item Copy in a box: the same icon or image as the box, the name on one line with its full text in a tooltip while cut, and the slot names as the second line. Use (when it applies) and Unequip act in one click. The name's button covers the row and opens the item popup. With nothing equipped it reads "Nothing is equipped."
+- 📋 **Equipped list.** One row per Item Instance in a box: the same icon or image as the box, the name on one line with its full text in a tooltip while cut, and the slot names as the second line. Use (when it applies) and Unequip act in one click. The name's button covers the row and opens the item popup. With nothing equipped it reads "Nothing is equipped."
 - 🖼️ **Filled box.** The item's icon, with its name in the tooltip. An item set to None shows its image at its own aspect, in a frame that fits it. With no image, or one that fails, None is a plain filled box. An All of item draws in each box it fills. The frame opens a popover with the item's row, and only the frame takes the pointer, so a tap on the margin reaches the box below.
 - ⬜ **Empty box.** A blank outline. Hover or tap shows the slot's name.
-- 🎒 **Carried.** One row per Item Copy: the same icon or image as the box, the name, ×count for a stack, a lock for Bound, and a uses line ("2 of 3 uses" for Uses 2+, "No uses left" for a spent Uses 1 copy). Icon buttons on the right: Use (only for an item with Uses, After Use effects or a When Used script), Equip (only for an item with a slot), Drop and Give.
+- 🎒 **Carried.** One row per Item Instance: the same icon or image as the box, the name, ×count for a stack, a lock for Bound, and a uses line ("2 of 3 uses" for Uses 2+, "No uses left" for a spent Uses 1 instance). Icon buttons on the right: Use (only for an item with Uses, After Use effects or a When Used script), Equip (only for an item with a slot), Drop and Give.
 - ✨ **Use.** A sparkles icon button on carried and equipped rows. It spends one use, and turns off at zero uses.
 - 💰 **Money.** Above Carried, while the played Persona has a Currency with Items or a visible stat. One row per Currency, built like an Effects row: the Currency's name, and its amount in meta text at the end.
-- ⏳ **Effects.** Between Carried and Here, only while an effect runs. One row per running After Use effect, soonest end first: the item name, the effect under it in meta text ("Strength +2", or the trait's name), and "1 h 20 min left" on the right. A hidden Item Copy's effect reads **An item**.
-- 🔢 **Count.** Drop on one Item Copy acts at once. Drop on a stack and Give open a popover. It holds a number field that starts at 1, an **All** button and "of N". Give adds the entities in the scene, each under its label, as `CompactSelectionRow`s, or "Nobody is in the scene."
+- ⏳ **Effects.** Between Carried and Here, only while an effect runs. One row per running After Use effect, soonest end first: the item name, the effect under it in meta text ("Strength +2", or the trait's name), and "1 h 20 min left" on the right. A hidden Item Instance's effect reads **An item**.
+- 🔢 **Count.** Drop on one Item Instance acts at once. Drop on a stack and Give open a popover. It holds a number field that starts at 1, an **All** button and "of N". Give adds the entities in the scene, each under its label, as `CompactSelectionRow`s, or "Nobody is in the scene."
 - 🔒 **Bound.** Drop and Give stay in place, disabled, with the reason in their tooltips.
 - 🔍 **Item popup.** The name's button covers the row, and the row's buttons sit above it. It opens an [Entity Popup](#pattern-entity-popup)'s layout with the item's image, description, with State, count and uses beside its name. With no image it is a short 520px window.
 - 🏷️ **Tab strip.** The side panels' strips are [collapsing tab strips](#as-a-tab-strip): every label, then only the selected tab's, then icons alone. A folded tab's tooltip names it.
@@ -2624,7 +2748,7 @@ The tab fills the right panel on desktop and the **Status** sheet on mobile. Row
 | --- | --- |
 | Turn running or past page | Every action button is disabled, and an open count popover closes. A figure's boxes still open, with their actions disabled. |
 | Bound | Drop and Give disabled; Equip still works. |
-| Hidden Item Copy | Never shown. A hidden equipped item takes capacity but draws in no box, so its box reads as empty. |
+| Hidden Item Instance | Never shown. A hidden equipped item takes capacity but draws in no box, so its box reads as empty. |
 | Equipped row | In the list and in the popover: Use (when it applies) and Unequip. Drop and Give act on carried rows. The popover's row wraps its name, keeps the uses line, and its name opens the item popup. |
 | No boxes on the Body, or no Body | No **Equipped** section. An equipped item with no box lists under **Carried**, with Unequip. |
 | Zero uses | Use stays in place, disabled: "Use Ash Wand: no uses left". |
@@ -2714,6 +2838,48 @@ A record with both kinds follows the hard case. The confirm counts only the hard
 ### Writing review
 
 The line reads "This also deletes its link." for one reference and "This also deletes its 2 links and 1 pick." for several kinds. Zero uses has no line, and no dialog opens.
+
+## Pattern: Paired Tiles
+
+**Purpose:** Show a release's highlights so the biggest changes read at a glance, each beside a related one.
+
+**Density:** Comfortable. Tiles carry a title and one or two sentences.
+
+> ✅ Approved by the user through the What's New prototype (B4), 2026-11-19.
+
+### Composition
+
+- 🧭 **Three columns.** A Major tile spans two, and its paired New tile takes the third.
+- 🎯 **Major tiles** have a 4px left edge and a 24px icon in the dialogue color, on a plain `card` with a `primary/30` border.
+- 🧩 **New tiles** have the same card and border, with no edge and no icon.
+- 🔧 **Fixes** is one muted box with no border. It fills the last row's empty cells and sizes to its text.
+- 🎨 Every color is a theme token. Status colors (success, info) never tint a tile.
+
+### Pairing
+
+| Case | Layout |
+|---|---|
+| Major with a nested item | The nested item is its pair |
+| Major with none | The next unpaired New item is its pair |
+| Major with nothing left | It spans the full row |
+| Leftover New items | Rows of three |
+| Fixes | The last row's empty cells, or a full row |
+
+### Production mapping
+
+| Need | Component |
+| --- | --- |
+| The grid and tiles | `WhatsNewTiles` in [`WhatsNewTiles.tsx`](../src/components/whatsNew/WhatsNewTiles.tsx) |
+| The pairing rule | `tileCells` in [`tileLayout.ts`](../src/lib/whatsNew/tileLayout.ts) |
+| Emoji to icon | `MAJOR_ICONS` in [`releaseSummary.ts`](../src/lib/whatsNew/releaseSummary.ts), components in [`majorIcons.ts`](../src/components/whatsNew/majorIcons.ts) |
+
+### Responsive behavior
+
+Below `sm` the grid is one column, in the same order: each Major, then its pair.
+
+### State reference
+
+Open `#dev?modal=designSystem&tab=paired-tiles` for the 3.7.0 summary in both modes, or `#dev?modal=whatsNew` for the dialog. An emoji outside the icon map shows the default icon.
 
 ## UI and prototype workflow
 

@@ -8,12 +8,15 @@ import AuthService from '@/services/AuthService';
 import { buildPublishBody } from '@/lib/publishBody';
 import type { PublishPayload } from '@/lib/publishPayload';
 import type { WorldRecord } from '@/components/WorldDetails';
+import { daysFrom, serverEvent } from '@/test/serverEvents';
+import { resetTierNamesForTest, seedTierNamesForTest } from '@/lib/tierNames';
 import type { PolicyState } from '@/types';
 
 vi.mock('react-toastify', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
 const mascot: PublishPayload = { kind: 'mascot', name: 'Captain', description: '', contentData: { images: [] } };
 const world: PublishPayload = { kind: 'world', name: 'My World', description: 'd', contentData: {} };
+const dictionary: PublishPayload = { kind: 'dictionary', name: 'Terms', description: 'd', contentData: {} };
 const NO_POLICIES: PolicyState = { uploadGate: null, tagNotice: null, privacyPolicy: null };
 const listing = (id: string, name: string): WorldRecord => ({ _id: id, name, downloads: 0 });
 
@@ -71,12 +74,19 @@ describe('the Supporter-Only switch', () => {
     expect(theSwitch()).toBeNull();
   });
 
-  it('is absent for another kind', async () => {
+  it('is absent for a kind that cannot be Supporter-only', async () => {
+    signInAs('admin');
+    render(view(dictionary));
+
+    await screen.findByText('Publish Dictionary');
+    expect(theSwitch()).toBeNull();
+  });
+
+  it("shows for an admin's new World listing", async () => {
     signInAs('admin');
     render(view(world));
 
-    await screen.findByText('Publish World');
-    expect(theSwitch()).toBeNull();
+    expect(await screen.findByRole('switch', { name: 'Publish Supporter-only' })).toBeTruthy();
   });
 
   it('hides on an update and sends no flag, even after being turned on', async () => {
@@ -107,11 +117,133 @@ describe('the Supporter-Only switch', () => {
   });
 });
 
+describe('the schedule fields', () => {
+  beforeEach(() => { seedTierNamesForTest({ supporter_top: 'Beacon', supporter_plus: 'Flame', supporter: 'Spark' }); });
+  afterEach(() => { resetTierNamesForTest(); });
+  const field = (tier: string) => screen.queryByLabelText(`${tier} Days`) as HTMLInputElement | null;
+  const goPublic = () => screen.getByRole('switch', { name: 'Go public after the last stage' }) as HTMLButtonElement;
+  const turnOn = async () => userEvent.click(await screen.findByRole('switch', { name: 'Publish Supporter-only' }));
+
+  it.each([['mascot', mascot], ['world', world]])('sends the days of each tier of a new %s and shows the dates', async (_kind, payload) => {
+    signInAs('admin');
+    render(view(payload));
+
+    expect(field('Beacon')).toBeNull();
+    await turnOn();
+    await userEvent.type(field('Beacon')!, '5');
+    await userEvent.type(field('Flame')!, '6');
+    await userEvent.type(field('Spark')!, '7');
+    expect(screen.getAllByText(/^Opens [A-Z]/).length).toBe(3);
+    expect(screen.getByText(/^Opens to everyone on /)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Publish Supporter-Only' }));
+
+    await waitFor(() => expect(WorldStorageService.publishItem).toHaveBeenCalledTimes(1));
+    expect(sent()[0].supporterOnly).toBe(true);
+    expect(sent()[0].supporterSchedule).toEqual({ days: { supporter_top: 5, supporter_plus: 6, supporter: 7 }, goPublic: true });
+  });
+
+  it('sends no stage for an empty field and says it is skipped', async () => {
+    signInAs('admin');
+    render(view());
+
+    await turnOn();
+    await userEvent.type(field('Spark')!, '7');
+    expect(screen.getAllByText(/^Skipped\. Opens /).length).toBe(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Publish Supporter-Only' }));
+
+    await waitFor(() => expect(WorldStorageService.publishItem).toHaveBeenCalledTimes(1));
+    expect(sent()[0].supporterSchedule).toEqual({ days: { supporter: 7 }, goPublic: true });
+  });
+
+  it('sends no schedule with every field blank, and the public switch waits', async () => {
+    signInAs('admin');
+    render(view());
+
+    await turnOn();
+    expect(goPublic().disabled).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Publish Supporter-Only' }));
+
+    await waitFor(() => expect(WorldStorageService.publishItem).toHaveBeenCalledTimes(1));
+    expect(sent()[0].supporterOnly).toBe(true);
+    expect(sent()[0].supporterSchedule).toBeUndefined();
+  });
+
+  it('keeps the listing Supporter-only after the last stage when the public switch is off', async () => {
+    signInAs('admin');
+    render(view());
+
+    await turnOn();
+    await userEvent.type(field('Beacon')!, '5');
+    expect(goPublic().disabled).toBe(false);
+    await userEvent.click(goPublic());
+    expect(screen.getByText(/^Stays Supporter-only with no end date/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Publish Supporter-Only' }));
+
+    await waitFor(() => expect(WorldStorageService.publishItem).toHaveBeenCalledTimes(1));
+    expect(sent()[0].supporterSchedule).toEqual({ days: { supporter_top: 5 }, goPublic: false });
+  });
+
+  it('holds the publish back for a number the server would refuse', async () => {
+    signInAs('admin');
+    render(view());
+
+    await turnOn();
+    await userEvent.type(field('Flame')!, '0');
+
+    expect((screen.getByRole('button', { name: 'Publish Supporter-Only' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('alert').textContent).toMatch(/whole number/);
+  });
+
+  it('sends no schedule once the switch is turned back off', async () => {
+    signInAs('admin');
+    render(view());
+
+    const toggle = await screen.findByRole('switch', { name: 'Publish Supporter-only' });
+    await userEvent.click(toggle);
+    await userEvent.type(field('Beacon')!, '7');
+    await userEvent.click(toggle);
+    await userEvent.click(screen.getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(WorldStorageService.publishItem).toHaveBeenCalledTimes(1));
+    expect(sent()[0].supporterOnly).toBeUndefined();
+    expect(sent()[0].supporterSchedule).toBeUndefined();
+  });
+});
+
+describe('with a contest running', () => {
+  const contestSwitch = () => screen.getByRole('switch', { name: /enter/i });
+
+  it('turns the contest entry off when Supporter-only goes on, and the reverse', async () => {
+    signInAs('admin');
+    render(<PublishModal open onOpenChange={() => {}} isAuthenticated payload={world} events={[serverEvent({ title: 'Summer Isles Contest', startsAt: daysFrom(-2), endsAt: daysFrom(10) })]} />);
+
+    await userEvent.click(await screen.findByRole('switch', { name: 'Publish Supporter-only' }));
+    await userEvent.click(contestSwitch());
+    expect(theSwitch()?.getAttribute('aria-checked')).toBe('false');
+    expect(contestSwitch().getAttribute('aria-checked')).toBe('true');
+
+    await userEvent.click(theSwitch()!);
+    expect(contestSwitch().getAttribute('aria-checked')).toBe('false');
+    await userEvent.click(screen.getByRole('button', { name: 'Publish Supporter-Only' }));
+
+    await waitFor(() => expect(WorldStorageService.publishItem).toHaveBeenCalledTimes(1));
+    expect(sent()[2]).toBeNull();
+  });
+});
+
 describe('the publish body', () => {
   it('carries the flag only when set', async () => {
     const read = async (payload: PublishPayload) => JSON.parse(await buildPublishBody(payload, null).body.text()) as Record<string, unknown>;
 
     expect((await read({ ...mascot, supporterOnly: true })).supporterOnly).toBe(true);
     expect('supporterOnly' in (await read(mascot))).toBe(false);
+  });
+
+  it('carries the schedule only with the flag', async () => {
+    const read = async (payload: PublishPayload) => JSON.parse(await buildPublishBody(payload, null).body.text()) as Record<string, unknown>;
+    const supporterSchedule = { days: { supporter: 5 }, goPublic: true };
+
+    expect((await read({ ...world, supporterOnly: true, supporterSchedule })).supporterSchedule).toEqual(supporterSchedule);
+    expect('supporterSchedule' in (await read({ ...world, supporterSchedule }))).toBe(false);
   });
 });

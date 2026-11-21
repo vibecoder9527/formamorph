@@ -13,6 +13,8 @@ import { isAnimatedWebpUrl, nodeImageCodec, resizeRgba } from './nodeImageCodec'
 import { worldPublishPayload } from './publishPayload';
 import { downscaleWorldText, shippedWorldText, shipRuleFiles, skippedAnimations } from './shippedWorld';
 import list from './bundledFingerprints.json';
+import { entityImages } from '@/lib/entityImages';
+import { coverData } from '@/lib/mediaImages';
 
 /** A WebP of the given RGBA pixels, lossless or lossy. */
 const encodeWebp = async (rgba: Uint8Array, width: number, height: number, lossless = true) =>
@@ -100,8 +102,8 @@ describe('downscaleWorldText', () => {
   it('downscales lossless art within its budget, as the app scan selects it', async () => {
     const art = await webp(512, 64);
     const shipped = JSON.parse(await downscaleWorldText(world(art, art), nodeImageCodec)) as World;
-    expect(dataUrlImageSize(shipped.locations[0].images?.[0].data ?? '')).toEqual({ width: 512, height: 64 });
-    expect(isLosslessImage(shipped.locations[0].images?.[0].data ?? '')).toBe(false);
+    expect(dataUrlImageSize(entityImages(shipped.locations[0])[0]?.data ?? '')).toEqual({ width: 512, height: 64 });
+    expect(isLosslessImage(entityImages(shipped.locations[0])[0]?.data ?? '')).toBe(false);
   });
 
   it('downscales each slot by its own budget, the same image included', async () => {
@@ -109,8 +111,8 @@ describe('downscaleWorldText', () => {
     const source = world(wide, wide);
     const shipped = JSON.parse(await downscaleWorldText(source, nodeImageCodec)) as World;
     // The thumbnail budget is 1024 px, a backdrop's 1920 px.
-    expect(dataUrlImageSize(shipped.worldOverview.thumbnail ?? '')).toEqual({ width: 1024, height: 43 });
-    expect(shipped.locations[0].images?.[0].data).toBe(wide);
+    expect(dataUrlImageSize(coverData(shipped.worldOverview) ?? '')).toEqual({ width: 1024, height: 43 });
+    expect(entityImages(shipped.locations[0])[0]?.data).toBe(wide);
     expect(JSON.stringify({ ...shipped, worldOverview: { ...shipped.worldOverview, thumbnail: wide } })).toBe(JSON.stringify(JSON.parse(source)));
   });
 

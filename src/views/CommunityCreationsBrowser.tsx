@@ -2,7 +2,12 @@ import React, { useState, useCallback, useDeferredValue, useEffect, useMemo, use
 import { useRequestKey } from '@/lib/surface/useRequestKey';
 import { toast } from 'react-toastify';
 import { toastError } from '@/lib/linkToast';
+import { describeError } from '@/lib/errorDetails';
+import { useMountedRef } from '@/lib/useMountedRef';
 import { isSupporterOnly } from '@/lib/supporterListingAction';
+import { formatSupporterDate } from '@/lib/supporterEndDate';
+import { SupporterScheduleDialog } from '@/components/community/SupporterScheduleDialog';
+import type { SupporterScheduleSave } from '@/lib/supporterScheduleEdit';
 import { responseError } from '@/services/responseError';
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -302,7 +307,7 @@ const CommunityCreationsBrowser = ({
   const {
     downloadProgress, contextualAction, setContextualAction,
     overwriteSelectedId, setOverwriteSelectedId, showOverwriteSelect, setShowOverwriteSelect,
-    localCopiesBySource, copiesForWorld, downloadStateForWorld,
+    localCopiesBySource, overwriteCopiesForWorld, downloadStateForWorld,
     handleContextualDownload, handleChooseOverwrite, handleConfirmOverwrite, handleDownloadWorld,
     pendingDownload, retryDownload, dismissPendingDownload,
     worldUpdateReview, applyWorldUpdate, cancelWorldUpdate,
@@ -855,9 +860,34 @@ const CommunityCreationsBrowser = ({
     }
   };
 
+  const mounted = useMountedRef();
   const markingSupporterOnly = useRef(new Set<string>());
   // Opening a listing to all makes its clean files public, and a copy taken then can't be taken back.
   const [openingToAll, setOpeningToAll] = useState<WorldRecord | null>(null);
+  // The listing whose end date an admin is editing, and whether the change is on its way.
+  const [editingEnd, setEditingEnd] = useState<WorldRecord | null>(null);
+  const [savingEnd, setSavingEnd] = useState(false);
+  // Resolves to the server's refusal, which the dialog shows, or null once the schedule is saved.
+  const saveSupporterSchedule = async (world: WorldRecord, schedule: SupporterScheduleSave): Promise<string | null> => {
+    const worldId = String(world._id || world.id);
+    const noun = KIND_LABELS[kindOf(world)].one;
+    setSavingEnd(true);
+    try {
+      const held = await WorldStorageService.setRemoteWorldSupporterSchedule(worldId, schedule);
+      if (!mounted.current) return null;
+      const patch = (w: WorldRecord) => ({ ...w, supporter_until: held.until ?? undefined, supporterSchedule: held.schedule });
+      setRemoteWorlds((prev) => prev.map((w) => ((w._id || w.id) === worldId ? patch(w) : w)));
+      setSelectedRemoteWorld((prev) => (prev && (prev._id || prev.id) === worldId ? patch(prev) : prev));
+      setEditingEnd(null);
+      toast.success(held.until ? `${noun} opens to everyone on ${formatSupporterDate(new Date(held.until))}` : `${noun} has no end date`);
+
+      return null;
+    } catch (error) {
+      return describeError(error, `Failed to change the schedule of the ${noun.toLowerCase()}`).message;
+    } finally {
+      if (mounted.current) setSavingEnd(false);
+    }
+  };
   const handleToggleSupporterOnly = (world: WorldRecord) => {
     if (isSupporterOnly(world)) setOpeningToAll(world);
     else void applySupporterOnly(world);
@@ -1261,6 +1291,7 @@ const CommunityCreationsBrowser = ({
   const releaseCard = useStableCallback(handleRelease);
   const pinCard = useStableCallback(handleTogglePin);
   const supporterOnlyCard = useStableCallback(handleToggleSupporterOnly);
+  const supporterEndCard = useStableCallback((world: WorldRecord) => setEditingEnd(world));
   const withdrawCard = useStableCallback((entry: WorldRecord) => withdrawal.ask({
     id: String(entry._id || entry.id),
     name: String(entry.name ?? 'That world'),
@@ -1310,6 +1341,7 @@ const CommunityCreationsBrowser = ({
         onRelease={capabilities.moderation ? releaseCard : undefined}
         onTogglePin={capabilities.moderation ? pinCard : undefined}
         onToggleSupporterOnly={capabilities.moderation ? supporterOnlyCard : undefined}
+        onEditSupporterEnd={capabilities.moderation ? supporterEndCard : undefined}
         placements={placementsOf(world)}
         onOpenContest={openContest}
         // Only where the entry is the subject, and only while it is still an entry: a
@@ -1376,6 +1408,8 @@ const CommunityCreationsBrowser = ({
         description={`You've edited your copy of "${mascotDownload.dirtyConfirm?.name ?? ''}". Downloading again replaces it with the published version, and your changes are lost.`}
         onConfirm={mascotDownload.confirmDirtyDownload}
       />
+
+      <SupporterScheduleDialog world={editingEnd} busy={savingEnd} onClose={() => setEditingEnd(null)} onSave={saveSupporterSchedule} />
 
       <ConfirmDialog
         open={!!openingToAll}
@@ -1590,6 +1624,7 @@ const CommunityCreationsBrowser = ({
         onPendingUpdateChange={handlePendingUpdateChange}
         onTogglePin={handleTogglePin}
         onToggleSupporterOnly={handleToggleSupporterOnly}
+        onEditSupporterEnd={setEditingEnd}
         openLikersOnMount={openLikersOnMount}
         contests={contests}
         capabilities={capabilities}
@@ -1690,7 +1725,7 @@ const CommunityCreationsBrowser = ({
           </DialogHeader>
           <div className="py-2">
             <RadioGroup value={overwriteSelectedId ?? undefined} onValueChange={setOverwriteSelectedId}>
-              {(shownAction ? copiesForWorld(shownAction.world) : []).map((copy) => {
+              {(shownAction ? overwriteCopiesForWorld(shownAction.world) : []).map((copy) => {
                 const radioId = `overwrite-${copy.id}`;
                 const edited = copy.lastAccessed ? new Date(copy.lastAccessed).toLocaleString() : 'Unknown';
                 // In the update flow only, flag copies that already hold the current source version

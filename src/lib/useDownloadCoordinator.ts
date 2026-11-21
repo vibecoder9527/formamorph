@@ -19,8 +19,11 @@ import {
 } from "@/lib/worldUpdateReview";
 import type { UpdateAction } from "@/lib/componentUpdates";
 import { type WorldRecord } from "@/components/WorldDetails";
-import type { World } from "@/types";
+import type { SupporterCopyMarker, World } from "@/types";
+import { supporterContent, unscrambleWorldContent } from "@/lib/supporterContent";
+import { isSupporterOnly } from "@/lib/supporterListingAction";
 import { endWorldOptimize, reportWorldOptimize } from "@/lib/worldOptimizeProgress";
+import { coverData } from "@/lib/mediaImages";
 
 /** One add-on the player ticked. The name travels with the id so a row the world has since stopped
  *  offering can still be named in the report rather than shown as a listing id. */
@@ -86,9 +89,11 @@ interface DownloadRun {
   /** Replace an existing local copy in place, rather than adding one. */
   overwrite: boolean;
   /** The world's own content, kept so a retry does not download it a second time. */
-  content?: { migrated: World; thumbnailUrl: string };
+  content?: WorldContent;
   /** The components this run has already placed in the library. */
   installed: InstalledSource[];
+  /** Names of Supporter-only sources the run left out, reported once the world is stored. */
+  skipped: string[];
   /** The add-ons the player selected, and the ones already installed. */
   addons: SelectedAddon[];
   addonsDone: Set<string>;
@@ -101,6 +106,18 @@ interface DownloadRun {
   worldReady: boolean;
   /** Present when this run updates an installed copy in place rather than adding one. */
   update?: WorldUpdatePlan;
+}
+
+/** Note a Supporter-only source the run leaves out, once. */
+const noteSkipped = (run: DownloadRun, name: string) => {
+  if (!run.skipped.includes(name)) run.skipped.push(name);
+};
+
+/** A fetched world, migrated. `supporterCopy` is present when it came through the Supporter-only route. */
+interface WorldContent {
+  migrated: World;
+  thumbnailUrl: string;
+  supporterCopy?: SupporterCopyMarker;
 }
 
 /** A source the player cannot be given, by why. Each reads as the reason a retry would hit again. */
@@ -157,6 +174,12 @@ export function useDownloadCoordinator(
   const copiesForWorld = (world: WorldRecord): WorldRecord[] =>
     localCopiesBySource.get(listingId(world)) ?? [];
 
+  /** The copies a re-download may replace. A Supporter-only listing replaces only its Supporter Copies. */
+  const overwriteCopiesForWorld = (world: WorldRecord): WorldRecord[] => {
+    const copies = copiesForWorld(world);
+    return isSupporterOnly(world) ? copies.filter((copy) => copy.supporterCopy) : copies;
+  };
+
   const downloadStateForWorld = (world: WorldRecord): DownloadState =>
     getDownloadState(world.updated_at, copiesForWorld(world));
 
@@ -165,9 +188,18 @@ export function useDownloadCoordinator(
   const fetchWorldContent = async (
     world: WorldRecord,
     worldId: string,
-  ): Promise<{ migrated: World; thumbnailUrl: string }> => {
-    const contentData = await fetchCatalogContent(worldId, (fraction) =>
-      setDownloadProgress((p) => ({ ...p, [worldId]: fraction })));
+  ): Promise<WorldContent> => {
+    let supporterCopy: SupporterCopyMarker | undefined;
+    let contentData: unknown;
+    if (isSupporterOnly(world)) {
+      // The gated route sends it watermarked and scrambled; the copy is stored as plain images plus the marker.
+      const download = await supporterContent.fetchWorld(worldId);
+      contentData = await unscrambleWorldContent(download.contentData);
+      supporterCopy = { listingId: worldId, accountId: download.accountId, revision: download.revision };
+    } else {
+      contentData = await fetchCatalogContent(worldId, (fraction) =>
+        setDownloadProgress((p) => ({ ...p, [worldId]: fraction })));
+    }
 
     const migrated = migrateWorld(contentData);
 
@@ -183,15 +215,16 @@ export function useDownloadCoordinator(
     // embedding by the thumbnail response's `Cross-Origin-Resource-Policy: same-origin` header. Fall back to
     // the server URL only if the content somehow carries no embedded thumbnail.
     let thumbnailUrl = '';
-    if (migrated.worldOverview?.thumbnail) {
-      thumbnailUrl = migrated.worldOverview.thumbnail;
+    const embeddedCover = coverData(migrated.worldOverview);
+    if (embeddedCover) {
+      thumbnailUrl = embeddedCover;
     } else if (world.thumbnail_file) {
       thumbnailUrl = `${WorldStorageService.API_URL}/thumbnails/${world.thumbnail_file}`;
     } else if (world.thumbnail) {
       thumbnailUrl = world.thumbnail;
     }
 
-    return { migrated, thumbnailUrl };
+    return { migrated, thumbnailUrl, ...(supporterCopy ? { supporterCopy } : {}) };
   };
 
   /** Put one component listing's content in its library and note where it landed. */
@@ -243,6 +276,10 @@ export function useDownloadCoordinator(
         fail(MISSING_SOURCE);
         continue;
       }
+      if (isSupporterOnly(run.world) && isSupporterOnly(listing)) {
+        noteSkipped(run, name);
+        continue;
+      }
       try {
         run.installed.push(await installComponent(
           listing, () => WorldStorageService.fetchDependencyContent(worldId, dependency.id),
@@ -275,6 +312,11 @@ export function useDownloadCoordinator(
         failures.push({ id, name: listing.name || id, message: run.addonMessages[id] ?? 'Not downloaded yet.' });
         continue;
       }
+      if (isSupporterOnly(run.world) && isSupporterOnly(listing)) {
+        noteSkipped(run, listing.name || id);
+        run.addonsDone.add(id);
+        continue;
+      }
       try {
         run.installed.push(await installComponent(listing, () => fetchCatalogContent(id, () => {})));
         run.addonsDone.add(id);
@@ -299,7 +341,7 @@ export function useDownloadCoordinator(
   ];
 
   /** Store the world under its local id and put it in the caller's list. */
-  const storeWorld = async (run: DownloadRun, content: { migrated: World; thumbnailUrl: string }) => {
+  const storeWorld = async (run: DownloadRun, content: WorldContent) => {
     const world = run.world;
     const name = world.name || 'Downloaded World';
     const description = world.description || 'Downloaded from server';
@@ -313,6 +355,7 @@ export function useDownloadCoordinator(
       // Kept alongside the name so the author line can open their profile: `author` above is only a
       // name, and a name is not an account.
       sourceAuthorId: world.author?.id,
+      ...(content.supporterCopy ? { supporterCopy: content.supporterCopy } : {}),
     };
 
     // The world's own copies name the listings they follow; this is where each gains the library item
@@ -333,7 +376,8 @@ export function useDownloadCoordinator(
     // Offer to downscale oversized images; if accepted, overwrite the just-stored copy in place.
     // The run holds the library tile until the re-encoded copy is written back, not just until it is made.
     let finalData = linked;
-    if (onStored) {
+    // Re-encoding would damage the watermark, so a Supporter Copy keeps its images as sent.
+    if (onStored && !content.supporterCopy) {
       const listing = listingId(world);
       try {
         const w = await onStored(run.localId, linked, (fraction) => {
@@ -356,6 +400,7 @@ export function useDownloadCoordinator(
     else setWorlds((prev) => [...prev, { ...record, isLoading: false }]);
     toast.success(`"${name}" ${run.overwrite ? 'updated' : 'downloaded'}`);
     if (toolWarning) toast.warning(toolWarning);
+    if (run.skipped.length) toast.warning(`Left out ${run.skipped.join(', ')}. Supporter-only sources can't come with a world.`);
   };
 
   /**
@@ -449,7 +494,7 @@ export function useDownloadCoordinator(
   ) => {
     const run: DownloadRun = {
       world, localId, overwrite,
-      installed: [], addons: plan.addons, addonsDone: new Set(),
+      installed: [], skipped: [], addons: plan.addons, addonsDone: new Set(),
       addonMessages: {}, requiredFailures: {}, worldReady: false,
       ...(update ? { update } : {}),
     };
@@ -532,20 +577,32 @@ export function useDownloadCoordinator(
   const handleContextualDownload = (world: WorldRecord, state: DownloadState, plan: DownloadPlan = { addons: [] }) => {
     planRef.current = plan;
     if (state === 'none') { void handleDownloadWorld(world, plan); return; }
+    if (isSupporterOnly(world)) {
+      // Only a Supporter Copy is replaced in place; a plain copy stays plain and the download makes a new world.
+      const marked = overwriteCopiesForWorld(world);
+      if (!marked.length) { void handleDownloadWorld(world, plan); return; }
+      if (marked.length === 1) { void openWorldUpdateReview(world, marked[0].id); return; }
+      chooseOverwrite(world);
+      return;
+    }
     setContextualAction({ world, mode: state });
   };
 
   // "Overwrite an existing copy": review the one match, else pick which copy first.
-  const handleChooseOverwrite = () => {
-    if (!contextualAction) return;
-    const copies = copiesForWorld(contextualAction.world);
+  const chooseOverwrite = (world: WorldRecord) => {
+    const copies = overwriteCopiesForWorld(world);
     if (copies.length <= 1) {
-      if (copies[0]) void openWorldUpdateReview(contextualAction.world, copies[0].id);
+      if (copies[0]) void openWorldUpdateReview(world, copies[0].id);
       setContextualAction(null);
       return;
     }
+    setContextualAction({ world, mode: downloadStateForWorld(world) });
     setOverwriteSelectedId(copies[0]?.id ?? null);
     setShowOverwriteSelect(true);
+  };
+
+  const handleChooseOverwrite = () => {
+    if (contextualAction) chooseOverwrite(contextualAction.world);
   };
 
   // Confirm the chosen copy in the selection dialog.
@@ -565,6 +622,7 @@ export function useDownloadCoordinator(
     showOverwriteSelect, setShowOverwriteSelect,
     localCopiesBySource,
     copiesForWorld,
+    overwriteCopiesForWorld,
     downloadStateForWorld,
     handleContextualDownload,
     handleChooseOverwrite,

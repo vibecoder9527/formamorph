@@ -59,11 +59,10 @@ const panel = () => document.querySelector<HTMLElement>('[data-media-panel]');
 const framed = () => panel()?.querySelector<HTMLElement>('[data-media-framed]') ?? null;
 const inPanel = () => within(panel()!);
 const map = (bench: ReturnType<typeof open>) => bench.ctx().worldOverview.mapBackground;
-const lastLabel = (bench: ReturnType<typeof open>) => {
-  const { steps, cursor } = bench.historyState();
-  return steps[cursor - 1]?.label;
-};
 const step = (action: () => void) => act(async () => { action(); });
+/** The framed slot's Remove From Slot (Q45): the gallery renders every slot and hides all but the framed one. */
+const unlinkFramed = () => within(Array.from(panel()!.querySelectorAll<HTMLElement>('[data-media-entry-bar]'))
+  .find((bar) => !bar.parentElement!.classList.contains('hidden'))!).getByRole('button', { name: 'Remove From Slot' });
 const undo = undoMediaEdit;
 const webp = () => new File(['new-map'], 'map.webp', { type: 'image/webp' });
 
@@ -95,45 +94,24 @@ describe('Media tab Map Background', () => {
     expect(map(bench)!.frame).toEqual(FRAME);
   });
 
-  it('replaces an image in place, keeping its rule, the frame and opacity, as one undoable step', async () => {
-    const ruled = { all: [{ kind: 'stat' as const, id: 'health', operator: '<' as const, value: 20, unit: 'raw' as const }] };
-    const bench = open(mapWorld({ images: [{ data: DRAWN }, { data: RUINED, requires: [ruled] }], frame: FRAME, opacity: 0.6 }));
-    const was = map(bench);
-    fireEvent.click(section().querySelector<HTMLElement>('[data-media-card="stack"]')!);
-    fireEvent.click(inPanel().getByRole('button', { name: /^Image 2/ }));
-    const steps = bench.historyState().cursor;
-
-    const input = framed()!.querySelector<HTMLInputElement>('input[data-media-replace]')!;
-    await act(async () => { fireEvent.change(input, { target: { files: [webp()] } }); });
-
-    // The old image is WebP data too, so wait for the change itself.
-    await waitFor(() => expect(map(bench)!.images[1].data).not.toBe(RUINED));
-    expect(map(bench)!.images[1].data).toMatch(/^data:image\/webp;base64,/);
-    expect(map(bench)!.images[1].requires).toEqual([ruled]);
-    expect(map(bench)).toMatchObject({ frame: FRAME, opacity: 0.6 });
-    expect(lastLabel(bench)).toBe('Replace Image 2: Map Background');
-    expect(bench.historyState().cursor).toBe(steps + 1);
-
-    await undo();
-    expect(map(bench)).toEqual(was);
-  });
-
   it('removes one image as one step, and the field with the last one', async () => {
     const bench = open();
     const was = map(bench);
     fireEvent.click(section().querySelector<HTMLElement>('[data-media-card="stack"]')!);
+    const steps = bench.historyState().cursor;
 
-    await step(() => fireEvent.click(within(framed()!).getByRole('button', { name: 'Remove' })));
-    expect(map(bench)).toEqual({ ...was, images: [{ data: RUINED }] });
-    expect(lastLabel(bench)).toBe('Remove Image 1: Map Background');
+    await step(() => fireEvent.click(unlinkFramed()));
+    expect(map(bench)).toEqual({ ...was, images: [was!.images[1]] });
+    // The gallery's own edit: one step, with no label of its own.
+    expect(bench.historyState().cursor).toBe(steps + 1);
     await undo();
     expect(map(bench)).toEqual(was);
 
     // Down to one image, a removal takes the frame and opacity with it (Q77).
-    await step(() => fireEvent.click(within(framed()!).getByRole('button', { name: 'Remove' })));
+    await step(() => fireEvent.click(unlinkFramed()));
     const single = section().querySelector<HTMLElement>('[data-media-card="image"]')!;
     fireEvent.click(single);
-    await step(() => fireEvent.click(within(framed()!).getByRole('button', { name: 'Remove' })));
+    await step(() => fireEvent.click(unlinkFramed()));
     expect(map(bench)).toBeUndefined();
   });
 });
@@ -159,10 +137,13 @@ describe('Media tab Map Background under No Images', () => {
 
     await waitFor(() => expect(map(bench)).toBeDefined());
     expect(map(bench)).toEqual({
-      images: [{ data: expect.stringMatching(/^data:image\//) }],
+      images: [{ mediaId: expect.any(String) }],
       frame: firstMapFrame(world.locations, 2),
       opacity: 1,
     });
+    // The picture joined the list under its file's name (Q23).
+    const placed = bench.ctx().worldOverview.mediaList![(map(bench)!.images[0] as { mediaId: string }).mediaId];
+    expect(placed).toMatchObject({ name: 'map', data: expect.stringMatching(/^data:image\//) });
     expect(blankCard()).toBeUndefined();
 
     await undo();

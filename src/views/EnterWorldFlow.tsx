@@ -7,18 +7,18 @@ import { DEV_MISSING_PICK } from '@/lib/dev/devAvatars';
 import { useLingeringMount } from '@/lib/useLingeringMount';
 import { useMountedRef } from '@/lib/useMountedRef';
 import { useResolvedAuthoredWorld } from '@/lib/useResolvedWorld';
-import { inAuthoredOrder, traitOrderIndex } from '@/lib/traitEffects';
+import { inAuthoredOrder, isHidden, traitOrderIndex } from '@/lib/traitEffects';
 import { ownerPins, inPlayOwners, pinBlueprintsOf, playedEntityId } from '@/lib/ownedTraitsInPlay';
 import { playedEntityIdOf, startLocationIdsOpen } from '@/lib/inPlayWorld';
-import { cascadeOffInput, startingStatsWith } from '@/lib/traitRuntime';
-import { seedWorldEntityStats } from '@/lib/entityStats';
+import { cascadeOffInput, startingTraitState } from '@/lib/traitRuntime';
+import { seedWorldEntityStats } from '@/lib/entityStatSeed';
 import { toastError } from '@/lib/linkToast';
 import CharacterCustomization from './CharacterCustomization';
 import { seededCharacterData } from '@/lib/legacyVrm';
 import EnterWorldWorkspace from './EnterWorldWorkspace';
 import { startingLocations } from '@/lib/startingLocation';
 import {
-  gateTrees, gateStates, gateTreeOf, settle, shownRefs, switchTrait, type SettleResult,
+  gateTrees, gateStates, gateTreeOf, settle, shownRefs, switchTrait, type GateTraitRef, type SettleResult,
 } from '@/lib/traitGates';
 import { playedEntityIds, scoped, type OwnerId } from '@/lib/scope';
 import { checkedAvatarLock } from '@/lib/customizationLock';
@@ -27,10 +27,11 @@ import { buildInitialSelection, finalizeSelection, shouldShowDictionaryChoices }
 import { libraryLines } from '@/lib/librarySources';
 import { followedLibraryId } from '@/lib/publishLinks';
 import {
-  castOwnedTraits, emptyEntryDraft, entryDefaults, entryGateInput, entryTrees, libraryCastIds, rekeyOwnedPicks,
-  withLibraryDefaults, withLocationPick, withPersonaPick, withSettledTraits, type EntryDraft, type EntryTraitWorld,
+  applyPreset, castOwnedTraits, emptyEntryDraft, entryDefaults, entryGateInput, entryTrees, libraryCastIds, matchPreset, presetRowRef, rekeyOwnedPicks,
+  withLibraryDefaults, withLocationPick, withPersonaPick, withSettledEntry, type EntryDraft, type EntryTraitWorld, type PresetPlaces,
 } from '@/lib/entryDraft';
-import { optionPinLists, shownOptions } from '@/lib/worldOptions';
+import { presetRowTrait, presetTraitTrees } from '@/lib/presetCheck';
+import { isPreset, shownOptions } from '@/lib/worldOptions';
 import { bindLibraryEntity, blueprintBindWorld } from '@/lib/blueprintTravel';
 import { playLibraryStats } from '@/lib/portableStats';
 import { hasWorldAdditionDefaults, restoreWorldAdditionDefaults, saveWorldAdditionDefaults } from '@/lib/worldAdditionDefaults';
@@ -49,11 +50,13 @@ import { LibraryRecordNotFoundError } from '../services/LibraryStore';
 import type { WorldRecord } from '@/components/WorldDetails';
 import ReadmeModal from '@/components/game/ReadmeModal';
 import { readUserDefaultAvatar } from '@/lib/defaultAvatar';
+import { supporterCopyBlock } from '@/lib/supporterCopy';
+import { OpenWorldIdProvider } from '@/lib/useSupporterCopyBlock';
 import {
   buildEnterFlow, entryAvatarInUse, entryVrmPick, navigableSteps, type EntryVrmInput, type EnterMode, type EnterStep, type NavigableStep,
 } from '@/lib/enterFlow';
 import type {
-  CharacterData, Dictionary, DictionaryMetadata, Entity, EntityMetadata, OwnedTraitPicks, PersonaRef, VrmPick, WorldOptionValueOf, WorldOptionValues,
+  CharacterData, Dictionary, DictionaryMetadata, Entity, EntityMetadata, OwnedTraitPicks, PersonaRef, PresetWorldOption, VrmPick, WorldOptionValueOf, WorldOptionValues,
 } from '@/types';
 
 export type StartGame = (
@@ -203,11 +206,12 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
     );
     const world = { traits: rawTraits, traitGroups: rawTraitGroups, entities: worldEntities };
     // The persona's linked stat traits apply after the world picks, as the game's seed does.
-    const entityStats = seedWorldEntityStats({ stats: rawStats, statGroups: rawStatGroups, entities: [...worldEntities, ...libraryCast] });
-    const starting = startingStatsWith(rawStats, chosen, {
+    const seeded = seedWorldEntityStats({ stats: rawStats, statGroups: rawStatGroups, entities: [...worldEntities, ...libraryCast] });
+    const starting = startingTraitState(rawStats, chosen, {
       traits: rawTraits, groups: rawTraitGroups, entities: worldEntities, persona: draftPersona,
+      options: worldOptions, ...(entryDraft.optionValues && { optionValues: entryDraft.optionValues }),
       ...inPlayOwners(world, draftPersona, libraryCast),
-    }, ownedTraitPicks, entityStats);
+    }, ownedTraitPicks, seeded).state;
     return ownerPins({
       world,
       persona: draftPersona,
@@ -215,12 +219,12 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
       globalTraits: chosen,
       owned: ownedTraitPicks,
       sharedPlaceholders: worldPlaceholders,
-      entityStats,
+      entityStats: starting.entityStats,
       blueprints: pinBlueprintsOf({ stats: rawStats, statGroups: rawStatGroups, placeholders: worldPlaceholders, placeholderGroups }),
+      optionStats: { options: worldOptions, optionValues: entryDraft.optionValues },
     }, {
-      options: optionPinLists(worldOptions, entryDraft.optionValues),
       location: rawLocations.find((l) => l.id === selectedLocationId),
-      stats: starting,
+      stats: starting.stats,
       placeholders,
       rolls,
     });
@@ -245,6 +249,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
   );
   const rawEntryWorld: EntryTraitWorld = {
     traits: rawTraits, traitGroups: rawTraitGroups, entities: worldEntities, library: libraryCast, stats: rawStats, statGroups: rawStatGroups,
+    options: worldOptions,
   };
   // A library entity that joins the cast starts on its own defaults.
   useEffect(() => {
@@ -256,7 +261,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
   const traitName = (ownerId: OwnerId, traitId: string) => {
     const owner = gateTreeOf(castTrees, ownerId);
     const name = owner?.traits.find((t) => t.id === traitId)?.name ?? traitId;
-    return owner && ownerId !== null && ownerId !== playedEntityId(entryDraft.persona) ? `${owner.name}'s ${name}` : name;
+    return owner && ownerId !== null && ownerId !== playedEntityId(entryDraft.persona) ? `${owner.name}: ${name}` : name;
   };
   // Every scope's picks: the global picks, and each entity's by its id.
   const entrySelectedTraits = useMemo(
@@ -271,7 +276,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
     ownedIds: entryDraft.ownedTraitIds,
     inOrder: (checked) => inAuthoredOrder(checked, traitOrderIndex(rawTraits, rawTraitGroups)),
   }), [castTrees, entryDraft.persona, entryDraft.traitIds, entryDraft.ownedTraitIds, resolvedWorldEntities, rawTraits, rawTraitGroups]);
-  const cascadeFrom = (result: SettleResult, because: string): TraitCascade | null => {
+  const cascadeFrom = (result: Pick<SettleResult, 'turnedOff'>, because: string): TraitCascade | null => {
     const names = shownRefs(castTrees, result.turnedOff).map((ref) => traitName(ref.ownerId, ref.traitId));
     return names.length ? { off: names, because } : null;
   };
@@ -280,7 +285,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
   const handleTraitSelection = (traitId: string, ownerId: OwnerId) => {
     const result = switchTrait(entryGateInput(entryWorld, entryDraft), ownerId, traitId, cascadeOffInput(entryDraft.cascadeOffTraitIds));
     if (!result) return;
-    reviseDraft((draft) => withSettledTraits(draft, result));
+    reviseDraft((draft) => withSettledEntry(draft, result, entryWorld));
     setTraitCascade(cascadeFrom(result, traitName(ownerId, traitId)));
   };
 
@@ -289,7 +294,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
     const next = withPersonaPick(entryDraft, ref, personaPickContext);
     // A pick the last persona turned off returns once the new one opens its gate again.
     const result = settle(entryGateInput(entryWorld, next), cascadeOffInput(next.cascadeOffTraitIds));
-    reviseDraft(() => withSettledTraits(next, result));
+    reviseDraft(() => withSettledEntry(next, result, entryWorld));
     const picked = ref.source === 'world' ? worldPersonaOptions.find((p) => p.id === ref.entityId)
       : ref.source === 'library' ? personaOptions.find((p) => p.id === ref.entityId) : undefined;
     setTraitCascade(cascadeFrom(result, picked?.name ?? 'the persona change'));
@@ -299,8 +304,43 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
   const handleOptionChange = (id: string, value: WorldOptionValueOf) => {
     const next = { ...entryDraft, optionValues: { ...entryDraft.optionValues, [id]: value } };
     const result = settle(entryGateInput(entryWorld, next), cascadeOffInput(next.cascadeOffTraitIds));
-    reviseDraft(() => withSettledTraits(next, result));
+    reviseDraft(() => withSettledEntry(next, result, entryWorld));
     setTraitCascade(cascadeFrom(result, worldOptions.find((o) => o.id === id)?.name ?? 'the World Option change'));
+  };
+
+  // A Preset click settles the whole target at once, so click order never blocks it.
+  const handlePreset = (preset: PresetWorldOption, valueId: string) => {
+    const applied = applyPreset(entryDraft, entryWorld, preset, valueId, presetPlaces);
+    if (!applied) return;
+    reviseDraft(() => applied.draft);
+    const { notice } = applied;
+    // Resolved names from setup's trees, owned ones as "Owner: Trait" (Q30, Q42).
+    const trees = presetTraitTrees(entryWorld, entryWorld.library);
+    const presetTraitName = ({ ownerId, traitId }: GateTraitRef): string[] => {
+      const found = presetRowTrait({ traitId, ...(ownerId === null ? {} : { ownerId }) }, trees);
+      if (!found || isHidden(found.trait)) return [];
+      const { trait, owner } = found;
+      if (!owner) return [trait.name];
+      const name = resolveTraitText(trait, trait.name, owner.entity);
+      return [ownerId !== playedEntityId(applied.draft.persona) ? `${owner.name}: ${name}` : name];
+    };
+    const traitsNotApplied = notice.skipped.flatMap((row) => (row.kind === 'trait' ? presetTraitName(presetRowRef(row)) : []));
+    const notSet = notice.skipped.flatMap((row) => {
+      if (row.kind === 'persona') return entryWorld.entities.some((e) => e.id === row.entityId) ? ['Persona'] : [];
+      if (row.kind === 'location') return locations.some((l) => l.id === row.locationId) ? ['Starting Location'] : [];
+      const option = row.kind === 'option' ? worldOptions.find((o) => o.id === row.optionId) : undefined;
+      return option ? [resolvePH(option.name)] : [];
+    });
+    const on = notice.on.flatMap(presetTraitName);
+    const off = notice.off.flatMap(presetTraitName);
+    const picked = notice.persona;
+    // A persona row picks a world persona or the Custom Persona (Q36).
+    const persona = picked && (picked.source === 'none' ? personaOffer.custom?.name ?? 'None'
+      : worldPersonaOptions.find((p) => p.id === picked.entityId)?.name);
+    const location = notice.locationId === undefined ? undefined
+      : notice.locationId === null ? 'Random' : locations.find((l) => l.id === notice.locationId)?.name;
+    setTraitCascade(on.length || off.length || traitsNotApplied.length || notSet.length || persona || location
+      ? { kind: 'preset', value: resolvePH(notice.value.name), on, off, persona, location, traitsNotApplied, notSet } : null);
   };
 
   /**
@@ -322,15 +362,19 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
 
   /** The library personas this entry offers: marked entities the world holds no copy of. */
   const personaOptions = useMemo(
-    () => additionEntities.filter((entity) => entity.persona === true).map(({ id, name, image, description }) => ({ id, name, image, description })),
-    [additionEntities],
+    () => additionEntities.filter((entity) => entity.persona === true).map((entity) => ({
+      id: entity.id, name: entity.name, image: entity.image, description: entity.description,
+      // A persona saved from a Supporter Copy plays only in its source world.
+      blockedReason: supporterCopyBlock(entity, { addToWorld: selectedWorld?.id ?? '' }),
+    })),
+    [additionEntities, selectedWorld?.id],
   );
   /** The world's entities the author marked as playable. */
   /** A persona card with the name of the location it starts at. */
   const startingOption = useCallback((entity: Entity): PersonaOption => {
     const start = personaStartLocation(entity, locations);
-    return { ...personaOption(resolveEntityText)(entity), startsAt: locations.find((l) => l.id === start)?.name };
-  }, [resolveEntityText, locations]);
+    return { ...personaOption(resolveEntityText, worldOverview.mediaList)(entity), startsAt: locations.find((l) => l.id === start)?.name };
+  }, [resolveEntityText, locations, worldOverview.mediaList]);
   const worldPersonaOptions = useMemo<PersonaOption[]>(
     () => resolvedWorldEntities.filter((entity) => entity.persona === true).map(startingOption),
     [resolvedWorldEntities, startingOption],
@@ -355,18 +399,32 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
     [personaRules.allowed, worldPersonaOptions, personaOptions, customPersonaOption],
   );
   // The locations the gates leave on and unlocked at the start under the picked persona and Options (Q12, Q43).
-  const startLocations = useMemo(() => {
-    const world = {
+  const openStartIds = useCallback((draft: EntryDraft) => startLocationIdsOpen(
+    {
       entities: worldEntities, locations: rawLocations, traits: rawTraits, traitGroups: rawTraitGroups,
       stats: rawStats, statGroups: rawStatGroups, options: worldOptions,
-    };
-    const open = startLocationIdsOpen(world, playedEntityIdOf(entryDraft.persona, worldEntities), entryDraft.optionValues);
+    },
+    playedEntityIdOf(draft.persona, worldEntities), draft.optionValues, scoped(draft.traitIds, draft.ownedTraitIds), libraryCast,
+  ), [worldEntities, rawLocations, rawTraits, rawTraitGroups, rawStats, rawStatGroups, worldOptions, libraryCast]);
+  const startLocations = useMemo(() => {
+    const open = openStartIds(entryDraft);
     return open.size === locations.length ? locations : locations.filter((l) => open.has(l.id));
-  }, [worldEntities, rawLocations, rawTraits, rawTraitGroups, rawStats, rawStatGroups, worldOptions, entryDraft.persona, entryDraft.optionValues, locations]);
+  }, [openStartIds, entryDraft, locations]);
   const personaPickContext: PersonaPickContext = {
     worldEntities: resolvedWorldEntities,
     locations: startLocations,
   };
+  // What a Preset's persona and location rows read (Q35, Q36).
+  const presetPlaces = useMemo<PresetPlaces>(
+    () => ({ allowed: personaRules.allowed, worldEntities: resolvedWorldEntities, locations, openLocationIds: openStartIds }),
+    [personaRules.allowed, resolvedWorldEntities, locations, openStartIds],
+  );
+  // Each Preset's match settles once per value, so it runs only when the draft or the world changes.
+  const presetMatches = useMemo(
+    () => new Map(setupOptions.flatMap((o) => (isPreset(o) ? [[o.id, matchPreset(entryDraft, entryWorld, o, presetPlaces)] as const] : []))),
+    [setupOptions, entryDraft, entryWorld, presetPlaces],
+  );
+  const presetMatch = (preset: PresetWorldOption) => presetMatches.get(preset.id) ?? null;
   // Enter World and Quick Start start on the same persona, and at the same location for it.
   const personaPreselect = (worldId: string) => preselectPersona({
     rules: personaRules,
@@ -374,7 +432,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
     globalDefault: defaultPersona,
     available: {
       world: worldPersonaOptions.map((option) => option.id),
-      library: personaOptions.map((option) => option.id),
+      library: personaOptions.filter((option) => !option.blockedReason).map((option) => option.id),
       custom: !!customPersonaOption,
     },
   });
@@ -601,7 +659,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
   }
 
   return (
-    <>
+    <OpenWorldIdProvider value={selectedWorld?.id}>
       {/* The world's Introduction, over whichever setup screen is behind it. Placeholders resolve because
           `beginSession` rolls them on the Enter World click, before this opens. */}
       {selectedWorld && (
@@ -624,12 +682,16 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
           options={worldOptions}
           optionValues={entryDraft.optionValues}
           onOptionChange={handleOptionChange}
+          presetMatch={presetMatch}
+          onPreset={handlePreset}
           traitEntities={entryTraitEntities}
           traitLibrary={entryWorld.library}
           resolveEntityText={resolveEntityText}
           stats={rawStats}
           statGroups={rawStatGroups}
           locations={offeredStartLocations(entryDraft.persona, personaPickContext)}
+          items={worldItems}
+          allLocations={rawLocations}
           resolveText={resolvePH}
           resolveTraitText={resolveTraitText}
           selectedTraits={entrySelectedTraits}
@@ -676,7 +738,7 @@ const EnterWorldFlow = forwardRef<EnterWorldFlowHandle, EnterWorldFlowProps>(fun
           resolving={resolvingEntry}
         />
       )}
-    </>
+    </OpenWorldIdProvider>
   );
 });
 

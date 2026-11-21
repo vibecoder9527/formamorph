@@ -127,6 +127,8 @@ import { exportedComponentLinks } from '@/lib/componentExportLinks';
 import { buildDictionaryFile } from '@/lib/dictionaryFile';
 import { downloadBlob } from '@/lib/downloadBlob';
 import { toastSaveFailure } from '@/lib/saveFailureToast';
+import { openWorldBlock } from '@/lib/supporterCopy';
+import { OpenWorldIdProvider, SupporterCopyProvider } from '@/lib/useSupporterCopyBlock';
 import { useWorldExport } from '@/lib/useWorldExport';
 import { terminateWorker as terminateJsonWorker } from '@/lib/jsonFileWorkerUtils';
 import AddDictionaryModal from '@/components/modals/AddDictionaryModal';
@@ -202,10 +204,10 @@ const WorldEditorInner = ({
 }) => {
   const showBackButton = backButton ?? !embedded;
   const {
-    updateWorldOverview, worldId, worldOverview,
+    updateWorldOverview, addMedia, worldId, worldOverview,
     loadWorldData, getWorldData,
     stats, statGroups, locations, connections, entities, entityGroups, traits, traitGroups, dictionaries, placeholders, placementLetters,
-    worldPlaceholders, placeholderOwners, placeholderGroups, worldTools, worldScripts, items, setItems, setBodies, updateItem, updateWorldTool,
+    worldPlaceholders, placeholderOwners, placeholderGroups, worldTools, worldScripts, items, itemGroups, setItems, setBodies, updateItem, updateItemGroup, updateWorldTool,
     addStat, addLocation, addEntity, addTrait, addDictionary,
     addPlaceholder,
     updateStat, updateStatGroup, updateEntity, updateEntityGroup, updateLocation, updateTrait, updateTraitGroup,
@@ -213,8 +215,13 @@ const WorldEditorInner = ({
     updateDictionary, addDictionaryEntry, updateDictionaryEntry, updatePlaceholder, updatePlaceholderGroup,
     setLocations, setEntities, setDictionaries,
     isWorldDirty, isWorldStored, saveWorld: saveWorldCtx, discardChanges, setOwnedLibraryIds,
-    worldChangedElsewhere, reloadWorld, keepWorldCopy,
+    worldChangedElsewhere, reloadWorld, keepWorldCopy, supporterCopy,
   } = useGameData();
+  const exportWorldBlock = openWorldBlock(supporterCopy, 'exportWorld');
+  const exportBlocks = useMemo(() => ({
+    entity: openWorldBlock(supporterCopy, 'exportEntity'),
+    dictionary: openWorldBlock(supporterCopy, 'exportDictionary'),
+  }), [supporterCopy]);
   const { editorAutoSave, setEditorAutoSave, editorAutoSaveIdleSeconds } = useSettings();
   const { promptWorld, dialog: downscaleDialog } = useDownscalePrompt();
 
@@ -233,6 +240,7 @@ const WorldEditorInner = ({
   const applyDownscaled = (w: World) => {
     updateWorldOverview({
       thumbnail: w.worldOverview.thumbnail,
+      ...(w.worldOverview.mediaList ? { mediaList: w.worldOverview.mediaList } : {}),
       ...(w.worldOverview.mapBackground ? { mapBackground: w.worldOverview.mapBackground } : {}),
     });
     setEntities(w.entities);
@@ -250,7 +258,9 @@ const WorldEditorInner = ({
   useEffect(() => () => optimizeAbortRef.current?.abort(), []);
   // Drop the import/export JSON worker when the editor unmounts — it's idle outside those two actions.
   useEffect(() => () => terminateJsonWorker(), []);
+  const optimizeBlock = openWorldBlock(supporterCopy, 'optimizeImages');
   const optimizeImages = async () => {
+    if (optimizeBlock) return;
     const controller = new AbortController();
     optimizeAbortRef.current = controller;
     setOptimizeProgress('scanning');
@@ -532,14 +542,14 @@ const WorldEditorInner = ({
     const reachable = new Set<string>(visibleTabs.map((t) => t.value));
     return collectSearchTargets({
       worldOverview, stats, statGroups, entities, entityGroups, locations, connections, traits, traitGroups, dictionaries, placeholders,
-      placeholderGroups, items, scripts: worldScripts, tools: worldTools, updateWorldOverview, updateStat, updateStatGroup, updateEntity,
+      placeholderGroups, items, itemGroups, scripts: worldScripts, tools: worldTools, updateWorldOverview, updateStat, updateStatGroup, updateEntity,
       updateEntityGroup, updateLocation, updateConnection, updateTrait, updateTraitGroup, updateDictionary, updateDictionaryEntry,
-      updatePlaceholder, updatePlaceholderGroup, updateItem, advanced, writeScripts, updateTool: updateWorldTool,
+      updatePlaceholder, updatePlaceholderGroup, updateItem, updateItemGroup, advanced, writeScripts, updateTool: updateWorldTool,
     }).filter((t) => reachable.has(t.tab));
   }, [searching, visibleTabs, advanced, worldOverview, stats, statGroups, updateStatGroup, entities, entityGroups, locations, connections, traits,
-      traitGroups, dictionaries, placeholders, placeholderGroups, items, worldScripts, worldTools, updateWorldOverview, updateStat,
+      traitGroups, dictionaries, placeholders, placeholderGroups, items, itemGroups, worldScripts, worldTools, updateWorldOverview, updateStat,
       updateEntity, updateEntityGroup, updateLocation, updateConnection, updateTrait, updateTraitGroup, updateDictionary,
-      updateDictionaryEntry, updatePlaceholder, updatePlaceholderGroup, updateItem, writeScripts, updateWorldTool]);
+      updateDictionaryEntry, updatePlaceholder, updatePlaceholderGroup, updateItem, updateItemGroup, writeScripts, updateWorldTool]);
   // A fresh object per navigation, not the bare key: a panel with its own tabs has to re-open the right one
   // even when two consecutive hits sit in the same field and the author flipped tabs between them.
   // `itemId` says which item the hit belongs to — null for Overview's own fields, which sit in no item.
@@ -660,7 +670,7 @@ const WorldEditorInner = ({
     addEntity(entity);
     navigateToBenchItem('entities', entity.id);
   }, [getWorldData, addEntity, navigateToBenchItem]);
-  useHelpWorldSource(editorToolWorld, getWorldData, { lean: 'editor', world: getWorldData, open: openWorldSource, addEntity: addEntityDraft });
+  useHelpWorldSource(editorToolWorld, getWorldData, { lean: 'editor', world: getWorldData, open: openWorldSource, addEntity: addEntityDraft, supporterCopy: () => supporterCopy });
   // A Find All Uses row: select the box's stat or trait; its panel opens the Scripts tab and the box takes the caret.
   const goToCodeUse = useCallback(({ entityId, rowId, trait, world, tool, timing, scriptId, line }: CodeUse) => {
     requestCodeUseReveal({ entityId, rowId, ...(trait && { trait }), ...(world && { world }), ...(tool && { tool }), timing, scriptId, line });
@@ -691,10 +701,11 @@ const WorldEditorInner = ({
   });
   const benchPanel = <PanelErrorBoundary><TestBench {...bench.panelProps} /></PanelErrorBoundary>;
 
-  const exportCurrentWorld = () => exportWorld(buildCurrentWorld());
+  const exportCurrentWorld = () => { if (!exportWorldBlock) exportWorld(buildCurrentWorld()); };
 
   // Export one book to its own standalone `.json` (no image downscale — dictionaries are text only).
   const exportDictionary = async (book: Dictionary) => {
+    if (exportBlocks.dictionary) return;
     try {
       // The book's own placeholders go as they are; the shared ones its entries use ride along so its chips
       // resolve after import elsewhere. The link record travels as file relationships, never as a world.
@@ -709,10 +720,11 @@ const WorldEditorInner = ({
 
   // Export one entity as a shareable WebP character card (its portrait carrying the text fields).
   const exportEntity = async (entity: Entity) => {
+    if (exportBlocks.entity) return;
     try {
       // The card's own data keeps the chips; only the filename is flattened, since a placement id is not a name.
       const links = await exportedComponentLinks(entity.link);
-      downloadBlob(await exportEntityCard(entity, placeholders, links, undefined, { traits, traitGroups, entities, stats, statGroups }, worldOverview?.vrmStore), `${labelPlaceholders(entity.name, placeholders, { letters: placementLetters, owners: placeholderOwners }) || 'Character'}.webp`);
+      downloadBlob(await exportEntityCard(entity, placeholders, links, undefined, { traits, traitGroups, entities, stats, statGroups }, worldOverview?.vrmStore, worldOverview?.mediaList), `${labelPlaceholders(entity.name, placeholders, { letters: placementLetters, owners: placeholderOwners }) || 'Character'}.webp`);
     } catch (error) {
       toastError(error, 'Could not export the entity.');
     }
@@ -738,12 +750,16 @@ const WorldEditorInner = ({
     addEntityToWorld, addBookToWorld, addPlaceholder, addLocation, setOwnedLibraryIds,
     vrmStore: worldOverview?.vrmStore,
     setVrmStore: (vrmStore) => updateWorldOverview({ vrmStore }),
+    mediaList: worldOverview?.mediaList,
+    setMediaList: (mediaList) => updateWorldOverview({ mediaList }),
     reopenPicker: (kind) => {
       setResumePicker(true);
       if (kind === 'dictionary') setShowAddDictionary(true); else setShowAddEntity(true);
     },
     exportEntity: (entity) => { void exportEntity(entity); },
     exportDictionary: (book) => { void exportDictionary(book); },
+    exportBlocks,
+    supporterCopy,
   });
 
   // The Save face walks every save through its states, the tour's and autosaves included.
@@ -755,7 +771,7 @@ const WorldEditorInner = ({
       // The links made this session are now on disk, so they stop reading as pending.
       linking.clearPendingLinks();
     } else {
-      void toastSaveFailure(result.error, result.world);
+      void toastSaveFailure(result.error, result.world, exportWorldBlock);
     }
     return result.ok;
   });
@@ -929,11 +945,11 @@ const WorldEditorInner = ({
   const tourApi = useMemo(
     () => ({
       updateWorldOverview, addLocation, updateLocation, addConnection, updateConnection, openConnection, addEntity,
-      updateEntity, addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry,
+      updateEntity, addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry, addMedia,
     }),
     [
       updateWorldOverview, addLocation, updateLocation, addConnection, updateConnection, openConnection, addEntity,
-      updateEntity, addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry,
+      updateEntity, addStat, updateStat, addTrait, updateTrait, addDictionaryEntry, updateDictionaryEntry, addMedia,
     ],
   );
   const tourWorld = useMemo(() => getWorldData(), [getWorldData]);
@@ -1057,6 +1073,7 @@ const WorldEditorInner = ({
   const { adapter: itemsAdapter, dialog: removeItemDialog } = useWorldItemsAdapter({
     selectedId: selections.items ?? null,
     onSelect: selectItem,
+    collapse: treeCollapse.stateFor('items'),
     tab: shownItemTab,
     onTabChange: setItemTab,
     placeholderId: itemPlaceholderId,
@@ -1157,7 +1174,7 @@ const WorldEditorInner = ({
   const mediaParts = useWorldMediaEditor({
     selectedId: selections.media ?? null, onSelect: selectMediaItem, search, onGoTo: goToMediaParent,
     publishBytes: bench.publishBytes,
-    optimize: { progress: optimizeProgress, onRun: () => { void optimizeImages(); } },
+    optimize: { progress: optimizeProgress, onRun: () => { void optimizeImages(); }, blocked: optimizeBlock },
   });
   const selectOpeningsOwner = useCallback((id: string | null) => select('openings', id), [select]);
   const openingsParts = useWorldOpeningsEditor({
@@ -1384,6 +1401,7 @@ const WorldEditorInner = ({
     label: 'Export World',
     icon: <ActionIcon.export className="mr-2 h-4 w-4 shrink-0" />,
     onClick: exportCurrentWorld,
+    disabledTip: exportWorldBlock,
   }, {
     label: 'Autosave',
     checked: editorAutoSave,
@@ -1501,6 +1519,8 @@ const WorldEditorInner = ({
   );
 
   return (
+    <SupporterCopyProvider value={supporterCopy}>
+    <OpenWorldIdProvider value={worldId ?? undefined}>
     <CodeCardNavigationContext.Provider value={codeCardNavigation}>
     <div className={`${embedded ? "h-full" : "app-viewport pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"} flex flex-col overflow-hidden`}>
       {!embedded && (
@@ -1762,6 +1782,8 @@ const WorldEditorInner = ({
       <TourSaveNote tour={tour} />
     </div>
     </CodeCardNavigationContext.Provider>
+    </OpenWorldIdProvider>
+    </SupporterCopyProvider>
   );
 };
 

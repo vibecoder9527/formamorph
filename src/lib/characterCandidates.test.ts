@@ -1,11 +1,16 @@
 import { describe, it, expect } from 'vitest';
+import { escapeRegExp } from '@/lib/utils';
 import {
   extractCharacterCandidates,
+  entityExclusions,
+  clusterCandidates,
   collectCandidateEvidence,
   mergeCandidateEvidence,
   qualifiesAsCharacter,
   MID_SENTENCE_THRESHOLD,
+  worldNameExclusions,
   type CandidateEvidence,
+  type WorldNameSources,
 } from './characterCandidates';
 
 /** Accumulate several turns the way the app does, then extract. */
@@ -78,6 +83,30 @@ describe('extractCharacterCandidates', () => {
       Being a Deer Demi-Human, the walk tires you. Your Arousal settles.
       You cross Praetoria Academy again, and Art History waits. Porsia sighs. Deer Demi-Human legs ache. Arousal fades.`;
     expect(extractCharacterCandidates(text, { terms })).toEqual([]);
+  });
+
+  describe('worldNameExclusions', () => {
+    const world = (over: Partial<WorldNameSources> = {}): WorldNameSources => ({
+      entities: [{ name: 'Townsfolk Pokemon' }], playerNames: [], locations: [], stats: [], traits: [],
+      dictionary: [], placeholders: [{ name: 'Pokemon Name', values: [{ id: 'v1', text: 'Cinder' }, { id: 'v2', text: 'Nutmeg' }] }], playerNotes: '', ...over,
+    });
+    // Verbatim shape from a live turn: the stand-in's rolled name introduced in speech.
+    const intro = `She steps back. "I'm Cinder. I've lived here long enough." Cinder crosses her arms.`;
+
+    it('lets a rolled placeholder value introduce a new character', () => {
+      expect(extractCharacterCandidates(intro, worldNameExclusions(world()))).toEqual(['Cinder']);
+    });
+
+    it('still excludes an entity whose name resolved from a placeholder', () => {
+      const named = world({ entities: [{ name: 'Cinder' }] });
+      expect(extractCharacterCandidates(intro, worldNameExclusions(named))).toEqual([]);
+    });
+
+    it("still excludes a placeholder's own name", () => {
+      const text = 'You greet Pokemon Name. "I\'m Pokemon Name," she says.';
+      expect(extractCharacterCandidates(text, {})).toEqual(['Pokemon Name']);
+      expect(extractCharacterCandidates(text, worldNameExclusions(world()))).toEqual([]);
+    });
   });
 
   it('treats a fragment of a known name as that name, not a new character', () => {
@@ -255,5 +284,179 @@ Lyria glances back at you with a playful smile.`;
 
   it('leaves an already-known name alone', () => {
     expect(extractCharacterCandidates("Lyria's hand is warm.", { characters: ['Lyria'] })).toEqual([]);
+  });
+});
+
+/** Coref clusters over `text`: each group lists its mentions, found in order. Passages written for these tests. */
+function clustersOf(text: string, groups: string[][]): [number, number][][] {
+  return groups.map((group) => {
+    let from = 0;
+    return group.map((mention): [number, number] => {
+      const start = text.slice(from).search(new RegExp(String.raw`\b${escapeRegExp(mention)}\b`)) + from;
+      if (start < from) throw new Error(`"${mention}" is not in the passage`);
+      from = start + mention.length;
+      return [start, from];
+    });
+  });
+}
+
+const clusterNames = (...args: Parameters<typeof clusterCandidates>) => clusterCandidates(...args).names;
+/** A line the character speaks, which a cluster needs before it proposes a name (Q73). */
+const SPEAKS = ' "Rain soon," she says.';
+
+describe('clusterCandidates (Q73)', () => {
+  it("keeps a spelling an earlier turn pooled under that turn's name", () => {
+    const first = `You met the Zorvak at noon, and later the Zorvak again. You saw the Zorvac paused. She listened.${SPEAKS}`;
+    const second = `Rain fell while the Zorvac paused. You watched the Zorvac. She listened.${SPEAKS}`;
+    const earlier = clusterCandidates(first, clustersOf(first, [['the Zorvak', 'the Zorvak', 'the Zorvac', 'She', 'she']]), {});
+    expect(earlier.names).toEqual(['Zorvak']);
+    const clusters = clustersOf(second, [['the Zorvac', 'the Zorvac', 'She', 'she']]);
+    const prior = () => collectCandidateEvidence(first);
+    // Without the links the misspelling would be a second character.
+    expect(clusterNames(second, clusters, { characters: ['Zorvak'] }, prior)).toEqual(['Zorvac']);
+    expect(clusterNames(second, clusters, {}, prior, earlier.links)).toEqual(['Zorvak']);
+    expect(clusterNames(second, clusters, { characters: ['Zorvak'] }, prior, earlier.links)).toEqual([]);
+    expect(clusterNames(second, clusters, { suppressed: ['Zorvak'] }, prior, earlier.links)).toEqual([]);
+  });
+
+  it('adds nobody for a cluster that holds a known character', () => {
+    const text = `Odile waited by the well. You watched as the Zorvak paused, and later the Zorvak listened. She smiled.${SPEAKS} `
+      + 'You heard the Old Mill, and it groaned.';
+    const clusters = clustersOf(text, [['Odile', 'the Zorvak', 'the Zorvak', 'She', 'she'], ['the Old Mill', 'it']]);
+    expect(clusterNames(text, clusters, {})).toEqual(['Zorvak']);
+    const known = clusterCandidates(text, clusters, { characters: ['Odile'] });
+    expect(known.names).toEqual([]);
+    // The model can merge two people, so the cluster links nothing: a later turn still finds the Zorvak.
+    const later = `You saw the Zorvak at the gate, and the Zorvak paused. She listened.${SPEAKS}`;
+    const again = clustersOf(later, [['the Zorvak', 'the Zorvak', 'She', 'she']]);
+    expect(clusterNames(later, again, { characters: ['Odile'] }, undefined, known.links)).toEqual(['Zorvak']);
+  });
+
+  // A species label used as a name, in two spellings, with only "paused" and "listened" for verbs.
+  const LABEL = 'An Anthro Zorvak waited beside the well. You watched as the Zorvak paused, and she listened to the wind. '
+    + `Rain dripped while the Zorvac kept her eyes on the road.${SPEAKS}`;
+  const LABEL_CLUSTER = [['An Anthro Zorvak', 'the Zorvak', 'she', 'the Zorvac', 'her', 'she']];
+
+  it('finds a she/her character the name evidence alone misses', () => {
+    expect(extractCharacterCandidates(LABEL, {})).toEqual([]);
+    expect(clusterNames(LABEL, clustersOf(LABEL, LABEL_CLUSTER), {})).toEqual(['Anthro Zorvak']);
+  });
+
+  it('proposes only a cluster a speech verb ties to a quote', () => {
+    const described = 'You read about the Zorvak in the paper, and later the Zorvak again. '
+      + 'Her interviews praise "freedom" and "art." She paused.';
+    const cluster = [['the Zorvak', 'the Zorvak', 'Her', 'She']];
+    expect(clusterNames(described, clustersOf(described, cluster), {})).toEqual([]);
+    const spoken = `${described}${SPEAKS}`;
+    expect(clusterNames(spoken, clustersOf(spoken, [[...cluster[0], 'she']]), {})).toEqual(['Zorvak']);
+    // Someone else's line does not count.
+    const other = `${described} "Rain soon," the porter says.`;
+    expect(clusterNames(other, clustersOf(other, cluster), {})).toEqual([]);
+  });
+
+  it('pools spellings that share a cluster, and only those', () => {
+    const text = `You saw the Zorvak paused by the gate, and later the Zorvac listened.${SPEAKS}`;
+    const apart = clustersOf(text, [['the Zorvak', 'she'], ['the Zorvac', 'she']]);
+    expect(clusterNames(text, apart, {})).toEqual([]);
+    const pooled = clustersOf(text, [['the Zorvak', 'the Zorvac', 'she']]);
+    expect(clusterNames(text, pooled, {})).toEqual(['Zorvak']);
+  });
+
+  it('keeps two different names in one cluster apart (Q76)', () => {
+    const text = 'You saw the Zorvak at the gate, and later the Zorvak paused. '
+      + `You saw the Tessaly at the well, and the Tessaly listened.${SPEAKS}`;
+    const merged = clustersOf(text, [['the Zorvak', 'the Zorvak', 'the Tessaly', 'the Tessaly', 'she']]);
+    const found = clusterCandidates(text, merged, {});
+    expect(found.names).toEqual(['Zorvak', 'Tessaly']);
+    expect(found.links.get('Tessaly')).toBe('Tessaly');
+    // A name with too little evidence of its own is not carried by the other's.
+    const once = text.replace('and the Tessaly listened', 'and the well listened');
+    expect(clusterNames(once, clustersOf(once, [['the Zorvak', 'the Zorvak', 'the Tessaly', 'she']]), {})).toEqual(['Zorvak']);
+  });
+
+  it('pools a close spelling of one word of a longer name', () => {
+    const text = `An Anthro Zorvak waited at the gate. Later the Zorvac paused, and the Zorvac listened.${SPEAKS}`;
+    const found = clusterCandidates(text, clustersOf(text, [['An Anthro Zorvak', 'the Zorvac', 'the Zorvac', 'she']]), {});
+    expect(found.names).toEqual(['Zorvac']);
+    expect(found.links.get('Anthro Zorvak')).toBe('Zorvac');
+  });
+
+  it('never chains two names through a third they both contain', () => {
+    const text = 'You met Anna Smith at the gate, and Anna Smith paused. You met John Smith at the well, '
+      + `and John Smith listened. Smith waited.${SPEAKS}`;
+    const clusters = clustersOf(text, [['Anna Smith', 'Anna Smith', 'John Smith', 'John Smith', 'Smith', 'she']]);
+    expect(clusterNames(text, clusters, {})).toEqual(['Anna Smith', 'John Smith']);
+  });
+
+  it('never chains two names through a third used more than either', () => {
+    const text = 'You met Smith at the gate, and Smith paused. Later Smith listened, and Anna Smith waved. '
+      + `John Smith nodded.${SPEAKS}`;
+    const clusters = clustersOf(text, [['Smith', 'Smith', 'Smith', 'Anna Smith', 'John Smith', 'she']]);
+    const found = clusterCandidates(text, clusters, {});
+    expect(found.links.get('Anna Smith')).toBe(found.links.get('Smith'));
+    expect(found.links.get('John Smith')).not.toBe(found.links.get('Smith'));
+  });
+
+  it("names a group by an earlier turn's link only when that name spells every member", () => {
+    const text = `You met John Smith at the gate, and John Smith paused. Smith listened.${SPEAKS}`;
+    const clusters = clustersOf(text, [['John Smith', 'John Smith', 'Smith', 'she']]);
+    const found = clusterCandidates(text, clusters, {}, undefined, new Map([['Smith', 'Anna Smith']]));
+    expect(found.names).toEqual(['John Smith']);
+    expect(found.links.get('John Smith')).toBe('John Smith');
+  });
+
+  it('names the most-used spelling no exclusion blocks', () => {
+    const text = `You met the Zorvac at dawn. You met the Zorvak at noon, and you met the Zorvak at dusk.${SPEAKS}`;
+    const clusters = clustersOf(text, [['the Zorvac', 'the Zorvak', 'the Zorvak', 'she']]);
+    expect(clusterNames(text, clusters, {})).toEqual(['Zorvak']);
+    expect(clusterNames(text, clusters, { terms: ['Zorvak'] })).toEqual(['Zorvac']);
+    expect(clusterNames(text, clusters, { terms: ['Zorvak', 'Zorvac'] })).toEqual([]);
+  });
+
+  it('breaks a tie toward the first spelling in the text', () => {
+    const text = `You met the Zorvac at dawn, and later the Zorvak.${SPEAKS}`;
+    // The model's link order puts the later spelling first.
+    const [[she], [later], [first]] = clustersOf(text, [['she'], ['the Zorvak'], ['the Zorvac']]);
+    expect(clusterNames(text, [[she, later, first]], {})).toEqual(['Zorvac']);
+  });
+
+  it('gives no person evidence to an it-only or they-only cluster', () => {
+    const mill = 'The Old Mill creaked in the wind. You walked toward the Old Mill. "Noon," it says.';
+    expect(clusterNames(mill, clustersOf(mill, [['The Old Mill', 'the Old Mill', 'it']]), {})).toEqual([]);
+    const they = 'You saw the Tessaly at the gate. You saw the Tessaly again. "Rain soon," they say.';
+    expect(clusterNames(they, clustersOf(they, [['the Tessaly', 'the Tessaly', 'they']]), {})).toEqual([]);
+    const she = they.replace('they say', 'she says');
+    expect(clusterNames(she, clustersOf(she, [['the Tessaly', 'the Tessaly', 'she']]), {})).toEqual(['Tessaly']);
+  });
+
+  it('counts earlier turns toward the pool', () => {
+    const now = `Rain fell while the Zorvak paused.${SPEAKS}`;
+    const clusters = clustersOf(now, [['the Zorvak', 'she']]);
+    expect(clusterNames(now, clusters, {})).toEqual([]);
+    const prior = () => collectCandidateEvidence('You first saw the Zorvak at the market.');
+    expect(clusterNames(now, clusters, {}, prior)).toEqual(['Zorvak']);
+  });
+
+  it('counts uses in prose only, as the name rule does', () => {
+    const text = `"You saw the Zorvak," you say. You watched as the Zorvak paused.${SPEAKS}`;
+    expect(clusterNames(text, clustersOf(text, [['the Zorvak', 'the Zorvak', 'she']]), {})).toEqual([]);
+  });
+});
+
+describe('entityExclusions', () => {
+  const ALIAS = "You step back as the Ursaring's eyes narrow.";
+  const STRANGER = "You step back as the Mill Keeper's eyes narrow.";
+  const OTHER_KEEPER = "You step back as the Gate Keeper's eyes narrow.";
+  const wren = { name: 'Wren', aliases: ['Ursaring'], strangerName: 'The Mill Keeper' };
+
+  it('blocks a name that is an entity alias', () => {
+    expect(extractCharacterCandidates(ALIAS, {})).toEqual(['Ursaring']);
+    expect(extractCharacterCandidates(ALIAS, entityExclusions([wren]))).toEqual([]);
+  });
+
+  it('blocks a Stranger Name without blocking other names that end in its last word', () => {
+    expect(extractCharacterCandidates(STRANGER, {})).toEqual(['Mill Keeper']);
+    expect(extractCharacterCandidates(STRANGER, entityExclusions([wren]))).toEqual([]);
+    expect(extractCharacterCandidates(OTHER_KEEPER, entityExclusions([wren]))).toEqual(['Gate Keeper']);
   });
 });

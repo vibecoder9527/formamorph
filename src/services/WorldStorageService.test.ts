@@ -3,6 +3,7 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import WorldStorageService, { type StoredWorldRecord } from './WorldStorageService';
+import { bindCopyViewer } from '@/lib/supporterCopyVisibility';
 import { clearDeletedDefaultWorlds, readDeletedDefaultWorlds } from '@/lib/defaultWorlds';
 import { encodePlaceholderToken } from '@/lib/placeholders';
 import AuthService from './AuthService';
@@ -424,6 +425,36 @@ describe('local world storage (IndexedDB)', () => {
     expect(stored?.sourceAuthorId).toBe('u-publisher');
 
     await WorldStorageService.deleteWorld('sticky-1');
+  });
+
+  it('keeps the Supporter Copy marker across an editor save, and out of the world data', async () => {
+    const supporterCopy = { listingId: 'listing-1', accountId: 'account-1', revision: 2 };
+    await WorldStorageService.storeWorld({ ...validWorld, id: 'supporter-1', sourceId: 'listing-1', supporterCopy });
+    // An editor save sends the record without its local-only fields.
+    await WorldStorageService.storeWorld({ ...validWorld, id: 'supporter-1', dirty: true });
+
+    expect(await WorldStorageService.getSupporterCopy('supporter-1')).toEqual(supporterCopy);
+    expect((await WorldStorageService.getWorldMetadata()).find((m) => m.id === 'supporter-1')?.supporterCopy).toEqual(supporterCopy);
+    // Every export reads the world data, which never holds the marker.
+    expect(JSON.stringify(await WorldStorageService.getWorldData('supporter-1'))).not.toContain('supporterCopy');
+    expect(await WorldStorageService.getSupporterCopy('rt-missing')).toBeNull();
+
+    await WorldStorageService.deleteWorld('supporter-1');
+  });
+
+  it("lists another account's Supporter Copy only when asked for hidden ones", async () => {
+    const supporterCopy = { listingId: 'listing-2', accountId: 'account-a', revision: 1 };
+    await WorldStorageService.storeWorld({ ...validWorld, id: 'supporter-hidden', sourceId: 'listing-2', supporterCopy });
+    bindCopyViewer(() => 'account-b');
+    try {
+      expect((await WorldStorageService.getWorldMetadata()).some((m) => m.id === 'supporter-hidden')).toBe(false);
+      expect((await WorldStorageService.getWorldMetadata({ includeHidden: true })).some((m) => m.id === 'supporter-hidden')).toBe(true);
+      bindCopyViewer(() => 'account-a');
+      expect((await WorldStorageService.getWorldMetadata()).some((m) => m.id === 'supporter-hidden')).toBe(true);
+    } finally {
+      bindCopyViewer(() => null);
+      await WorldStorageService.deleteWorld('supporter-hidden');
+    }
   });
 
   it('keeps sourceHash sticky across a save that omits it', async () => {

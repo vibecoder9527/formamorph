@@ -1,13 +1,22 @@
-// World Options: setup switches that act through placeholder pins and never add text to the AI.
+// World Options: setup switches that act through placeholder pins and stat rows, and never add text to the AI.
 
 import type { ActionRef } from './actionList';
-import type { PlaceholderPin, WorldOption, WorldOptionType, WorldOptionValueOf, WorldOptionValues } from '@/types';
+import type {
+  BooleanWorldOption, OptionStatRows, Placement, PlaceholderPin, PresetWorldOption, Trait, ValuedWorldOption, WorldOption, WorldOptionType, WorldOptionValueOf, WorldOptionValues,
+} from '@/types';
 
 /** The value ids a boolean Option's pin lists sit under. */
 export const BOOLEAN_ON = 'on';
 export const BOOLEAN_OFF = 'off';
 
 export const NO_WORLD_OPTION_VALUES: WorldOptionValues = {};
+
+/** Whether `option` is a Preset, which stores no value. */
+export const isPreset = (option: WorldOption): option is PresetWorldOption => option.type === 'preset';
+
+/** The Options that hold a value: every one but the Presets, in Options-tab order. */
+export const valuedOptions = (options: readonly WorldOption[] | undefined): ValuedWorldOption[] =>
+  (options ?? []).filter((o): o is ValuedWorldOption => !isPreset(o));
 
 /** The Options a world file holds, or none. */
 export const parseWorldOptions = (raw: unknown): WorldOption[] =>
@@ -34,7 +43,7 @@ export function snapNumber(option: { min: number; max: number; step?: number }, 
 }
 
 /** The value a new game starts an Option on. A choice whose default names no value falls to its first. */
-export function optionDefault(option: WorldOption): WorldOptionValueOf {
+export function optionDefault(option: ValuedWorldOption): WorldOptionValueOf {
   switch (option.type) {
     case 'choice': return choiceDefault(option.values, option.default);
     case 'boolean': return option.default;
@@ -42,9 +51,10 @@ export function optionDefault(option: WorldOption): WorldOptionValueOf {
   }
 }
 
-/** Whether `value` is one the Option accepts as it stands. */
+/** Whether `value` is one the Option accepts as it stands. A Preset accepts none. */
 export function acceptsValue(option: WorldOption, value: unknown): value is WorldOptionValueOf {
   switch (option.type) {
+    case 'preset': return false;
     case 'choice': return typeof value === 'string' && option.values.some((v) => v.id === value);
     case 'boolean': return typeof value === 'boolean';
     case 'number': {
@@ -55,7 +65,7 @@ export function acceptsValue(option: WorldOption, value: unknown): value is Worl
 }
 
 /** The value a playthrough reads for an Option: its own, else the default. */
-export const optionValue = (option: WorldOption, values: WorldOptionValues | undefined): WorldOptionValueOf => {
+export const optionValue = (option: ValuedWorldOption, values: WorldOptionValues | undefined): WorldOptionValueOf => {
   const held = values?.[option.id];
   return acceptsValue(option, held) ? held : optionDefault(option);
 };
@@ -76,7 +86,7 @@ export interface OptionPins {
 /** The pin lists the Options' current values lay, in Options-tab order. A number Option lays none. */
 export function optionPinLists(options: readonly WorldOption[] | undefined, values?: WorldOptionValues): OptionPins[] {
   const out: OptionPins[] = [];
-  for (const option of options ?? []) {
+  for (const option of valuedOptions(options)) {
     const value = optionValue(option, values);
     if (option.type === 'choice') {
       const picked = option.values.find((v) => v.id === value);
@@ -89,16 +99,109 @@ export function optionPinLists(options: readonly WorldOption[] | undefined, valu
   return out;
 }
 
-/** The Options the player sees at new game. */
+/** The Starting Item Instances the Options' current values add, in Options-tab order. */
+export function optionPlacements(options: readonly WorldOption[] | undefined, values?: WorldOptionValues): Placement[] {
+  return valuedOptions(options).flatMap((option) => {
+    const value = optionValue(option, values);
+    if (option.type === 'choice') return option.values.find((v) => v.id === value)?.placements ?? [];
+    if (option.type === 'boolean') return (value ? option.onPlacements : option.offPlacements) ?? [];
+    return [];
+  });
+}
+
+/** `options` with every value's placement list passed through `edit`; an Option it leaves alone stays the same object. */
+export function withOptionPlacements(options: WorldOption[], edit: (placements: Placement[]) => Placement[]): WorldOption[] {
+  const fix = (list: Placement[] | undefined) => {
+    if (!list) return list;
+    const next = edit(list);
+    return next.length === list.length && next.every((p, i) => p === list[i]) ? list : next.length ? next : undefined;
+  };
+  return options.map((option) => {
+    if (option.type === 'choice') {
+      const values = option.values.map((v) => { const placements = fix(v.placements); return placements === v.placements ? v : { ...v, placements }; });
+      return values.every((v, i) => v === option.values[i]) ? option : { ...option, values };
+    }
+    if (option.type !== 'boolean') return option;
+    const onPlacements = fix(option.onPlacements);
+    const offPlacements = fix(option.offPlacements);
+    return onPlacements === option.onPlacements && offPlacements === option.offPlacements ? option : { ...option, onPlacements, offPlacements };
+  });
+}
+
+/** The stat rows one Option value lays: under `valueId`, as {@link OptionPins}. */
+export interface OptionRows extends Required<OptionStatRows> {
+  optionId: string;
+  valueId: string;
+}
+
+/** The stat rows the Options' current values lay, in Options-tab order, hidden Options included. A number Option
+ *  lays none, and a value with no rows is left out. */
+export function optionStatRowLists(options: readonly WorldOption[] | undefined, values?: WorldOptionValues): OptionRows[] {
+  const out: OptionRows[] = [];
+  for (const option of valuedOptions(options)) {
+    const value = optionValue(option, values);
+    let rows: OptionStatRows | undefined;
+    let valueId = String(value);
+    if (option.type === 'choice') rows = option.values.find((v) => v.id === value);
+    else if (option.type === 'boolean') {
+      rows = booleanRows(option, value === true);
+      valueId = value ? BOOLEAN_ON : BOOLEAN_OFF;
+    }
+    const statChanges = rows?.statChanges ?? [];
+    const statToggles = rows?.statToggles ?? [];
+    if (statChanges.length || statToggles.length) out.push({ optionId: option.id, valueId, statChanges, statToggles });
+  }
+  return out;
+}
+
+/** A world's Options and the values in force. Absent values = each Option's default. */
+export interface OptionStatWorld {
+  options?: readonly WorldOption[];
+  optionValues?: WorldOptionValues;
+}
+
+/** The id prefix of an Option value's stat source, which no authored trait carries. */
+const OPTION_SOURCE = 'option:';
+
+/** An Option's rows that move `ownerId`'s stats (undefined = the global stats), with the owner field dropped. */
+const ownerOptionRows = <R extends { ownerId?: string }>(rows: readonly R[], ownerId: string | undefined): Omit<R, 'ownerId'>[] =>
+  rows.filter((row) => row.ownerId === ownerId).map(({ ownerId: _owner, ...row }) => row);
+
+/** Each current Option value's stat rows on one scope as one stat source, in Options-tab order: the global stats,
+ *  or with `ownerId` that entity's own stats. Only the stat sets read it, never a trait list. */
+export function optionStatTraits(world: OptionStatWorld, ownerId?: string): Trait[] {
+  return optionStatRowLists(world.options, world.optionValues).flatMap(({ optionId, valueId, statChanges, statToggles }) => {
+    const changes = ownerOptionRows(statChanges, ownerId);
+    const toggles = ownerOptionRows(statToggles, ownerId);
+    if (!changes.length && !toggles.length) return [];
+    return [{ id: `${OPTION_SOURCE}${optionId}:${valueId}`, name: '', statChanges: changes, ...(toggles.length ? { statToggles: toggles } : {}) }];
+  });
+}
+
+/** A boolean Option's rows for one state, as the Options panel edits them. */
+export const booleanRows = (option: BooleanWorldOption, on: boolean): OptionStatRows => (on
+  ? { statChanges: option.onStatChanges, statToggles: option.onStatToggles }
+  : { statChanges: option.offStatChanges, statToggles: option.offStatToggles });
+
+/** `option` with one state's rows replaced. */
+export const withBooleanRows = (option: BooleanWorldOption, on: boolean, rows: OptionStatRows): BooleanWorldOption => (on
+  ? { ...option, onStatChanges: rows.statChanges, onStatToggles: rows.statToggles }
+  : { ...option, offStatChanges: rows.statChanges, offStatToggles: rows.statToggles });
+
+/** The Options the player sees at new game. A Preset always shows there. */
 export const shownOptions = (options: readonly WorldOption[] | undefined): WorldOption[] =>
-  (options ?? []).filter((o) => o.shownToPlayer);
+  (options ?? []).filter((o) => isPreset(o) || o.shownToPlayer);
+
+/** The shown Options that hold a value: those a Preset row can set. */
+export const shownValuedOptions = (options: readonly WorldOption[] | undefined): ValuedWorldOption[] =>
+  valuedOptions(options).filter((o) => o.shownToPlayer);
 
 /** The Options the in-game tab lists: shown to the player and flagged for change during play (Q26). */
-export const midGameOptions = (options: readonly WorldOption[] | undefined): WorldOption[] =>
-  shownOptions(options).filter((o) => o.midGame);
+export const midGameOptions = (options: readonly WorldOption[] | undefined): ValuedWorldOption[] =>
+  shownValuedOptions(options).filter((o) => o.midGame);
 
 /** `value` of `option` as an id and a display name, for a Listed Action's facts. */
-export function optionValueRef(option: WorldOption, value: WorldOptionValueOf): ActionRef {
+export function optionValueRef(option: ValuedWorldOption, value: WorldOptionValueOf): ActionRef {
   switch (option.type) {
     case 'choice': return { id: String(value), name: option.values.find((v) => v.id === value)?.name ?? String(value) };
     case 'boolean': return value ? { id: BOOLEAN_ON, name: 'On' } : { id: BOOLEAN_OFF, name: 'Off' };
@@ -106,10 +209,14 @@ export function optionValueRef(option: WorldOption, value: WorldOptionValueOf): 
   }
 }
 
-/** A new Option of `type`: shown, set at new game only. `newId` mints a choice's first values. */
+/** A new Option of `type`: shown, set at new game only. `newId` mints a choice's or a Preset's first values. */
 export function blankOption(type: WorldOptionType, id: string, name: string, newId: () => string): WorldOption {
   const base = { id, name, shownToPlayer: true, midGame: false };
   switch (type) {
+    case 'preset': {
+      const values = [1, 2].map((n) => ({ id: newId(), name: `Value ${n}`, description: '', rows: [] }));
+      return { id, name, type, mode: 'snapshot', values };
+    }
     case 'choice': {
       const values = [{ id: newId(), name: 'Value 1' }, { id: newId(), name: 'Value 2' }];
       return { ...base, type, values, default: values[0].id };
@@ -122,8 +229,10 @@ export function blankOption(type: WorldOptionType, id: string, name: string, new
 /** The Option switched to `type`, keeping what every type shares. The type's own fields start blank. */
 export function withOptionType(option: WorldOption, type: WorldOptionType, newId: () => string): WorldOption {
   if (option.type === type) return option;
-  const { id, name, playerDescription, shownToPlayer, midGame } = option;
-  return { ...blankOption(type, id, name, newId), shownToPlayer, midGame, ...(playerDescription ? { playerDescription } : {}) };
+  const { id, name, playerDescription } = option;
+  const next = { ...blankOption(type, id, name, newId), ...(playerDescription ? { playerDescription } : {}) };
+  if (isPreset(next) || isPreset(option)) return next;
+  return { ...next, shownToPlayer: option.shownToPlayer, midGame: option.midGame };
 }
 
 /** `options` with `activeId` moved to where `overId` stands. The same list when either is missing. */

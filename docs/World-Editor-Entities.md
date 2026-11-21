@@ -71,7 +71,7 @@ Select an entity to open its panel.
 
 | Tab | Holds | Mode |
 |---|---|---|
-| **Profile** | **Name**, **Pronouns**, **Relationships**, the **Image** and the **Avatar** dropdown (**None**, **User's Default**, or an Avatar of the world; see [World Avatars](Avatars#world-avatars)). In Advanced mode, also **Aliases**, [**Stranger Name**](#stranger-name) beside **Name**, the **Persona** control, **Type**, **Image Tags** and the **3D Model**. | Simple and Advanced |
+| **Profile** | **Name**, **Pronouns**, **Relationships**, the **Image** and the **Avatar** dropdown (**None**, **User's Default**, or an Avatar of the world; see [World Avatars](Avatars#world-avatars)). In Advanced mode, also **Aliases**, [**Stranger Name**](#stranger-name) beside **Name**, the **Persona** control, **Type**, **Image Tags**, the [**Sound**](#sound-slots) and the **3D Model**. | Simple and Advanced |
 | **Descriptions** | **Player-Facing Description** and **AI-Facing Description**. In Advanced mode, also [**Stranger Description**](#stranger-description) under **Player-Facing Description**, and **AI-Facing Summary**. | Simple and Advanced |
 | **Items** | The entity's [Starting Items](World-Editor-Items#starting-items) | Simple and Advanced |
 | **Presence** | When the entity is on ([Enabled](#enabled)), its [Routines](#routines), where it starts, its daily [schedule](#the-schedule), and where the AI knows of it ([Known In](#known-in)) | Simple and Advanced |
@@ -453,6 +453,46 @@ The narrator reads none of these.
 An image field takes an uploaded file or a web address. See [Upload or link](World-Editor-Overview#upload-or-link).
 
 An entity's gallery has no slot limit, so a generated image always gets a new slot. A one-image field that already holds an image, such as an item's image, asks **Replace which image?** first. **Cancel** changes nothing.
+
+## Image slots
+<!-- keywords: reuse image, same picture on two entities, shared image, pick existing image, image library, rename image, image name, delete image everywhere, remove image from entity -->
+<!-- route: deleteMediaEntry -->
+
+A world keeps one list of its images. Entity and location galleries pick from that list, so one image can show on many entities and is stored once.
+
+An empty slot offers three ways in:
+
+| Control | What it does |
+|---|---|
+| 📥 **Import** | Adds one or more files to the world's images, named after each file. The first fills this slot, the rest fill the slots after it. |
+| 🖼️ **Choose** | Opens a grid of the world's images. Type in **Search Images** to filter by name. Images this entity or location already uses are dimmed, and you can still pick one. |
+| 🔗 **Or paste an image URL** | Adds a linked image, named after the last part of the address |
+
+You can also drop a file or a link onto the slot. A generated image is named after the entity or location, such as *Wren 1*.
+
+Under a filled slot:
+
+- **Image Name** renames the image everywhere it shows. Press Enter or click away to keep the name. A name another image has gets a number, such as *knight (2)*.
+- ✖️ **Remove From Slot** takes the image out of this slot. It stays in the world, ready to pick again.
+- 🗑️ **Delete From World** lists every place that uses the image, then asks. **Delete** takes it out of all of them and drops it from the world. One undo brings it all back.
+
+## Sound slots
+<!-- keywords: entity sound, reuse sound, same sound in two rooms, shared ambience, pick existing sound, sound url, audio link, rename sound, broken sound, sound won't play, linked sound -->
+
+Sounds work the way images do. The world keeps one list of its sounds, so two rooms can share one ambience and store it once. Sound slots are the entity's **Sound** (Advanced mode, on the **Profile** tab), a location's **Ambient Sound** and the world's **Background Music**.
+
+An empty sound slot offers:
+
+| Control | What it does |
+|---|---|
+| 📥 **Import** | Adds an audio file to the world's sounds, named after the file, and puts it in this slot |
+| 🎵 **Choose** | Lists the world's sounds by name. Type in **Search Sounds** to filter. |
+| 🔗 **Or paste a sound URL** | Adds a linked sound, named after the last part of the address |
+
+A filled slot shows the player. Under it, **Sound Name**, ✖️ **Remove From Slot** and 🗑️ **Delete From World** work as they do for images.
+
+- 🔗 **Linked** marks a sound that plays from its address. It plays only while the player is online, and it isn't saved into exports.
+- A sound that can't load says so under the player. Check the link, or import the file instead.
 
 ## Visibility rules
 <!-- keywords: show image when hurt, wounded portrait, portrait only when injured, image changes with health, hide image, change image in game, art follows story, transformation art, armored portrait, conditional image, image per state, stat threshold image, form change image -->

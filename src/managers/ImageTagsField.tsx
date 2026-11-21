@@ -20,6 +20,7 @@ import { ImageUpload } from '../lib/UtilityComponents';
 import { fileToDataUrl } from '@/lib/imageDrop';
 import { followReorder } from '@/lib/imageGalleryOrder';
 import { withImageRule } from '@/lib/entityImages';
+import { mediaNameFromFile } from '@/lib/mediaList';
 import { useStableIds } from '@/lib/useStableIds';
 import { useImageDropTarget } from '@/lib/useImageDropTarget';
 import { RemoteImg } from '@/lib/useRemoteImage';
@@ -32,6 +33,8 @@ import type { ImageCap } from '../lib/imageOptim';
 import type { ImageSubjectKind } from '@/lib/imagePrompt';
 import { useEditorMode } from '@/lib/editorMode';
 import type { GalleryImage, Placeholder, TraitRequirementRow } from '@/types';
+import type { GalleryMedia } from '@/lib/mediaGallery';
+import { MediaChooseButton, MediaEntryBar } from './MediaPicker';
 import { Tip } from '@/components/ui/tooltip';
 import { fieldFrame } from '@/lib/historyField';
 
@@ -70,6 +73,8 @@ interface ImageWidgetProps {
   onFramedChange?: (index: number) => void;
   /** False hides the strip's rule cog and the framed rule's summary, for a host that edits the rule itself. */
   ruleCog?: boolean;
+  /** A gallery on the world's Media List: its slots offer Choose, and a filled one names its entry. */
+  media?: GalleryMedia;
 }
 
 /** The inputs a host passes to control the gallery's frame and cog. */
@@ -174,7 +179,8 @@ const ImageTile = ({ id, url, index, framed, onSelect, ruled, rule }: {
 /** The strip's trailing tile: press it to add, or drop onto it. A label on the open slot's file input, so
  *  one press opens the picker. */
 const AddTile = ({ htmlFor, selected, onSelect, onUrl, onFiles }: {
-  htmlFor: string;
+  /** The open slot's file input. Unset, a press only frames the slot, whose own buttons then import or choose. */
+  htmlFor?: string;
   selected: boolean;
   onSelect: () => void;
   onUrl: (url: string) => void;
@@ -205,9 +211,12 @@ const AddTile = ({ htmlFor, selected, onSelect, onUrl, onFiles }: {
 };
 
 /** `list` with slot `index` showing `data` under the slot's own rule; an empty `data` drops the slot and its rule. */
-function withSlotData(list: readonly GalleryImage[], index: number, data: string): GalleryImage[] {
+function withSlotData(list: readonly GalleryImage[], index: number, data: string, fileName?: string): GalleryImage[] {
   const next: (GalleryImage | undefined)[] = [...list];
-  next[index] = data ? { ...list[index], data } : undefined;
+  // A new picture keeps the slot's rule; the old picture's name leaves with it.
+  const rules = list[index]?.requires ? { requires: list[index].requires } : {};
+  const name = mediaNameFromFile(fileName);
+  next[index] = data ? { data, ...(name ? { name } : {}), ...rules } : undefined;
   return next.filter((img): img is GalleryImage => !!img);
 }
 
@@ -230,7 +239,7 @@ function withSlotData(list: readonly GalleryImage[], index: number, data: string
 export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
   const {
     label, images, onImagesChange, slots = 1, imageId, cap, description, kind, fileSubject, tags, onTagsChange, tourAnchor, ruleHost,
-    framed, onFramedChange, ruleCog = true,
+    framed, onFramedChange, ruleCog = true, media,
   } = useImageWidget();
   const ruleSourced = useHasRuleSource();
   // SD prompt pulled from an uploaded image, pending the user's OK to use it as Image Tags.
@@ -273,7 +282,7 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
   const openSlot = rows.findIndex((url) => !url);
 
   /** Write one slot; an emptied slot drops out rather than leaving a hole for the next one to fall into. */
-  const setSlot = (index: number, value: string) => onImagesChange(withSlotData(shownImages, index, value));
+  const setSlot = (index: number, value: string, fileName?: string) => onImagesChange(withSlotData(shownImages, index, value, fileName));
 
   /** Write one slot's Visibility rule; an emptied rule drops the field. */
   const setRule = (index: number, requires: TraitRequirementRow[]) => onImagesChange(withImageRule(shownImages, index, requires));
@@ -336,7 +345,7 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
         thumbs.forEach(URL.revokeObjectURL);
       }
     }
-    onImagesChange(stored.reduce((next, url, k) => withSlotData(next, index + k, url), shownImages));
+    onImagesChange(stored.reduce((next, url, k) => withSlotData(next, index + k, url, accepted[k].name), shownImages));
   };
 
   // The pane behind the framed picture. A framed picture refuses drops itself, so without this a drag over
@@ -350,6 +359,13 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
     onTargeted: () => setShowing(openSlot),
   });
   const paneProps = gallery ? pane.dropProps : {};
+
+  // The entry behind each filled slot, and the ones this subject links, which Choose dims.
+  const entryAt = (i: number) => {
+    const link = media?.links[i];
+    return link && 'mediaId' in link ? media?.list?.[link.mediaId] : undefined;
+  };
+  const linkedIds = new Set((media?.links ?? []).flatMap((link) => ('mediaId' in link ? [link.mediaId] : [])));
 
   // Ids that follow the picture, not the position. Keyed by position, React rewrites each tile's contents
   // instead of moving any node, so on drop the dragged tile snapped back before the new order appeared.
@@ -385,10 +401,12 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
       {/* Keyed by the image, not the position. Keyed by position, a reorder hands each slot a different
           value instead of moving it — and an uploader's resolved src lags its value by a render, so the
           newly framed slot showed the previous image for a frame before swapping. */}
-      {rows.map((url, i) => (
+      {rows.map((url, i) => {
+        const entry = url ? entryAt(i) : undefined;
+        return (
         <div key={url ? tileIds[i] : 'empty-slot'} className={cn('space-y-1', gallery && i !== showing && 'hidden')}>
           <ImageUpload
-            onChange={(value) => setSlot(i, value)}
+            onChange={(value, fileName) => setSlot(i, value, fileName)}
             id={slotId(i)}
             value={url}
             cap={cap}
@@ -399,9 +417,16 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
             onPromptExtracted={i === 0 && advanced ? setPendingPrompt : undefined}
             // Only a gallery can take several at once; a single-slot subject keeps the first file.
             onFiles={gallery ? (files) => void takeFiles(i, files) : undefined}
+            // A picked entry relinks by its content, so the slot links that entry rather than a copy. A filled
+            // slot with no entry behind it keeps its plain remove button.
+            choose={media && (!url || entry) && (
+              <MediaChooseButton list={media.list} linkedIds={linkedIds} onPick={(entry) => { setSlot(i, entry.data); setShowing(i); }} />
+            )}
           />
+          {entry && <MediaEntryBar entry={entry} onUnlink={() => setSlot(i, '')} />}
         </div>
-      ))}
+        );
+      })}
       {batch && <ImageConvertOverlay thumb={batch.thumb} done={batch.done} total={batch.total} />}
       </div>
 
@@ -432,7 +457,7 @@ export const ImageGallery = ({ tagsSlot }: { tagsSlot?: ReactNode }) => {
           {/* Outside the sortable set: dropping a picture onto "add" would mean nothing. */}
           {openSlot !== -1 && (
             <AddTile
-              htmlFor={`image-upload-${slotId(openSlot)}`}
+              htmlFor={media ? undefined : `image-upload-${slotId(openSlot)}`}
               selected={openSlot === showing}
               onSelect={() => setShowing(openSlot)}
               onUrl={(dropped) => setSlot(openSlot, dropped)}

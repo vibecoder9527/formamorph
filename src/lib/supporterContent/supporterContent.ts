@@ -6,6 +6,8 @@
  * checks and signed-out starts keep the cache usable until 7 days after the last good check, then remove it.
  * Items installed for one account are never handed out while another account is signed in.
  */
+import { isSupporterTier, tierNotOpenMessage } from '@/lib/supporterSchedule';
+import type { SupporterTier } from '@/types';
 import { createSupporterCache, itemKey, type CheckRecord, type ItemRecord, type SupporterCache, type SupporterItemRef } from './cache';
 
 export type { SupporterItemRef } from './cache';
@@ -31,7 +33,7 @@ export interface SupporterContentDeps {
   session: () => SupporterSession | null;
   apiBase: string;
   cache?: SupporterCache;
-  /** Time limits in milliseconds: the entitlement check, and each content download. */
+  /** Idle limits in milliseconds (no answer and no body bytes): the entitlement check, and each content download. */
   timeoutMs?: { check?: number; install?: number };
 }
 
@@ -39,12 +41,23 @@ export interface SupporterContentSnapshot {
   /** `idle` until the first check finishes. */
   status: 'idle' | 'checking' | 'ready';
   qualifies: boolean;
+  /** The account's tier as the last good check named it; null while unknown or for an account that does not qualify. */
+  tier?: SupporterTier | null;
   /** What the account may install, as the last good check listed it. */
   entitled: SupporterItemRef[];
   installed: SupporterItemRef[];
+  /** What Supporter Copies may stay, as the last good check and the offline window decide. Null or absent while unknown. */
+  copyRule?: SupporterCopyRule | null;
 }
 
-export type SupporterContentRefusal = 'signed-out' | 'not-entitled';
+/**
+ * Which stored Supporter Copies stay. `removeAll`: no check inside the offline window backs any copy.
+ * Otherwise a copy stays when it is marked for `accountId` and its listing is in `keep` (current and expired
+ * listings of a qualifying account, none for one that does not qualify).
+ */
+export type SupporterCopyRule = { removeAll: true } | { accountId: string; keep: string[] };
+
+export type SupporterContentRefusal = 'signed-out' | 'not-entitled' | 'tier-not-open';
 
 export class SupporterContentError extends Error {
   constructor(readonly reason: SupporterContentRefusal, message: string) {
@@ -53,9 +66,19 @@ export class SupporterContentError extends Error {
   }
 }
 
+/** A world as the gated route sent it: layers still scrambled. */
+export interface SupporterWorldDownload {
+  contentData: unknown;
+  revision: number;
+  /** The account the server marked and scrambled it for. */
+  accountId: string;
+}
+
 interface Entitlement {
   qualifies: boolean;
+  tier: SupporterTier | null;
   items: SupporterItemRef[];
+  expired: SupporterItemRef[];
 }
 
 const asObject = (value: unknown): Record<string, unknown> | null =>
@@ -76,7 +99,9 @@ export function createSupporterContent(deps: SupporterContentDeps) {
   let items: ItemRecord[] = [];
   let loaded: Promise<void> | null = null;
   let status: SupporterContentSnapshot['status'] = 'idle';
-  let snapshot: SupporterContentSnapshot = { status, qualifies: false, entitled: [], installed: [] };
+  let snapshot: SupporterContentSnapshot = { status, qualifies: false, tier: null, entitled: [], installed: [], copyRule: null };
+  /** Whether the stored check was read; a failed read must never look like "no check". */
+  let stored = false;
   let queue: Promise<unknown> = Promise.resolve();
   let lastAttemptAt = Number.NEGATIVE_INFINITY;
   let lastAttemptFailed = false;
@@ -96,13 +121,24 @@ export function createSupporterContent(deps: SupporterContentDeps) {
     return usable ? items.filter((item) => item.accountId === usable.accountId) : [];
   };
 
+  const copyRule = (): SupporterCopyRule | null => {
+    if (!stored) return null;
+    if (!withinWindow(check)) return { removeAll: true };
+    const usable = usableCheck();
+    if (!usable) return null;
+    // The lists are empty for an account that does not qualify, so the rule keeps nothing for it.
+    return { accountId: usable.accountId, keep: [...usable.entitled, ...usable.expired].map((item) => item.id) };
+  };
+
   const publish = () => {
     const usable = usableCheck();
     snapshot = {
       status,
       qualifies: !!usable?.qualifies,
+      tier: usable?.qualifies ? usable.tier ?? null : null,
       entitled: usable ? usable.entitled.map(refOf) : [],
       installed: usableItems().map(refOf),
+      copyRule: copyRule(),
     };
     listeners.forEach((listener) => listener());
   };
@@ -117,6 +153,7 @@ export function createSupporterContent(deps: SupporterContentDeps) {
     loaded ??= Promise.all([cache.readCheck(), cache.readItems()]).then(([storedCheck, storedItems]) => {
       check = storedCheck;
       items = storedItems;
+      stored = true;
     }).catch((error: unknown) => {
       loaded = null;
       throw error;
@@ -129,16 +166,37 @@ export function createSupporterContent(deps: SupporterContentDeps) {
     install: deps.timeoutMs?.install ?? DEFAULT_TIMEOUT_MS.install,
   };
 
-  /** GET a gated route as JSON. Aborts the request and rejects when the answer takes longer than `ms`. */
+  /** A response body as text; `onProgress` runs on every chunk that arrives. */
+  const readText = async (response: Response, onProgress: () => void): Promise<string> => {
+    if (!response.body) return response.text();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return text + decoder.decode();
+      onProgress();
+      text += decoder.decode(value, { stream: true });
+    }
+  };
+
+  /**
+   * GET a gated route as JSON. Aborts the request and rejects when `ms` pass with no answer and no body
+   * bytes, so a large download on a slow line finishes while a stalled one ends.
+   */
   const getJson = async (session: SupporterSession, path: string, ms: number): Promise<{ status: number; ok: boolean; body: unknown }> => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const expired = new Promise<never>((_, reject) => {
+    let expire: (error: Error) => void = () => {};
+    const expired = new Promise<never>((_, reject) => { expire = reject; });
+    const arm = () => {
+      clearTimeout(timer);
       timer = setTimeout(() => {
         controller.abort();
-        reject(new Error('The Supporter content request timed out'));
+        expire(new Error('The Supporter content request timed out'));
       }, ms);
-    });
+    };
+    arm();
     try {
       return await Promise.race([
         (async () => {
@@ -146,7 +204,12 @@ export function createSupporterContent(deps: SupporterContentDeps) {
             headers: { Authorization: `Bearer ${session.token}` },
             signal: controller.signal,
           });
-          return { status: response.status, ok: response.ok, body: response.ok ? await response.json() : null };
+          arm();
+          // A refusal's body names the tier and date, so it is read too; an unreadable one is null.
+          const text = await readText(response, arm);
+          let body: unknown = null;
+          try { body = JSON.parse(text); } catch { /* unreadable body */ }
+          return { status: response.status, ok: response.ok, body };
         })(),
         expired,
       ]);
@@ -161,19 +224,35 @@ export function createSupporterContent(deps: SupporterContentDeps) {
       const response = await getJson(session, '/supporter-content/entitlement', timeouts.check);
       if (!response.ok) return null;
       const data = asObject(asObject(response.body)?.data);
-      if (!data || typeof data.qualifies !== 'boolean' || !Array.isArray(data.items)) return null;
+      if (!data || typeof data.qualifies !== 'boolean' || !Array.isArray(data.items) || !Array.isArray(data.expired)) return null;
       const listed = data.items.map(asItemRef);
-      if (listed.some((item) => !item)) return null;
-      return { qualifies: data.qualifies, items: data.qualifies ? listed as SupporterItemRef[] : [] };
+      const formerly = data.expired.map(asItemRef);
+      if (listed.some((item) => !item) || formerly.some((item) => !item)) return null;
+      return {
+        qualifies: data.qualifies,
+        tier: data.qualifies && isSupporterTier(data.tier) ? data.tier : null,
+        items: data.qualifies ? listed as SupporterItemRef[] : [],
+        expired: data.qualifies ? formerly as SupporterItemRef[] : [],
+      };
     } catch {
       return null;
     }
   };
 
+  /** Throw the refusal for a download the account's tier may not make yet, or a plain error for any other failure. */
+  const failDownload = (response: { status: number; body: unknown }): never => {
+    const body = asObject(response.body);
+    if (response.status === 403 && isSupporterTier(body?.requiredTier)) {
+      const opensAt = typeof body.opensAt === 'string' ? body.opensAt : null;
+      throw new SupporterContentError('tier-not-open', tierNotOpenMessage(body.requiredTier, opensAt));
+    }
+    throw new Error(`The Supporter content download failed with status ${response.status}`);
+  };
+
   /** Fetch one listing from the gated route and store it in place of any other revision. */
   const fetchAndStore = async (session: SupporterSession, id: string): Promise<void> => {
     const response = await getJson(session, `/worlds/${encodeURIComponent(id)}/supporter-content`, timeouts.install);
-    if (!response.ok) throw new Error(`The Supporter content download failed with status ${response.status}`);
+    if (!response.ok) return failDownload(response);
     const data = asObject(asObject(response.body)?.data);
     const ref = asItemRef({ id, kind: data?.kind, revision: data?.revision });
     if (!data || !ref || data.contentData === undefined) throw new Error('The Supporter content download returned no content');
@@ -182,12 +261,31 @@ export function createSupporterContent(deps: SupporterContentDeps) {
     items = [...items.filter((item) => item.id !== id), { ...record, key: itemKey(id, ref.revision) }];
   };
 
+  /** The signed-in session, once a good check lists `id` for it. Checks again first when none does. */
+  const entitledSession = async (id: string): Promise<SupporterSession> => {
+    await load();
+    const session = deps.session();
+    if (!session) throw new SupporterContentError('signed-out', 'Sign in to install Supporter content');
+    const listedNow = () => {
+      const usable = usableCheck();
+      return !!usable?.qualifies && usable.entitled.some((item) => item.id === id);
+    };
+    if (!listedNow()) await runCheck();
+    if (!listedNow()) {
+      throw new SupporterContentError('not-entitled', 'This account cannot install that Supporter content');
+    }
+    return session;
+  };
+
   const applyGoodCheck = async (session: SupporterSession, entitlement: Entitlement) => {
     const listed = new Map(entitlement.items.map((item) => [item.id, item]));
-    const drop = items.filter((item) => item.accountId !== session.accountId || !listed.has(item.id));
+    const formerly = new Set(entitlement.expired.map((item) => item.id));
+    // An installed Mascot outlives its listing (R1, R4); other kinds go with it.
+    const stays = (item: ItemRecord) => listed.has(item.id) || (item.kind === 'mascot' && formerly.has(item.id));
+    const drop = items.filter((item) => item.accountId !== session.accountId || !stays(item));
     await cache.deleteItems(drop.map((item) => item.key));
     items = items.filter((item) => !drop.includes(item));
-    const good: CheckRecord = { accountId: session.accountId, checkedAt: deps.now(), qualifies: entitlement.qualifies, entitled: entitlement.items };
+    const good: CheckRecord = { accountId: session.accountId, checkedAt: deps.now(), qualifies: entitlement.qualifies, tier: entitlement.tier, entitled: entitlement.items, expired: entitlement.expired };
     await cache.writeCheck(good);
     check = good;
     publish();
@@ -259,19 +357,26 @@ export function createSupporterContent(deps: SupporterContentDeps) {
      * @throws SupporterContentError when signed out or the listing is not entitled; Error when the download fails
      */
     install: (id: string): Promise<void> => serial(async () => {
-      await load();
-      const session = deps.session();
-      if (!session) throw new SupporterContentError('signed-out', 'Sign in to install Supporter content');
-      const listedNow = () => {
-        const usable = usableCheck();
-        return !!usable?.qualifies && usable.entitled.some((item) => item.id === id);
-      };
-      if (!listedNow()) await runCheck();
-      if (!listedNow()) {
-        throw new SupporterContentError('not-entitled', 'This account cannot install that Supporter content');
-      }
+      const session = await entitledSession(id);
       await fetchAndStore(session, id);
       publish();
+    }),
+
+    /**
+     * Fetch one world listing from the gated route, still scrambled, without caching it. The caller stores
+     * the world, so nothing of it stays in this module's cache.
+     *
+     * @throws SupporterContentError when signed out or the listing is not entitled; Error when the download fails
+     */
+    fetchWorld: (id: string): Promise<SupporterWorldDownload> => serial(async () => {
+      const session = await entitledSession(id);
+      const response = await getJson(session, `/worlds/${encodeURIComponent(id)}/supporter-content`, timeouts.install);
+      if (!response.ok) return failDownload(response);
+      const data = asObject(asObject(response.body)?.data);
+      if (!data || data.contentData === undefined || !Number.isInteger(data.revision)) {
+        throw new Error('The Supporter content download returned no content');
+      }
+      return { contentData: data.contentData, revision: data.revision as number, accountId: session.accountId };
     }),
 
     /** The installed content of `id` with its layers still scrambled, or null when it is not usable now. */

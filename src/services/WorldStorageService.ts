@@ -14,6 +14,9 @@ import {
 } from '@/lib/worldLibrary';
 import { clearUnreadableWorld, reportUnreadableWorld, syncUnreadableWorlds } from '@/lib/unreadableWorlds';
 import { contentHash } from '@/lib/contentHash';
+import { isHiddenCopy } from '@/lib/supporterCopyVisibility';
+import { parseSupporterSchedule, type SupporterScheduleEntry } from '@/lib/supporterSchedule';
+import type { SupporterScheduleSave } from '@/lib/supporterScheduleEdit';
 import { announceWorldDeleted, announceWorldSaved } from '@/lib/worldChangeSignal';
 import {
   forgetDeletedDefaultWorld, readDeletedDefaultWorlds, seedWorldData, tombstoneDefaultWorld, type BundledWorlds, type DefaultWorldSeed,
@@ -26,9 +29,11 @@ import type { AddonRow, DependencyRow } from '@/lib/worldDependencies';
 import type { SourceCheckStatus } from '@/lib/sourceChecks';
 import type { LikeState } from '@/lib/likeCount';
 import type {
-  AnonymousLikeRow, AnonymousLikesRemoved, LikerAuditRow, LikerRow, LikesMarkerReason, LikesSummary, VrmLicense, WorldMetadata,
+  AnonymousLikeRow, AnonymousLikesRemoved, LikerAuditRow, LikerRow, LikesMarkerReason, LikesSummary, SupporterCopyMarker, VrmLicense,
+  WorldMetadata,
 } from '@/types';
 import { likesMarkerOf } from '@/lib/likesMarker';
+import { coverData } from '@/lib/mediaImages';
 import {
   INSTALL_HEADER_NAME, installHeaderInUse, noteInstallHeaderRefused, readerInstallId, storedInstallId,
 } from '@/lib/anonymousLikes';
@@ -166,6 +171,8 @@ export interface StoredWorldRecord {
    *  tell whether the shipped content actually changed. Derived (never hand-written) and local-only, so it
    *  isn't exported and needs no version bump. Absent on copies seeded before hashing existed. */
   sourceHash?: string;
+  /** Present on a Supporter Copy. Local-only and sticky, like `sourceId`. */
+  supporterCopy?: SupporterCopyMarker;
   data: {
     version?: string; // stamped on save/export (see lib/version)
     worldOverview: unknown;
@@ -315,8 +322,9 @@ class WorldStorageService {
   }
 
   /** List all stored worlds' list fields, for menu/library rendering. Reads no world data. */
-  async getWorldMetadata(): Promise<WorldMetadata[]> {
-    return (await this.readMeta()).map(listFieldsOf);
+  async getWorldMetadata({ includeHidden = false }: { includeHidden?: boolean } = {}): Promise<WorldMetadata[]> {
+    const meta = await this.readMeta();
+    return meta.filter((world) => includeHidden || !isHiddenCopy(world.supporterCopy)).map(listFieldsOf);
   }
 
   /**
@@ -329,6 +337,17 @@ class WorldStorageService {
     if (!worldId) return {};
     const meta = await this.readMetaOf(worldId);
     return { sourceId: meta?.sourceId, downloadedAt: meta?.downloadedAt };
+  }
+
+  /**
+   * A stored world's Supporter Copy marker.
+   *
+   * @param worldId - The local record's id
+   * @returns The marker, or null for a plain world or a missing record
+   */
+  async getSupporterCopy(worldId: string): Promise<SupporterCopyMarker | null> {
+    if (!worldId) return null;
+    return (await this.readMetaOf(worldId))?.supporterCopy ?? null;
   }
 
   /**
@@ -510,6 +529,7 @@ class WorldStorageService {
         sourceUpdatedAt: world.sourceUpdatedAt ?? existing?.sourceUpdatedAt,
         sourceAuthorId: world.sourceAuthorId ?? existing?.sourceAuthorId,
         sourceHash: world.sourceHash ?? existing?.sourceHash,
+        supporterCopy: world.supporterCopy ?? existing?.supporterCopy,
         data: world.data,
         // createdAt is sticky: stamped once on first store, preserved across later saves.
         createdAt: existing?.createdAt ?? new Date().toISOString(),
@@ -579,7 +599,7 @@ class WorldStorageService {
             name: data.worldOverview?.name || world.defaultName,
             description: data.worldOverview?.description || `Default ${world.defaultName} world`,
             author: data.worldOverview?.author || '',
-            thumbnail: data.worldOverview?.thumbnail || '',
+            thumbnail: coverData(data.worldOverview) || '',
             data,
           };
           await this.storeWorld({ ...fullWorld, sourceHash: hash });
@@ -963,6 +983,37 @@ class WorldStorageService {
     if (typeof held !== 'boolean') throw new Error('The server did not say what it saved');
 
     return held;
+  }
+
+  /**
+   * Replace the tier schedule of a Supporter-only listing. Staff only.
+   *
+   * @param worldId - The listing's server id
+   * @param schedule - Each lower tier's opening date and the public date, or the public date alone for a listing without stages
+   * @returns The public date and the stages the server now holds
+   */
+  async setRemoteWorldSupporterSchedule(
+    worldId: string,
+    schedule: SupporterScheduleSave,
+  ): Promise<{ until: string | null; schedule: SupporterScheduleEntry[] }> {
+    const response = await fetch(`${this.API_URL}/worlds/${worldId}/supporter-only`, {
+      method: 'PUT',
+      headers: authHeaders(true),
+      body: JSON.stringify(
+        'opensAt' in schedule
+          ? { supporterOnly: true, supporterSchedule: schedule }
+          : { supporterOnly: true, supporterUntil: schedule.publicAt },
+      ),
+    });
+
+    if (!response.ok) throw await responseError(response, 'Failed to change the schedule');
+    const body = await response.json().catch(() => ({}));
+    const held = body.data ?? body;
+
+    return {
+      until: typeof held?.supporterUntil === 'string' ? held.supporterUntil : null,
+      schedule: parseSupporterSchedule(held?.supporterSchedule),
+    };
   }
 
   /** Fetch a page of comments for a published world; auth is optional. Never throws — errors resolve to

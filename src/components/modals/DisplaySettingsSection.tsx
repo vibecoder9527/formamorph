@@ -21,6 +21,7 @@ import { targetAttribute } from '@/lib/surface/surfaceTargets';
 import { hslTripleToHex } from '@/lib/hslColor';
 import type { SettingsMode } from '@/lib/settingsMode';
 import type { DisplaySettingsSource } from './settingsSource';
+import { CharacterMentionsRows } from './CharacterMentionsRows';
 
 // These bindings narrow each option's `value` to the setting's union, so a drifted option fails to compile.
 const THEME_OPTIONS: readonly SettingOptionCopy<'light' | 'dark' | 'system'>[] = SETTINGS_OPTIONS.theme;
@@ -303,22 +304,7 @@ export function DisplaySettingsSection({ source, mode }: { source: DisplaySettin
           </Meta>
         </div>
       </Row>
-      <CheckRow
-        htmlFor="quoteColor"
-        checked={quoteColor}
-        onChange={setQuoteColor}
-        target={targetAttribute('settings.display', 'quote-color')}
-        {...rowCopy('quoteColor')}
-      />
-      {quoteColor && (
-        <QuoteColorField quoteColorMode={quoteColorMode} activeQuoteColor={activeQuoteColor} setActiveQuoteColor={setActiveQuoteColor} />
-      )}
-      <CheckRow
-        htmlFor="quoteItalic"
-        checked={quoteItalic}
-        onChange={setQuoteItalic}
-        {...rowCopy('quoteItalic')}
-      />
+      {/* Directly under the two rows it resets (Q66). */}
       <Row>
         <div>
           <ConfirmDialog
@@ -335,6 +321,23 @@ export function DisplaySettingsSection({ source, mode }: { source: DisplaySettin
           </ConfirmDialog>
         </div>
       </Row>
+      <CheckRow
+        htmlFor="quoteColor"
+        checked={quoteColor}
+        onChange={setQuoteColor}
+        target={targetAttribute('settings.display', 'quote-color')}
+        {...rowCopy('quoteColor')}
+      />
+      {quoteColor && (
+        <QuoteColorField quoteColorMode={quoteColorMode} activeQuoteColor={activeQuoteColor} setActiveQuoteColor={setActiveQuoteColor} />
+      )}
+      <CheckRow
+        htmlFor="quoteItalic"
+        checked={quoteItalic}
+        onChange={setQuoteItalic}
+        {...rowCopy('quoteItalic')}
+      />
+      <CharacterMentionsRows source={source} advanced={advanced} />
       </Section>
 
       {/* Both rows only decide whether a panel appears on screen — nothing about them changes what

@@ -4,6 +4,8 @@ import { screen, fireEvent, waitFor, within } from '@testing-library/react';
 import type { World } from '@/types';
 import { renderOverviewTab } from '@/test/overviewBench';
 import { panelWorld } from '@/test/panelBench';
+import { encodePlaceholderToken } from '@/lib/placeholders';
+import { phValues } from '@/test/placeholderValues';
 
 /** The Overview tab's left column: the thumbnail's Generate button, the persona rules and the background music. */
 
@@ -133,6 +135,23 @@ describe('the Overview persona rules', () => {
     expect(await screen.findByRole('option', { name: 'Wanderer' })).toBeInTheDocument();
   });
 
+  it('shows a persona named by a placeholder as its chip, never as the token behind it', async () => {
+    const user = userEvent.setup();
+    const token = encodePlaceholderToken({ id: 'p-hero', mode: 'world', placementId: 'v-hero' });
+    renderOverviewTab(panelWorld({
+      ...withPersonas({ allowedPersonas: 'world' }, [
+        { id: 'e3', name: token, playerDescription: '', aiDescription: '', persona: true },
+      ]),
+      placeholders: [{ id: 'p-hero', name: 'Hero Name', values: phValues(['Ash']) }],
+    } as unknown as Partial<World>), 'advanced');
+    await screen.findByLabelText('World Name');
+    await openStartsOn(user);
+    const option = await screen.findByRole('option', { name: /Hero Name/ });
+    await user.click(option);
+    expect(startsOn()).toHaveTextContent('Hero Name');
+    expect(startsOn().textContent).not.toContain('{{ph:');
+  });
+
   it('reads a pick of an entity that is no longer a persona as the default', async () => {
     renderOverviewTab(withPersonas({ startPersona: { source: 'world', entityId: 'gone' } }), 'advanced');
     await screen.findByLabelText('World Name');
@@ -141,33 +160,37 @@ describe('the Overview persona rules', () => {
 });
 
 describe('the Overview background music widget', () => {
-  it('offers the shared sound dropzone while the world has no music', async () => {
+  it('offers the sound slot while the world has no music', async () => {
     renderOverviewTab(WORLD, 'advanced');
     await screen.findByLabelText('World Name');
-    expect(screen.getByText('Add Sound')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Remove sound' })).toBeNull();
+    const slot = document.querySelector<HTMLElement>('[data-sound-slot="world-bgm"]')!;
+    expect(within(slot).getByText('Import')).toBeInTheDocument();
+    expect(within(slot).getByRole('button', { name: 'Choose' })).toBeInTheDocument();
+    expect(within(slot).getByRole('textbox', { name: 'Sound URL' })).toBeInTheDocument();
   });
 
-  it('shows the player and the remove control once a track is added, and clears both on remove', async () => {
+  it('links an imported track as a Media List entry, plays it, and clears it on Remove From Slot', async () => {
     const { ctx } = renderOverviewTab(WORLD, 'advanced');
     await screen.findByLabelText('World Name');
 
-    const input = document.querySelector<HTMLInputElement>('#sound-upload-world-bgm');
+    const input = document.querySelector<HTMLInputElement>('#sound-import-world-bgm');
     if (!input) throw new Error('No background music input');
     fireEvent.change(input, {
       target: { files: [new File(['fen-drone'], 'Drone.mp3', { type: 'audio/mpeg' })] },
     });
 
-    const remove = await screen.findByRole('button', { name: 'Remove sound' });
+    const remove = await screen.findByRole('button', { name: 'Remove From Slot' });
     expect(document.querySelector('audio')).not.toBeNull();
-    // Still the bare data URL the world has always stored, not the widget's media record.
-    expect(typeof ctx().worldOverview.bgm).toBe('string');
+    const bgm = ctx().worldOverview.bgm;
+    const id = bgm && typeof bgm === 'object' ? bgm.mediaId : '';
+    expect(ctx().worldOverview.mediaList?.[id]).toMatchObject({ name: 'Drone', kind: 'sound' });
 
     fireEvent.click(remove);
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove sound' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove From Slot' })).toBeNull());
     expect(ctx().worldOverview.bgm).toBeNull();
-    expect(screen.getByText('Add Sound')).toBeInTheDocument();
+    // The entry stays in the world.
+    expect(ctx().worldOverview.mediaList?.[id]).toBeDefined();
   });
 });
 

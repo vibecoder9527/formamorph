@@ -2,8 +2,10 @@ import { randomUUID } from "@/lib/uuid";
 import { newBlankWorld } from "@/lib/blankWorld";
 import { filledScripts, SCRIPT_TIMING_LABEL, type ScriptHome } from "@/lib/scripts";
 import { DEFAULT_WORLDS, isDefaultWorldId, readDeletedDefaultWorlds, seedWorldData } from "@/lib/defaultWorlds";
-import { firstRunStepDue } from "@/lib/firstTimeFlow";
-import { isFirstRunStepSeen, markFirstRunStepSeen } from "@/lib/firstTimeFlowStore";
+import { firstRunStepDue, whatsNewDue } from "@/lib/firstTimeFlow";
+import { isFirstRunStepSeen, markFirstRunStepSeen, markWhatsNewSeen, whatsNewSeenVersion } from "@/lib/firstTimeFlowStore";
+import { APP_VERSION } from "@/lib/version";
+import { releaseBodies } from "@/services/UpdateService";
 import { FirstRunStep } from "@/components/FirstRunStep";
 import { bundledWorlds } from "@/lib/bundledWorldText";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -94,8 +96,8 @@ import type { World, Stat, Dictionary, DictionaryMetadata, Entity, EntityMetadat
 import { parseWorldFile } from '@/lib/jsonFileWorkerUtils';
 import { updateBridge } from '@/lib/updates/updateBridge';
 import { useIsMobile } from '@/lib/useIsMobile';
-import { UpdateVersionControl } from '@/components/menu/UpdateVersionControl';
-import { WebVersionChangelog } from '@/components/menu/WebVersionChangelog';
+import { WhatsNewHost } from '@/components/whatsNew/WhatsNewHost';
+import { WhatsNewVersionButton } from '@/components/whatsNew/WhatsNewVersionButton';
 import { parseDictionaryImport } from '@/lib/dictionaryFile';
 import { readLibraryDetails } from '@/lib/contentAuthor';
 import { importCharacterFile } from '@/lib/entityFile';
@@ -116,6 +118,8 @@ import SortableWorldCard from "@/components/SortableWorldCard";
 import { PlaceBadges } from "@/components/PlaceBadges";
 import { LibraryWorldCard } from "@/components/LibraryWorldCard";
 import { WorldActionButton } from "@/components/WorldActionButton";
+import { BlockedActionTip } from "@/components/BlockedActionTip";
+import { supporterCopyBlock } from "@/lib/supporterCopy";
 import { GradientButton } from "@/components/GradientButton";
 import DictionaryEditorModal from "@/components/modals/DictionaryEditorModal";
 import EntityEditorModal from "@/components/modals/EntityEditorModal";
@@ -198,6 +202,7 @@ import { currentHelpSettings, useHelpSettings } from "@/components/formaquestion
 import PatreonIcon from "@/components/PatreonIcon";
 import GithubIcon from "@/components/GithubIcon";
 import { describePlaceholders } from '@/lib/placeholders';
+import { coverData } from '@/lib/mediaImages';
 
 interface MainMenuProps {
   onStartGame: StartGame;
@@ -228,6 +233,8 @@ const WORLD_NOT_FOUND = 'World not found';
 
 /** The bundled world the first-run step starts. */
 const FIRST_RUN_WORLD_ID = 'emberwatch';
+/** How long the What's New load-time fetch waits; the dialog still applies its own wait on open. */
+const WHATS_NEW_PREFETCH_MS = 4000;
 
 
 /** The library's card-type tabs, with their icon + label, so the top switcher and the mobile bottom bar
@@ -418,6 +425,9 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     const record = readSourceCheck(selectedWorld.id);
     return sourceBlockReason(linkedSourceCopies(selectedWorld.data, record.required), record.results);
   }, [selectedWorld, showWorldEditor]);
+  const duplicateBlock = supporterCopyBlock(selectedWorld, 'duplicate');
+  const exportBlock = supporterCopyBlock(selectedWorld, 'exportWorld');
+  const publishBlock = supporterCopyBlock(selectedWorld, 'publish');
   const [worldToDelete, setWorldToDelete] = useState<string | null>(null);
   const [warmingOffline, setWarmingOffline] = useState(false);
   const [showCharacterCustomization, setShowCharacterCustomization] = useState(false);
@@ -452,6 +462,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   // Whether this build can install an update. The Android app is always "mobile", so its version line has
   // to stay in the footer rather than collapsing into the ⋯ menu — an update offer nobody opens is no offer.
   const canUpdate = updateBridge() !== null;
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   // The age attestation every community surface waits on (see AgeGateContext).
   const { attested, gateOpen, requireAttestation } = useAgeGate();
 
@@ -484,7 +495,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     if (devRoute?.modal === 'profile') setShowProfileDialog(true);
     if (devRoute?.modal === 'feedbackHub') setShowFeedback(true);
     if (devRoute?.modal === 'adminPanel') setShowAdminPanel(true);
-    if (['worldEditor', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'appearancePreview', 'statAppearancePreview'].includes(devRoute?.modal ?? '')) setShowWorldEditor(true);
+    if (['worldEditor', 'replaceSource', 'imageReplace', 'codeRename', 'replaceAll', 'savedElsewhere', 'deletedElsewhere', 'deleteWorldAvatar', 'deleteMediaEntry', 'appearancePreview', 'statAppearancePreview'].includes(devRoute?.modal ?? '')) setShowWorldEditor(true);
     if (devRoute?.modal === 'avatar') setShowCharacterCustomization(true);
     if (devRoute?.modal === 'aiSetup') setGate({ reason: 'firstRun' });
     if (devRoute?.modal === 'firstRun') setDevFirstRun(true);
@@ -595,6 +606,32 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     setDevFirstRun(false);
   };
 
+  // What's New opens once per version, after the startup steps; a fresh install records the version instead.
+  const [whatsNewSeen, setWhatsNewSeen] = useState(whatsNewSeenVersion);
+  useEffect(() => {
+    if (!introSeenAtLaunch) markWhatsNewSeen(APP_VERSION);
+  }, [introSeenAtLaunch]);
+  const whatsNewIsDue = whatsNewDue({
+    introSeenAtLaunch, seenVersion: whatsNewSeen, installedVersion: APP_VERSION, devBuild: import.meta.env.DEV,
+  });
+  // Starts the release fetch on load, so the summary is ready when the startup steps end.
+  useEffect(() => {
+    if (whatsNewIsDue) void releaseBodies(APP_VERSION, WHATS_NEW_PREFETCH_MS);
+  }, [whatsNewIsDue]);
+  const startupStepsWaiting = introActive || gate !== null || gateOpen || aiGatePending || firstRunDue;
+  const changeWhatsNewOpen = useCallback((open: boolean) => {
+    if (open) {
+      markWhatsNewSeen(APP_VERSION);
+      setWhatsNewSeen(APP_VERSION);
+    }
+    setWhatsNewOpen(open);
+  }, []);
+  useEffect(() => {
+    if (whatsNewIsDue && !startupStepsWaiting) changeWhatsNewOpen(true);
+  }, [whatsNewIsDue, startupStepsWaiting, changeWhatsNewOpen]);
+  // The event poster, the CUDA notice and the menu tutorial stay held while What's New is due or open.
+  const whatsNewHolds = whatsNewIsDue || whatsNewOpen;
+
   // Cold-load: fetch the save's world into GameData, then hand the save id to App to enter the game.
   // Orphaned saves are blocked inside the dialog, so `worldId` is always an installed world here.
   const handleColdLoad = async (saveId: string, worldId?: string) => {
@@ -658,7 +695,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
     ...(!COMMUNITY_ENABLED || !isAuthenticated ? ['main-menu-feedback'] : []),
   ];
   const { active: menuTutorial, nav: menuTutorialNav, dismiss: dismissMenuTutorial } = useTutorial('mainMenu', {
-    active: !introActive && !firstRunDue,
+    active: !introActive && !firstRunDue && !whatsNewHolds,
     held: heldMenuTutorials,
   });
   // Opening the window, by the tab or by F1, reads the Help tab's note.
@@ -692,6 +729,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
    * side already offers this choice; the publish side is where the big image actually comes from.
    */
   const publishEntity = async (entity: Entity, libraryDetails?: { author?: string }) => {
+    if (supporterCopyBlock(entities.find((record) => record.id === entity.id), 'publish')) return;
     openPublish(
       entityPublishPayload(await withCarriedVrm(await promptEntity(entity)), libraryDetails),
       entity.id,
@@ -706,6 +744,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
    * payload that could only be rejected, and the reason would arrive after the upload instead of before it.
    */
   const publishModel = async (model: { id: string; name: string }) => {
+    if (supporterCopyBlock(models.find((record) => record.id === model.id), 'publish')) return;
     const attempt = await buildAvatarPublish(model);
     if (!attempt.allowed) {
       toast.error(attempt.message);
@@ -716,6 +755,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
 
   /** Publish the selected world, unless it is a bundled world the player never edited. */
   const publishWorld = (world: WorldRecord) => {
+    if (supporterCopyBlock(world, 'publish')) return;
     // A selected world always holds its migrated data (handleWorldSelection); WorldRecord is loose.
     const attempt = buildWorldPublish(world as WorldPublishTarget);
     if (!attempt.allowed) {
@@ -1192,8 +1232,8 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             data.id = id;
             const name = data.worldOverview?.name || 'Uploaded World';
             const description = data.worldOverview?.description || 'Custom uploaded world';
-            await WorldStorageService.storeWorld({ id, name, description, thumbnail: data.worldOverview?.thumbnail ?? undefined, data });
-            setWorlds(prev => [...prev, { id, name, description, thumbnail: data.worldOverview?.thumbnail, tags: data.worldOverview?.tags || [], createdAt: now, lastAccessed: now, isLoading: false }]);
+            await WorldStorageService.storeWorld({ id, name, description, thumbnail: coverData(data.worldOverview), data });
+            setWorlds(prev => [...prev, { id, name, description, thumbnail: coverData(data.worldOverview), tags: data.worldOverview?.tags || [], createdAt: now, lastAccessed: now, isLoading: false }]);
             stored++;
             last = { id, data };
           } catch (error) {
@@ -1209,7 +1249,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
       if (files.length === 1 && last) {
         const d = last.data;
         loadWorldData(d, true, { stored: true });
-        setSelectedWorld({ id: last.id, name: d.worldOverview?.name || 'Uploaded World', description: d.worldOverview?.description || 'Custom uploaded world', thumbnail: d.worldOverview?.thumbnail, createdAt: now, lastAccessed: now, data: d });
+        setSelectedWorld({ id: last.id, name: d.worldOverview?.name || 'Uploaded World', description: d.worldOverview?.description || 'Custom uploaded world', thumbnail: coverData(d.worldOverview), createdAt: now, lastAccessed: now, data: d });
         setShowWorldModal(true);
       }
     }
@@ -1446,12 +1486,29 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   useEffect(() => { devEntryActions.current = { select: handleWorldSelection, start: startEntry }; });
   const [devEntryPending, setDevEntryPending] = useState(false);
   const devEntryRoute = useRef<typeof devRoute>(null);
+  const [devEntryWorld, setDevEntryWorld] = useState<string | null>(null);
   useEffect(() => {
     if (!import.meta.env.DEV || devRoute?.modal !== 'enterWorld' || !worlds.length) return;
     if (devEntryRoute.current === devRoute) return;
     devEntryRoute.current = devRoute;
-    void devEntryActions.current.select(devRoute.tab ?? worlds[0].id).then(() => setDevEntryPending(true));
-  }, [devRoute, worlds]);
+    const fixture = devRoute.fixture;
+    if (!fixture) { setDevEntryWorld(devRoute.tab ?? worlds[0].id); return; }
+    // A fixture's world is stored first, so entry runs on a library world.
+    void (async () => {
+      const { loadDevFixture } = await import('@/lib/devFixtures');
+      const fx = await loadDevFixture(fixture);
+      if (!fx) return;
+      const { world } = fx;
+      await WorldStorageService.storeWorld({ id: world.id, name: world.worldOverview.name, description: world.worldOverview.description, thumbnail: coverData(world.worldOverview), data: world });
+      await refreshWorlds();
+      setDevEntryWorld(world.id);
+    })();
+  }, [devRoute, worlds, refreshWorlds]);
+  useEffect(() => {
+    if (!import.meta.env.DEV || !devEntryWorld || !worlds.some((w) => w.id === devEntryWorld)) return;
+    setDevEntryWorld(null);
+    void devEntryActions.current.select(devEntryWorld).then(() => setDevEntryPending(true));
+  }, [devEntryWorld, worlds]);
   useEffect(() => {
     if (!import.meta.env.DEV || !devEntryPending || !selectedWorld) return;
     setDevEntryPending(false);
@@ -1491,7 +1548,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         id: worldId,
         name: migrated.worldOverview?.name || seed.defaultName,
         description: migrated.worldOverview?.description || '',
-        thumbnail: migrated.worldOverview?.thumbnail,
+        thumbnail: coverData(migrated.worldOverview),
         createdAt: now,
         lastAccessed: now,
         data: migrated,
@@ -1619,6 +1676,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         toast.error('No world selected to duplicate');
         return;
       }
+      if (supporterCopyBlock(selectedWorld, 'duplicate')) return;
 
       // Get the current world data
       const worldToDuplicate = selectedWorld!.data;
@@ -1642,7 +1700,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         id: worldId,
         name: duplicatedWorld.worldOverview.name,
         description: duplicatedWorld.worldOverview.description || 'Duplicated world',
-        thumbnail: duplicatedWorld.worldOverview.thumbnail,
+        thumbnail: coverData(duplicatedWorld.worldOverview),
         data: duplicatedWorld
       });
 
@@ -1651,7 +1709,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         id: worldId,
         name: duplicatedWorld.worldOverview.name,
         description: duplicatedWorld.worldOverview.description || 'Duplicated world',
-        thumbnail: duplicatedWorld.worldOverview.thumbnail,
+        thumbnail: coverData(duplicatedWorld.worldOverview),
         tags: duplicatedWorld.worldOverview.tags || [],
         isLoading: false
       }]);
@@ -1669,6 +1727,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
 
   // The copy joins the original's folder, if it has one.
   const handleDuplicateEntity = async (id: string) => {
+    if (supporterCopyBlock(entities.find((entity) => entity.id === id), 'duplicate')) return;
     try {
       const folder = entityTiles.groupOfItem(id);
       const details = entities.find((entity) => entity.id === id)?.libraryDetails;
@@ -1684,6 +1743,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
   };
 
   const handleDuplicateDictionary = async (id: string) => {
+    if (supporterCopyBlock(dictionaries.find((dictionary) => dictionary.id === id), 'duplicate')) return;
     try {
       const folder = dictionaryTiles.groupOfItem(id);
       const details = dictionaries.find((dictionary) => dictionary.id === id)?.libraryDetails;
@@ -2309,6 +2369,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
             const target = models.find((m) => m.id === id);
             if (target) void publishModel(target);
           } : undefined}
+          blockOf={(id, action) => supporterCopyBlock(models.find((m) => m.id === id), action)}
           itemActions={(id) => {
             const model = models.find((m) => m.id === id);
             return model ? (
@@ -2375,6 +2436,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           )}
           onCheckUpdates={(id) => { void checkForUpdates('entity', id); }}
           onDuplicate={(id) => { void handleDuplicateEntity(id); }}
+          blockOf={(id, action) => supporterCopyBlock(entities.find((e) => e.id === id), action)}
           itemActions={(id) => {
             if (!entities.some((entity) => entity.id === id && entity.persona)) return null;
             return (
@@ -2416,6 +2478,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           )}
           onCheckUpdates={(id) => { void checkForUpdates('dictionary', id); }}
           onDuplicate={(id) => { void handleDuplicateDictionary(id); }}
+          blockOf={(id, action) => supporterCopyBlock(dictionaries.find((d) => d.id === id), action)}
           onDelete={setDictionaryToDelete}
         />
       ) : (
@@ -2495,6 +2558,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           scrolling under floating buttons. Full-width (the root is no longer the max-width container — that
           moved to the grid scroll areas), so the profile/social sit at the viewport edges. Equal flex-1
           side cells keep the copyright truly centered. */}
+      <WhatsNewHost open={whatsNewOpen} onOpenChange={changeWhatsNewOpen}>
       <footer className="shrink-0 flex items-center gap-2 py-3 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))]">
         {/* Left: user profile circle + app version (the version moves into the ⋯ menu on mobile). */}
         <div className="flex-1 flex items-center justify-start gap-2">
@@ -2595,7 +2659,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
               </TooltipPortal>
             </Tooltip>
           )}
-          {canUpdate ? <UpdateVersionControl /> : !isMobile && <WebVersionChangelog />}
+          {(canUpdate || !isMobile) && <WhatsNewVersionButton />}
         </div>
 
         {/* Center: copyright + origin and the Credits line (original is MIT — see THIRD-PARTY-NOTICES / legal/). The
@@ -2641,7 +2705,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
                 </button>
               </PopoverTrigger>
               <PopoverContent align="end" side="top" className="w-56 flex flex-col gap-1">
-                {!canUpdate && <WebVersionChangelog />}
+                {!canUpdate && <WhatsNewVersionButton />}
                 <a
                   href="https://www.patreon.com/JakeJamesNSFW"
                   target="_blank"
@@ -2699,6 +2763,7 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           )}
         </div>
       </footer>
+      </WhatsNewHost>
 
       <Dialog open={showWorldModal} onOpenChange={setShowWorldModal}>
         <DialogContent aria-describedby={undefined} className={cn("h-[85dvh] flex flex-col overflow-x-hidden", worldModalCollapsed ? "sm:max-w-[600px]" : "sm:max-w-[1200px]")}>
@@ -2820,19 +2885,25 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
                     <Pencil className="mr-2 h-4 w-4" /> Edit World
                   </WorldActionButton>
 
-                  <WorldActionButton
-                    tone="purpleSoft"
-                    onClick={() => handleDuplicateWorld()}
-                  >
-                    <ActionIcon.copy className="mr-2 h-4 w-4" /> Duplicate World
-                  </WorldActionButton>
+                  <BlockedActionTip reason={duplicateBlock}>
+                    <WorldActionButton
+                      tone="purpleSoft"
+                      disabled={!!duplicateBlock}
+                      onClick={() => handleDuplicateWorld()}
+                    >
+                      <ActionIcon.copy className="mr-2 h-4 w-4" /> Duplicate World
+                    </WorldActionButton>
+                  </BlockedActionTip>
 
-                  <WorldActionButton
-                    tone="emeraldSoft"
-                    onClick={() => { if (selectedWorld) void exportWorld(selectedWorld.data); }}
-                  >
-                    <ActionIcon.export className="mr-2 h-4 w-4" /> Export World
-                  </WorldActionButton>
+                  <BlockedActionTip reason={exportBlock}>
+                    <WorldActionButton
+                      tone="emeraldSoft"
+                      disabled={!!exportBlock}
+                      onClick={() => { if (selectedWorld) void exportWorld(selectedWorld.data); }}
+                    >
+                      <ActionIcon.export className="mr-2 h-4 w-4" /> Export World
+                    </WorldActionButton>
+                  </BlockedActionTip>
 
                   {/* Only worth offering for a world that links its pictures — one storing its own has nothing
                       to download. */}
@@ -2847,13 +2918,15 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
                   )}
 
                   {isAuthenticated && (
-                    <WorldActionButton
-                      tone="redSoft"
-                      disabled={!!sourceBlock}
-                      onClick={() => { if (selectedWorld) publishWorld(selectedWorld); }}
-                    >
-                      <ActionIcon.publish className="mr-2 h-4 w-4" /> Publish World
-                    </WorldActionButton>
+                    <BlockedActionTip reason={publishBlock}>
+                      <WorldActionButton
+                        tone="redSoft"
+                        disabled={!!sourceBlock || !!publishBlock}
+                        onClick={() => { if (selectedWorld) publishWorld(selectedWorld); }}
+                      >
+                        <ActionIcon.publish className="mr-2 h-4 w-4" /> Publish World
+                      </WorldActionButton>
+                    </BlockedActionTip>
                   )}
                 </div>
               }
@@ -3006,7 +3079,10 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
         initialTab={devRoute?.modal === 'dictionaryEditor' ? DICTIONARY_EDITOR_TABS.find((t) => t.value === devRoute.tab)?.value : undefined}
         draft={draftDictionary}
         onClose={() => { setEditingDictionaryId(null); setDraftDictionary(null); refreshDictionaries(); }}
-        onPublish={isAuthenticated ? (book, details) => openPublish(dictionaryPublishPayload(book, details), book.id, dictionaries.find((record) => record.id === book.id)?.sourceId) : undefined}
+        onPublish={isAuthenticated ? (book, details) => {
+          if (supporterCopyBlock(dictionaries.find((record) => record.id === book.id), 'publish')) return;
+          openPublish(dictionaryPublishPayload(book, details), book.id, dictionaries.find((record) => record.id === book.id)?.sourceId);
+        } : undefined}
       />
 
       <ConfirmDialog
@@ -3215,17 +3291,17 @@ const MainMenu = ({ onStartGame, onLoadSaveGame, onReplayIntro, introActive = fa
           />
 
           {/* One-time acknowledge poster for an event that has just started or just ended. It waits for
-              the welcome intro and the first-run step to finish, so a first-run player meets the menu
-              before the poster. */}
+              the welcome intro, the first-run step and What's New to finish, so a first-run player meets the
+              menu before the poster. */}
           <EventAckModal
             events={announceable}
             isAuthenticated={isAuthenticated}
             onOpenEvent={openEvent}
-            held={introActive || gateOpen || firstRunDue}
+            held={introActive || gateOpen || firstRunDue || whatsNewHolds}
           />
 
-          {/* One-time CUDA engine offer; waits for the intro, the AI setup gate, the first-run step and any open modal dialog. */}
-          <CudaNoticeHost held={introActive || gateOpen || gate !== null || aiGatePending || firstRunDue} />
+          {/* One-time CUDA engine offer; waits for the intro, the AI setup gate, the first-run step, What's New and any open modal dialog. */}
+          <CudaNoticeHost held={startupStepsWaiting || whatsNewHolds} />
 
           {/* Community Creations. The host reads its own libraries, account and events from the services,
               so all the menu hands it is where to open — see CommunityBrowserHost.tsx. */}

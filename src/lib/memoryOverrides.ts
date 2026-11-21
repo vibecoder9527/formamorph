@@ -29,7 +29,23 @@ export interface MemoryNote {
   id: string;
   text: string;
   anchorTurn: number;
+  /** A named memory's name as the script first wrote it. `text` and `anchorTurn` then mirror its newest revision. */
+  name?: string;
+  /** A named memory's writes, oldest first. */
+  revisions?: NamedRevision[];
 }
+
+/** One write to a named memory: a script's, keyed by its turn, or the player's, with no turn. */
+export interface NamedRevision {
+  turnId?: string;
+  text: string;
+  anchorTurn: number;
+  /** A script's `remove()`: the memory is gone while this revision is its newest, `text` keeping what it removed. */
+  removed?: true;
+}
+
+/** Whether a script removed the named memory, so it reads as deleted until a restore or a rewind. */
+export const isRemoved = (note: MemoryNote): boolean => note.revisions?.at(-1)?.removed === true;
 
 export interface MemoryOverrides {
   edits?: MemoryEditMap;
@@ -68,5 +84,5 @@ export function activeNotes(overrides: MemoryOverrides | null | undefined): Memo
   const notes = overrides?.notes;
   if (!notes || notes.length === 0) return [];
   const gone = overrides?.deleted?.length ? new Set(overrides.deleted) : null;
-  return notes.filter((n) => !gone?.has(n.id)).sort((a, b) => a.anchorTurn - b.anchorTurn);
+  return notes.filter((n) => !gone?.has(n.id) && !isRemoved(n)).sort((a, b) => a.anchorTurn - b.anchorTurn);
 }

@@ -6,7 +6,7 @@ import { scoped } from '@/lib/scope';
 import { inPlayOwners } from '@/lib/ownedTraitsInPlay';
 import { applyOwnedStatTraits, seedNewGameStats, type TraitRuntimeState, type TraitWorld } from '@/lib/traitRuntime';
 import { ownedTraitStatesFrom } from '@/lib/ownedTraitState';
-import { seedEntityStats } from '@/lib/entityStats';
+import { seedEntityStats } from '@/lib/entityStatSeed';
 import { stateInventory, type SandboxState, type StatCodeTurn, type StatCodeTurnResult } from '@/lib/statCodeTurn';
 import type { Daypart, Entity, GameLocation, PersonaRef, PlayerStat, Trait, World } from '@/types';
 
@@ -120,9 +120,9 @@ export function bundledWorldHarness(raw: string) {
   }
 
   /** The image slots play shows for an entity. */
-  const entitySlots = (entity: Entity, input: GateInput) => visibleImages(entity, input).map((image) => image.slot);
+  const entitySlots = (entity: Entity, input: GateInput) => visibleImages(entity, input, world.worldOverview.mediaList).map((image) => image.slot);
   /** The image slots play shows for a location. */
-  const locationSlots = (location: GameLocation, input: GateInput) => visibleLocationImages(location, input).map((image) => image.slot);
+  const locationSlots = (location: GameLocation, input: GateInput) => visibleLocationImages(location, input, world.worldOverview.mediaList).map((image) => image.slot);
 
   return {
     world, persona, gate, ownerWorld, none, traitNamed, idOf, activeIds, activeTraits, activeNames,

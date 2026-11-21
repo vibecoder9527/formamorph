@@ -24,6 +24,7 @@ import { fieldFrame } from '@/lib/historyField';
 import { WHEN_EMPTY_LABEL, itemStackable, whenEmptyOf, wholeCount } from '@/lib/items';
 import { labelPlaceholders } from '@/lib/placementLetters';
 import { itemFields, currencyOf } from '@/lib/currency';
+import { itemsInTabOrder } from '@/lib/itemGroupTree';
 import ItemValueFields from './ItemValueFields';
 import { itemPanelTabsFor, itemTabForField, type ItemPanelTab } from '@/views/itemPanelTabs';
 import type { FocusFieldHint, Item, ItemWhenEmpty } from '@/types';
@@ -54,11 +55,11 @@ const CheckRow = ({ id, field, label, hint, checked, disabled, onChange }: {
 
 /** The item fields beyond its descriptions: value, stacking, uses, the lock, and equipping. */
 const ItemPropertiesFields = ({ item, apply }: { item: Item; apply: (patch: Partial<Item>) => void }) => {
-  const { currencies, placeholders, items } = useGameData();
+  const { currencies, placeholders, items, itemGroups } = useGameData();
   const label = (name: string) => labelPlaceholders(name, placeholders);
   const multiUse = (item.uses ?? 1) > 1;
   const empty = item.uses === undefined ? undefined : whenEmptyOf(item);
-  const others = items.filter((i) => i.id !== item.id);
+  const others = itemsInTabOrder(itemGroups, items).filter((i) => i.id !== item.id);
   const pickEmpty = (kind: ItemWhenEmpty['kind']) => apply({
     whenEmpty: kind === 'becomes' ? { kind, itemId: empty?.kind === 'becomes' ? empty.itemId : others[0]?.id ?? '' }
       : kind === 'changesState' ? { kind, state: empty?.kind === 'changesState' ? empty.state : '' }
@@ -109,14 +110,14 @@ const ItemPropertiesFields = ({ item, apply }: { item: Item; apply: (patch: Part
         id={id('stackable')}
         field="stackable"
         label="Stackable"
-        hint={multiUse ? 'Set Uses to 1 or blank to turn this on' : 'Groups Item Copies into one row with a quantity'}
+        hint={multiUse ? 'Set Uses to 1 or blank to turn this on' : 'Groups Item Instances into one row with a quantity'}
         checked={itemStackable(item)}
         disabled={multiUse}
         onChange={(stackable) => apply({ stackable })}
       />
       <div className="space-y-2" {...fieldFrame('uses')}>
         <Label htmlFor={id('uses')}>Uses</Label>
-        <Hint>Sets how many times each copy of this item can be used. Leave it blank for unlimited uses.</Hint>
+        <Hint>Sets how many times each instance of this item can be used. Leave it blank for unlimited uses.</Hint>
         <WorldInput
           id={id('uses')}
           type="number"
@@ -134,7 +135,7 @@ const ItemPropertiesFields = ({ item, apply }: { item: Item; apply: (patch: Part
       </div>
       <div className="space-y-2" {...fieldFrame('state')}>
         <Label htmlFor={id('state')}>State</Label>
-        <Hint>Sets the state each copy of this item starts in, such as sealed</Hint>
+        <Hint>Sets the state each instance of this item starts in, such as sealed</Hint>
         <WorldInput
           id={id('state')}
           className="w-48"
@@ -145,7 +146,7 @@ const ItemPropertiesFields = ({ item, apply }: { item: Item; apply: (patch: Part
       {empty && (
         <div className="space-y-2" {...fieldFrame('whenEmpty')}>
           <Label id={id('when-empty-label')}>When Empty</Label>
-          <Hint>Picks what happens to a copy of this item after its last use</Hint>
+          <Hint>Picks what happens to an instance of this item after its last use</Hint>
           <div className="flex flex-wrap items-center gap-2">
             <Select value={empty.kind} onValueChange={(kind) => { if (isWhenEmptyKind(kind)) pickEmpty(kind); }}>
               <SelectTrigger className="w-48" aria-labelledby={id('when-empty-label')}>
@@ -230,7 +231,7 @@ const ItemManager = ({ item, tab, onTabChange, placeholderId, onPlaceholderIdCha
       surfaceTabs="worldEditorItem"
     >
       <PanelTabContent value="profile">
-        <EntityImageWidget {...groupProps} ruleHost={ruleHost} imageId={`item-image-${item.id}`}>
+        <EntityImageWidget {...groupProps} ruleHost={ruleHost} imageId={`item-image-${item.id}`} linked>
           <div className="grid gap-4 sm:grid-cols-[18rem_minmax(0,1fr)] md:grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)]">
             <ImageGallery />
             <div className="space-y-4">

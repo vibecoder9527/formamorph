@@ -8,8 +8,9 @@ import { codeDictionaries, sandboxDictionaries, sandboxPlaceholders } from './st
 import {
   CLOCK_MEMBERS, CLOCK_PREVIOUS_FIELDS, CURRENCY_FIELDS, TURN_MEMBERS, LOCATION_ENTRY_FIELDS, LOCATION_EXIT_FIELDS, LOCATION_MEMBERS, MEMORY_ENTRY_FIELDS, MEMORY_MEMBERS, DELTA_FIELDS, DELTA_MEMBERS, DICTIONARY_FIELDS, ENTITY_FIELDS, PERSONA_FIELDS,
   NARRATION_FIELDS, PLAYER_CALL_ENTRIES, PREVIOUS_FIELDS, SANDBOX_GLOBALS, STAT_CODE_SURFACE, STAT_FIELDS, TRAIT_ENTRY_FIELDS,
-  placeholderEntryFields, scriptSurface,
+  placeholderEntryFields, scriptSurface, ITEM_INSTANCE_FIELDS, ITEM_SCRIPT_SURFACE, WORLD_SCRIPT_SURFACE,
 } from './statCodeSurface';
+import type { CodeSurface } from './codeSurface';
 import { codeDiagnostics } from './statCodeAnalysis';
 import { codeCard } from './codeCards';
 import { entityTraitNames, sandboxTraits, unplayedEntities, worldTraitPlaces } from './statCodeTraits';
@@ -119,7 +120,7 @@ const asLevel = (entries: readonly { name: string }[]) => entries.map((entry) =>
 
 describe('the top level', () => {
   it('lists the sandbox’s globals in the order an author meets them, without console', () => {
-    expect(tree.map(labelOf)).toEqual(['This Stat', 'Stats', 'Traits', 'Entities', 'Persona', 'Placeholders', 'Dictionaries', 'Items', 'Currencies', 'World Options', 'Clock', 'Turn', 'Locations', 'Location', 'Memories', 'notes', 'discover']);
+    expect(tree.map(labelOf)).toEqual(['This Stat', 'Stats', 'Traits', 'Entities', 'Persona', 'Placeholders', 'Dictionaries', 'Items', 'Currencies', 'World Options', 'Clock', 'Turn', 'Locations', 'Location', 'Memories', 'Music', 'notes', 'discover']);
   });
 
   it('keeps the in-group order of a stat’s fields', () => {
@@ -376,12 +377,12 @@ describe('verbs last in a group (R7)', () => {
     expect(levelAt(tree, 'Entities', 'Mira').slice(-5)).toEqual(['move', 'follow', 'unfollow', 'meet', 'diary']);
   });
 
-  it('reads the memory entry’s eleven fields, then pin, forget, edit, remove', () => {
+  it('reads the memory entry’s twelve fields, then pin, forget, edit, remove', () => {
     const level = levelAt(tree, 'Memories', 'memories[0]');
     const verbs = ['pin', 'forget', 'edit', 'remove'];
     const names = MEMORY_ENTRY_FIELDS.map((entry) => entry.name);
     expect(level).toEqual([...names.filter((name) => !verbs.includes(name)), ...verbs]);
-    expect(level.length - verbs.length).toBe(11);
+    expect(level.length - verbs.length).toBe(12);
   });
 
 });
@@ -498,11 +499,11 @@ describe('array elements', () => {
   // The fields only: the persona has no verbs and stands first where the player is.
   const presentFields = [
     'id', 'name', 'type', 'pronouns', 'inScene', 'met', 'location', 'following', 'waiting', 'kind', 'action', 'held', 'knownIn', 'knownInPlaces',
-    'description', 'summary', 'aliases', 'traits', 'placeholders', 'stats', 'items', 'body',
+    'description', 'summary', 'aliases', 'traits', 'placeholders', 'stats', 'items', 'body', 'image', 'sound', 'instances',
   ];
 
   it('lists the memory element’s group, then the memories calls, with the verbs last', () => {
-    expect(levelAt(tree, 'Memories')).toEqual(['memories[0]', 'add', 'pin']);
+    expect(levelAt(tree, 'Memories')).toEqual(['memories[0]', 'append', 'pin']);
     expect(levelAt(tree, 'Memories', 'memories[0]')).toEqual(MEMORY_ENTRY_FIELDS.map((entry) => entry.name));
   });
 
@@ -602,7 +603,7 @@ describe('every leaf against the sandbox', () => {
     dictionaries: sandboxDictionaries(names.placeholders!.dictionaries ?? [], placeholders.owners),
     // Test Code stands at the world's starting location.
     places: { locations: [{ id: 'dock', name: 'Dock' }, { id: 'mill', name: 'Old Mill' }], location: { id: 'dock', name: 'Dock' } },
-    items: [{ id: 'lamp', name: 'Brass Lamp', placeholders: placeholders.owners.get('lamp'), copies: [] }],
+    items: [{ id: 'lamp', name: 'Brass Lamp', placeholders: placeholders.owners.get('lamp'), instances: [] }],
     currencies: [{ id: 'coin', name: 'Coin', kind: 'name' }],
   });
 
@@ -680,6 +681,49 @@ describe('every leaf against the sandbox', () => {
   });
 });
 
+describe('the names an item timing adds', () => {
+  const treeAt = (timing: ScriptTiming) => {
+    const surface = scriptSurface(ITEM_SCRIPT_SURFACE, timing);
+    return { surface, built: buildVariableTree(editorNames(), null, 'empty', timingGlobalsOf(surface)) };
+  };
+
+  it('lists Item Instance and its timing’s Arguments in an item timing only', () => {
+    expect(levelAt(treeAt('gained').built, 'Item Instance')).toEqual(ITEM_INSTANCE_FIELDS.map((field) => field.name));
+    expect(levelAt(treeAt('gained').built, 'Arguments')).toEqual(['by', 'from', 'purchase', 'quantity']);
+    expect(levelAt(treeAt('lost').built, 'Arguments')).toEqual(['by', 'to', 'purchase', 'quantity']);
+    expect(inserts(treeAt('gained').built, 'Arguments', 'from')).toBe('args.from');
+    expect(levelAt(treeAt('used').built, 'Arguments')).toEqual(['by', 'quantity', 'target']);
+    expect(inserts(treeAt('used').built, 'Arguments', 'target')).toBe('args.target');
+    expect(inserts(treeAt('lost').built, 'Item Instance', 'quantity')).toBe('instance.quantity');
+    for (const timing of ['before', 'after', 'output', 'start', 'switch'] as const) {
+      expect(treeAt(timing).built.map(labelOf)).not.toContain('Item Instance');
+    }
+    for (const timing of ['before', 'after', 'output', 'start'] as const) {
+      expect(treeAt(timing).built.map(labelOf)).not.toContain('Arguments');
+    }
+  });
+
+  it('reads instance and the timing’s args fields clean, and marks instance outside an item timing', () => {
+    const errorsAt = (surface: CodeSurface, code: string) =>
+      codeDiagnostics(code, { surface, statNames: [] }).map((d) => d.message);
+    expect(errorsAt(treeAt('used').surface, 'const read = [instance.quantity, args.quantity, args.target, self.name];')).toEqual([]);
+    expect(errorsAt(scriptSurface(WORLD_SCRIPT_SURFACE, 'after'), 'const read = [args, instance];')).toEqual([expect.stringContaining('“instance”')]);
+  });
+
+  it('gives each timing’s args fields a card, and args its fields', () => {
+    const cardAt = (timing: ScriptTiming, code: string, at: string) =>
+      codeCard(code, code.lastIndexOf(at) + 1, { surface: treeAt(timing).surface });
+    expect(cardAt('used', 'args.target', 'target')?.signature).toMatchObject({ type: 'object | null' });
+    expect(cardAt('used', 'args', 'args')?.signature).toMatchObject({ type: '{ by, quantity, target }' });
+    expect(cardAt('gained', 'args', 'args')?.signature).toMatchObject({ type: '{ by, from, purchase, quantity }' });
+    expect(cardAt('lost', 'args', 'args')?.signature).toMatchObject({ type: '{ by, to, purchase, quantity }' });
+    expect(cardAt('lost', 'args.purchase', 'purchase')?.signature).toMatchObject({ type: '{ price, currency } | null' });
+    expect(cardAt('equipped', 'args.by', 'by')?.signature).toMatchObject({ type: "'story' | 'player' | 'script' | 'rule'" });
+    expect(cardAt('gained', 'args.from', 'from')?.signature).toMatchObject({ type: 'object | null' });
+    expect(cardAt('gained', 'instance.owner', 'owner')?.signature).toMatchObject({ type: 'string' });
+  });
+});
+
 describe('the names a script’s timing adds', () => {
   const treeAt = (timing: ScriptTiming) => {
     const surface = scriptSurface(STAT_CODE_SURFACE, timing);
@@ -697,10 +741,22 @@ describe('the names a script’s timing adds', () => {
     expect(tree.map(labelOf)).not.toContain('Player');
   });
 
+  it('lists a switch’s one argument as a leaf and gives args.by its card', () => {
+    // A group with one field lists as that field.
+    expect(treeAt('switch').built.find((node) => labelOf(node) === 'by')).toMatchObject({ kind: 'field', insert: 'args.by' });
+    expect(treeAt('after').built.map(labelOf)).not.toContain('by');
+    const card = (code: string, at: string) => codeCard(code, code.lastIndexOf(at) + 1, { surface: treeAt('switch').surface });
+    expect(card('args.by', 'by')?.signature).toMatchObject({ type: "'player' | 'script' | 'rule'" });
+    expect(card('args', 'args')?.signature).toMatchObject({ type: '{ by }' });
+  });
+
   it('opens Narration to its fields and Player to its calls, each inserted whole', () => {
     expect(levelAt(treeAt('output').built, 'Narration')).toEqual(NARRATION_FIELDS.map((field) => field.name));
     expect(inserts(treeAt('output').built, 'Narration', 'sentence')).toBe('narration.sentence');
     expect(levelAt(treeAt('after').built, 'Player')).toEqual(PLAYER_CALL_ENTRIES.map((call) => call.name));
+    // During AI Output's player holds show alone (Q29), and a group of one lists as its call.
+    expect(treeAt('output').built.find((node) => labelOf(node) === 'show')).toMatchObject({ kind: 'field', insert: 'player.show("")' });
+    expect(treeAt('output').built.map(labelOf)).not.toContain('Player');
     const confirm = leaf(treeAt('after').built, 'Player', 'confirm');
     expect(confirm.insert).toBe('player.confirm("")');
     expect(confirm.selection).toEqual({ from: 'player.confirm("'.length, to: 'player.confirm("'.length });

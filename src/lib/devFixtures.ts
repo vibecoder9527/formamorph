@@ -4,11 +4,13 @@
  * or replaying turns. Loaded via dynamic `import()` so each fixture is a separate chunk fetched only when
  * `loadDevFixture` runs (DEV-gated), never in the production bundle. See `devRouter.ts` / [[formamorph-dev-router]].
  */
-import type { Body, Currency, WorldOption, Entity, EntityStatValues, GameLocation, Item, Placement, ScheduleRow, Slot, Traversable, Trait, World, SaveObject } from '@/types';
+import type { Body, Currency, WorldOption, Entity, EntityStatValues, GameLocation, Item, Placement, ScheduleRow, Slot, Traversable, Trait, World, SaveObject, MediaEntry, GalleryLink } from '@/types';
 import { withMembership } from './entityPlaces';
 import { DEFAULT_AVATAR_URL } from './defaultAvatar';
 import { DEFAULT_WORLDS, seedWorldData, type DefaultWorldSeed } from './defaultWorlds';
 import { firstRoutine } from '@/lib/entityKind';
+import { narrationHash } from '@/lib/coref/mentionReadings';
+import { spokenQuotes } from '@/lib/quoteSegments';
 
 /** `bundled-<world id>` boots a new game in that bundled world. */
 const BUNDLED_PREFIX = 'bundled-';
@@ -16,8 +18,8 @@ const BUNDLED_PREFIX = 'bundled-';
 /** The names the router can boot. Kept in lockstep with `loadDevFixture` by `devRouter.test.ts`. */
 export const DEV_FIXTURES = [
   'whiteRoom', 'thousandTurns', 'writtenOpening', 'pickedOpening', 'entityStats', 'entityMorphs', 'entityAvatars', 'avatarIcon',
-  'entityPresence', 'entityFollowers', 'mapStrangers', 'mapBackground', 'items', 'options', 'lockedPlaces',
-  ...DEFAULT_WORLDS.map((w) => `${BUNDLED_PREFIX}${w.id}`),
+  'entityPresence', 'entityFollowers', 'mapStrangers', 'mapBackground', 'items', 'options', 'lockedPlaces', 'speakerQuotes', 'scriptImages',
+  'enterOptions', ...DEFAULT_WORLDS.map((w) => `${BUNDLED_PREFIX}${w.id}`),
 ];
 
 // Real-sized images for the long save, fetched from the dev server.
@@ -39,10 +41,33 @@ const DEV_OPTIONS: WorldOption[] = [
     playerDescription: 'How much the narrator writes each turn',
     values: [{ id: 'dev-len-short', name: 'Short' }, { id: 'dev-len-medium', name: 'Medium' }, { id: 'dev-len-long', name: 'Long' }],
   },
+  {
+    id: 'dev-opt-difficulty', name: 'Difficulty', type: 'choice', shownToPlayer: true, midGame: true, default: 'dev-diff-easy',
+    playerDescription: 'How hard the room is on you',
+    values: [
+      { id: 'dev-diff-easy', name: 'Easy', statChanges: [{ statId: 'stat-coin', type: 'starting', value: 50 }, { statId: 'stat-warmth', type: 'regen', value: 2 }] },
+      { id: 'dev-diff-hard', name: 'Hard', statChanges: [{ statId: 'stat-warmth', type: 'regen', value: -1 }, { statId: 'stat-coin', type: 'max', value: -20 }] },
+    ],
+  },
   { id: 'dev-opt-gore', name: 'Graphic Violence', type: 'boolean', shownToPlayer: true, midGame: true, default: false },
   { id: 'dev-opt-pace', name: 'Pacing', type: 'number', shownToPlayer: true, midGame: true, min: 1, max: 5, default: 3 },
   { id: 'dev-opt-setup', name: 'Starting Season', type: 'boolean', shownToPlayer: true, midGame: false, default: true },
   { id: 'dev-opt-secret', name: 'Secret Flag', type: 'boolean', shownToPlayer: false, midGame: true, default: false },
+];
+
+/** The `enterOptions` fixture's Options: a choice with stat changes, a switch and a slider. */
+const EMBERWATCH_OPTIONS: WorldOption[] = [
+  {
+    id: 'dev-ember-difficulty', name: 'Difficulty', type: 'choice', shownToPlayer: true, midGame: true, default: 'dev-ember-steady',
+    playerDescription: 'How hard the frontier is on you',
+    values: [
+      { id: 'dev-ember-gentle', name: 'Gentle', statChanges: [{ statId: 'health', type: 'max', value: 20 }] },
+      { id: 'dev-ember-steady', name: 'Steady' },
+      { id: 'dev-ember-grim', name: 'Grim', statChanges: [{ statId: 'health', type: 'max', value: -20 }, { statId: 'renown', type: 'starting', value: -5 }] },
+    ],
+  },
+  { id: 'dev-ember-gore', name: 'Graphic Violence', type: 'boolean', shownToPlayer: true, midGame: true, default: false },
+  { id: 'dev-ember-undead', name: 'Undead Activity', type: 'number', shownToPlayer: true, midGame: true, min: 1, max: 5, default: 3 },
 ];
 
 const portrait = (fill: string) =>
@@ -169,7 +194,7 @@ const devItems = (valueStatId: string | undefined): Item[] => [
   // None with no image.
   devItem('dev-item-trinket', 'Strange Trinket', 'dev-slot-ring', { slotRule: undefined, icon: 'none' }),
 ];
-/** The `items` fixture's starting Item Copies, on the player. The equipped ones fill the doll. */
+/** The `items` fixture's starting Item Instances, on the player. The equipped ones fill the doll. */
 const DEV_PLACEMENTS = ([
   ['dev-item-sword', 1, true], ['dev-item-ring', 1, true], ['dev-item-signet', 1, true], ['dev-item-helmet', 1, true], ['dev-item-amulet', 1, true],
   ['dev-item-cuirass', 1, true], ['dev-item-belt', 1, true], ['dev-item-breeches', 1, true], ['dev-item-boots', 1, true],
@@ -250,6 +275,39 @@ export const WORLD_OPENING_TEXT = 'I look around the white room.';
 /** The `pickedOpening` picked entity's opening. */
 export const PICKED_OPENING_TEXT = 'I wave to the courier by the door.';
 
+const SPEAKER_QUOTE_LINES: [string, string | null][] = [
+  ['"You said noon,"', 'dev-kessa'], ['"I said after the tide."', 'dev-mira'], ['"Ask the courier if you don\'t believe me."', 'dev-mira'],
+  ['"Don\'t drag me into this."', 'dev-courier'], ['"Too late."', 'dev-kessa'], ['"Both of you, the tide won\'t wait."', null],
+  ['"Then we go now,"', 'dev-ash'],
+];
+const SPEAKER_QUOTES_TEXT = [
+  'The ferry bumps the dock as Mira throws the line. "You said noon," Kessa says, coming down the plank.',
+  '"I said after the tide." Mira knots the rope twice. "Ask the courier if you don\'t believe me."',
+  'The courier lifts one hand from the bench. "Don\'t drag me into this."',
+  '"Too late." Kessa drops onto the bench beside him. From the wheelhouse, someone calls out: "Both of you, the tide won\'t wait."',
+  'You step onto the plank. "Then we go now," you say.',
+].join('\n\n');
+/** The speakerQuotes fixture's last narration and its quotes' speakers, for the streaming quote preview. */
+export const speakerQuotesPassage = () => ({ text: SPEAKER_QUOTES_TEXT, quotes: spokenQuotes(SPEAKER_QUOTES_TEXT, SPEAKER_QUOTE_LINES) });
+// The fixture's linked mentions, in order, for the mention cards.
+const SPEAKER_QUOTE_MENTIONS = spokenQuotes(SPEAKER_QUOTES_TEXT, [
+  ['Mira', 'dev-mira'], ['Kessa', 'dev-kessa'], ['Mira', 'dev-mira'], ['the courier', 'dev-courier'],
+  ['The courier', 'dev-courier'], ['Kessa', 'dev-kessa'], ['him', 'dev-courier'], ['You', 'dev-ash'], ['you', 'dev-ash'],
+]).map(({ start, end, speaker }) => ({ start, end, entityId: speaker }));
+const SCRIPT_IMAGES_TEXT = [
+  'A lamp flickers on the shelf beside the door. Its light is thin and yellow, and it shakes each time the hum rises.',
+  'You cross the room and lift it from its hook. Under the base, pressed into the dust, is the outline of something small and square.',
+  'You set the lamp down and run a finger along the outline. The dust gives way to cold metal, and a key slides free into your palm.',
+  'It is heavier than it looks. The teeth are worn smooth, and a thin chain hangs from the bow, broken at one link.',
+  'Behind you the door clicks. When you turn, it stands an inch open, and the hum has gone quiet.',
+].join('\n\n');
+/** A flat portrait for the fixture's cast, so the cards and pick list show images. */
+const fixturePortrait = (hue: number): NonNullable<Entity['images']> => [{
+  data: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"><rect width="80" height="120" fill="hsl(${hue} 45% 55%)"/><circle cx="40" cy="34" r="18" fill="hsl(${hue} 35% 85%)"/><rect x="14" y="60" width="52" height="60" rx="20" fill="hsl(${hue} 40% 35%)"/></svg>`)}`,
+}];
+
+
+
 /** Load a fixture's world+save (dynamic import → own chunk). Null outside DEV or for an unknown name. */
 export async function loadDevFixture(name: string): Promise<DevFixture | null> {
   if (!import.meta.env.DEV) return null;
@@ -263,6 +321,92 @@ export async function loadDevFixture(name: string): Promise<DevFixture | null> {
         world: world.default as unknown as World,
         save: save.default as unknown as SaveObject,
         saveName: 'DEV: White Room (8 turns)',
+      };
+    }
+    case 'speakerQuotes': {
+      // The white room whose last turn has three speakers and one unresolved quote, read already. Quote colors
+      // show with Character Mentions on.
+      const [world, save] = await Promise.all([
+        import('./devFixtures/whiteRoomWorld.json'),
+        import('./devFixtures/whiteRoomSave.json'),
+      ]);
+      const saved = save.default as unknown as SaveObject;
+      const history = saved.currentState.fullMessageHistory ?? [];
+      const last = history.length - 1;
+      const turn = JSON.parse(history[last].content) as { turnId: string };
+      const base = world.default as unknown as World;
+      const speaker = (id: string, name: string, extra: Partial<Entity> = {}): Entity => ({ ...base.entities[0], id, name, ...extra });
+      return {
+        world: {
+          ...base,
+          entities: [
+            ...base.entities,
+            speaker('dev-ash', 'Ash', { persona: true, personaOnly: true, playerDescription: 'A ferryman who keeps to the tide.', images: fixturePortrait(30) }),
+            speaker('dev-mira', 'Mira', { images: fixturePortrait(200) }),
+            speaker('dev-kessa', 'Kessa'),
+            speaker('dev-courier', 'Ilan', { strangerName: 'the courier', strangerDescription: 'A stranger in a gray coat.', images: fixturePortrait(280) }),
+          ],
+        },
+        save: {
+          ...saved,
+          persona: { source: 'world', entityId: 'dev-ash' },
+          currentState: {
+            ...saved.currentState,
+            fullMessageHistory: history.map((message, index) => (
+              index === last ? { ...message, content: JSON.stringify({ ...turn, narration: SPEAKER_QUOTES_TEXT }) } : message
+            )),
+          },
+          mentionReadings: {
+            [turn.turnId]: { model: 'small', version: 1, textHash: narrationHash(SPEAKER_QUOTES_TEXT), reading: { mentions: SPEAKER_QUOTE_MENTIONS, quotes: spokenQuotes(SPEAKER_QUOTES_TEXT, SPEAKER_QUOTE_LINES) } },
+          },
+        },
+        saveName: 'DEV: Speaker Quotes',
+      };
+    }
+    case 'scriptImages': {
+      // The white room whose last turn shows every `player.show` placement: above, inline left and right, below,
+      // in Emberwatch art.
+      const [world, save, ember] = await Promise.all([
+        import('./devFixtures/whiteRoomWorld.json'),
+        import('./devFixtures/whiteRoomSave.json'),
+        loadBundledFixture('emberwatch'),
+      ]);
+      const saved = save.default as unknown as SaveObject;
+      const history = saved.currentState.fullMessageHistory ?? [];
+      const last = history.length - 1;
+      const turn = JSON.parse(history[last].content) as { turnId: string };
+      const base = world.default as unknown as World;
+      const art = ember?.world;
+      const media = (id: string, image?: GalleryLink): MediaEntry => ({ id, name: id, kind: 'image', type: 'image/webp', data: !image ? '' : 'data' in image ? image.data : art?.worldOverview.mediaList?.[image.mediaId]?.data ?? '' });
+      const place = (name: string) => art?.locations.find((l) => l.name === name)?.images?.[0];
+      const face = (name: string) => art?.entities.find((e) => e.name === name)?.images?.[0];
+      const mediaList = {
+        ...base.worldOverview.mediaList,
+        'dev-img-door': media('dev-img-door', place("The Sorcerer's Vault")),
+        'dev-img-lamp': media('dev-img-lamp', face('Sergeant Ilsa Marr')),
+        'dev-img-key': media('dev-img-key', place('The Barrow Beyond the Wall')),
+      };
+      return {
+        world: { ...base, worldOverview: { ...base.worldOverview, mediaList } },
+        save: {
+          ...saved,
+          currentState: {
+            ...saved.currentState,
+            fullMessageHistory: history.map((message, index) => (
+              index === last ? { ...message, content: JSON.stringify({ ...turn, narration: SCRIPT_IMAGES_TEXT }) } : message
+            )),
+          },
+          scriptTells: {
+            [turn.turnId]: [
+              { image: 'dev-img-door', size: 'medium', wrap: 'block', timing: 'before' },
+              { image: 'dev-img-lamp', size: 'small', wrap: 'left', sentence: 0, timing: 'output' },
+              { image: 'dev-img-key', size: 'medium', wrap: 'right', sentence: 3, timing: 'output' },
+              { text: 'The key is yours.', timing: 'after' },
+              { image: 'dev-img-key', size: 'small', wrap: 'block', timing: 'after' },
+            ],
+          },
+        },
+        saveName: 'DEV: Script Images',
       };
     }
     case 'thousandTurns': {
@@ -318,9 +462,9 @@ export async function loadDevFixture(name: string): Promise<DevFixture | null> {
             locationId: WHITE_ROOM_ID,
             metEntities: ['dev-bram', 'dev-mara'],
             ownedTraits: { 'dev-bram': { chosen: ['dev-trait-oath'] } },
-            itemCopies: [
-              { id: 'dev-copy-worn', item: { kind: 'item', itemId: 'dev-item-wand' }, where: { kind: 'entity', id: 'dev-bram' }, quantity: 1, visibility: 'visible', equipped: { slotId: 'dev-slot-hand', order: 0 } },
-              { id: 'dev-copy-carried', item: { kind: 'item', itemId: 'dev-item-tonic' }, where: { kind: 'entity', id: 'dev-bram' }, quantity: 1, visibility: 'visible' },
+            itemInstances: [
+              { id: 'dev-instance-worn', item: { kind: 'item', itemId: 'dev-item-wand' }, where: { kind: 'entity', id: 'dev-bram' }, quantity: 1, visibility: 'visible', equipped: { slotId: 'dev-slot-hand', order: 0 } },
+              { id: 'dev-instance-carried', item: { kind: 'item', itemId: 'dev-item-tonic' }, where: { kind: 'entity', id: 'dev-bram' }, quantity: 1, visibility: 'visible' },
             ],
             // The latest turn names who took part, which is what puts them In Scene.
             fullMessageHistory: history.map((message, index) => (
@@ -566,6 +710,13 @@ export async function loadDevFixture(name: string): Promise<DevFixture | null> {
           openings: [{ id: 'courier-opening', text: PICKED_OPENING_TEXT, kind: 'action' }],
         }],
       };
+    }
+    case 'enterOptions': {
+      // Emberwatch, with its traits, plus World Options, stored under its own id for Enter World.
+      const seed = DEFAULT_WORLDS.find((w) => w.id === 'emberwatch');
+      const raw = (await import('../defaultworlds/emberwatch.json')).default as unknown as Record<string, unknown>;
+      if (!seed) return null;
+      return { world: { ...seedWorldData(raw, seed), id: 'dev-enter-options', options: EMBERWATCH_OPTIONS } };
     }
     default:
       return name.startsWith(BUNDLED_PREFIX) ? loadBundledFixture(name.slice(BUNDLED_PREFIX.length)) : null;

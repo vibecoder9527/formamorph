@@ -7,6 +7,9 @@ import { fakeDataUrl } from '@/test/mediaFixture';
 import { blankItem } from '@/lib/items';
 import { formatMediaBytes, storedBytes } from '@/lib/mediaIndex';
 import type { World } from '@/types';
+import { entityImages } from '@/lib/entityImages';
+import { coverData } from '@/lib/mediaImages';
+import { mapImages } from '@/lib/mapBackground';
 
 /** Optimize Images runs from the Media tab header and is one history step. */
 
@@ -15,6 +18,7 @@ vi.mock('../services/WorldStorageService', () => ({
     initialize: vi.fn(),
     getWorldMetadata: vi.fn().mockResolvedValue([]),
     storeWorld: vi.fn().mockResolvedValue(undefined),
+    getSupporterCopy: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -73,12 +77,14 @@ const WORLD = benchEditorWorld({
   items: [{ ...blankItem('lantern', 'Tin Lantern'), images: [{ data: PNG }] }],
 } as Partial<World>);
 
-const renderMedia = (mode: 'simple' | 'advanced') => {
+const optimizeButton = () => screen.getByRole('button', { name: 'Optimize Images' });
+// Optimize waits for the world's Supporter Copy read, as a player's click would.
+const renderMedia = async (mode: 'simple' | 'advanced') => {
   const bench = renderWorldEditorBench(WORLD, mode);
   openEditorTab(/^Media$/);
+  await waitFor(() => expect(optimizeButton()).toHaveAttribute('aria-disabled', 'false'));
   return bench;
 };
-const optimizeButton = () => screen.getByRole('button', { name: 'Optimize Images' });
 
 beforeEach(() => {
   localStorage.clear();
@@ -90,12 +96,12 @@ beforeEach(() => {
 
 describe('Optimize Images', () => {
   it.each(['simple', 'advanced'] as const)('is the last icon of the Media header and runs in %s', async (mode) => {
-    const { ctx } = renderMedia(mode);
+    const { ctx } = await renderMedia(mode);
     const header = document.querySelector<HTMLElement>('[data-media-header]')!;
     expect(header.lastElementChild).toBe(optimizeButton());
 
     fireEvent.click(optimizeButton());
-    await waitFor(() => expect(ctx().worldOverview.thumbnail).toBe(WEBP));
+    await waitFor(() => expect(coverData(ctx().worldOverview)).toBe(WEBP));
   });
 
   it('is gone from every other tab', () => {
@@ -106,7 +112,7 @@ describe('Optimize Images', () => {
   it('spins and reports progress in its tooltip while it runs, and ignores a second click', async () => {
     let finish!: () => void;
     run.hold = new Promise<void>((resolve) => { finish = resolve; });
-    renderMedia('advanced');
+    await renderMedia('advanced');
     const optimize = optimizeButton();
     expect(optimize.querySelector('.animate-spin')).toBeNull();
 
@@ -127,58 +133,58 @@ describe('Optimize Images', () => {
   });
 
   it('writes the dictionary thumbnail back with the other images, and the cards show the new sizes', async () => {
-    const { ctx } = renderMedia('simple');
+    const { ctx } = await renderMedia('simple');
     const dictionaries = screen.getByRole('region', { name: 'Dictionaries' });
     expect(dictionaries).toHaveTextContent(formatMediaBytes(storedBytes(PNG)));
 
     fireEvent.click(optimizeButton());
     await waitFor(() => expect(ctx().dictionaries[0].thumbnail).toBe(WEBP));
-    expect(ctx().worldOverview.thumbnail).toBe(WEBP);
+    expect(coverData(ctx().worldOverview)).toBe(WEBP);
     expect(ctx().entities[0].images).toEqual([{ data: WEBP }]);
-    expect(ctx().locations[0].images?.[0]?.data).toBe(WEBP);
-    expect(ctx().items[0].images).toEqual([{ data: WEBP }]);
+    expect(entityImages(ctx().locations[0])[0]?.data).toBe(WEBP);
+    expect(entityImages(ctx().items[0], ctx().worldOverview.mediaList).map((img) => img.data)).toEqual([WEBP]);
     await waitFor(() => expect(screen.getByRole('region', { name: 'Dictionaries' })).toHaveTextContent(formatMediaBytes(storedBytes(WEBP))));
     expect(screen.getByRole('region', { name: 'Dictionaries' })).not.toHaveTextContent(formatMediaBytes(storedBytes(PNG)));
   });
 
   it('undoes in one press', async () => {
-    const { ctx } = renderMedia('advanced');
+    const { ctx } = await renderMedia('advanced');
     fireEvent.click(optimizeButton());
-    await waitFor(() => expect(ctx().locations[0].images?.[0]?.data).toBe(WEBP));
-    expect(ctx().worldOverview.thumbnail).toBe(WEBP);
-    expect(ctx().worldOverview.mapBackground?.images).toEqual([{ data: WEBP }]);
+    await waitFor(() => expect(entityImages(ctx().locations[0])[0]?.data).toBe(WEBP));
+    expect(coverData(ctx().worldOverview)).toBe(WEBP);
+    expect(mapImages(ctx().worldOverview).map((img) => img.data)).toEqual([WEBP]);
     expect(ctx().entities[0].images).toEqual([{ data: WEBP }]);
     expect(ctx().dictionaries[0].thumbnail).toBe(WEBP);
-    expect(ctx().items[0].images).toEqual([{ data: WEBP }]);
+    expect(entityImages(ctx().items[0], ctx().worldOverview.mediaList).map((img) => img.data)).toEqual([WEBP]);
 
     await act(async () => { fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true }); });
-    expect(ctx().worldOverview.thumbnail).toBe(PNG);
-    expect(ctx().worldOverview.mapBackground?.images).toEqual([{ data: PNG }]);
-    expect(ctx().entities[0].images).toEqual([{ data: PNG }]);
-    expect(ctx().locations[0].images?.[0]?.data).toBe(PNG);
+    expect(coverData(ctx().worldOverview)).toBe(PNG);
+    expect(mapImages(ctx().worldOverview).map((img) => img.data)).toEqual([PNG]);
+    expect(entityImages(ctx().entities[0], ctx().worldOverview.mediaList)).toEqual([{ data: PNG, name: 'Odd Wick 1' }]);
+    expect(entityImages(ctx().locations[0], ctx().worldOverview.mediaList)[0]?.data).toBe(PNG);
     expect(ctx().dictionaries[0].thumbnail).toBe(PNG);
-    expect(ctx().items[0].images).toEqual([{ data: PNG }]);
+    expect(entityImages(ctx().items[0], ctx().worldOverview.mediaList).map((img) => img.data)).toEqual([PNG]);
 
     // Nothing earlier is left to undo.
     await act(async () => { fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true }); });
-    expect(ctx().worldOverview.thumbnail).toBe(PNG);
+    expect(coverData(ctx().worldOverview)).toBe(PNG);
     await act(async () => { fireEvent.keyDown(document.body, { key: 'y', ctrlKey: true }); });
-    expect(ctx().worldOverview.thumbnail).toBe(WEBP);
+    expect(coverData(ctx().worldOverview)).toBe(WEBP);
     expect(ctx().dictionaries[0].thumbnail).toBe(WEBP);
-    expect(ctx().locations[0].images?.[0]?.data).toBe(WEBP);
-    expect(ctx().worldOverview.mapBackground?.images).toEqual([{ data: WEBP }]);
-    expect(ctx().items[0].images).toEqual([{ data: WEBP }]);
+    expect(entityImages(ctx().locations[0])[0]?.data).toBe(WEBP);
+    expect(mapImages(ctx().worldOverview).map((img) => img.data)).toEqual([WEBP]);
+    expect(entityImages(ctx().items[0], ctx().worldOverview.mediaList).map((img) => img.data)).toEqual([WEBP]);
   });
 
-  it('shows no gallery card for an item image', () => {
-    renderMedia('simple');
+  it('shows no gallery card for an item image', async () => {
+    await renderMedia('simple');
     expect(screen.queryByText('Tin Lantern')).toBeNull();
   });
 
   it('cancels when the editor closes mid-run and writes nothing', async () => {
     let finish!: () => void;
     run.hold = new Promise<void>((resolve) => { finish = resolve; });
-    const { ctx, unmount } = renderMedia('advanced');
+    const { ctx, unmount } = await renderMedia('advanced');
     fireEvent.click(optimizeButton());
     await waitFor(() => expect(optimizeButton()).toHaveAttribute('aria-disabled', 'true'));
     expect(run.signal?.aborted).toBe(false);
@@ -186,18 +192,18 @@ describe('Optimize Images', () => {
     unmount();
     expect(run.signal?.aborted).toBe(true);
     await act(async () => { finish(); });
-    expect(ctx().worldOverview.thumbnail).toBe(PNG);
+    expect(coverData(ctx().worldOverview)).toBe(PNG);
     expect(ctx().dictionaries[0].thumbnail).toBe(PNG);
   });
 
   it('reveals what it touched on undo, not the tab the author ran it from', async () => {
-    const { ctx } = renderMedia('advanced');
+    const { ctx } = await renderMedia('advanced');
     fireEvent.click(optimizeButton());
-    await waitFor(() => expect(ctx().locations[0].images?.[0]?.data).toBe(WEBP));
+    await waitFor(() => expect(entityImages(ctx().locations[0])[0]?.data).toBe(WEBP));
     openEditorTab(/Entities/);
 
     await act(async () => { fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true }); });
-    expect(ctx().worldOverview.thumbnail).toBe(PNG);
+    expect(coverData(ctx().worldOverview)).toBe(PNG);
     expect(shownEditorTab()).toMatch(/Overview/);
   });
 });

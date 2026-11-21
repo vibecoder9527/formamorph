@@ -1,6 +1,9 @@
-import type { Stat, Trait, Entity, Dictionary, CommunityLink, ScriptTiming, PlacementWhere, BodyPick, WorldOptionValueOf } from './world';
+import type { MentionReadingMap } from '@/lib/coref/mentionReadings';
+import type { MentionCorrectionMap } from '@/lib/coref/mentionCorrections';
+import type { Stat, Trait, Entity, Dictionary, CommunityLink, PlacementWhere, BodyPick, WorldOptionValueOf, SupporterCopyMarker, LibrarySupporterCopyMarker } from './world';
 import type { ChatMessage } from './ai';
 import type { ActionSnapshot, ListedAction, SentActionList } from '@/lib/actionList';
+import type { ScriptTell } from '@/lib/scriptTells';
 
 /** A director-invented character promoted to a persisted, per-playthrough entity (runtime characters,
  *  Slice 2). Save-only: it rolls back with the turn and is never written to the world export. */
@@ -142,7 +145,7 @@ export type PlayerStat = Omit<Stat, 'value'> & {
   aiMaxDelta?: number;
   /** How far stat code has moved each bound, kept apart like `aiMaxDelta` so every layer stays derived. */
   codeDelta?: CodeBoundDeltas;
-  /** What the item effects in force add to each bound, recomputed from the Item Copies on every change. */
+  /** What the item effects in force add to each bound, recomputed from the Item Instances on every change. */
   itemDelta?: CodeBounds;
 };
 
@@ -280,6 +283,8 @@ export interface ModelMetadata extends CommunityLink {
   license?: VrmLicense;
   createdAt?: string;
   lastAccessed?: string;
+  /** Local-only: the Avatar came with content saved from a Supporter Copy, so it never leaves the app. */
+  supporterCopy?: LibrarySupporterCopyMarker;
 }
 
 /** An Avatar listing's stored content, fetched back on download. Matches the server's `contentData` shape
@@ -293,7 +298,7 @@ export interface AvatarListingContent {
   hash?: string;
 }
 
-/** What an Item Copy is a copy of: an authored item, or a runtime item the Inventory pass made. */
+/** What an Item Instance is an instance of: an authored item, or a runtime item the Inventory pass made. */
 export type ItemRef = { kind: 'item'; itemId: string } | { kind: 'runtime'; runtimeItemId: string };
 
 /** An item the Inventory pass named that the world does not define: Stackable and Consumable, no slot, no
@@ -334,32 +339,32 @@ export interface InventoryOwner {
   name: string;
 }
 
-/** Where an Item Copy is: owned by the played Persona or an entity, or lying at a location. */
-export type ItemCopyWhere = PlacementWhere;
+/** Where an Item Instance is: owned by the played Persona or an entity, or lying at a location. */
+export type ItemInstanceWhere = PlacementWhere;
 
-export type ItemCopyVisibility = 'visible' | 'hidden';
+export type ItemInstanceVisibility = 'visible' | 'hidden';
 
-/** State one Item Copy keeps of its own. */
-export interface ItemCopyState {
+/** State one Item Instance keeps of its own. */
+export interface ItemInstanceState {
   /** Uses left. Absent = full, or the item has no Uses. */
   uses?: number;
-  /** The copy's current State word. Absent = none. */
+  /** The instance's current State word. Absent = none. */
   state?: string;
   /** Shows the item's unidentified face to the player. Apart from visibility (Q15). */
   unidentified?: true;
 }
 
-/** One item in play: a stack of `quantity` copies of an item in one place. */
-export interface ItemCopy {
+/** One item in play: a stack of `quantity` instances of an item in one place. */
+export interface ItemInstance {
   id: string;
   item: ItemRef;
-  where: ItemCopyWhere;
+  where: ItemInstanceWhere;
   quantity: number;
   /** The slot it is equipped in and when, as a rising order. Absent = carried. */
   equipped?: { slotId: string; order: number };
-  visibility: ItemCopyVisibility;
+  visibility: ItemInstanceVisibility;
   /** Absent = none. */
-  state?: ItemCopyState;
+  state?: ItemInstanceState;
 }
 
 /** One While Owned or While Equipped source in force on an owner, and the values it actually moved. */
@@ -370,9 +375,9 @@ export interface AppliedItemEffect {
   timing: 'owned' | 'equipped';
   /** Stat id → value delta, cap carry included. Reversal negates this. */
   values: Record<string, number>;
-  /** Every Item Copy behind it is hidden, so its log lines name no item. */
+  /** Every Item Instance behind it is hidden, so its log lines name no item. */
   hidden?: boolean;
-  /** Every Item Copy behind it is unidentified, so its log lines use the unidentified face. */
+  /** Every Item Instance behind it is unidentified, so its log lines use the unidentified face. */
   unidentified?: boolean;
 }
 
@@ -388,13 +393,13 @@ export interface TimedItemEffect {
   endsAt: number;
   /** Stat rows: stat id → value delta. Expiry negates this. */
   values?: Record<string, number>;
-  /** The use came from a hidden Item Copy, so its lines name no item. */
+  /** The use came from a hidden Item Instance, so its lines name no item. */
   hidden?: boolean;
-  /** The use came from an unidentified Item Copy, so its lines use the unidentified face. */
+  /** The use came from an unidentified Item Instance, so its lines use the unidentified face. */
   unidentified?: boolean;
 }
 
-/** The item effects in force. Bound facets are derived from the Item Copies and recorded nowhere. */
+/** The item effects in force. Bound facets are derived from the Item Instances and recorded nowhere. */
 export interface ItemEffectLedger {
   /** Source key → what it applied. */
   applied?: Record<string, AppliedItemEffect>;
@@ -418,6 +423,32 @@ export interface BodyRuntime {
   traitsOn?: BodyTraitOn[];
   /** Each owner's base Body a script wrote, by owner key (the empty string is the played Persona). Absent ⇒ the authored picks. */
   base?: Record<string, BodyPick>;
+}
+
+/** An entity's or Generic Entity Instance's script-set media, by Media Entry id. */
+export interface EntityMediaOverride {
+  image?: string;
+  sound?: string;
+}
+
+/** A location's script-set media, by Media Entry id. */
+export interface LocationMediaOverride {
+  image?: string;
+  ambience?: string;
+}
+
+/** The Media Entries scripts set, by owner. An id the Media List lacks reads as unset (Q19). */
+export interface MediaOverrides {
+  /** Entity id → its override; the empty key is the played persona. */
+  entities?: Record<string, EntityMediaOverride>;
+  /** Generic entity id → Start id → that Generic Entity Instance's override, which beats the entity's (Q50). */
+  instances?: Record<string, Record<string, EntityMediaOverride>>;
+  /** Location id → its override. */
+  locations?: Record<string, LocationMediaOverride>;
+  /** Item Instance id → its image's entry id (Q49). */
+  items?: Record<string, string>;
+  /** World music's entry id. */
+  music?: string;
 }
 
 /** One saved snapshot of a play session (see GameplayContext.saveCurrentGameState). */
@@ -450,8 +481,8 @@ export interface GameState {
   strangerAliases?: Record<string, string>;
   /** What this turn moved each entity stat, AI, regen and code together. Absent ⇒ none. */
   entityStatChanges?: EntityStatChanges;
-  /** Every Item Copy in play. A new game seeds them; an older save never gains any. Absent ⇒ none. */
-  itemCopies?: ItemCopy[];
+  /** Every Item Instance in play. A new game seeds them; an older save never gains any. Absent ⇒ none. */
+  itemInstances?: ItemInstance[];
   /** The runtime items the Inventory pass made. Absent ⇒ none. */
   runtimeItems?: RuntimeItem[];
   /** What item effects have applied. Absent ⇒ none. */
@@ -462,6 +493,8 @@ export interface GameState {
   codePins?: CodePins;
   /** Absent ⇒ none. */
   loreToggles?: LoreToggles;
+  /** The Media Entries scripts set in place of the authored media. Absent ⇒ none. */
+  mediaOverrides?: MediaOverrides;
   /** The playthrough's World Option values. An Option missing here reads its default. Absent ⇒ every default. */
   worldOptionValues?: WorldOptionValues;
   /** The live scene list — who is physically present this turn, with alias/reveal state for the tab. Legacy
@@ -579,9 +612,15 @@ export interface SaveObject {
   /** The images the player attached to actions, by turn id. Always written when there are any, so a save
    *  is self-contained. Absent ⇒ none. Out of the messages for the same reason as `sceneImages`. */
   actionAttachments?: Record<string, ImageAttachment[]>;
-  /** What scripts told the player with `player.tell`, by turn id, in call order, each with its script's
-   *  timing. Never sent in a request. Absent ⇒ none. */
-  scriptTells?: Record<string, { text: string; timing: ScriptTiming }[]>;
+  /** What scripts told and showed the player with `player.tell` and `player.show`, by turn id, in call order,
+   *  each with its script's timing. Never sent in a request. Absent ⇒ none. */
+  scriptTells?: Record<string, ScriptTell[]>;
+  /** Each turn's Mention Reading by turn id, with the model that made it and a hash of the narration it read.
+   *  Never sent in a request. Absent ⇒ none. */
+  mentionReadings?: MentionReadingMap;
+  /** The player's corrections to those readings by turn id, with a hash of the narration their spans index
+   *  into. Never sent in a request. Absent ⇒ none. */
+  mentionCorrections?: MentionCorrectionMap;
   /** The Action List each turn was sent with, by turn id. Only the newest turn's entries keep their
    *  snapshots, whose states carry no `fullMessageHistory`. Absent ⇒ none. */
   sentActions?: Record<string, SentActionList<ActionSnapshot>>;
@@ -593,8 +632,12 @@ export interface SaveObject {
   openingAction?: string;
   /** v2.x memory editing: memories the player wrote by hand. `anchorTurn` is the message-history length
    *  at creation, which places the note chronologically among the digests. Never judged by the selector —
-   *  a player-written memory rides until deleted. Absent (or empty) on older saves ⇒ none. */
-  memoryNotes?: Array<{ id: string; text: string; anchorTurn: number }>;
+   *  a player-written memory rides until deleted. Absent (or empty) on older saves ⇒ none. A named memory adds
+   *  its `name` and its `revisions`, and its `text` and `anchorTurn` mirror the newest revision. */
+  memoryNotes?: Array<{
+    id: string; text: string; anchorTurn: number;
+    name?: string; revisions?: Array<{ turnId?: string; text: string; anchorTurn: number; removed?: true }>;
+  }>;
   /** Who the player plays in this playthrough (see lib/persona). Sits beside `dictionaries` and does not
    *  rewind with an undo. Absent on saves written before personas ⇒ no persona. */
   persona?: PersonaRef;
@@ -641,6 +684,8 @@ export interface SaveRecord extends SaveObject {
   /** Device-local: marks one of the world's rolling autosaves (as many as Autosaves Kept). Like `id`, it's
    *  stripped from the exported `.json` — a downloaded autosave re-imports as an ordinary manual save. */
   isAutosave?: boolean;
+  /** Device-local: the save holds a Supporter Copy's books, so it never exports. Stripped like `id`. */
+  supporterCopy?: SupporterCopyMarker;
 }
 
 /** v1.2.0: client-side community-browser hide preferences (persisted in localStorage). */

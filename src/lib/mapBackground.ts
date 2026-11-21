@@ -1,7 +1,9 @@
 // The Map Background's shape and geometry: which images it holds, where its frame sits, and how a gesture moves it.
 
-import type { GalleryImage, GameLocation, MapBackground, MapFrame, WorldOverview } from '@/types';
+import type { GalleryImage, GalleryLink, GameLocation, MapBackground, MapFrame, WorldOverview } from '@/types';
 import { canvasRects } from './locationCanvas';
+import { entityImages, galleryLinks } from './entityImages';
+import { isMediaRef } from './mediaList';
 
 /** The width of a first frame with nothing to cover (Q78). */
 export const EMPTY_MAP_WIDTH = 1280;
@@ -9,16 +11,16 @@ export const EMPTY_MAP_WIDTH = 1280;
 /** The smallest edge a resize leaves, in canvas units. */
 export const MIN_MAP_EDGE = 40;
 
-/** The Map Background's images in author order, blanks dropped. */
-export const mapImages = (overview?: Pick<WorldOverview, 'mapBackground'> | null): GalleryImage[] =>
-  (overview?.mapBackground?.images ?? []).filter((img) => !!img?.data);
+/** The Map Background's images in author order, blanks dropped and links resolved through the world's Media List. */
+export const mapImages = (overview?: Pick<WorldOverview, 'mapBackground'> & Partial<Pick<WorldOverview, 'mediaList'>> | null): GalleryImage[] =>
+  entityImages({ images: overview?.mapBackground?.images }, overview?.mediaList);
 
 /**
  * The background with `images` in place of its own. The field goes with the last image (Q77), and a first
  * image takes `frame` at full opacity (Q81).
  */
-export function withMapImages(current: MapBackground | undefined, images: GalleryImage[], frame?: MapFrame): MapBackground | undefined {
-  const kept = images.filter((img) => !!img.data);
+export function withMapImages(current: MapBackground | undefined, images: GalleryLink[], frame?: MapFrame): MapBackground | undefined {
+  const kept = images.filter((img) => isMediaRef(img) || !!img.data);
   if (!kept.length) return undefined;
   if (current) return { ...current, images: kept };
   return frame ? { images: kept, frame, opacity: 1 } : undefined;
@@ -34,8 +36,9 @@ export async function rewriteMapImages(
 ): Promise<Pick<WorldOverview, 'mapBackground'>> {
   const background = overview?.mapBackground;
   if (!background) return {};
-  const images: GalleryImage[] = [];
-  for (const img of mapImages(overview)) images.push({ ...img, data: await rewrite(img.data) });
+  // A link stays a link: its entry is rewritten once, through the Media List.
+  const images: GalleryLink[] = [];
+  for (const link of galleryLinks({ images: background.images })) images.push(isMediaRef(link) ? link : { ...link, data: await rewrite(link.data) });
   return { mapBackground: withMapImages(background, images) };
 }
 

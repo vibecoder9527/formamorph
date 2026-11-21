@@ -88,6 +88,26 @@ export function engineCardDue(facts: EngineCardFacts): boolean {
   return earned(engineOfferAvailable(facts), facts, ENGINE_CARD_TURNS);
 }
 
+/** New player turns on any AI before the Character Mentions card is due (Q52). */
+const MENTIONS_CARD_TURNS = 3;
+
+export interface MentionsOfferFacts {
+  /** AI Language is English. */
+  english: boolean;
+  /** Character Mentions is already on. */
+  enabled: boolean;
+}
+
+export function mentionsOfferAvailable({ english, enabled }: MentionsOfferFacts): boolean {
+  return english && !enabled;
+}
+
+export type MentionsCardFacts = MentionsOfferFacts & CardProgress;
+
+export function mentionsCardDue(facts: MentionsCardFacts): boolean {
+  return earned(mentionsOfferAvailable(facts), facts, MENTIONS_CARD_TURNS);
+}
+
 export interface AiSetupFacts {
   vramClass: VramClass;
   hostedAvailable: boolean;
@@ -97,4 +117,18 @@ export interface AiSetupFacts {
 
 export function aiSetupLeadsWithHostedAi({ vramClass, hostedAvailable, pledged }: AiSetupFacts): boolean {
   return hostedAvailable && !pledged && vramClass === 'low';
+}
+
+export interface WhatsNewFacts {
+  introSeenAtLaunch: boolean;
+  /** The last version for which What's New opened; null with no record. */
+  seenVersion: string | null;
+  installedVersion: string;
+  /** Dev builds never open What's New by themselves. */
+  devBuild: boolean;
+}
+
+/** A fresh install never opens it; a missing record on an existing install does. */
+export function whatsNewDue({ introSeenAtLaunch, seenVersion, installedVersion, devBuild }: WhatsNewFacts): boolean {
+  return !devBuild && introSeenAtLaunch && seenVersion !== installedVersion;
 }

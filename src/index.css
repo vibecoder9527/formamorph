@@ -600,8 +600,66 @@
    root attribute the Quote Color setting writes is what paints it, so switching the setting off leaves the
    span with nothing to read rather than re-rendering the markdown. */
 :root[data-quote-color] .dialogue-quote {
-  /* `--dialogue-custom` is the player's color for the active mode, set on the root only while one exists. */
-  color: var(--dialogue-custom, hsl(var(--dialogue)));
+  /* `--quote-speaker` is on a quote with a known speaker; `--dialogue-custom` is the player's own color. */
+  color: var(--quote-speaker, var(--dialogue-custom, hsl(var(--dialogue))));
+}
+
+/* A quote the full-turn reading names differently fades from the color it streamed in with. */
+:root[data-quote-color] .dialogue-quote[data-quote-recolor] {
+  animation: quote-recolor 300ms ease;
+}
+
+@keyframes quote-recolor {
+  from { color: var(--quote-from); }
+}
+
+/* Speaker quote colors, one set per mode in every palette. `.light` serves a pinned-light panel in the dark app.
+   0–7 are the auto palette; every token is a swatch an author can pin, in `QUOTE_SWATCHES` order. */
+:root,
+.light {
+  --speaker-0: 24 75% 34%;
+  --speaker-1: 145 65% 25%;
+  --speaker-2: 280 55% 44%;
+  --speaker-3: 340 65% 40%;
+  --speaker-4: 195 80% 27%;
+  --speaker-5: 45 85% 25%;
+  --speaker-6: 95 60% 26%;
+  --speaker-7: 250 55% 50%;
+  --speaker-8: 0 70% 41%;
+  --speaker-9: 12 75% 37%;
+  --speaker-10: 30 40% 33%;
+  --speaker-11: 62 60% 23%;
+  --speaker-12: 165 70% 24%;
+  --speaker-13: 182 75% 23%;
+  --speaker-14: 210 80% 36%;
+  --speaker-15: 228 70% 50%;
+  --speaker-16: 295 35% 40%;
+  --speaker-17: 310 65% 38%;
+  --speaker-18: 325 70% 39%;
+  --speaker-19: 215 22% 38%;
+}
+
+.dark {
+  --speaker-0: 24 85% 70%;
+  --speaker-1: 145 55% 62%;
+  --speaker-2: 280 75% 78%;
+  --speaker-3: 340 80% 76%;
+  --speaker-4: 195 70% 62%;
+  --speaker-5: 45 75% 62%;
+  --speaker-6: 95 50% 62%;
+  --speaker-7: 250 85% 78%;
+  --speaker-8: 0 85% 78%;
+  --speaker-9: 12 90% 74%;
+  --speaker-10: 30 45% 67%;
+  --speaker-11: 62 55% 47%;
+  --speaker-12: 165 55% 50%;
+  --speaker-13: 182 60% 49%;
+  --speaker-14: 210 85% 71%;
+  --speaker-15: 228 90% 79%;
+  --speaker-16: 295 45% 74%;
+  --speaker-17: 310 75% 75%;
+  --speaker-18: 325 85% 77%;
+  --speaker-19: 215 25% 71%;
 }
 
 /* Real italic only, no skew: a quote is often a whole sentence, and the skew's inline-block would stop it wrapping. */
@@ -780,13 +838,12 @@ b {
   to   { opacity: 1; }
 }
 
-/* Streamdown animates each word in a bare inline <span>; transforms (move/scale) need a transformable
-   box, so promote the animated words to inline-block within narration. Axis-scale anchors its growth
-   to an edge via --rl-origin (set on the container); everything else uses center. */
+/* Streamdown animates each word in a bare inline <span>, with the spaces between words outside it.
+   Words stay inline so they wrap as the settled text does; Move and Scale set --rl-display to
+   inline-block, the box a transform needs. Axis-scale anchors its growth to an edge via --rl-origin
+   (set on the container); everything else uses center. */
 .narration-text [data-sd-animate] {
-  display: inline-block;
-  /* Each word's span carries its trailing space; inline-block would drop it. */
-  white-space: pre;
+  display: var(--rl-display, inline);
   transform-origin: var(--rl-origin, center);
 }
 
@@ -948,6 +1005,12 @@ b {
   letter-spacing: 0.01em;
   color: hsl(var(--muted-foreground));
 }
+/* A release with no player-facing changes: one muted line where its category labels would sit. */
+.changelog-body p:has(> em:only-child) {
+  @apply text-meta;
+  margin-left: 1rem;
+  color: hsl(var(--muted-foreground));
+}
 /* The patch version (`### <tag>`) is a flush-left caption styled like the category labels, not a big heading. */
 .changelog-body h3 {
   @apply text-meta;
@@ -966,24 +1029,16 @@ b {
 .changelog-body code {
   @apply text-label;
 }
-/* Tint the current (installed) and newest-uninstalled version captions toward info/success, keeping the
-   muted base so they stay captions — not full-saturation labels. Tagged by ChangelogBody. */
+/* Tint the current (installed) version caption toward info, keeping the muted base so it stays a
+   caption — not a full-saturation label. Tagged by ChangelogBody. */
 .changelog-body h3.cl-current,
 .changelog-body p.cl-current:has(> [data-streamdown="strong"]:only-child) > [data-streamdown="strong"] {
   color: color-mix(in srgb, hsl(var(--info)) 45%, hsl(var(--muted-foreground)));
-}
-.changelog-body h3.cl-update,
-.changelog-body p.cl-update:has(> [data-streamdown="strong"]:only-child) > [data-streamdown="strong"] {
-  color: color-mix(in srgb, hsl(var(--success)) 45%, hsl(var(--muted-foreground)));
 }
 /* Inline status tags on the tinted versions (pseudo-element so they stay out of the heading's text — the
    version-match tagging reads textContent). Lighter weight so they read as a secondary marker. */
 .changelog-body h3.cl-current::after {
   content: ' (Current)';
-  font-weight: 400;
-}
-.changelog-body h3.cl-update::after {
-  content: ' (New!)';
   font-weight: 400;
 }
 

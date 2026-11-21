@@ -34,7 +34,7 @@ describe('ImageUpload URL entry', () => {
     fireEvent.change(urlBox(), { target: { value: 'https://files.example/a.png' } });
     fireEvent.click(screen.getByRole('button', { name: 'Use this image URL' }));
 
-    expect(onChange).toHaveBeenCalledWith('https://files.example/a.png');
+    expect(onChange).toHaveBeenCalledWith('https://files.example/a.png', 'a.png');
   });
 
   it('accepts Enter as well as the button', () => {
@@ -44,7 +44,7 @@ describe('ImageUpload URL entry', () => {
     fireEvent.change(urlBox(), { target: { value: 'https://files.example/a.png' } });
     fireEvent.keyDown(urlBox(), { key: 'Enter' });
 
-    expect(onChange).toHaveBeenCalledWith('https://files.example/a.png');
+    expect(onChange).toHaveBeenCalledWith('https://files.example/a.png', 'a.png');
   });
 
   it('never runs the downscale pass on a link — a remote image costs the payload nothing', () => {
@@ -65,7 +65,7 @@ describe('ImageUpload URL entry', () => {
     fireEvent.change(urlBox(), { target: { value: 'mara.png' } });
     fireEvent.keyDown(urlBox(), { key: 'Enter' });
 
-    expect(await screen.findByText(/starting with http/i)).toBeTruthy();
+    expect(await screen.findByText(/isn't a web link/i)).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
   });
 

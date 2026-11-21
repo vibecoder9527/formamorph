@@ -1,12 +1,14 @@
 import type { World, Entity, Dictionary, VrmLicense } from '@/types';
 import type { CatalogKind } from '@/lib/catalogKinds';
 import type { ListingVisibility } from '@/lib/publishLinks';
+import type { SupporterDaysSchedule } from '@/lib/supporterScheduleEdit';
 import { describePlaceholders } from '@/lib/placeholders';
 import { allPlaceholders } from '@/lib/placeholderHomes';
 import { entityPlacementLetters, labelPlaceholders } from '@/lib/placementLetters';
 import { primaryImage } from '@/lib/entityImages';
 import type { PresetOverview } from '@/lib/promptPresets';
 import type { SharedPreset } from '@/lib/promptPresetShare';
+import { coverData } from '@/lib/mediaImages';
 
 /**
  * What a publish request carries, whatever kind it is. The server takes the same body for all three; only
@@ -40,6 +42,8 @@ export interface PublishPayload {
   models?: string[];
   /** Create the listing Supporter-only and pinned. New listings only; the server takes it from an admin alone. */
   supporterOnly?: boolean;
+  /** The stages of a new Supporter-only Mascot or World listing. Omitted means Supporter-only with no end date. */
+  supporterSchedule?: SupporterDaysSchedule;
 }
 
 /**
@@ -58,7 +62,7 @@ export function worldPublishPayload(world: Omit<World, 'id'>): PublishPayload {
     kind: 'world',
     name: overview.name || 'Untitled World',
     description: describePlaceholders(overview.description || '', allPlaceholders(world)),
-    thumbnail: overview.thumbnail || undefined,
+    thumbnail: coverData(overview) || undefined,
     contentData: { ...world, worldOverview: { ...overview, tags: overview.tags ?? [] } },
     tags: overview.tags ?? [],
   };

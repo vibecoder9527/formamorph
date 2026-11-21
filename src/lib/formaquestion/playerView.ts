@@ -3,17 +3,20 @@
  * Formaquestion reads (ADR-0014). No row type has an AI field; AI text written in play counts as player text.
  */
 import type {
-  ChatMessage, Currency, DiscoveredEntity, Entity, GameState, Item, ItemCopy, PlayerStat, RuntimeItem, Trait, World,
+  Base64Data, ChatMessage, Currency, DiscoveredEntity, Entity, GameState, Item, ItemInstance, MediaList, PlayerStat, RuntimeItem, SceneEntity, Trait, World,
 } from '@/types';
 import { activeDescriptor } from '@/lib/statContext';
-import { copyWorthText } from '@/lib/currency';
-import { copyFace, copyState, isUnidentified, stateKey } from '@/lib/items';
+import { visibleImages } from '@/lib/imageVisibility';
+import type { GateInput } from '@/lib/traitGates';
+import { instanceWorthText } from '@/lib/currency';
+import { instanceFace, instanceState, isUnidentified, stateKey } from '@/lib/items';
 import { resolveEntityByName } from '@/lib/entityMatch';
 import { parseTurnContent } from '@/lib/turnDigest';
 import { activeOwnedTraitIds } from '@/lib/ownedTraitsInPlay';
 import { INITIAL_SOURCE_TURN_ID, discoveredAsEntities } from '@/lib/runtimeCharacters';
 import { computePresence } from '@/lib/presence';
 import { followerIds } from '@/lib/positionPlay';
+import { mediaOverrideReader, type MediaOverrideReader } from '@/lib/mediaOverrides';
 import { runtimePositions } from '@/lib/entityFollowing';
 
 export interface PlayerViewEntity {
@@ -28,6 +31,8 @@ export interface PlayerViewEntity {
   alias?: true;
   /** The other scene aliases the player saw it under, first seen first. */
   seenAliases?: string[];
+  /** The first image whose Visibility rule passes. Present only when the input carries a `gate`. */
+  image?: Base64Data;
 }
 
 export interface PlayerViewLocation {
@@ -44,7 +49,7 @@ export interface PlayerViewItem {
   id: string;
   name: string;
   description: string;
-  /** The State word of the copies this row stands for. Absent = none. */
+  /** The State word of the instances this row stands for. Absent = none. */
   state?: string;
   /** What the item is worth, such as "40 Gold". Absent on an item with no price and on an unidentified face. */
   worth?: string;
@@ -92,6 +97,30 @@ export interface PlayerViewInput {
   resolve: (text: string) => string;
   /** Whether a runtime character is on. `world` arrives already gated; the snapshots' runtime characters do not. */
   isEntityOn?: (entity: Entity) => boolean;
+  /** Reads each entity's image Visibility rules. Without it, no row carries an image. */
+  gate?: GateInput;
+  /** The world's Media List, which gallery links resolve through. */
+  media?: MediaList;
+}
+
+/** The state the entity rows read; a game state satisfies it. */
+export type PlayerViewEntityState = Pick<GameState,
+  'discoveredEntities' | 'entityPositions' | 'genericStates' | 'uniqueStates' | 'locationId' | 'metEntities' | 'strangerAliases'>;
+
+/** Everything the entity rows read, and nothing else: no history, choices, log, page or notes. */
+export interface PlayerViewEntitiesInput {
+  world: Pick<World, 'entities' | 'locations'> & Partial<Pick<World, 'connections'>>;
+  current: PlayerViewEntityState;
+  /** The scene rows of the saved snapshots before the current one, oldest first. */
+  savedVisible: readonly (readonly SceneEntity[])[];
+  currentVisible: readonly SceneEntity[];
+  persona: Entity | null;
+  resolve: (text: string) => string;
+  isEntityOn?: (entity: Entity) => boolean;
+  gate?: GateInput;
+  media?: MediaList;
+  /** The script overrides the snapshot shows. Absent ⇒ none. */
+  mediaOverrides?: MediaOverrideReader;
 }
 
 /** Player text with chips resolved; empty when there is none. */
@@ -110,9 +139,9 @@ function discoveredText(record: DiscoveredEntity, world: ReadonlyMap<string, Ent
 }
 
 /** Every aliased scene row of the chain that resolves to one of `candidates`, oldest first. */
-function* aliasedRows(chain: readonly GameState[], candidates: readonly Entity[]): Generator<{ entity: Entity; alias: string; revealed: boolean }> {
-  for (const snapshot of chain) {
-    for (const row of snapshot.visibleEntities) {
+function* aliasedRows(scenes: readonly (readonly SceneEntity[])[], candidates: readonly Entity[]): Generator<{ entity: Entity; alias: string; revealed: boolean }> {
+  for (const scene of scenes) {
+    for (const row of scene) {
       const alias = row.alias?.trim();
       const entity = alias ? resolveEntityByName(row.name, candidates) : undefined;
       if (alias && entity) yield { entity, alias, revealed: row.revealed };
@@ -121,16 +150,16 @@ function* aliasedRows(chain: readonly GameState[], candidates: readonly Entity[]
 }
 
 /** Entity id → the alias each unrevealed scene row knew it by, newest last, for entities not met by name. */
-function aliasesInChain(chain: readonly GameState[], candidates: readonly Entity[], met: ReadonlySet<string>): Map<string, string> {
+function aliasesInChain(scenes: readonly (readonly SceneEntity[])[], candidates: readonly Entity[], met: ReadonlySet<string>): Map<string, string> {
   const aliases = new Map<string, string>();
-  for (const { entity, alias, revealed } of aliasedRows(chain, candidates)) if (!revealed && !met.has(entity.id)) aliases.set(entity.id, alias);
+  for (const { entity, alias, revealed } of aliasedRows(scenes, candidates)) if (!revealed && !met.has(entity.id)) aliases.set(entity.id, alias);
   return aliases;
 }
 
 /** Entity id → every scene alias the player saw it under, revealed or not, first seen first. */
-function seenAliasesInChain(chain: readonly GameState[], candidates: readonly Entity[]): Map<string, string[]> {
+function seenAliasesInChain(scenes: readonly (readonly SceneEntity[])[], candidates: readonly Entity[]): Map<string, string[]> {
   const seen = new Map<string, string[]>();
-  for (const { entity, alias } of aliasedRows(chain, candidates)) {
+  for (const { entity, alias } of aliasedRows(scenes, candidates)) {
     const list = seen.get(entity.id) ?? [];
     if (!list.includes(alias)) seen.set(entity.id, [...list, alias]);
   }
@@ -140,7 +169,7 @@ function seenAliasesInChain(chain: readonly GameState[], candidates: readonly En
 /** The ids of everyone the player knows by name in cast order, and the unmet ones among them, read from the
  *  Presence module on `current`. */
 function knownIds(
-  input: PlayerViewInput, current: GameState, cast: readonly Entity[], discovered: readonly DiscoveredEntity[],
+  input: PlayerViewEntitiesInput, current: PlayerViewEntityState, cast: readonly Entity[], discovered: readonly DiscoveredEntity[],
 ): { known: string[]; unmet: Set<string> } {
   const { world, persona, resolve } = input;
   const worldIds = new Set(world.entities.map((e) => e.id));
@@ -161,8 +190,10 @@ function knownIds(
   return { known: known.map((p) => p.entity.id), unmet: new Set(known.filter((p) => !p.met).map((p) => p.entity.id)) };
 }
 
-function viewEntities(input: PlayerViewInput, current: GameState): PlayerViewEntity[] {
-  const { world, persona, resolve } = input;
+/** The entity rows alone, from the entity state only. The full Player View builds its rows through this. */
+export function buildPlayerViewEntities(input: PlayerViewEntitiesInput): PlayerViewEntity[] {
+  const { world, persona, resolve, current } = input;
+  const scenes = [...input.savedVisible, input.currentVisible];
   const personaId = persona?.id ?? null;
   const worldById = new Map(world.entities.map((e) => [e.id, e]));
   // A deleted character leaves the discovered list, so its met id resolves to nothing.
@@ -180,8 +211,14 @@ function viewEntities(input: PlayerViewInput, current: GameState): PlayerViewEnt
   const { known: knownList, unmet } = knownIds(input, current, [...pool.values()], discovered);
   const known = new Set(knownList);
   // An entity known only by an alias shows the alias alone: its player description could name it.
-  const aliases = aliasesInChain(input.chain, [...pool.values()], known);
-  const seenAliases = seenAliasesInChain(input.chain, [...pool.values()]);
+  const aliases = aliasesInChain(scenes, [...pool.values()], known);
+  const seenAliases = seenAliasesInChain(scenes, [...pool.values()]);
+
+  const { gate } = input;
+  const withImage = (row: PlayerViewEntity, entity: Entity): PlayerViewEntity => {
+    const image = gate && visibleImages(entity, gate, input.media, input.mediaOverrides?.entity(entity.id, 'image'))[0]?.data;
+    return image ? { ...row, image } : row;
+  };
 
   const rows: PlayerViewEntity[] = [];
   const seen = new Set<string>(personaId ? [personaId] : []);
@@ -196,11 +233,11 @@ function viewEntities(input: PlayerViewInput, current: GameState): PlayerViewEnt
       ? { kind: 'entity', id: entity.id, name: alias, description: '', alias: true }
       : { kind: 'entity', id: entity.id, name: resolve(entity.name), description: textOf(resolve, playerText(entity)) };
     const others = (seenAliases.get(entity.id) ?? []).filter((name) => name !== row.name);
-    rows.push(others.length ? { ...row, seenAliases: others } : row);
+    rows.push(withImage(others.length ? { ...row, seenAliases: others } : row, entity));
   };
 
   if (persona) {
-    rows.push({ kind: 'entity', id: persona.id, name: resolve(persona.name), description: textOf(resolve, persona.playerDescription), player: true });
+    rows.push(withImage({ kind: 'entity', id: persona.id, name: resolve(persona.name), description: textOf(resolve, persona.playerDescription), player: true }, persona));
   }
   for (const id of [...known, ...aliases.keys()]) {
     const entity = pool.get(id);
@@ -229,29 +266,29 @@ function viewLocations(input: PlayerViewInput, current: GameState): PlayerViewLo
   });
 }
 
-/** A copy the player has met in this snapshot: visible, and held by the player or lying where the player stands. */
-const metCopy = (copy: ItemCopy, snapshot: GameState): boolean =>
-  copy.visibility === 'visible'
-  && (copy.where.kind === 'you' || (copy.where.kind === 'location' && copy.where.id === snapshot.locationId));
+/** An instance the player has met in this snapshot: visible, and held by the player or lying where the player stands. */
+const metInstance = (instance: ItemInstance, snapshot: GameState): boolean =>
+  instance.visibility === 'visible'
+  && (instance.where.kind === 'you' || (instance.where.kind === 'location' && instance.where.id === snapshot.locationId));
 
 /** The row id of an item's unidentified face, apart from its true face's so the two never link (Q40). */
 export const unidentifiedRowId = (itemId: string): string => `${itemId}:unidentified`;
 
-/** The row id the player knows `copy` by: its item's id, or the unidentified face's while it is unidentified. */
-export const playerItemId = (copy: ItemCopy): string => (copy.item.kind === 'runtime' ? copy.item.runtimeItemId
-  : isUnidentified(copy) ? unidentifiedRowId(copy.item.itemId) : copy.item.itemId);
+/** The row id the player knows `instance` by: its item's id, or the unidentified face's while it is unidentified. */
+export const playerItemId = (instance: ItemInstance): string => (instance.item.kind === 'runtime' ? instance.item.runtimeItemId
+  : isUnidentified(instance) ? unidentifiedRowId(instance.item.itemId) : instance.item.itemId);
 
-/** The item a copy is of as the player knows it, with its player text; undefined when the item is gone. */
+/** The item an instance is of as the player knows it, with its player text; undefined when the item is gone. */
 function copiedItem(
-  copy: ItemCopy, authored: ReadonlyMap<string, Item>, runtime: ReadonlyMap<string, RuntimeItem>, currencies: readonly Currency[], items: readonly Item[],
+  instance: ItemInstance, authored: ReadonlyMap<string, Item>, runtime: ReadonlyMap<string, RuntimeItem>, currencies: readonly Currency[], items: readonly Item[],
 ): { id: string; name: string; text?: string; worth?: string } | undefined {
-  const ref = copy.item;
+  const ref = instance.item;
   if (ref.kind === 'item') {
     const item = authored.get(ref.itemId);
     if (!item) return undefined;
-    const face = copyFace(item, copy);
-    const worth = copyWorthText(copy, item, currencies, items);
-    return { id: playerItemId(copy), name: face.name, text: face.description, ...(worth && { worth }) };
+    const face = instanceFace(item, instance);
+    const worth = instanceWorthText(instance, item, currencies, items);
+    return { id: playerItemId(instance), name: face.name, text: face.description, ...(worth && { worth }) };
   }
   // A runtime item's description is text the AI wrote in play, which counts as player text.
   const item = runtime.get(ref.runtimeItemId);
@@ -266,16 +303,16 @@ function viewItems(input: PlayerViewInput): PlayerViewItem[] {
   const met = new Map<string, { item: { id: string; name: string; text?: string; worth?: string }; at: number; states: Map<string, string | undefined> }>();
   input.chain.forEach((snapshot, at) => {
     for (const item of snapshot.runtimeItems ?? []) runtime.set(item.id, item);
-    for (const copy of snapshot.itemCopies ?? []) {
-      if (!metCopy(copy, snapshot)) continue;
-      const item = copiedItem(copy, authored, runtime, input.world.currencies ?? [], input.world.items ?? []);
+    for (const instance of snapshot.itemInstances ?? []) {
+      if (!metInstance(instance, snapshot)) continue;
+      const item = copiedItem(instance, authored, runtime, input.world.currencies ?? [], input.world.items ?? []);
       if (!item) continue;
-      const key = `${copy.item.kind}:${item.id}`;
+      const key = `${instance.item.kind}:${item.id}`;
       const row = met.get(key);
       const entry = row && row.at === at ? row : { item, at, states: new Map<string, string | undefined>() };
       if (entry !== row) met.set(key, entry);
-      const byState = stateKey(copy);
-      if (!entry.states.has(byState)) entry.states.set(byState, copyState(copy));
+      const byState = stateKey(instance);
+      if (!entry.states.has(byState)) entry.states.set(byState, instanceState(instance));
     }
   });
   return [...met.values()].flatMap(({ item, states }) => [...states.values()].map((state) => ({
@@ -328,7 +365,13 @@ export function buildPlayerView(input: PlayerViewInput): PlayerView {
   const current = input.chain.at(-1);
   if (!current) return { entities: [], locations: [], items: [], stats: [], traits: [] };
   return {
-    entities: viewEntities(input, current),
+    entities: buildPlayerViewEntities({
+      world: input.world, current, savedVisible: input.chain.slice(0, -1).map((s) => s.visibleEntities), currentVisible: current.visibleEntities,
+      persona: input.persona, resolve: input.resolve, isEntityOn: input.isEntityOn, gate: input.gate, media: input.media,
+      mediaOverrides: mediaOverrideReader(current.mediaOverrides, input.media, {
+        genericStates: current.genericStates, locationId: current.locationId, personaId: input.persona?.id,
+      }),
+    }),
     locations: viewLocations(input, current),
     items: viewItems(input),
     stats: viewStats(input, current),

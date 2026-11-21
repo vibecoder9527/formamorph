@@ -13,7 +13,7 @@ import { allPlaceholders } from '@/lib/placeholderHomes';
 import { resolvePlaceholders } from '@/lib/placeholders';
 import { parseTurns } from '@/lib/turnBanding';
 import { escapeRegExp } from '@/lib/utils';
-import type { ChatMessage, DictionaryEntry, Entity, GameState, ItemCopy, PlayerStat, World } from '@/types';
+import type { ChatMessage, DictionaryEntry, Entity, GameState, ItemInstance, PlayerStat, World } from '@/types';
 import type { Check, Opinion } from './world-question-score';
 
 export const WORLD_IDS = ['drone', 'emberwatch', 'open-chat', 'rampage', 'slime', 'sugarscape', 'valentines', 'veilwood'] as const;
@@ -188,17 +188,17 @@ const playerStats = (stats: readonly PlayerStat[] | undefined): PlayerStat[] => 
 function chainOf(world: World, save: Save, history: readonly ChatMessage[]): GameState[] {
   const persona = personaOf(world);
   const met = save.met.map((name) => entityNamed(world, name).id);
-  const held: ItemCopy[] = (save.held ?? []).map((name, at) => {
+  const held: ItemInstance[] = (save.held ?? []).map((name, at) => {
     const item = (world.items ?? []).find((i) => i.name === name);
     if (!item) throw new Error(`world-question: no item named ${name}`);
-    return { id: `copy-${at}`, item: { kind: 'item', itemId: item.id }, where: { kind: 'you' }, quantity: 1, visibility: 'visible' };
+    return { id: `instance-${at}`, item: { kind: 'item', itemId: item.id }, where: { kind: 'you' }, quantity: 1, visibility: 'visible' };
   });
   const last = JSON.parse(history.at(-1)!.content) as { locationId: string };
   const snapshot: GameState = {
     globalStats: playerStats(world.stats as PlayerStat[]), globalTraits: [], visibleEntities: [], logEntries: [], gameplayText: '', gameTime: 0,
     characterData: null, choices: [], isGameStarted: true, timestamp: '', worldName: world.worldOverview?.name ?? null, playerNotes: '',
     previousStateIndex: null, stateVersion: 1,
-    metEntities: met, locationId: last.locationId, itemCopies: held,
+    metEntities: met, locationId: last.locationId, itemInstances: held,
     entityStats: { [persona.id]: playerStats(persona.stats as PlayerStat[] | undefined) },
   };
   return save.turns.map(() => snapshot).concat(snapshot);
@@ -287,10 +287,10 @@ export const WORLD_QUESTION_CASES: WorldQuestionCase[] = [
     facts: [check('mechanic', /mechanic/i), check('the clan camp', /clan|hulkfall|rustjaw/i)] },
   { id: 'drone-try', world: 'drone', lean: 'game', question: ASK_TRY, facts: [], opinion: { solutions: [] } },
   // Open Chat: no cast, no save to play, so editor cases only.
-  { id: 'chat-entity-leads', world: 'open-chat', lean: 'editor', question: 'What does the Entity Leads trait do?',
+  { id: 'chat-entity-leads', world: 'open-chat', lean: 'editor', question: 'What does the Entity Leads choice in the Pacing Option do?',
     facts: [check('the entity drives', /entity (drives|leads|takes the lead)|drives the (chat|conversation)/i)] },
   { id: 'chat-reply-length', world: 'open-chat', lean: 'editor', question: 'How do I make the replies longer?',
-    facts: [check('the Long trait', /\blong\b/i)] },
+    facts: [check('the Long value', /\blong\b/i)] },
   // Rampage
   { id: 'rampage-alert-stat', world: 'rampage', lean: 'editor', question: 'What raises the Alert Level stat?',
     facts: [check('damage', /damage|destruct|wreck/i), check('never goes down', /never (goes )?down|only (climbs|rises)|never (falls|drops|decreases)/i)] },

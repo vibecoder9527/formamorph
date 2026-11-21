@@ -1,0 +1,45 @@
+# 01: Global Option Stat Rows
+
+Status: done
+Blocked by: None (can start immediately)
+Recommended model: Claude Opus 5.5 (`claude-opus-5-5`)
+Reasoning effort: high
+
+## What to build
+
+An author can give each choice value and each boolean state stat rows that move global stats. The rows act on stats like a trait's rows do, and never go into the prompt. The spec covers this in Q1–Q5 and Q7.
+
+- **World shape.** Add stat-change and stat-toggle row lists to a choice value, and one pair each for On and Off on a boolean Option. The rows use the trait's row shapes, plus an optional owner field naming an entity. This ticket defines the owner field as a type only; ticket 02 makes it work. Number and Preset Options get no rows.
+- **Runtime.** Option rows become one more source of stat contributions, read live from the world and the current Option values. They are never copied into the save.
+  - Starting rows apply once at game start, after authored starting values and before starting traits. The Test Bench opening does the same.
+  - Min, max and regen rows stack with trait rows under the existing floors.
+  - Option toggles apply before trait toggles, so a trait wins on the same stat.
+- **Mid-game.** Every path that changes Option values in play re-derives stats: the in-play Options tab, stat code and script writes to `options`, and the gate settle after a change. A change never moves a value, except where a new bound clamps it. A stat at its cap does not follow a raised cap.
+- **Editor.** The Options panel shows the trait stat-row editor under each choice value and each boolean state. The stat picker offers global stats.
+- **Deleted targets.** A row whose stat no longer exists stays in the file and is ignored at runtime, as trait rows are. Nothing prunes it (spec Q18).
+- **Docs.** Update [World-Editor-Options.md](docs/World-Editor-Options.md) for stat rows. Write a changelog fragment.
+
+## Acceptance criteria
+
+- [x] A new game with Easy picked starts Gold at its authored starting value plus Easy's starting row. `traitRuntime.optionRows.test.ts` "starts Gold at its authored start…" (opening fold), and `GameViewer.optionStatRows.test.tsx` "opens with the default value's rows applied".
+- [x] The Test Bench opening applies the picked values' starting rows. `traitRuntime.optionRows.test.ts` "applies the lens's picked values in the Test Bench opening".
+- [x] An Option's regen row and a trait's regen row on the same stat sum. `traitRuntime.optionRows.test.ts` "sum with a trait's regen row".
+- [x] A mid-game switch from Easy to Hard moves max and regen at once and leaves the value alone. A value above the new max is clamped. `traitRuntime.optionRows.test.ts` "a mid-game Option change" block, and the GameViewer in-play tab test.
+- [x] A stat code write to `options` re-derives stats the same way the Options tab does. `statCodeTurn.optionStatRows.test.ts`.
+- [x] An Option toggle turns a stat on. A trait toggle on the same stat wins. `traitRuntime.optionRows.test.ts` "Option stat toggles".
+- [x] A hidden Option's rows still apply. `traitRuntime.optionRows.test.ts` "still apply while the Option is hidden".
+- [x] Each runtime guard above goes red with its bug reinstated. 15 mutations, each red against its test, each restore checked.
+- [x] Editor render test: add a stat row to a choice value and to a boolean's Off state. `WorldEditor.optionStatRows.test.tsx`.
+- [x] Frame: `.scratch/frames/option-stat-rows-editor-dark-1440.png`, the Options panel with rows on a choice value, dark theme at 1440 wide. Taken with Playwright.
+
+Extra guards: `GameViewer.optionStatRows.test.tsx` "adds nothing to the AI request…" (Q17's no-leak test; red when the rows join the prompt's trait list), and a save whose world lost every row settles back to authored bounds (Q16).
+
+## Landed
+
+**Not verified**
+- A paged-back turn now reads that turn's own Option values for its stat toggles. No test covers it.
+- A save whose world deletes an Option outright keeps that Option's old bounds until a trait switch re-derives them. The settle re-derives only in a world with a valued Option, because a re-derive everywhere also corrects existing fixtures whose bounds disagree with the traits in force.
+
+**For you**
+- Set up an Easy/Hard switch in a world, start a game on each, and switch mid-game to judge whether the effect reads right in play.
+- [Frame](.scratch/option-stat-rows-01/frames/option-stat-rows-editor-dark-1440.png): the Options panel with stat rows under Easy and Hard.

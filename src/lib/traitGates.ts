@@ -3,8 +3,8 @@
 // for a global target (Q10, Q29).
 
 import type {
-  Daypart, ItemCopy, ItemRequirement, OptionRequirement, PersonaRef, RequirementOwner, StatComparison, StatRequirement, TimeRequirement, Trait, TraitGroup, TraitRequirement, TraitRequirementRow,
-  SlotRule, WorldOption, WorldOptionValues,
+  Daypart, ItemInstance, ItemRequirement, OptionRequirement, PersonaRef, RequirementOwner, StatComparison, StatRequirement, TimeRequirement, Trait, TraitGroup, TraitRequirement, TraitRequirementRow,
+  SlotRule, ValuedWorldOption, WorldOption, WorldOptionValues,
 } from '@/types';
 import { DAYPARTS, OPENING_DAYPART, daypartSet } from './gameClock';
 import { defaultPicks, exclusiveSiblings, isAlwaysOn, isHidden, traitOrderIndex } from './traitEffects';
@@ -12,7 +12,7 @@ import { defaultPicks, exclusiveSiblings, isAlwaysOn, isHidden, traitOrderIndex 
 import { buildTree, flattenTree } from './groupTree';
 import { blueprintsSubtreeIds } from './blueprintGroups';
 import { conditionsOf, rowsHold } from './requirementRows';
-import { optionDefault, optionValue } from './worldOptions';
+import { optionDefault, optionValue, valuedOptions } from './worldOptions';
 import { faceName, isUnidentified, itemHasUnidentifiedFace, stateKey, stateTextKey } from './items';
 import { partOf, playedEntityIds, scoped, scopedEntries, scopeKey, withPart, type OwnerId, type Scoped } from './scope';
 
@@ -104,6 +104,11 @@ export interface GateInput {
   active: GateActive;
   /** Absent, every stat Condition is unresolved. */
   stats?: GateStats;
+  /** Setup only: the stats a game starts with under a set of picks (Q26). Present, a trait's gate reads the
+   *  stats of the picks around it, its own left out, and the settle grows them from the ground up. */
+  statsOf?: (active: GateActive) => GateStats;
+  /** Play only: `stats` with one held trait's own contribution taken out, which that trait's gate reads (Q32). */
+  statsWithout?: (ownerId: OwnerId, traitId: string) => GateStats;
   /** The story clock's daypart, which a time Condition reads. Absent, the opening hour's: what authoring
    *  lenses read. */
   daypart?: Daypart;
@@ -112,8 +117,8 @@ export interface GateInput {
   /** Every world trait and group a requirement can name, whether or not a present owner holds it. Absent,
    *  only the owners' items resolve. */
   originals?: { traits: readonly Trait[]; groups: readonly TraitGroup[] };
-  /** Every Item Copy in play, hidden ones included (Q63). Absent, no one owns anything. */
-  itemCopies?: readonly ItemCopy[];
+  /** Every Item Instance in play, hidden ones included (Q63). Absent, no one owns anything. */
+  itemInstances?: readonly ItemInstance[];
   /** Every authored item an item Condition can name. Absent, every item Condition is unresolved. */
   worldItems?: readonly GateItem[];
   /** The traits item grants hold (Q52): `only` the active ones no pick holds, which count toward no Pick
@@ -268,7 +273,8 @@ function index(input: GateInput) {
   const personaName = input.reader === 'player' && played.length > 0
     ? owners.get(played[0])?.owner.name || entities.get(played[0])?.name || null
     : null;
-  const stats = input.stats;
+  // Picks move values, never which stats exist, so any set names them.
+  const stats = input.stats ?? input.statsOf?.(NO_ACTIVE);
   const global = globalItems(input);
   const holds = (ownerId: OwnerId, req: Targeted): boolean => (req.kind === 'item' ? false
     : req.kind === 'stat' ? !!statsIn(stats, ownerId)?.[req.id]
@@ -286,47 +292,47 @@ function index(input: GateInput) {
   const traitsBelow = (set: ReadonlySet<OwnerId>, groupId: string): string[] =>
     [...set].flatMap((ownerId) => owners.get(ownerId)?.below.get(groupId) ?? []);
   const itemNames = new Map((input.worldItems ?? []).map((item) => [item.id, item.name]));
-  /** The copies of the item an item Condition on `from` names, held by its owner. */
-  const copiesOf = (req: ItemRequirement, from: GateScopeTree): ItemCopy[] => {
+  /** The instances of the item an item Condition on `from` names, held by its owner. */
+  const instancesOf = (req: ItemRequirement, from: GateScopeTree): ItemInstance[] => {
     const owner: RequirementOwner = req.owner ?? (from.id === null ? { kind: 'you' } : { kind: 'entity', id: from.id });
     const ids = owner.kind === 'you' ? played : [owner.id];
     const you = owner.kind === 'you' || ids.some((id) => played.includes(id));
-    return (input.itemCopies ?? []).filter((copy) => copy.item.kind === 'item' && copy.item.itemId === req.id && copy.quantity > 0
-      && (copy.where.kind === 'you' ? you : copy.where.kind === 'entity' && ids.includes(copy.where.id)));
+    return (input.itemInstances ?? []).filter((instance) => instance.item.kind === 'item' && instance.item.itemId === req.id && instance.quantity > 0
+      && (instance.where.kind === 'you' ? you : instance.where.kind === 'entity' && ids.includes(instance.where.id)));
   };
-  /** Whether an item Condition on `from` holds before Not: one copy of its owner matches the status, the State
+  /** Whether an item Condition on `from` holds before Not: one instance of its owner matches the status, the State
    *  word and the identity together. An owner-less one on global scope reads the persona (Q88); a played entity
-   *  reads the copies of `you` (Q54, Q90). */
+   *  reads the instances of `you` (Q54, Q90). */
   const itemHeld = (req: ItemRequirement, from: GateScopeTree, visibleOnly = false): boolean => {
     const state = itemStateKey(req);
-    return copiesOf(req, from).some((copy) => (!visibleOnly || copy.visibility === 'visible') && (req.status === 'owned' || !!copy.equipped)
-      && (!state || stateKey(copy) === state)
-      && (req.identity === undefined || isUnidentified(copy) === (req.identity === 'unidentified')));
+    return instancesOf(req, from).some((instance) => (!visibleOnly || instance.visibility === 'visible') && (req.status === 'owned' || !!instance.equipped)
+      && (!state || stateKey(instance) === state)
+      && (req.identity === undefined || isUnidentified(instance) === (req.identity === 'unidentified')));
   };
   const worldItem = new Map((input.worldItems ?? []).map((item) => [item.id, item]));
   /** The name the player's text gives a required item: its unidentified face while its owner holds no visible
-   *  identified copy (Q45). `from` absent, the owner is unknown and the true name reads. */
+   *  identified instance (Q45). `from` absent, the owner is unknown and the true name reads. */
   const itemNameFor = (req: ItemRequirement, from?: GateScopeTree): string | undefined => {
     const item = worldItem.get(req.id);
     if (!item) return undefined;
     const showUnidentified = input.reader === 'player' && from && itemHasUnidentifiedFace(item)
-      && !copiesOf(req, from).some((copy) => copy.visibility === 'visible' && !isUnidentified(copy));
+      && !instancesOf(req, from).some((instance) => instance.visibility === 'visible' && !isUnidentified(instance));
     return faceName(item, !!showUnidentified);
   };
   const statNames = new Map<string, string>();
   for (const [, set] of stats ? scopedEntries(stats) : []) {
     for (const [id, stat] of Object.entries(set)) if (!statNames.has(id)) statNames.set(id, stat.name);
   }
-  /** The stat a stat Condition on `from` reads: the first scope of the id in its owner set. Null when no
-   *  scope in the set has it. */
-  const statOf = (req: StatRequirement, from: GateScopeTree): GateStat | null => {
+  /** The stat a stat Condition on `from` reads in `read`: the first scope of the id in its owner set. Null when
+   *  no scope in the set has it. */
+  const statOf = (req: StatRequirement, from: GateScopeTree, read: GateStats | undefined = stats): GateStat | null => {
     for (const ownerId of ownerSet(req, from)) {
-      const stat = statsIn(stats, ownerId)?.[req.id];
+      const stat = statsIn(read, ownerId)?.[req.id];
       if (stat) return stat;
     }
     return null;
   };
-  const options = new Map((input.worldOptions ?? []).map((option) => [option.id, option]));
+  const options = new Map(valuedOptions(input.worldOptions).map((option) => [option.id, option]));
   return {
     owners, traitNames, groupNames, hiddenTraits, statNames, entities, global, isGlobal, ownerSet, traitsBelow, statOf, itemNames, itemNameFor, itemHeld, persona: input.persona, personaName,
     daypart: input.daypart ?? OPENING_DAYPART, options, optionValues: input.optionValues,
@@ -367,7 +373,7 @@ const activeSets = (input: GateInput): ActiveIn => {
 };
 
 /** Whether a Condition's target is on for `trait`. The trait itself and its exclusive siblings in its own tree
- *  never count (Q26); another owner's copy of a sibling does. */
+ *  never count (Q26); another owner's instance of a sibling does. */
 function targetOn(req: Switched, trait: Located<{ id: string }>, activeIn: ActiveIn, idx: Index): boolean {
   if (req.kind === 'playingAs') return idx.persona.source === 'world' && idx.persona.entityId === req.id;
   const set = idx.ownerSet(req, trait.owner);
@@ -401,14 +407,14 @@ function compares(reading: number, operator: StatRequirement['operator'], value:
 
 /** Whether a stat Condition on `from` holds: its stat resolves and is not inert, and it compares, or fails to
  *  under Not. */
-function statHolds(req: StatRequirement, from: GateScopeTree, idx: Index): boolean {
-  const stat = idx.statOf(req, from);
+function statHolds(req: StatRequirement, from: GateScopeTree, idx: Index, read?: GateStats): boolean {
+  const stat = idx.statOf(req, from, read);
   if (!stat || stat.inert) return false;
   return compares(statReading(stat, req.unit), req.operator, req.value) !== !!req.not;
 }
 
 /** The Option an Option Condition names, when its fields fit the Option's type and its value exists. */
-function fittedOption(req: OptionRequirement, idx: Index): WorldOption | null {
+function fittedOption(req: OptionRequirement, idx: Index): ValuedWorldOption | null {
   const option = idx.options.get(req.id);
   if (!option) return null;
   switch (option.type) {
@@ -436,9 +442,10 @@ function optionHolds(req: OptionRequirement, idx: Index): boolean {
   return (option.type === 'choice' ? value === req.valueId : value === true) !== !!req.not;
 }
 
-/** Whether one Condition holds for `trait` against `activeIn`: its target is on, or off under Not. */
-function requirementHolds(req: TraitRequirement, trait: Located<{ id: string }>, activeIn: ActiveIn, idx: Index): boolean {
-  if (req.kind === 'stat') return statHolds(req, trait.owner, idx);
+/** Whether one Condition holds for `trait` against `activeIn`, a stat one in `read`: its target is on, or off
+ *  under Not. */
+function requirementHolds(req: TraitRequirement, trait: Located<{ id: string }>, activeIn: ActiveIn, idx: Index, read?: GateStats): boolean {
+  if (req.kind === 'stat') return statHolds(req, trait.owner, idx, read);
   if (req.kind === 'option') return optionHolds(req, idx);
   if (req.kind === 'time') return req.dayparts.includes(idx.daypart);
   // Like a stat, an item that is gone or an owner that is gone never holds, Not included.
@@ -452,8 +459,8 @@ function requirementHolds(req: TraitRequirement, trait: Located<{ id: string }>,
 /** The Condition test for positive growth: every Not Condition on a target that exists holds, so growth stays
  *  monotone and a Condition whose target is gone never holds (Q27). A stat Condition reads no active set, so
  *  it evaluates directly. */
-const growthHolds = (trait: Located<Trait>, activeIn: ActiveIn, idx: Index) => (req: TraitRequirement): boolean =>
-  (req.not && !readsNoSet(req) ? resolves(req as Switched, idx) : requirementHolds(req, trait, activeIn, idx));
+const growthHolds = (trait: Located<Trait>, activeIn: ActiveIn, idx: Index, read?: () => GateStats | undefined) => (req: TraitRequirement): boolean =>
+  (req.not && !readsNoSet(req) ? resolves(req as Switched, idx) : requirementHolds(req, trait, activeIn, idx, req.kind === 'stat' ? read?.() : undefined));
 
 /** The owner's name as the reader's text reads it, or null when the named entity is gone. The persona owner
  *  reads "Persona" to the author and the played persona's name to the player, which `persona` marks. */
@@ -581,10 +588,13 @@ export const complementary = (a: TraitRequirement, b: TraitRequirement): boolean
 export function gateStates(input: GateInput): GateStates {
   const idx = index(input);
   const activeIn = activeSets(input);
+  const reader = ownRowsReader(input, idx);
+  const active = new Set(locate(idx, input.active).filter((t) => activeIn(t.owner.id, t.item.id)).map(keyOf));
   return perScopeOf([...idx.owners.values()].map((o) => o.owner), (owner) => {
     const states = new Map<string, GateState>();
     for (const trait of idx.owners.get(owner.id)!.traits.values()) {
-      const rows = rowStatesOf(trait.item.requires ?? [], trait, activeIn, idx);
+      const read = reader && conditionsOf(trait.item.requires).some((req) => req.kind === 'stat') ? reader(active, trait) : undefined;
+      const rows = rowStatesOf(trait.item.requires ?? [], trait, activeIn, idx, read);
       states.set(trait.item.id, { unlocked: rows.length === 0 || rows.some((r) => r.holds), rows });
     }
     return states;
@@ -593,18 +603,20 @@ export function gateStates(input: GateInput): GateStates {
 
 /** Each row's state for `rows` read from `host`: a stat resolves against the owner set of `host`, which the
  *  text alone does not read. */
-function rowStatesOf(rows: readonly TraitRequirementRow[], host: Located<{ id: string }>, activeIn: ActiveIn, idx: Index): RowState[] {
+function rowStatesOf(
+  rows: readonly TraitRequirementRow[], host: Located<{ id: string }>, activeIn: ActiveIn, idx: Index, read?: GateStats,
+): RowState[] {
   return rows.map((row): RowState => {
     const conditions = row.all.map((req): ConditionState => {
       const named = requirementText(req, idx, host.owner);
-      const stat = req.kind === 'stat' ? idx.statOf(req, host.owner) : null;
+      const stat = req.kind === 'stat' ? idx.statOf(req, host.owner, read) : null;
       const unresolved = named.unresolved || (req.kind === 'stat' && (!stat || !!stat.inert));
-      // An item held only as a hidden Item Copy stays out of the player's line (Q63, Q115).
+      // An item held only as a hidden Item Instance stays out of the player's line (Q63, Q115).
       const hidden = req.kind === 'trait' ? idx.hiddenTraits.has(req.id)
         : req.kind === 'item' ? !req.not && idx.itemHeld(req, host.owner) && !idx.itemHeld(req, host.owner, true)
           : req.kind === 'option' ? idx.options.get(req.id)?.shownToPlayer === false
             : !!stat && (!!stat.hidden || !!stat.inert);
-      return { text: named.text, persona: named.persona, unresolved, hidden, holds: !unresolved && requirementHolds(req, host, activeIn, idx) };
+      return { text: named.text, persona: named.persona, unresolved, hidden, holds: !unresolved && requirementHolds(req, host, activeIn, idx, read) };
     });
     return { holds: conditions.every((c) => c.holds), conditions };
   });
@@ -690,6 +702,27 @@ function locate(idx: Index, lists: GateActive): Located<Trait>[] {
   return out;
 }
 
+/** The stats a trait's gate reads, its own rows left out: at setup, the stats of the other picks among `on`
+ *  (Q26b); in play, the live stats (Q32). Null when the input carries neither. Only the traits with stat rows
+ *  key the setup cache, since only they move a stat. */
+function ownRowsReader(input: GateInput, idx: Index): ((on: ReadonlySet<string>, without: Located<Trait>) => GateStats) | null {
+  const { statsOf, statsWithout } = input;
+  if (!statsOf) return statsWithout ? (_on, without) => statsWithout(without.owner.id, without.item.id) : null;
+  const moving = [...idx.owners.values()].flatMap((o) => [...o.traits.values()])
+    .filter((t) => (t.item.statChanges?.length ?? 0) > 0 || (t.item.statToggles?.length ?? 0) > 0);
+  const cache = new Map<string, GateStats>();
+  return (on, without) => {
+    const picks = moving.filter((t) => t !== without && on.has(keyOf(t)));
+    const sig = picks.map(keyOf).join('\u0001');
+    const hit = cache.get(sig);
+    if (hit) return hit;
+    const scopes = [...idx.owners.values()].map((o) => o.owner);
+    const stats = statsOf(perScopeOf(scopes, (owner) => picks.filter((t) => t.owner === owner).map((t) => t.item.id), []));
+    cache.set(sig, stats);
+    return stats;
+  };
+}
+
 /**
  * Settle the proposed active sets against every gate. The settled set grows from the ground up: a proposed
  * trait joins once its gate holds against what has joined so far, until nothing joins. Traits that only
@@ -727,8 +760,13 @@ export function settle(input: GateInput, cascadeOff: GateActive = NO_ACTIVE): Se
   let kept = new Set<string>();
   let returned: Located<Trait>[] = [];
   const activeIn: ActiveIn = (ownerId, id) => kept.has(key(ownerId, id));
-  const grows = (t: Located<Trait>) => rowsHold(t.item.requires, growthHolds(t, activeIn, idx));
-  const opens = (t: Located<Trait>) => rowsHold(t.item.requires, (req) => requirementHolds(req, t, activeIn, idx));
+  // At setup a stat reads what has joined so far, so a pick never props up the gate it needs (Q26c). In play it
+  // reads the live stats less the trait's own rows (Q32).
+  const reader = ownRowsReader(input, idx);
+  const read = (t: Located<Trait>) => (reader ? () => reader(kept, t) : undefined);
+  const grows = (t: Located<Trait>) => rowsHold(t.item.requires, growthHolds(t, activeIn, idx, read(t)));
+  const opens = (t: Located<Trait>) => rowsHold(t.item.requires, (req) =>
+    requirementHolds(req, t, activeIn, idx, req.kind === 'stat' ? read(t)?.() : undefined));
   const grow = () => {
     kept = new Set();
     returned = [];
@@ -1196,7 +1234,7 @@ export interface RequirementOptions {
 }
 
 /** A new Condition on `option`: a choice on its default value, a boolean on, a number at least its default. */
-export function optionRequirement(option: WorldOption): OptionRequirement {
+export function optionRequirement(option: ValuedWorldOption): OptionRequirement {
   const base = { kind: 'option' as const, id: option.id, name: option.name };
   switch (option.type) {
     case 'choice': {
@@ -1208,9 +1246,9 @@ export function optionRequirement(option: WorldOption): OptionRequirement {
   }
 }
 
-/** The picker's World Option rows, in Options-tab order. */
+/** The picker's World Option rows, in Options-tab order. A Preset holds nothing to gate on. */
 export const worldOptionRows = (options: readonly WorldOption[] | undefined): RequirementOption[] =>
-  (options ?? []).map((option) => ({ requirement: optionRequirement(option), label: option.name, breadcrumb: [], owners: [], worldOption: option }));
+  valuedOptions(options).map((option) => ({ requirement: optionRequirement(option), label: option.name, breadcrumb: [], owners: [], worldOption: option }));
 
 /** `requirement` scoped to `owner`; the same owner when `owner` is absent. */
 export const withRequirementOwner = (requirement: TraitRequirement, owner?: RequirementOwner): TraitRequirement =>

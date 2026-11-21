@@ -2,6 +2,8 @@ import { useCallback, useMemo } from 'react';
 import { useGameplay } from '@/contexts/GameplayContext';
 import { visibleImages } from './imageVisibility';
 import { useViewedGateInput } from './useViewedGateInput';
+import { useMediaList } from './useMediaList';
+import { useViewedMediaOverrides } from './useMediaOverrides';
 import type { Entity } from '@/types';
 
 /**
@@ -12,7 +14,11 @@ import type { Entity } from '@/types';
 export function useEntityGallery(entity?: Pick<Entity, 'id' | 'images'> | null) {
   const { entityImageIndex, setEntityImageIndex } = useGameplay();
   const input = useViewedGateInput();
-  const visible = useMemo(() => (entity ? visibleImages(entity, input) : []), [entity, input]);
+  const media = useMediaList();
+  const overrides = useViewedMediaOverrides();
+  const visible = useMemo(
+    () => (entity ? visibleImages(entity, input, media, overrides.entity(entity.id, 'image')) : []), [entity, input, media, overrides],
+  );
   const images = useMemo(() => visible.map((img) => img.data), [visible]);
   const id = entity?.id;
   const positionOf = useCallback((slot: number | undefined) => Math.max(0, visible.findIndex((img) => img.slot === slot)), [visible]);

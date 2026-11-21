@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useEntityRuleHost, type RuleHost } from '@/components/editor/ImageRuleCog';
 import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -9,21 +9,27 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import PlaceholderText from "@/components/prompt/PlaceholderText";
 import AiGenerateButton from "@/components/AiGenerateButton";
 import PlaceholderField, { PlaceholderNameField } from "@/components/prompt/PlaceholderField";
-import { ModelUpload } from '../lib/UtilityComponents';
+import { ModelUpload, SoundUpload } from '../lib/UtilityComponents';
+import { isMediaRef } from '@/lib/mediaList';
+import { MediaSoundSlot } from './MediaSoundSlot';
 import { IMAGE_CAPS } from '../lib/imageOptim';
-import { entityImages } from '../lib/entityImages';
+import { entityImages, galleryLinks } from '../lib/entityImages';
+import { useLinkedGallery } from '@/lib/useLinkedGallery';
 import { ImageGallery, ImageTags, ImageWidget, type GalleryFrameProps } from './ImageTagsField';
+import type { GalleryMedia } from '@/lib/mediaGallery';
 import { useEditorMode } from '@/lib/editorMode';
 import { labelPlaceholders } from '@/lib/placementLetters';
 import { randomUUID } from '@/lib/uuid';
 import { customPersonaCounts, personaRole, personaRolePatch, unmarkLine, withPersonaRole, type PersonaRole } from '@/lib/customPersona';
 import type { RenameFieldHandlers } from '@/lib/useCodeRename';
 import type { ReactNode } from 'react';
-import type { Entity, Placeholder, VrmPick } from '@/types';
+import type { Entity, GalleryImage, GalleryLink, ModelMetadata, Placeholder, VrmPick } from '@/types';
+import { useLibraryAddBlock } from '@/lib/useSupporterCopyBlock';
 import { vrmPickFromValue, vrmPickValue } from '@/lib/worldVrmStore';
 import { pickLabel } from '@/lib/vrmPickMatch';
 import { WorldInput } from '@/components/editor/WorldField';
-import { Select, SelectContent, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { QUOTE_SWATCHES, isQuoteSwatch, swatchColor } from '@/lib/coref/speakerPalette';
 import { SelectOptions } from "@/components/SelectOptions";
 import { useGameDataOptional } from '@/contexts/GameDataContext';
 import { useWorldHistoryStep } from '@/contexts/worldRecorder';
@@ -116,6 +122,7 @@ export const EntityIdentityFields = ({ value, onChange, placeholders = [], owner
           placeholder="she/her, he/him, it/its"
         />
       </div>
+      {advanced && <EntityQuoteColorField value={value} onChange={onChange} />}
       {advanced && (
         <div className="space-y-2" {...fieldFrame('type')}>
           <Label>Type</Label>
@@ -129,6 +136,31 @@ export const EntityIdentityFields = ({ value, onChange, placeholders = [], owner
     </>
   );
 };
+
+const AUTO_QUOTE_COLOR = 'auto';
+const QUOTE_COLOR_OPTIONS = QUOTE_SWATCHES.map((key) => ({ key, label: key[0].toUpperCase() + key.slice(1), color: swatchColor(key) }));
+
+/** The swatch the entity's quotes take in narration. Each option shows in its own color, like the Font list. */
+const EntityQuoteColorField = ({ value, onChange }: Pick<EntityFieldGroupProps, 'value' | 'onChange'>) => (
+  <div className="space-y-2" {...fieldFrame('quoteColor')}>
+    <Label htmlFor="entity-quote-color">Quote Color</Label>
+    <Hint>Colors this entity’s quotes in the narration. Auto picks one.</Hint>
+    <Select
+      value={isQuoteSwatch(value.quoteColor) ? value.quoteColor : AUTO_QUOTE_COLOR}
+      onValueChange={(v) => onChange('quoteColor', v === AUTO_QUOTE_COLOR ? undefined : v)}
+    >
+      <SelectTrigger id="entity-quote-color" className="w-48">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={AUTO_QUOTE_COLOR}>Auto</SelectItem>
+        {QUOTE_COLOR_OPTIONS.map((o) => (
+          <SelectItem key={o.key} value={o.key} style={{ color: o.color }}>{o.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  </div>
+);
 
 /** What the player reads before meeting the entity, for `afterPlayer` on the Descriptions tab. World Editor and Advanced only. */
 export const EntityStrangerDescriptionField = ({ value, onChange, placeholders = [], ownerId, home }: EntityFieldGroupProps & { home: EntityHome }) => {
@@ -325,9 +357,7 @@ export const EntityDescriptionFields = ({ value, onChange, placeholders = [], ow
  * The entity's picture widget with neither piece placed: a host draws `ImageGallery` and `ImageTags` where
  * its own layout wants them and both still write this entity. `EntityGalleryField` is the one-box version.
  */
-export const EntityImageWidget = ({
-  value, onChange, placeholders = [], ownerId, children, frame, imageId = `entity-image-${value.id}`, ruleHost,
-}: DescribedFieldGroupProps & {
+type EntityImageWidgetProps = DescribedFieldGroupProps & {
   children: ReactNode;
   /** A host that shows the framed image's details controls the frame. */
   frame?: GalleryFrameProps;
@@ -335,14 +365,33 @@ export const EntityImageWidget = ({
   imageId?: string;
   /** Absent = the record is an entity, and its rules read it. */
   ruleHost?: RuleHost;
-}) => {
+  /** The record is a world entity, whose gallery links the world's Media List. */
+  linked?: boolean;
+};
+
+export const EntityImageWidget = ({ linked, ...props }: EntityImageWidgetProps) =>
+  (linked ? <LinkedEntityImageWidget {...props} /> : (
+    <EntityImageBody {...props} images={entityImages(props.value)} onImagesChange={(list) => props.onChange('images', list)} />
+  ));
+
+const LinkedEntityImageWidget = (props: Omit<EntityImageWidgetProps, 'linked'>) => {
+  const { value, onChange, placeholders = [] } = props;
+  const write = useCallback((links: GalleryLink[]) => onChange('images', links), [onChange]);
+  const gallery = useLinkedGallery(galleryLinks(value), write, labelPlaceholders(value.name, placeholders));
+  return <EntityImageBody {...props} {...gallery} />;
+};
+
+const EntityImageBody = ({
+  value, onChange, placeholders = [], ownerId, children, frame, imageId = `entity-image-${value.id}`, ruleHost, images, onImagesChange, media,
+}: Omit<EntityImageWidgetProps, 'linked'> & { images: GalleryImage[]; onImagesChange: (next: GalleryImage[]) => void; media?: GalleryMedia }) => {
   const entityHost = useEntityRuleHost(value.id);
   return (
     <ImageWidget
       label="Image"
       tourAnchor={ruleHost ? undefined : 'entity-image'}
-      images={entityImages(value)}
-      onImagesChange={(list) => onChange('images', list)}
+      images={images}
+      onImagesChange={onImagesChange}
+      media={media}
       slots={Infinity}
       imageId={imageId}
       cap={IMAGE_CAPS.entity}
@@ -368,6 +417,21 @@ export const EntityGalleryField = (props: EntityFieldGroupProps) => (
   </EntityImageWidget>
 );
 
+/** The entity's sound, played from its card. Advanced only. A library entity keeps its file embedded (Q41). */
+export const EntitySoundField = ({ value, onChange, placeholders = [], home }: EntityFieldGroupProps & { home: EntityHome }) => {
+  const { advanced } = useEditorMode();
+  if (!advanced) return null;
+  const id = `entity-${value.id}`;
+  return (
+    <div className="space-y-2" {...fieldFrame('sound')}>
+      <Label htmlFor={home === 'world' ? `sound-import-${id}` : `sound-upload-${id}`}>Sound</Label>
+      {home === 'world'
+        ? <MediaSoundSlot id={id} value={value.sound} subject={labelPlaceholders(value.name, placeholders)} onChange={(next) => onChange('sound', next)} />
+        : <SoundUpload id={id} value={isMediaRef(value.sound) ? undefined : value.sound} onChange={(next) => onChange('sound', next)} />}
+    </div>
+  );
+};
+
 /** The 3D model slot. Advanced only. */
 export const EntityModelField = ({ value, onChange }: EntityFieldGroupProps) => {
   const { advanced } = useEditorMode();
@@ -390,7 +454,7 @@ const AvatarPickField = ({ entityId, hint, named, stored, onPick }: {
   entityId: string;
   hint: string;
   /** The editor's own Avatars, as option values from `vrmPickValue`. */
-  named: { value: string; label: string }[];
+  named: { value: string; label: string; blockedReason?: string | null }[];
   stored: string;
   onPick: (pick: VrmPick | undefined) => void;
 }) => {
@@ -433,14 +497,18 @@ export const LIBRARY_ENTITY_VRM_HINT = 'Picks the Avatar this entity shows. Add 
 
 /** A library entity's Avatar: none, the player's default, or one from the player's Avatar library. */
 export const LibraryEntityVrmPickField = ({ value, onChange }: EntityFieldGroupProps) => {
-  const [library, setLibrary] = useState<{ id: string; name: string }[] | undefined>();
+  const [library, setLibrary] = useState<ModelMetadata[] | undefined>();
   const mounted = useMountedRef();
+  const addBlock = useLibraryAddBlock();
   useEffect(() => {
     ModelStorageService.getModelMetadata()
       .then((models) => { if (mounted.current) setLibrary(models); })
       .catch(() => { /* An unreadable library offers None and User's Default only. */ });
   }, [mounted]);
-  const named = (library ?? []).map((model) => ({ value: vrmPickValue({ kind: 'library', id: model.id }), label: model.name || 'Unnamed' }));
+  // A library Avatar saved from a Supporter Copy would ride into this entity's export, so it stays out of reach here.
+  const named: { value: string; label: string; blockedReason?: string | null }[] = (library ?? []).map((model) => ({
+    value: vrmPickValue({ kind: 'library', id: model.id }), label: model.name || 'Unnamed', blockedReason: addBlock(model),
+  }));
   const stored = vrmPickValue(value.vrmPick);
   // Once the library is read, a library id it lacks keeps its own option, named as the link review names it.
   if (library && value.vrmPick?.kind === 'library' && !named.some((o) => o.value === stored)) {
@@ -463,7 +531,7 @@ export const EntityProfileFields = ({ columnsClassName, nameHandlers, locations,
   customPersonaEntityName?: string;
 }) => (
   <>
-    <EntityImageWidget {...props}>
+    <EntityImageWidget {...props} linked={home === 'world'}>
       <div className={`grid gap-4 ${columnsClassName}`}>
         <ImageGallery />
         <div className="space-y-4">
@@ -475,6 +543,7 @@ export const EntityProfileFields = ({ columnsClassName, nameHandlers, locations,
     <EntityPersonaField {...props} home={home} customPersonaEntityName={customPersonaEntityName} />
     {locations}
     {home === 'world' ? <EntityVrmPickField {...props} /> : <LibraryEntityVrmPickField {...props} />}
+    <EntitySoundField {...props} home={home} />
     <EntityModelField {...props} />
   </>
 );

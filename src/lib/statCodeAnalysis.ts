@@ -10,6 +10,7 @@ import type { SyntaxNode, Tree } from '@lezer/common';
 import type { CodeWorldLookup } from '@/lib/codeWorldLookup';
 import type { PlaceholderOwners } from '@/lib/placeholderHomes';
 import { placeholderKindNoun } from '@/lib/placeholders';
+import { SCRIPT_TIMING_LABEL } from '@/lib/scripts';
 import { hasEntityKey } from '@/lib/statCodeNames';
 import { memberRenameKey } from '@/lib/codeRenameChains';
 import { rewrittenKey } from '@/lib/statCodeRename';
@@ -20,8 +21,8 @@ import {
 } from '@/lib/codeSurface';
 import type { SandboxDictionaryEntry } from '@/lib/statCodeExecutor';
 import {
-  clockFieldsAt, DELTA_FIELDS, DELTA_MEMBERS, PREVIOUS_FIELDS, SELF_WRITABLE_FIELDS, STAT_CODE_SURFACE, STAT_FIELDS,
-  DICTIONARY_ENTRY_FIELDS, DICTIONARY_FIELDS, DICTIONARY_WRITABLE_FIELD, ENTITY_FIELDS, LOCATION_ENTRY_FIELDS, LOCATION_EXIT_FIELDS, MEMORY_ENTRY_FIELDS, PERSONA_FIELDS, SELF_TRAIT_FIELDS, SWITCHED_TRAIT_FIELDS, TRAIT_ENTRY_FIELDS, TRAIT_WRITABLE_FIELD, placeholderEntryFields,
+  clockFieldsAt, partialPlayerCalls, PLAYER_CALL_ENTRIES, DELTA_FIELDS, DELTA_MEMBERS, PREVIOUS_FIELDS, SELF_WRITABLE_FIELDS, STAT_CODE_SURFACE, STAT_FIELDS,
+  DICTIONARY_ENTRY_FIELDS, DICTIONARY_FIELDS, DICTIONARY_WRITABLE_FIELD, ENTITY_FIELDS, GENERIC_INSTANCE_FIELDS, LOCATION_ENTRY_FIELDS, LOCATION_EXIT_FIELDS, MEMORY_ENTRY_FIELDS, PERSONA_FIELDS, SELF_TRAIT_FIELDS, SWITCHED_TRAIT_FIELDS, TRAIT_ENTRY_FIELDS, TRAIT_WRITABLE_FIELD, placeholderEntryFields,
 } from '@/lib/statCodeSurface';
 import {
   isIdentifier, isPlaceholderEntryMember, placeholderKeyWinner, placeholderPathLabel, placeholderPathMap,
@@ -489,7 +490,9 @@ function placeholderMembersAt(
 }
 
 /** The members of one element of each array shape. */
-const ELEMENT_FIELDS: Record<ArrayElement, readonly SurfaceEntry[]> = { memory: MEMORY_ENTRY_FIELDS, entity: ENTITY_FIELDS, exit: LOCATION_EXIT_FIELDS };
+const ELEMENT_FIELDS: Record<ArrayElement, readonly SurfaceEntry[]> = {
+  memory: MEMORY_ENTRY_FIELDS, entity: ENTITY_FIELDS, exit: LOCATION_EXIT_FIELDS, genericInstance: GENERIC_INSTANCE_FIELDS,
+};
 
 /** What a resolved expression carries after its dot, or null where nothing can be shown. A wrong list would
  *  claim the sandbox holds something it doesn't. */
@@ -921,9 +924,14 @@ function checkTraitWrite(
   return suggested({ from: field.from, to: field.to, severity: 'error', message }, suggestion);
 }
 
+/** Whether `fields` lists `name` as a member that takes a write. */
+const isWritableField = (fields: readonly SurfaceEntry[], name: string): boolean =>
+  fields.some((field) => field.name === name && field.access === 'writable');
+
 /** What is wrong with a write into `persona`: to one of its own members, or into its traits as `traits`. */
 function checkPersonaWrite(target: SyntaxNode, code: string, assignment: boolean): CodeDiagnostic | null {
   const own = entryRef(target, code, 'persona');
+  if (own && isWritableField(PERSONA_FIELDS, own.name)) return null;
   if (own) {
     const message = `persona.${own.name} is read-only.`;
     return { from: own.from, to: own.to, severity: 'error', message };
@@ -935,6 +943,7 @@ function checkPersonaWrite(target: SyntaxNode, code: string, assignment: boolean
  *  to a stat below `owner.stats` is a stat write, which `checkWrite` reads. */
 function checkOwnerWrite(target: SyntaxNode, code: string, assignment: boolean): CodeDiagnostic | null {
   const own = entryRef(target, code, 'owner');
+  if (own && isWritableField(ENTITY_FIELDS, own.name)) return null;
   if (own) return { from: own.from, to: own.to, severity: 'error', message: `owner.${own.name} is read-only.` };
   return checkTraitWrite(target, code, assignment, ownerTraitRef);
 }
@@ -990,6 +999,7 @@ function checkEntityWrite(target: SyntaxNode, code: string, assignment: boolean)
   const entry = entryRef(target, code, 'entities');
   if (entry) return readOnly(entry.from, entry.to);
   const own = target.firstChild && entryRef(target.firstChild, code, 'entities') ? memberKey(target, code) : null;
+  if (own && isWritableField(ENTITY_FIELDS, own.name)) return null;
   if (own) return readOnly(own.from, own.to);
   return checkTraitWrite(target, code, assignment, entityTraitRef);
 }
@@ -1007,6 +1017,17 @@ function checkClockField(member: SyntaxNode, code: string): CodeDiagnostic | nul
   const suggestion = nearestName(name, fields.map((entry) => entry.name));
   const lead = `${path} has no field “${name}”.`;
   return suggested({ from: field.from, to: field.to, severity: 'error', message: suggestion ? `${lead} Did you mean “${suggestion}”?` : lead }, suggestion);
+}
+
+/** What is wrong with `player.<call>` where the timing's `player` lacks that call: During AI Output's holds
+ *  `show` alone, and the run throws on the rest (Q29). */
+function checkPlayerCall(member: SyntaxNode, code: string, calls: readonly SurfaceEntry[]): CodeDiagnostic | null {
+  const object = member.firstChild;
+  const field = member.getChild('PropertyName');
+  if (!object || !field || code.slice(object.from, object.to) !== 'player') return null;
+  const name = code.slice(field.from, field.to);
+  if (calls.some((entry) => entry.name === name) || !PLAYER_CALL_ENTRIES.some((entry) => entry.name === name)) return null;
+  return { from: field.from, to: field.to, severity: 'error', message: `player.${name} can’t run in ${SCRIPT_TIMING_LABEL.output}.` };
 }
 
 /** What is wrong with a read of `<root>.<field>` on a trait entry, `self` in a trait's script or `trait` in a
@@ -1306,6 +1327,8 @@ export function codeDiagnostics(code: string, options: SurfaceAnalysisOptions): 
   const clockInScope = rules.stats && !declared.has('clock');
   const selfInScope = rules.self && !declared.has('self');
   const switchedTraitInScope = surfaceHasGlobal(surface, 'trait') && !declared.has('trait');
+  // A `player` short of some calls: the ones it lacks are flagged.
+  const limitedPlayer = surfaceHasGlobal(surface, 'player') && !declared.has('player') ? partialPlayerCalls(surface) : undefined;
   const readOnlyInScope = new Set(READ_ONLY_GLOBALS.filter((name) => surfaceHasGlobal(surface, name) && !declared.has(name)));
   /** The read-only global a name is, when the code has not shadowed it. */
   const readOnlyGlobal = (name: string | null) => READ_ONLY_GLOBALS.find((global) => global === name && readOnlyInScope.has(global));
@@ -1461,6 +1484,10 @@ export function codeDiagnostics(code: string, options: SurfaceAnalysisOptions): 
       const problem = checkTraitEntryField(cursor.node, code, 'self', SELF_TRAIT_FIELDS);
       if (problem && !overlapsAny(problem.from, problem.to, ranges)) diagnostics.push(problem);
     }
+    if (cursor.type.name === 'MemberExpression' && limitedPlayer) {
+      const problem = checkPlayerCall(cursor.node, code, limitedPlayer);
+      if (problem && !overlapsAny(problem.from, problem.to, ranges)) diagnostics.push(problem);
+    }
     if (cursor.type.name === 'MemberExpression' && switchedTraitInScope) {
       const problem = checkTraitEntryField(cursor.node, code, 'trait', SWITCHED_TRAIT_FIELDS);
       if (problem && !overlapsAny(problem.from, problem.to, ranges)) diagnostics.push(problem);
@@ -1471,13 +1498,14 @@ export function codeDiagnostics(code: string, options: SurfaceAnalysisOptions): 
     if (cursor.type.name !== 'VariableName') continue;
 
     const name = code.slice(from, to);
-    if (declared.has(name) || known.has(name)) continue;
-    if (overlapsAny(from, to, ranges)) continue;
+    if (declared.has(name) || overlapsAny(from, to, ranges)) continue;
+    // A retired member is marked even on a global that lives on, as `world.entities` beside `world.music` (Q55).
     const retired = retiredRead(cursor.node, code, surface);
     if (retired) {
       diagnostics.push({ ...retired, severity: 'error', message: `“${code.slice(retired.from, retired.to)}” isn’t available in ${surface.label}. ${retired.newForm}` });
       continue;
     }
+    if (known.has(name)) continue;
     const suggestion = nearestName(name, [...known, ...declared]);
     diagnostics.push(suggested({
       from,

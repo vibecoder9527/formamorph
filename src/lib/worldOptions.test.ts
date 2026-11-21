@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import type { PlaceholderPin, Trait, WorldOption } from '@/types';
+import type { Placement, PlaceholderPin, Trait, WorldOption } from '@/types';
 import { phValues } from '@/test/placeholderValues';
 import {
   addPinAt, collectPinLayers, collectPins, commitPinSource, pinsTargeting, removePinAt,
 } from './placeholderPins';
 import { encodePlaceholderToken, resolvePlaceholders } from './placeholders';
 import {
-  BOOLEAN_OFF, BOOLEAN_ON, optionDefault, optionPinLists, optionValue, shownOptions, snapNumber, withOptionType,
+  BOOLEAN_OFF, BOOLEAN_ON, acceptsValue, midGameOptions, optionDefault, optionPinLists, optionPlacements, optionValue, shownOptions, snapNumber, withOptionPlacements, withOptionType,
 } from './worldOptions';
 
 const pin = (placeholderId: string, value: string): PlaceholderPin => ({ placeholderId, value });
@@ -123,5 +123,59 @@ describe('Option list helpers', () => {
     let n = 0;
     const next = withOptionType({ ...style, playerDescription: 'How it reads' }, 'number', () => `id-${n++}`);
     expect(next).toMatchObject({ id: 'o-style', name: 'Style', type: 'number', midGame: true, playerDescription: 'How it reads' });
+  });
+});
+
+describe('a Preset Option', () => {
+  const start: WorldOption = {
+    id: 'o-start', name: 'Start', type: 'preset', mode: 'overlay',
+    values: [{ id: 'p-lush', name: 'Lush', description: '', rows: [{ kind: 'option', optionId: 'o-style', value: 'v-lush' }] }],
+  };
+  const withStart = [...options, { ...style, id: 'o-mid', midGame: true }, start];
+
+  it('always shows at setup and never in the mid-game list', () => {
+    expect(shownOptions(withStart).map((o) => o.id)).toContain('o-start');
+    expect(midGameOptions(withStart).map((o) => o.id)).toEqual(['o-style', 'o-mid']);
+  });
+
+  it('accepts no value and lays no pins', () => {
+    expect([acceptsValue(start, 'p-lush'), acceptsValue(start, true), acceptsValue(start, 1)]).toEqual([false, false, false]);
+    expect(optionPinLists(withStart, { 'o-start': 'p-lush' }).map((l) => l.optionId)).toEqual(['o-style', 'o-brisk', 'o-mid']);
+  });
+
+  it('starts as a snapshot with two empty values, and switches to and from the other types', () => {
+    let n = 0;
+    const preset = withOptionType({ ...style, playerDescription: 'How it reads' }, 'preset', () => `id-${n++}`);
+    expect(preset).toEqual({
+      id: 'o-style', name: 'Style', type: 'preset', mode: 'snapshot', playerDescription: 'How it reads',
+      values: [{ id: 'id-0', name: 'Value 1', description: '', rows: [] }, { id: 'id-1', name: 'Value 2', description: '', rows: [] }],
+    });
+    expect(withOptionType(preset, 'boolean', () => 'x')).toEqual({
+      id: 'o-style', name: 'Style', type: 'boolean', default: false, shownToPlayer: true, midGame: false, playerDescription: 'How it reads',
+    });
+  });
+});
+
+describe('Option Starting Items', () => {
+  const give = (id: string, itemId: string): Placement => ({ id, where: { kind: 'you' }, quantity: 1, source: { kind: 'item', itemId } });
+  const supplies: WorldOption = {
+    id: 'supplies', name: 'Supplies', type: 'choice', shownToPlayer: true, midGame: false, default: 'a',
+    values: [{ id: 'a', name: 'A', placements: [give('a1', 'rope'), give('a2', 'torch')] }, { id: 'b', name: 'B', placements: [give('b1', 'rope')] }],
+  };
+  const kit: WorldOption = {
+    id: 'kit', name: 'Kit', type: 'boolean', shownToPlayer: true, midGame: false, default: true, onPlacements: [give('k1', 'torch')],
+  };
+
+  it('lists the current values’ placements in Options-tab order', () => {
+    expect(optionPlacements([supplies, kit]).map((p) => p.id)).toEqual(['a1', 'a2', 'k1']);
+    expect(optionPlacements([supplies, kit], { supplies: 'b', kit: false }).map((p) => p.id)).toEqual(['b1']);
+  });
+
+  it('edits every value’s list, drops an emptied one, and keeps an untouched Option the same object', () => {
+    const untouched: WorldOption = { ...kit, id: 'other', onPlacements: [give('x1', 'rope')] };
+    const [s, k, o] = withOptionPlacements([supplies, kit, untouched], (list) => list.filter((p) => p.source.itemId !== 'torch'));
+    expect(s.type === 'choice' && s.values.map((v) => v.placements?.map((p) => p.id))).toEqual([['a1'], ['b1']]);
+    expect(k.type === 'boolean' && k.onPlacements).toBeUndefined();
+    expect(o).toBe(untouched);
   });
 });

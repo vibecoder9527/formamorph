@@ -18,6 +18,7 @@ import { blueprintItemIds } from '@/lib/traitTree';
 import { placeholderPathExpression, placeholderPathLabel } from '@/lib/statCodePaths';
 import { turnOneClock } from '@/lib/statCodeTiming';
 import { sampleTurn } from '@/lib/scriptTestSamples';
+import { isItemTiming } from '@/lib/scripts';
 import type { ScriptPromptHost } from '@/lib/scriptPrompts';
 import type { ToolArgs } from '@/lib/tools/toolRunner';
 import {
@@ -26,7 +27,8 @@ import {
 import {
   ownerOfHome, PENDING_PERSONA_ID, snapshotOf, type SandboxSnapshot, type ScriptRunUnit, type SnapshotOptions, type UnitHome,
 } from '@/lib/sandboxSnapshot';
-import type { ScriptTiming, Stat, Trait, World } from '@/types';
+import type { MediaList, ScriptTiming, Stat, Trait, World } from '@/types';
+import type { MediaWrite } from '@/lib/mediaOverrides';
 
 /** Test Code names each bound a run wrote with its Details field label. */
 const BOUND_LABELS: Record<CodeBoundField, string> = { min: 'Min', max: 'Max', regen: 'Regen' };
@@ -194,19 +196,32 @@ const worldWriteLines = (
   writes: WorldWrites | undefined, locations: readonly SandboxPlace[], entityNames: ReadonlyMap<string, string>,
 ): string[] => {
   if (!writes) return [];
-  const { location, minutes, discover = [], memory = [], pins = [], diary = [], entities: entityWrites = [] } = writes;
+  const { location, minutes, discover = [], memory = [], pins = [], namedWrites = [], diary = [], entities: entityWrites = [] } = writes;
   const entityName = (entity: string) => entityNames.get(entity) ?? entity;
   const placeName = (id: string) => locations.find((place) => place.id === id)?.name ?? id;
   return [
     ...(location === undefined ? [] : [`location.move: ${placeName(location)}`]),
     ...(minutes === undefined ? [] : [`clock.advance: ${minutes} minutes`]),
     ...discover.map(({ name, description }) => `discover: ${name}${description === undefined ? '' : ', described'}`),
-    ...memory.map((line) => `memories.add: ${line}`),
+    ...memory.map((line) => `memories.append: ${line}`),
     ...pins.map((line) => `memories.pin: ${line}`),
+    ...namedWrites.map((write) => ('remove' in write ? `memories[${JSON.stringify(write.name)}].remove()` : `memories.pin: ${write.name}: ${write.text}`)),
     ...diary.map(({ entity, line }) => `diary: ${entityName(entity)}: ${line}`),
     ...entityWrites.map((write) => `${memberPath('entities', entityName(write.entity))}.${write.kind === 'move' ? `move: ${placeName(write.location)}` : `${write.kind}()`}`),
   ];
 };
+
+/** One line per media assignment, as code would write it. */
+const mediaWriteLines = (
+  writes: readonly MediaWrite[], list: MediaList | undefined, locations: readonly SandboxPlace[], entityNames: ReadonlyMap<string, string>,
+): string[] => writes.map(({ owner, field, mediaId }) => {
+  const entity = (id: string) => (id ? memberPath('entities', entityNames.get(id) ?? id) : 'persona');
+  const at = owner.kind === 'entity' ? entity(owner.id)
+    : owner.kind === 'instance' ? `${entity(owner.entityId)}.instances`
+      : owner.kind === 'location' ? memberPath('locations', locations.find((place) => place.id === owner.id)?.name ?? owner.id)
+        : owner.kind === 'item' ? 'instance' : 'world';
+  return `${at}.${field} = ${mediaId === null ? 'null' : JSON.stringify(list?.[mediaId]?.name ?? mediaId)}`;
+});
 
 /** One line per `pay` call as code names its Currency: the amount and parties, and why a refused one failed. */
 const paymentLines = (
@@ -248,7 +263,8 @@ export async function runTestCode(
   const unit: ScriptRunUnit = {
     home: seeded, timing, code,
     ...(timing === 'output' && { narration: sentence ?? '' }),
-    ...(timing === 'switch' && { switched: 'sample' as const }), ...(prompts && { prompts }), ...(args && { args }),
+    ...(timing === 'switch' && { switched: 'sample' as const }), ...(isItemTiming(timing) && { itemEvent: 'sample' as const }),
+    ...(prompts && { prompts }), ...(args && { args }),
   };
   const outcome = await snapshot.run(unit);
   const assumedField = missing ? { assumed } : {};
@@ -280,6 +296,7 @@ export async function runTestCode(
     ...(outcome.lore ?? []).map(({ path, value }) => `${path} = ${value}`),
     ...(outcome.choices ? [`turn.choices = ${JSON.stringify(outcome.choices)}`] : []),
     ...worldWriteLines(outcome.worldWrites, locations, entityNames),
+    ...mediaWriteLines(outcome.mediaWrites ?? [], world.worldOverview?.mediaList, locations, entityNames),
     ...paymentLines(outcome.payments ?? [], currencyName, entityNames),
   ];
   const keep = missing ? droppedFilter(missing) : KEEP_DROPPED;
@@ -292,6 +309,7 @@ export async function runTestCode(
     ...droppedLine('acquired is read-only.', outcome.acquiredWrites),
     ...droppedLine('Unknown entity names.', outcome.unknownEntities?.filter(keep.entity)),
     ...droppedLine('Unknown dictionary entries.', outcome.unknownLore),
+    ...droppedLine('Unknown memory names.', outcome.unknownMemories?.map((name) => `memories[${JSON.stringify(name)}]`)),
     ...readOnlyWritesLines(outcome.readOnlyWrites),
     ...(outcome.maybeDiary ?? []).map((name) => `Diary target “${name}” may be discovered in play.`),
     ...(outcome.entities ?? []).flatMap((row) => {

@@ -259,7 +259,7 @@ A script reads `args` and the same globals a world script reads. Each entry has 
 | `location` | The entry of the current location | [Location](Scripts-Reference#location) |
 | `memories` | The Memory panel's rows, oldest first | [Memory](Scripts-Reference#memory) |
 | `dictionaries` | Every dictionary, with `entries`. Disabled entries read `enabled: false` | [Dictionaries](Scripts-Reference#dictionaries) |
-| `items` | Every item in the world by name, with its placeholders and its Item Copies in play | [Items](Scripts-Reference#items) |
+| `items` | Every item in the world by name, with its placeholders and its Item Instances in play | [Items](Scripts-Reference#items) |
 | `currencies` | Every Currency by name, with `balance()`. A Tool can't call `pay()` | [Currencies](Scripts-Reference#currencies) |
 | `stats`, `traits`, `placeholders`, `persona` | The global stats and traits, the placeholders, and the persona | [Stats](Scripts-Reference#stats), [Traits](Scripts-Reference#traits), [Placeholders](Scripts-Reference#placeholders), [Persona](Scripts-Reference#persona) |
 | `clock` | The story clock. It reads the opening outside a game | [The Story Clock](Scripts-Reference#the-story-clock) |
@@ -269,7 +269,7 @@ A script reads `args` and the same globals a world script reads. Each entry has 
 
 A Tool script has none of the calls that write. Each of these calls is a "not a function" error:
 
-- `memories.add`, `memories.pin`
+- `memories.append`, `memories.pin`
 - An entry verb or an item verb
 - `location.move`, `entities.<Entity>.move`, `follow`, `unfollow`
 - `diary`
@@ -318,7 +318,7 @@ An item has a new shape: a location has `starting` and full `present` entries, a
 
 The rewrite never changes `world.dictionary`. The new `entries` map keys by entry name. Of entries with one name, an enabled one stays, else the later one. The map lists disabled entries too, which `world.dictionary` left out. Filter on `enabled` to match it.
 
-The same load also rewrites `memory.add(` to `memories.add(`, `memory.pin(` to `memories.pin(`, and `diary("Mira", line)` to `entities.Mira.diary(line)`. A `diary` call with a computed first argument becomes `entities[expr].diary(line)`.
+The same load also rewrites `memory.add(` and `memories.add(` to `memories.append(`, `memory.pin(` to `memories.pin(`, and `diary("Mira", line)` to `entities.Mira.diary(line)`. A `diary` call with a computed first argument becomes `entities[expr].diary(line)`.
 
 ## Try It
 <!-- keywords: try it tab, fourth tab, narrow editor, small window, side column -->

@@ -1,0 +1,247 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, fireEvent, within } from '@testing-library/react';
+import { benchEditorWorld, openEditorTab, renderWorldEditorBench } from '@/test/worldEditorBench';
+import { phValues } from '@/test/placeholderValues';
+import { encodePlaceholderToken } from '@/lib/placeholders';
+import type { Placeholder, World, WorldOption } from '@/types';
+
+vi.mock('../services/WorldStorageService', () => ({
+  default: {
+    initialize: vi.fn(),
+    getWorldMetadata: vi.fn().mockResolvedValue([]),
+    storeWorld: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock('@/lib/jsonFileWorkerUtils', () => ({
+  serializeJsonBlob: vi.fn(), parseJsonText: vi.fn(), terminateWorker: vi.fn(),
+}));
+
+vi.mock('react-toastify', () => ({
+  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
+  ToastContainer: () => null,
+}));
+
+const options: WorldOption[] = [
+  { id: 'size', name: 'Size', type: 'choice', shownToPlayer: true, midGame: false, values: [{ id: 'small', name: 'Small' }, { id: 'big', name: 'Big' }], default: 'small' },
+  { id: 'secret', name: 'Secret', type: 'boolean', shownToPlayer: false, midGame: false, default: false },
+  { id: 'start', name: 'Start', type: 'choice', shownToPlayer: true, midGame: false, values: [{ id: 'a', name: 'A' }], default: 'a' },
+];
+const traits = [
+  { id: 'brave', name: 'Brave', statChanges: [] },
+  { id: 'blessed', name: 'Blessed', statChanges: [], mode: 'alwaysOn' },
+];
+const wolf = { id: 'wolf', name: 'Wolf', traits: [{ id: 'feral', name: 'Feral', statChanges: [] }] };
+const WORLD: World = benchEditorWorld({ options, traits, entities: [wolf] } as Partial<World>);
+
+/** Pick a Select's option by keyboard: a click needs pointer capture, which jsdom lacks. */
+const pickOption = (trigger: HTMLElement, name: string) => {
+  fireEvent.keyDown(trigger, { key: 'Enter' });
+  fireEvent.keyDown(screen.getByRole('option', { name }), { key: 'Enter' });
+};
+
+/** Open a row's target picker and return its rows' names, the breadcrumb left out. */
+const openTargets = (name: string) => {
+  fireEvent.click(screen.getByRole('combobox', { name }));
+  return screen.getAllByRole('option').map((o) => o.querySelector(':scope > span.min-w-0')?.textContent ?? o.textContent);
+};
+/** Pick a row's target in its drill-down picker. */
+const pickTarget = (name: string, target: string) => {
+  openTargets(name);
+  fireEvent.click(screen.getAllByRole('option').find((o) => (o.querySelector(':scope > span.min-w-0')?.textContent ?? o.textContent) === target)!);
+};
+
+beforeEach(() => { localStorage.clear(); });
+
+describe('a Preset Option on the Options tab', () => {
+  it('is made by the type switch, takes a mode, and holds a named value that sets a shown Option', () => {
+    const bench = renderWorldEditorBench(WORLD, 'advanced');
+    openEditorTab(/Options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Start' }));
+    pickOption(screen.getByRole('combobox', { name: 'Type' }), 'Preset');
+    const preset = () => bench.ctx().options.find((o) => o.id === 'start')!;
+    expect(preset()).toMatchObject({ type: 'preset', mode: 'snapshot' });
+    expect(screen.queryByRole('checkbox', { name: 'Shown to Player' })).toBeNull();
+
+    fireEvent.click(screen.getAllByRole('radio', { name: 'Keep as Set' })[0]);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Value 1 Name' }), { target: { value: 'Big Start' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Big Start Description' }), { target: { value: 'Everything is big' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Row' })[0]);
+
+    expect(openTargets('Big Start Row 1 Target')).toEqual(['Size', 'Starting Location', 'Brave', 'Wolf: Feral']);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    pickTarget('Big Start Row 1 Target', 'Size');
+    pickOption(screen.getByRole('combobox', { name: 'Big Start Row 1 Value' }), 'Big');
+
+    expect(preset()).toEqual({
+      id: 'start', name: 'Start', type: 'preset', mode: 'overlay',
+      values: [
+        { id: expect.any(String), name: 'Big Start', description: 'Everything is big', rows: [{ kind: 'option', optionId: 'size', value: 'big' }] },
+        { id: expect.any(String), name: 'Value 2', description: '', rows: [] },
+      ],
+    });
+  });
+
+  it('turns a root or an entity-owned trait on or off', () => {
+    const bench = renderWorldEditorBench(WORLD, 'advanced');
+    openEditorTab(/Options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Start' }));
+    pickOption(screen.getByRole('combobox', { name: 'Type' }), 'Preset');
+    const rows = () => (bench.ctx().options.find((o) => o.id === 'start') as Extract<WorldOption, { type: 'preset' }>).values[0].rows;
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Row' })[0]);
+    pickTarget('Value 1 Row 1 Target', 'Brave');
+    expect(rows()).toEqual([{ kind: 'trait', traitId: 'brave', on: true }]);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Row' })[0]);
+    pickTarget('Value 1 Row 2 Target', 'Wolf: Feral');
+    pickOption(screen.getByRole('combobox', { name: 'Value 1 Row 2 Value' }), 'Off');
+    expect(rows()).toEqual([
+      { kind: 'trait', traitId: 'brave', on: true },
+      { kind: 'trait', traitId: 'feral', ownerId: 'wolf', on: false },
+    ]);
+  });
+
+  it('sets a world persona and a Starting Location', () => {
+    const place = (id: string, isStarting = false) => ({ id, name: id, description: '', isStarting });
+    const world = benchEditorWorld({
+      options,
+      entities: [
+        { id: 'knight', name: 'Knight', persona: true, locations: ['keep'] },
+        { id: 'hermit', name: 'Hermit', customPersona: true },
+        wolf,
+      ],
+      locations: [place('town', true), place('keep'), place('cave')],
+    } as Partial<World>);
+    const bench = renderWorldEditorBench(world, 'advanced');
+    openEditorTab(/Options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Start' }));
+    pickOption(screen.getByRole('combobox', { name: 'Type' }), 'Preset');
+    const rows = () => (bench.ctx().options.find((o) => o.id === 'start') as Extract<WorldOption, { type: 'preset' }>).values[0].rows;
+    const offered = (name: string) => {
+      fireEvent.keyDown(screen.getByRole('combobox', { name }), { key: 'Enter' });
+      const names = within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent);
+      fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' });
+      return names;
+    };
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Row' })[0]);
+    pickTarget('Value 1 Row 1 Target', 'Persona');
+    // Marked personas and the Custom Persona only: the Wolf is no persona, and library personas are the player's.
+    expect(offered('Value 1 Row 1 Value')).toEqual(['Knight', 'Hermit']);
+    pickOption(screen.getByRole('combobox', { name: 'Value 1 Row 1 Value' }), 'Hermit');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Row' })[0]);
+    pickTarget('Value 1 Row 2 Target', 'Starting Location');
+    // Starting locations and every persona's start places.
+    expect(offered('Value 1 Row 2 Value')).toEqual(['town', 'keep']);
+    pickOption(screen.getByRole('combobox', { name: 'Value 1 Row 2 Value' }), 'keep');
+
+    expect(rows()).toEqual([{ kind: 'persona', entityId: 'hermit' }, { kind: 'location', locationId: 'keep' }]);
+  });
+
+  it('warns on a value with rows that can’t apply, and names each row', () => {
+    const preset: WorldOption = {
+      id: 'start', name: 'Start', type: 'preset', mode: 'snapshot', values: [
+        { id: 'bad', name: 'Bad', description: '', rows: [
+          { kind: 'trait', traitId: 'brave', on: true },
+          { kind: 'trait', traitId: 'blessed', on: false },
+          { kind: 'trait', traitId: 'gone', on: true },
+          { kind: 'trait', traitId: 'feral', ownerId: 'wolf', on: true },
+          { kind: 'option', optionId: 'secret', value: true },
+          { kind: 'trait', traitId: 'gone-too', ownerId: 'wolf', on: false },
+          { kind: 'location', locationId: 'nowhere' },
+        ] },
+        { id: 'good', name: 'Good', description: '', rows: [{ kind: 'trait', traitId: 'feral', ownerId: 'wolf', on: true }] },
+      ],
+    };
+    renderWorldEditorBench(benchEditorWorld({ options: [options[0], options[1], preset], traits, entities: [wolf] } as Partial<World>), 'advanced');
+    openEditorTab(/Options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Start' }));
+    // Only the bad value warns.
+    expect(screen.getAllByText(/^Can't apply/).map((s) => s.textContent)).toEqual([
+      "Can't apply: Blessed, Secret: On, 2 deleted traits, a deleted location",
+    ]);
+  });
+
+  it('lists traits from setup’s trees and draws placeholder names as chips (Q42)', () => {
+    const kin: Placeholder = { id: 'ph-kin', name: 'Kin', values: phValues(['Fox']) };
+    const token = encodePlaceholderToken({ id: 'ph-kin', mode: 'world', placementId: 'pl-kin' });
+    // The hound links Smite from Blueprints; it, Smite, an Option, a choice value and a location are named by Kin.
+    const hound = {
+      id: 'hound', name: token,
+      traitLinks: [{ id: 'l-smite', originalId: 'smite', kind: 'trait', originalName: 'Smite', groupId: null }],
+    };
+    const preset: WorldOption = {
+      id: 'start', name: 'Start', type: 'preset', mode: 'overlay', values: [{ id: 'v', name: 'V', description: '', rows: [
+        { kind: 'trait', traitId: 'smite', ownerId: 'hound', on: true },
+        { kind: 'persona', entityId: 'hound' },
+        { kind: 'option', optionId: 'size', value: 'big' },
+        { kind: 'location', locationId: 'den' },
+      ] }],
+    };
+    const sized: WorldOption = {
+      id: 'size', name: `${token} Size`, type: 'choice', shownToPlayer: true, midGame: false, default: 'small',
+      values: [{ id: 'small', name: 'Small' }, { id: 'big', name: `${token} Big` }],
+    };
+    const world = benchEditorWorld({
+      options: [sized, preset], placeholders: [kin], entities: [hound],
+      traits: [...traits, { id: 'smite', name: `${token} Smite`, statChanges: [], groupId: 'bp' }],
+      traitGroups: [{ id: 'bp', name: 'Blueprints', parentId: null, system: 'blueprints' }],
+      locations: [{ id: 'den', name: token, description: '', isStarting: true }],
+    } as Partial<World>);
+    renderWorldEditorBench(world, 'advanced');
+    openEditorTab(/Options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Start' }));
+
+    const box = (name: string) => screen.getByRole('combobox', { name }).textContent;
+    expect([box('V Row 1 Target'), box('V Row 3 Target'), box('V Row 3 Value'), box('V Row 4 Value')])
+      .toEqual(['Kin: Kin Smite', 'Kin Size', 'Kin Big', 'Kin']);
+    expect(openTargets('V Row 1 Target')).toEqual(['Kin Size', 'Starting Location', 'Brave', 'Kin: Kin Smite']);
+    // Fifteen rows or fewer show flat, each with the page it lives on as its breadcrumb.
+    const crumbs = screen.getAllByRole('option').map((o) => o.textContent?.slice(o.querySelector(':scope > span.min-w-0')?.textContent?.length));
+    expect(crumbs).toEqual(['Options', 'Start', 'World', 'Kin']);
+    const list = screen.getByRole('listbox');
+    fireEvent.keyDown(list, { key: 'Escape' });
+
+    // The Kin hound is no persona.
+    expect(screen.getByText(/^Can't apply/).textContent).toBe("Can't apply: Persona: Kin");
+    expect(document.body.textContent).not.toContain('{{ph:');
+  });
+
+  it('names a persona or location row by its value', () => {
+    const preset: WorldOption = {
+      id: 'start', name: 'Start', type: 'preset', mode: 'overlay', values: [{ id: 'v', name: 'V', description: '', rows: [
+        { kind: 'persona', entityId: 'wolf' },
+        { kind: 'location', locationId: 'cave' },
+      ] }],
+    };
+    const world = benchEditorWorld({
+      options: [preset], entities: [wolf], locations: [{ id: 'cave', name: 'Cave', description: '', isStarting: false }],
+    } as Partial<World>);
+    renderWorldEditorBench(world, 'advanced');
+    openEditorTab(/Options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Start' }));
+    // The Wolf is no persona, and the Cave is no starting location.
+    expect(screen.getByText(/^Can't apply/).textContent).toBe("Can't apply: Persona: Wolf, Starting Location: Cave");
+  });
+
+  it('drills into Options and traits by owner once the targets pass fifteen', () => {
+    const many = Array.from({ length: 16 }, (_, i) => ({ id: `t${i}`, name: `Trait ${i}`, statChanges: [] }));
+    renderWorldEditorBench(benchEditorWorld({ options, traits: many, entities: [wolf] } as Partial<World>), 'advanced');
+    openEditorTab(/Options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Start' }));
+    pickOption(screen.getByRole('combobox', { name: 'Type' }), 'Preset');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Row' })[0]);
+
+    // A page with one row shows that row in its place.
+    fireEvent.click(screen.getByRole('combobox', { name: 'Value 1 Row 1 Target' }));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('aria-label') ?? o.querySelector(':scope > span.min-w-0')?.textContent)).toEqual([
+      'Size', 'Starting Location', 'Traits, 17 available, opens a page',
+    ]);
+    fireEvent.click(screen.getByRole('option', { name: /^Traits,/ }));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('aria-label') ?? o.querySelector(':scope > span.min-w-0')?.textContent)).toEqual([
+      'World, 16 available, opens a page', 'Wolf: Feral',
+    ]);
+  });
+});

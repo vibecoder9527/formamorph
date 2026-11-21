@@ -54,7 +54,7 @@ const SCRIPTS_TOPIC: HelpTopic = {
 
 \`return <number>\` sets the stat's value, clamped to its range. A script with no return can still set \`self\`, write another stat, pin a placeholder or switch a trait. An empty script changes nothing.
 
-**The home of a script.** A stat's script runs with the stat as \`self\`. A trait's script runs only while the trait is active, with the trait as \`self\`, read-only. An item's script runs on the events of its Item Copies, with the item as \`self\`, read-only. A world script has an empty \`self\`.
+**The home of a script.** A stat's script runs with the stat as \`self\`. A trait's script runs only while the trait is active, with the trait as \`self\`, read-only. An item's script runs on the events of its Item Instances, with the item as \`self\`, read-only. A world script has an empty \`self\`.
 
 The world's **Scripts** tab lists every script by timing, in run order. Drag a row to set its order within its timing.
 
@@ -84,7 +84,7 @@ An item's scripts use five timings of their own: **When Gained**, **When Lost**,
 
 - \`narration\` in **During AI Output**. Assign \`narration.sentence\`, or return a string, to rewrite the sentence.
 - \`trait\` in **When a Trait Switches**. It's the trait that switched, and \`trait.enabled\` is its new state.
-- \`player\` in **Before the AI**, **After the AI**, **At Game Start** and **When a Trait Switches**. \`player.tell\`, \`player.toast\`, \`player.confirm\`, \`player.ask\` and \`player.input\` show the player a message or a question. The script waits for the answer, with no \`await\`, and closing a question fails the script.
+- \`player\` in **Before the AI**, **After the AI**, **At Game Start** and **When a Trait Switches**. \`player.tell\`, \`player.toast\`, \`player.confirm\`, \`player.ask\` and \`player.input\` show the player a message or a question. The script waits for the answer, with no \`await\`, and closing a question fails the script. \`player.show\` puts a Media List image in the story.
 
 \`\`\`js
 const health = stats.Health.value;

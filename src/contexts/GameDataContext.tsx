@@ -4,8 +4,10 @@ import WorldStorageService from '../services/WorldStorageService';
 import { canonicalEqual } from '@/lib/canonicalStringify';
 import { dirtyDiff } from '@/lib/dirtyDiff';
 import { mapImages } from '@/lib/mapBackground';
+import { coverData } from '@/lib/mediaImages';
 import { registerDevHook } from '@/lib/devRouter';
 import { holdUnsavedWorld } from '@/lib/unsavedWorld';
+import { supporterCopyBlock } from '@/lib/supporterCopy';
 import { onWorldChangedElsewhere, type WorldChange } from '@/lib/worldChangeSignal';
 import { migrateWorld, APP_VERSION } from '@/lib/version';
 import { dropLocationFromEntities } from '@/lib/entityPresence';
@@ -45,7 +47,10 @@ import {
 } from '@/lib/items';
 import { parseBodies, withoutBodyRows, withoutEntityBodyRefs, withoutSlotEntries } from '@/lib/bodies';
 import { parseCurrencies } from '@/lib/currency/parse';
-import { parseWorldOptions } from '@/lib/worldOptions';
+import {
+  bodyWithoutMedia, entityWithoutMedia, itemWithoutMedia, locationWithoutMedia, overviewWithoutMedia, renameMediaEntry,
+} from '@/lib/mediaUnlink';
+import { parseWorldOptions, withOptionPlacements } from '@/lib/worldOptions';
 import { lostStatIds, withoutBackingStats, withoutCurrencyItem, withoutCurrencyRefs } from '@/lib/currencyDeletes';
 import { useWorldRecorder, WorldHistoryContext } from '@/contexts/worldRecorder';
 import { GestureGroupContext, type GestureGroups } from '@/components/ui/gesture-group';
@@ -53,11 +58,13 @@ import type { SliceName, WorldSlices } from '@/lib/editorHistory';
 import type {
   WorldMetadata,
   WorldOverview,
+  MediaList,
   Stat,
   StatGroup,
   GameLocation,
   Entity,
   EntityGroup,
+  ItemGroup,
   Trait,
   TraitGroup,
   StatUpdate,
@@ -74,6 +81,7 @@ import type {
   Script,
   Tool,
   World,
+  SupporterCopyMarker,
 } from '@/types';
 
 /** What a world save answers: done, or the error that stopped it with the world it could not store. */
@@ -88,12 +96,13 @@ const makeDefaultBook = (): Dictionary => ({ id: randomUUID(), name: 'Default', 
 // world field to the slices and it flows to dirty-detection, save, and download at once. An empty optional
 // list stays absent, so a world without it reads unchanged.
 function buildWorldData(slices: WorldSlices): WorldData {
-  const { scripts, tools, items, slots, bodies, placements, currencies, options, ...rest } = slices;
+  const { scripts, tools, items, itemGroups, slots, bodies, placements, currencies, options, ...rest } = slices;
   return {
     ...rest,
     ...(scripts.length ? { scripts } : {}),
     ...(tools.length ? { tools } : {}),
     ...(items.length ? { items } : {}),
+    ...(itemGroups.length ? { itemGroups } : {}),
     ...(slots.length ? { slots } : {}),
     ...(bodies.length ? { bodies } : {}),
     ...(placements.length ? { placements } : {}),
@@ -129,6 +138,7 @@ function useProvideGameData() {
   // The world's own Tools, in Tools-tab order.
   const [worldTools, setWorldTools] = useState<Tool[]>([]);
   const [items, setItems] = useState<Item[]>([]);
+  const [itemGroups, setItemGroups] = useState<ItemGroup[]>([]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [bodies, setBodies] = useState<Body[]>([]);
   const [placements, setPlacements] = useState<Placement[]>([]);
@@ -155,6 +165,22 @@ function useProvideGameData() {
     setOwnedBookIds(ownedLibraryIds.current);
   }, [setOwnedBookIds]);
   const [worldId, setWorldId] = useState<string | null>(null);
+  // The marker read, keyed by the world it answers for, so a switch never shows the last world's answer.
+  const [markerRead, setMarkerRead] = useState<{ worldId: string; marker: SupporterCopyMarker | null } | null>(null);
+  // The open world's Supporter Copy marker: undefined until read, null for a plain or unsaved world.
+  const supporterCopy = !worldId ? null : markerRead?.worldId === worldId ? markerRead.marker : undefined;
+  // Read at save time, so a save started before the marker arrives still sees the newest answer.
+  const supporterCopyRef = useRef(supporterCopy);
+  supporterCopyRef.current = supporterCopy;
+  useEffect(() => {
+    if (!worldId) return;
+    let live = true;
+    // A world whose metadata can't be read loaded from the same store, so a failed read means a plain world.
+    Promise.resolve().then(() => WorldStorageService.getSupporterCopy(worldId))
+      .then((marker) => marker, () => null)
+      .then((marker) => { if (live) setMarkerRead({ worldId, marker }); });
+    return () => { live = false; };
+  }, [worldId]);
   // The last saved or loaded world, compared against current data to flag pending edits. It shares every
   // record no edit has replaced, so it costs only the records edited since.
   const [savedWorld, setSavedWorld] = useState<WorldData | null>(null);
@@ -181,18 +207,18 @@ function useProvideGameData() {
 
   const slices = useMemo<WorldSlices>(() => ({
     worldOverview, stats, statGroups, locations, connections, entities, entityGroups, traits, traitGroups, statUpdates, dictionaries,
-    placeholders: worldPlaceholders, placeholderGroups, scripts: worldScripts, tools: worldTools, items, slots, bodies, placements, currencies,
+    placeholders: worldPlaceholders, placeholderGroups, scripts: worldScripts, tools: worldTools, items, itemGroups, slots, bodies, placements, currencies,
     options: worldOptions,
   }), [
     worldOverview, stats, statGroups, locations, connections, entities, entityGroups, traits, traitGroups, statUpdates, dictionaries,
-    worldPlaceholders, placeholderGroups, worldScripts, worldTools, items, slots, bodies, placements, currencies, worldOptions,
+    worldPlaceholders, placeholderGroups, worldScripts, worldTools, items, itemGroups, slots, bodies, placements, currencies, worldOptions,
   ]);
   const sliceSetters = useMemo(() => ({
     worldOverview: setWorldOverview, stats: setStats, statGroups: setStatGroups, locations: setLocations, connections: setConnections,
     entities: setEntities, entityGroups: setEntityGroups, traits: setTraits, traitGroups: setTraitGroups,
     statUpdates: setStatUpdates, dictionaries: setDictionaries, placeholders: setWorldPlaceholders,
     placeholderGroups: setPlaceholderGroups, scripts: setWorldScripts, tools: setWorldTools,
-    items: setItems, slots: setSlots, bodies: setBodies, placements: setPlacements, currencies: setCurrencies,
+    items: setItems, itemGroups: setItemGroups, slots: setSlots, bodies: setBodies, placements: setPlacements, currencies: setCurrencies,
     options: setWorldOptions,
   }), [setDictionaries]);
   const { intent: writeIntent, controls: history, disarm: disarmHistory, beginSave: beginHistorySave } = useWorldRecorder(
@@ -254,18 +280,26 @@ function useProvideGameData() {
       updatePlaceholderGroup: keyedTo('placeholderGroups', replaceIn(setPlaceholderGroups)),
       updateWorldScript: keyedTo('scripts', replaceIn(setWorldScripts)),
       updateItem: keyedTo('items', replaceIn(setItems)),
+      updateItemGroup: keyedTo('itemGroups', replaceIn(setItemGroups)),
       updateWorldTool: keyedTo('tools', replaceIn(setWorldTools)),
       updateSlot: keyedTo('slots', replaceIn(setSlots)),
       updateCurrency: keyedTo('currencies', replaceIn(setCurrencies)),
       updateWorldOption: keyedTo('options', replaceIn(setWorldOptions)),
       updateWorldOverview: keyedTo('worldOverview', (updates: Partial<WorldOverview>) =>
         setWorldOverview((prev) => ({ ...prev, ...updates }))),
+      addMedia: keyedTo('worldOverview', (entries: MediaList) =>
+        setWorldOverview((prev) => ({ ...prev, mediaList: { ...prev.mediaList, ...entries } }))),
+      // Takes no string or id first, so the step keys to the overview rather than to a record.
+      renameMedia: keyedTo('worldOverview', ({ mediaId, name }: { mediaId: string; name: string }) => setWorldOverview((prev) => {
+        const mediaList = renameMediaEntry(prev.mediaList, mediaId, name);
+        return mediaList === prev.mediaList ? prev : { ...prev, mediaList };
+      })),
     };
   }, [keyNext, updateBookUnkeyed, updateEntryUnkeyed, dropBackings]);
   const {
     keyedTo, updateDictionary, updateDictionaryEntry, updateStat, updateStatGroup, updateLocation, updateConnection, updateEntity, editEntity,
-    updateEntityGroup, updateTrait, updateTraitGroup, updatePlaceholderGroup, updateWorldOverview, updateWorldScript, updateItem, updateSlot, updateCurrency, updateWorldOption,
-    updateWorldTool,
+    updateEntityGroup, updateTrait, updateTraitGroup, updatePlaceholderGroup, updateWorldOverview, updateWorldScript, updateItem, updateItemGroup, updateSlot, updateCurrency, updateWorldOption,
+    updateWorldTool, addMedia, renameMedia,
   } = keyed;
   const dictStore = useMemo(() => ({
     dictionaries, setDictionaries, addDictionary, updateDictionary, removeDictionary,
@@ -330,6 +364,7 @@ function useProvideGameData() {
     // since neither the list nor the canvas has an end to select it by.
     setConnections(prevConnections => dropLocationFromConnections(locationId, prevConnections));
     setPlacements(prev => withoutPlacementsAt(prev, { kind: 'location', id: locationId }));
+    setWorldOptions(prev => withOptionPlacements(prev, (list) => withoutPlacementsAt(list, { kind: 'location', id: locationId })));
   }, []);
 
   const addConnection = useCallback((newConnection: Connection) => {
@@ -352,6 +387,7 @@ function useProvideGameData() {
     dropBackings(held, heldEntities.filter(entity => entity.id !== entityId));
     setEntities(prevEntities => dropRelationshipsTo(entityId, prevEntities.filter(entity => entity.id !== entityId)));
     setPlacements(prev => withoutPlacementsAt(prev, { kind: 'entity', id: entityId }));
+    setWorldOptions(prev => withOptionPlacements(prev, (list) => withoutPlacementsAt(list, { kind: 'entity', id: entityId })));
   }, [dropBackings]);
 
   const addEntityGroup = useCallback((newGroup: EntityGroup) => {
@@ -401,7 +437,33 @@ function useProvideGameData() {
   const removeItem = useCallback((itemId: string) => {
     setItems(prev => prev.filter(item => item.id !== itemId));
     setPlacements(prev => withoutItemPlacements(prev, itemId));
+    setWorldOptions(prev => withOptionPlacements(prev, (list) => withoutItemPlacements(list, itemId)));
     setCurrencies(prev => withoutCurrencyItem(prev, itemId));
+  }, []);
+
+  const addItemGroup = useCallback((newGroup: ItemGroup) => {
+    setItemGroups(prev => [...prev, newGroup]);
+  }, []);
+
+  // The group's subgroups and items take its slot in the parent, and sibling order closes up around them.
+  const removeItemGroup = useCallback((groupId: string) => {
+    const { itemGroups: groups, items: held } = latest.current;
+    const next = removeGroupPromotingChildren(groups, held, groupId);
+    if (next.groups !== groups) setItemGroups(next.groups);
+    if (next.leaves !== held) setItems(next.leaves);
+  }, []);
+
+  // Delete From World: every field that links the entry drops it, then the entry goes (Q6).
+  const removeMedia = useCallback((mediaId: string) => {
+    const each = <T,>(drop: (record: T, id: string) => T) => (prev: T[]) => {
+      const next = prev.map((record) => drop(record, mediaId));
+      return next.some((record, i) => record !== prev[i]) ? next : prev;
+    };
+    setEntities(each(entityWithoutMedia));
+    setLocations(each(locationWithoutMedia));
+    setItems(each(itemWithoutMedia));
+    setBodies(each(bodyWithoutMedia));
+    setWorldOverview((prev) => overviewWithoutMedia(prev, mediaId));
   }, []);
 
   // Items priced in a removed Currency lose it and keep their Value.
@@ -477,6 +539,7 @@ function useProvideGameData() {
       ...(overview.openingWeights ? { openingWeights: overview.openingWeights } : {}),
       ...(overview.vrmStore ? { vrmStore: overview.vrmStore } : {}),
       ...(overview.legacyVrmFallback ? { legacyVrmFallback: overview.legacyVrmFallback } : {}),
+      mediaList: overview.mediaList ?? {},
       ...(mapImages(overview).length && overview.mapBackground ? { mapBackground: overview.mapBackground } : {}),
       // Any and the player's default are the absent values.
       ...(allowedPersonas !== 'any' ? { allowedPersonas } : {}),
@@ -504,6 +567,7 @@ function useProvideGameData() {
     const nextScripts = Array.isArray(worldData.scripts) ? worldData.scripts : [];
     const nextTools = parseWorldTools(worldData.tools);
     const nextItems = parseItems(worldData.items);
+    const nextItemGroups = Array.isArray(worldData.itemGroups) ? worldData.itemGroups : [];
     const nextSlots = parseSlots(worldData.slots);
     const nextBodies = parseBodies(worldData.bodies);
     const nextPlacements = parsePlacements(worldData.placements);
@@ -539,6 +603,7 @@ function useProvideGameData() {
     setWorldScripts(nextScripts);
     setWorldTools(nextTools);
     setItems(nextItems);
+    setItemGroups(nextItemGroups);
     setSlots(nextSlots);
     setBodies(nextBodies);
     setPlacements(nextPlacements);
@@ -550,7 +615,7 @@ function useProvideGameData() {
       worldOverview: normalizedOverview, stats: nextStats, statGroups: nextStatGroups, locations: nextLocations, connections: nextConnections,
       entities: nextEntities, entityGroups: nextEntityGroups, traits: nextTraits, traitGroups: nextTraitGroups, statUpdates: nextStatUpdates,
       dictionaries: nextDictionaries, placeholders: nextPlaceholders, placeholderGroups: nextPlaceholderGroups, scripts: nextScripts,
-      tools: nextTools, items: nextItems, slots: nextSlots, bodies: nextBodies, placements: nextPlacements, currencies: nextCurrencies,
+      tools: nextTools, items: nextItems, itemGroups: nextItemGroups, slots: nextSlots, bodies: nextBodies, placements: nextPlacements, currencies: nextCurrencies,
       options: nextOptions,
     }));
     setWorldStored(stored);
@@ -593,7 +658,7 @@ function useProvideGameData() {
   const placeholderOwnerIndex = ownersRef.current;
 
   // The committed state, which every action reads at call time so it keeps one identity.
-  const committed = { stats, statGroups, entities, entityGroups, currencies, traits, traitGroups, locations, bodies, placeholders, worldOverview, worldId, savedWorld, worldStored, getWorldData };
+  const committed = { stats, statGroups, entities, entityGroups, items, itemGroups, currencies, traits, traitGroups, locations, bodies, placeholders, worldOverview, worldId, savedWorld, worldStored, getWorldData };
   const latest = useRef(committed);
   useLayoutEffect(() => { latest.current = committed; });
 
@@ -692,8 +757,11 @@ function useProvideGameData() {
   // only while it has unsaved edits, so nothing is built per commit and nothing is copied. Never released on
   // unmount: the crash unmounts this provider, and the screen reads the reference afterward.
   useEffect(() => {
-    holdUnsavedWorld(isWorldDirty ? () => ({ id: worldId ?? '', version: APP_VERSION, ...getWorldData() }) : null);
-  }, [isWorldDirty, worldId, getWorldData]);
+    const reader = isWorldDirty ? () => ({ id: worldId ?? '', version: APP_VERSION, ...getWorldData() }) : null;
+    // An unread marker blocks with no reason shown: the screen then offers only Reload.
+    const reason = supporterCopy === undefined ? null : supporterCopyBlock({ supporterCopy }, 'crashExport');
+    holdUnsavedWorld(reader, supporterCopy === undefined || reason ? { reason } : null);
+  }, [isWorldDirty, worldId, getWorldData, supporterCopy]);
   // DEV: names what `isWorldDirty` is reacting to.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -727,9 +795,12 @@ function useProvideGameData() {
     const heardBefore = elsewhere.current.heard;
     try {
       const writeBack = await planOwnedWriteBack({
+        worldId: worldId ?? '',
         entities: data.entities, dictionaries: data.dictionaries, placeholders, locations,
         traits: data.traits, traitGroups: data.traitGroups ?? [], stats: data.stats, statGroups: data.statGroups ?? [],
         vrmStore: worldOverview.vrmStore,
+        mediaList: worldOverview.mediaList,
+        supporterCopy: supporterCopyRef.current,
       });
       const stamped = (stamps: LinkStamp[]) => (stamps.length
         ? { ...data, entities: stampLinks(data.entities, stamps), dictionaries: stampLinks(data.dictionaries, stamps) }
@@ -740,7 +811,7 @@ function useProvideGameData() {
         name: worldOverview.name,
         description: worldOverview.description,
         author: worldOverview.author,
-        thumbnail: worldOverview.thumbnail ?? undefined,
+        thumbnail: coverData(worldOverview),
         // A save means the local copy was edited; flag it dirty and stamp the edit time (sourceId and
         // other sticky fields are preserved by storeWorld).
         dirty: true,
@@ -812,7 +883,7 @@ function useProvideGameData() {
 
   // One identity for the provider's life, so a component that only writes never re-renders on an edit.
   const actions = useMemo(() => ({
-    updateWorldOverview, loadWorldMetadata,
+    updateWorldOverview, addMedia, renameMedia, removeMedia, loadWorldMetadata,
     addStat, updateStat, removeStat,
     addStatGroup, updateStatGroup, removeStatGroup,
     addLocation, updateLocation, removeLocation,
@@ -827,11 +898,11 @@ function useProvideGameData() {
     addPlaceholderGroup, updatePlaceholderGroup, setPlaceholderGroups,
     setStats, setStatGroups, setLocations, setConnections, setEntities, setEntityGroups, setTraits, setTraitGroups, setStatUpdates,
     setDictionaries, setWorldPlaceholders, setWorldScripts, updateWorldScript, setWorldTools, updateWorldTool,
-    setItems, updateItem, removeItem, setSlots, updateSlot, removeSlot, setBodies, removeBody, setPlacements, setCurrencies, updateCurrency, removeCurrency,
+    setItems, updateItem, removeItem, setItemGroups, addItemGroup, updateItemGroup, removeItemGroup, setSlots, updateSlot, removeSlot, setBodies, removeBody, setPlacements, setCurrencies, updateCurrency, removeCurrency,
     setWorldOptions, updateOption: updateWorldOption,
     loadWorldData, setWorldId, saveWorld, discardChanges, setOwnedLibraryIds, reloadWorld, keepWorldCopy,
   }), [
-    updateWorldOverview, loadWorldMetadata,
+    updateWorldOverview, addMedia, renameMedia, removeMedia, loadWorldMetadata,
     addStat, updateStat, removeStat,
     addStatGroup, updateStatGroup, removeStatGroup,
     addLocation, updateLocation, removeLocation,
@@ -843,7 +914,7 @@ function useProvideGameData() {
     addDictionary, updateDictionary, removeDictionary,
     addDictionaryEntry, updateDictionaryEntry, removeDictionaryEntry,
     addPlaceholder, updatePlaceholder, removePlaceholder,
-    addPlaceholderGroup, updatePlaceholderGroup, updateWorldScript, updateWorldTool, updateItem, removeItem, updateSlot, removeSlot, removeBody, updateCurrency, removeCurrency, updateWorldOption,
+    addPlaceholderGroup, updatePlaceholderGroup, updateWorldScript, updateWorldTool, updateItem, removeItem, addItemGroup, updateItemGroup, removeItemGroup, updateSlot, removeSlot, removeBody, updateCurrency, removeCurrency, updateWorldOption,
     setDictionaries, loadWorldData, saveWorld, discardChanges, setOwnedLibraryIds, reloadWorld, keepWorldCopy,
   ]);
 
@@ -870,6 +941,7 @@ function useProvideGameData() {
     worldScripts,
     worldTools,
     items,
+    itemGroups,
     slots,
     bodies,
     placements,
@@ -881,6 +953,8 @@ function useProvideGameData() {
     placeholderGroups,
     getWorldData,
     worldId,
+    // The open world's Supporter Copy marker; undefined until read.
+    supporterCopy,
     // True once loadWorldData has run. A world file may have no id, so worldId can't signal this.
     worldLoaded,
     isWorldDirty,
@@ -898,7 +972,7 @@ function useProvideGameData() {
     placeholderOwners: placeholderOwnerIndex,
   }), [
     actions, worldMetadata, worldOverview, stats, statGroups, locations, connections, entities, entityGroups, playWorld, traits, traitGroups,
-    statUpdates, dictionaries, worldScripts, worldTools, items, slots, bodies, placements, currencies, worldOptions, placeholders, worldPlaceholders, placeholderGroups, getWorldData, worldId, worldLoaded,
+    statUpdates, dictionaries, worldScripts, worldTools, items, itemGroups, slots, bodies, placements, currencies, worldOptions, placeholders, worldPlaceholders, placeholderGroups, getWorldData, worldId, supporterCopy, worldLoaded,
     isWorldDirty, worldStored, worldChangedElsewhere, dictStore, phStore, placementLetters, placeholderOwnerIndex,
   ]);
 

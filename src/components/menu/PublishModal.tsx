@@ -28,6 +28,7 @@ import { ContestEntryCard } from "@/components/menu/ContestEntryCard";
 import { SupporterOnlyCard } from "@/components/menu/SupporterOnlyCard";
 import AuthService from "@/services/AuthService";
 import { isAdmin } from "@/lib/roles";
+import { planSchedule, type DaysText } from "@/lib/supporterScheduleEdit";
 import { activeContestOf, entriesOf } from "@/lib/contests";
 import { CONTEST_ALREADY_ENTERED, CONTEST_NOT_ACTIVE } from "@/services/WorldStorageService";
 import { useContestWithdrawal } from "@/lib/useContestWithdrawal";
@@ -101,6 +102,10 @@ export function PublishModal({
   const [contestError, setContestError] = useState('');
   // An admin's new Mascot listing, created Supporter-only and pinned.
   const [supporterOnly, setSupporterOnly] = useState(false);
+  // Days each tier gets it before the next; blank skips a stage, and none at all keeps it Supporter-only with no end.
+  const [supporterDaysText, setSupporterDaysText] = useState<DaysText>({});
+  // Whether it opens to everyone after the last stage.
+  const [supporterGoPublic, setSupporterGoPublic] = useState(true);
   // A Mascot's own thumbnail, replacing the Initial render the payload carries.
   const [thumbnailOverride, setThumbnailOverride] = useState<string | null>(null);
   // The expression drawn into the Initial look for the thumbnail, and that render. An upload wins over both.
@@ -199,9 +204,12 @@ export function PublishModal({
   const updatingEntry = Boolean(enteredId) && selectedWorldToOverride === enteredId;
   const showContestCard = Boolean(contest) && kind === 'world'
     && (selectedWorldToOverride === 'new' || updatingEntry);
-  // Only Mascots have a Supporter install today (Q40). An update keeps the listing's flag.
-  const showSupporterCard = kind === 'mascot' && selectedWorldToOverride === 'new' && isAdmin(AuthService.getCurrentUser());
+  // Mascots and worlds are the kinds a Supporter-only listing can download (R16). An update keeps the listing's flag.
+  const showSupporterCard = (kind === 'mascot' || kind === 'world') && selectedWorldToOverride === 'new' && isAdmin(AuthService.getCurrentUser());
   const publishesSupporterOnly = showSupporterCard && supporterOnly;
+  const supporterPlan = useMemo(() => planSchedule(supporterDaysText, supporterGoPublic), [supporterDaysText, supporterGoPublic]);
+  // A filled days field the server would refuse holds the publish back.
+  const supporterDaysInvalid = publishesSupporterOnly && supporterPlan.invalid.length > 0;
   // What's open right now, readable from inside an async callback that captured an older `kind`.
   const kindRef = useRef(kind);
   kindRef.current = kind;
@@ -275,7 +283,7 @@ export function PublishModal({
       const created = await WorldStorageService.publishItem({
         ...declared,
         ...(kind === 'mascot' && mascotThumbnail ? { thumbnail: mascotThumbnail } : {}),
-        ...(!targetId && publishesSupporterOnly ? { supporterOnly: true } : {}),
+        ...(!targetId && publishesSupporterOnly ? { supporterOnly: true, ...(supporterPlan.payload ? { supporterSchedule: supporterPlan.payload } : {}) } : {}),
       }, targetId, entering);
 
       // The author's copy becomes a copy of the listing it just became, the way a downloaded one is —
@@ -451,6 +459,8 @@ export function PublishModal({
     setEnterContest(false);
     setContestError('');
     setSupporterOnly(false);
+    setSupporterDaysText({});
+    setSupporterGoPublic(true);
     setThumbnailOverride(null);
     setThumbnailExpression(null);
     setExpressionThumbnail(null);
@@ -641,6 +651,15 @@ export function PublishModal({
               />
             )}
 
+            {/* Inside the scroll: with its schedule open it is taller than a short window. */}
+            {showSupporterCard && (
+              <SupporterOnlyCard
+                // The server refuses a Supporter-only listing in a contest, so the two switches exclude each other.
+                checked={supporterOnly} onCheckedChange={(next) => { setSupporterOnly(next); if (next) setEnterContest(false); }}
+                days={supporterDaysText} onDaysChange={(tier, next) => setSupporterDaysText((prev) => ({ ...prev, [tier]: next }))}
+                goPublic={supporterGoPublic} onGoPublicChange={setSupporterGoPublic} plan={supporterPlan}
+              />
+            )}
           </div>
         </ScrollArea>
 
@@ -651,7 +670,7 @@ export function PublishModal({
           <ContestEntryCard
             contest={contest}
             checked={enterContest}
-            onCheckedChange={setEnterContest}
+            onCheckedChange={(next) => { setEnterContest(next); if (next) setSupporterOnly(false); }}
             enteredName={enteredName}
             readOnly={updatingEntry}
             onWithdraw={existingEntry && enteredId
@@ -661,8 +680,6 @@ export function PublishModal({
             error={contestError || null}
           />
         )}
-
-        {showSupporterCard && <SupporterOnlyCard checked={supporterOnly} onCheckedChange={setSupporterOnly} />}
 
         {/* The world is still unpublished: every source it requires has to exist first. Pinned below the
             scrolling list, because the button beside it is what acts on this. */}
@@ -701,7 +718,7 @@ export function PublishModal({
             onClick={handlePublish}
             // `links.ready` is false while the dialog is still reading what this publish declares.
             // Publishing then would deliver relationship choices the author never saw.
-            disabled={isPublishing || !payload || policies.showBlockedNotice || !links.ready}
+            disabled={isPublishing || !payload || policies.showBlockedNotice || !links.ready || supporterDaysInvalid}
           >
             {isPublishing
               ? 'Publishing...'

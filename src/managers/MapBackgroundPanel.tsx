@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label';
 import { ValueSlider } from '@/components/SettingsRows';
 import { Tip } from '@/components/ui/tooltip';
 import type { GalleryImage, Placeholder, WorldOverview } from '@/types';
+import { mapImages } from '@/lib/mapBackground';
 import { MapBackgroundField } from './MapBackgroundField';
 
 /** What the canvas's Map Background card is open for: the gallery, or adjusting the frame. */
@@ -15,7 +16,7 @@ export type MapBackgroundPanelMode = 'set' | 'adjust';
  */
 export function MapBackgroundPanel({ mode, overview, placeholders, opacity, onImagesChange, onOpacity, onRemove, onClose }: {
   mode: MapBackgroundPanelMode;
-  overview: Pick<WorldOverview, 'mapBackground' | 'description' | 'name'>;
+  overview: Pick<WorldOverview, 'mapBackground' | 'mediaList' | 'description' | 'name'>;
   placeholders: Placeholder[];
   opacity: number;
   onImagesChange: (images: GalleryImage[]) => void;
@@ -24,7 +25,7 @@ export function MapBackgroundPanel({ mode, overview, placeholders, opacity, onIm
   onClose: () => void;
 }) {
   const percent = Math.round(opacity * 100);
-  const replacing = !!overview.mapBackground?.images.some((img) => img.data);
+  const replacing = mapImages(overview).length > 0;
   return (
     <div className="space-y-3 rounded-md border bg-card p-3 shadow-md" data-map-background-panel={mode}>
       <div className="flex items-center gap-1">

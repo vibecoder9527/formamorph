@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatMessage, InventoryPassOp, RuntimeItem } from '@/types';
+import type { ChatMessage, Entity, InventoryPassOp, RuntimeItem } from '@/types';
+import type { MentionReading } from '@/lib/coref/mentionReading';
+import { narrationHash, type MentionReadingMap } from '@/lib/coref/mentionReadings';
+import { knownNameFor, memoryNarrationFor, readingNamesFor } from '@/lib/coref/mentionMemory';
+import { metCheck, strangersInPlay } from '@/lib/presence';
 import type { TransportRequest } from '@/lib/aiRequest/requestTransport';
-import { parseTurns } from '@/lib/turnBanding';
+import { buildBandedHistory, buildVerbatimHistory, parseTurns } from '@/lib/turnBanding';
 import { parseIncrementalMilestoneReply } from '@/lib/milestoneMemory';
 import { parseTurnContent, serializeTurnContent } from '@/lib/turnDigest';
 import { withItemDescription } from '@/lib/inventory/describe';
+import { collectCandidateEvidence, extractCharacterCandidates } from '@/lib/characterCandidates';
+import { stripQuotedSpeech } from '@/lib/entityMatch';
 import {
   createBackgroundPassQueue, dueDiaries, dueDiscoveries, type QueueEnv, type QueueSnapshot, type StoredMilestoneSelection,
 } from './backgroundPassQueue';
@@ -106,7 +112,10 @@ function host(initial: ChatMessage[], over: Partial<QueueSnapshot> = {}) {
     // A diary carries the entity text that exists when the pass starts.
     diaryRequest: (target) => ({
       type: 'diary', systemPrompt: 'DIARY', silent: true, attachTurnId: target.turnId,
-      messages: [{ role: 'user', content: `${target.name} | ${descriptions.get(target.name) ?? 'no description'}` }],
+      messages: [
+        { role: 'user', content: `${target.name} | ${descriptions.get(target.name) ?? 'no description'}` },
+        { role: 'user', content: target.narration },
+      ],
     }),
     // The entity joins the cast at the next render, as React state does.
     addDiscovered: (target, description) => {
@@ -477,6 +486,127 @@ describe('the due selectors', () => {
     ];
     expect(dueDiscoveries(history, [])).toEqual([]);
     expect(dueDiaries(history)).toEqual([]);
+  });
+
+  it('discovers a character on the first turn its clusters qualify (Q73)', () => {
+    // Written passages: a species label used as a name, two spellings, only "paused" and "listened" for verbs.
+    const first = 'An Anthro Zorvak waited beside the well. You watched as the Zorvak paused, and she listened to the wind. '
+      + 'Rain dripped while the Zorvac kept her eyes on the road. "Rain soon," she says.';
+    const second = 'Later the Zorvak nodded to you, and you thanked the Zorvak.';
+    const stored = (narration: string, prior: string) =>
+      extractCharacterCandidates(stripQuotedSpeech(narration), {}, collectCandidateEvidence(prior));
+    const history = [
+      rawTurn({ turnId: 't1', narration: first, entities: stored(first, '') }),
+      rawTurn({ turnId: 't2', narration: second, entities: stored(second, first) }),
+    ];
+    let from = 0;
+    const spans = ['An Anthro Zorvak', 'the Zorvak', 'she', 'the Zorvac', 'her', 'she'].map((mention): [number, number] => {
+      const start = first.indexOf(mention, from);
+      from = start + mention.length;
+      return [start, from];
+    });
+    const read = (clusters?: [number, number][][]): MentionReadingMap => ({
+      t1: { model: 'small', version: 1, textHash: narrationHash(first), reading: { mentions: [], quotes: [] }, ...(clusters ? { clusters, clusterEntities: [null] } : {}) },
+    });
+    const firstDue = (readings: MentionReadingMap) =>
+      dueDiscoveries(history, [], readingNamesFor(true, readings, [], {}))[0];
+    expect(firstDue(read([spans]))).toMatchObject({ turnId: 't1', name: 'Anthro Zorvak' });
+    expect(firstDue(read())).toMatchObject({ turnId: 't2', name: 'Zorvak' });
+    expect(firstDue({})).toMatchObject({ turnId: 't2', name: 'Zorvak' });
+  });
+
+  it('judges a turn\'s clusters against the turns before it', () => {
+    const before = 'You first saw the Zorvak at the market.';
+    const now = 'Rain fell while the Zorvak paused. She listened. "Rain soon," she says.';
+    const spans = ['the Zorvak', 'She', 'she'].map((mention): [number, number] => [now.indexOf(mention), now.indexOf(mention) + mention.length]);
+    const readings: MentionReadingMap = {
+      t2: { model: 'small', version: 1, textHash: narrationHash(now), reading: { mentions: [], quotes: [] }, clusters: [spans], clusterEntities: [null] },
+    };
+    const names = readingNamesFor(true, readings, [], {});
+    const turns = (prior: string) => [rawTurn({ turnId: 't1', narration: prior, entities: [] }), rawTurn({ turnId: 't2', narration: now, entities: [] })];
+    expect(dueDiscoveries(turns(before), [], names).map((due) => due.name)).toEqual(['Zorvak']);
+    expect(dueDiscoveries(turns('The market was quiet.'), [], names)).toEqual([]);
+    expect(dueDiscoveries(turns(before), ['Zorvak'], names)).toEqual([]);
+  });
+
+  it('names a misspelling an earlier turn pooled as that turn\'s character', () => {
+    const first = 'You met the Zorvak at noon, and later the Zorvak again. You saw the Zorvac paused. She listened. '
+      + '"Rain soon," she says.';
+    // The name rule finds the misspelling on this turn, from "nodded".
+    const second = 'Rain fell while the Zorvac nodded. You watched the Zorvac. She listened. "Rain soon," she says.';
+    const spansOf = (text: string, mentions: string[]) => {
+      let from = 0;
+      return mentions.map((mention): [number, number] => {
+        const start = text.indexOf(mention, from);
+        from = start + mention.length;
+        return [start, from];
+      });
+    };
+    const entry = (text: string, mentions: string[]) => ({
+      model: 'small' as const, version: 1, textHash: narrationHash(text), reading: { mentions: [], quotes: [] },
+      clusters: [spansOf(text, mentions)], clusterEntities: [null],
+    });
+    const readings: MentionReadingMap = {
+      t1: entry(first, ['the Zorvak', 'the Zorvak', 'the Zorvac', 'She', 'she']),
+      t2: entry(second, ['the Zorvac', 'the Zorvac', 'She', 'she']),
+    };
+    const storedNames = extractCharacterCandidates(stripQuotedSpeech(second), {}, collectCandidateEvidence(first));
+    expect(storedNames).toEqual(['Zorvac']);
+    const history = [
+      rawTurn({ turnId: 't1', narration: first, entities: [] }),
+      rawTurn({ turnId: 't2', narration: second, entities: storedNames }),
+    ];
+    expect(dueDiscoveries(history, [], readingNamesFor(true, readings, [], {})).map((due) => [due.turnId, due.name]))
+      .toEqual([['t1', 'Zorvak'], ['t2', 'Zorvak']]);
+    expect(dueDiscoveries(history, [], readingNamesFor(true, {}, [], {})).map((due) => [due.turnId, due.name]))
+      .toEqual([['t2', 'Zorvac']]);
+    // Once discovered or deleted, the pooled name blocks the misspelling the name rule stored.
+    expect(dueDiscoveries(history, ['Zorvak'], readingNamesFor(true, readings, [], {}))).toEqual([]);
+  });
+
+  it('discovers both people of a cluster the model merged (Q76)', () => {
+    const text = 'You saw the Zorvak at the gate, and later the Zorvak paused. '
+      + 'You saw the Tessaly at the well, and the Tessaly nodded. "Rain soon," she says.';
+    let from = 0;
+    const spans = ['the Zorvak', 'the Zorvak', 'the Tessaly', 'the Tessaly', 'she'].map((mention): [number, number] => {
+      const start = text.indexOf(mention, from);
+      from = start + mention.length;
+      return [start, from];
+    });
+    const readings: MentionReadingMap = {
+      t1: { model: 'small', version: 1, textHash: narrationHash(text), reading: { mentions: [], quotes: [] }, clusters: [spans], clusterEntities: [null] },
+    };
+    // The name rule finds the Tessaly alone, from "nodded".
+    const stored = extractCharacterCandidates(stripQuotedSpeech(text), {});
+    expect(stored).toEqual(['Tessaly']);
+    const history = [rawTurn({ turnId: 't1', narration: text, entities: stored })];
+    expect(dueDiscoveries(history, [], readingNamesFor(true, readings, [], {})).map((due) => due.name).sort())
+      .toEqual(['Tessaly', 'Zorvak']);
+    // A link to a different name never takes a stored name's place.
+    const crossLinked = Object.assign(() => [], { spellings: () => new Map([['Tessaly', 'Zorvak']]) });
+    expect(dueDiscoveries(history, [], crossLinked).map((due) => due.name)).toEqual(['Tessaly']);
+    // Nor does a known name linked to it block it.
+    const knownLinked = Object.assign(() => [], { spellings: () => new Map([['Zorvak', 'Tessaly']]) });
+    expect(dueDiscoveries(history, ['Zorvak'], knownLinked).map((due) => due.name)).toEqual(['Tessaly']);
+  });
+
+  it('adds nobody for a pool that holds a discovered character', () => {
+    // "Zorvak" was discovered earlier; this turn uses a misspelling more often than the name.
+    const text = 'You met the Zorvak at dawn. You met the Zorvac at noon, and you met the Zorvac at dusk. '
+      + '"Rain soon," she says.';
+    let from = 0;
+    const spans = ['the Zorvak', 'the Zorvac', 'the Zorvac', 'she'].map((mention): [number, number] => {
+      const start = text.indexOf(mention, from);
+      from = start + mention.length;
+      return [start, from];
+    });
+    const readings: MentionReadingMap = {
+      t1: { model: 'small', version: 1, textHash: narrationHash(text), reading: { mentions: [], quotes: [] }, clusters: [spans], clusterEntities: [null] },
+    };
+    const history = [rawTurn({ turnId: 't1', narration: text, entities: [] })];
+    const names = readingNamesFor(true, readings, [], {});
+    expect(dueDiscoveries(history, [], names).map((due) => due.name)).toEqual(['Zorvac']);
+    expect(dueDiscoveries(history, ['Zorvak'], names)).toEqual([]);
   });
 
   it('lists a diary for every participant missing an entry, oldest turn first', () => {
@@ -1007,5 +1137,107 @@ describe('foreground jobs', () => {
     await h.sent[0].answer('First.');
     expect(seen[0]).toBe(true);
     expect(seen[seen.length - 1]).toBe(false);
+  });
+});
+
+describe('Character Mentions', () => {
+  // A passage written for these tests: Odile by name and pronoun, an unmet stranger by description.
+  const NARRATION = 'Odile sets the sack down. She wipes her hands while the hooded woman watches her, and she smiles.';
+  const ODILE: Entity = { id: 'odile', name: 'Odile' };
+  const HOODED: Entity = { id: 'hooded', name: 'Sabine Thorne', strangerName: 'a hooded woman' };
+  const CAST = [ODILE, HOODED];
+  const at = (word: string, from = 0) => {
+    const start = NARRATION.indexOf(word, from);
+    return { start, end: start + word.length };
+  };
+  const reading: MentionReading = {
+    mentions: [
+      { ...at('Odile'), entityId: 'odile' },
+      { ...at('She'), entityId: 'odile' },
+      { ...at('her'), entityId: 'odile' },
+      { ...at('the hooded woman'), entityId: 'hooded' },
+      { ...at('her', NARRATION.indexOf('watches')), entityId: 'odile' },
+      { ...at('she', NARRATION.indexOf('and')), entityId: 'hooded' },
+    ],
+    quotes: [],
+  };
+  const readings: MentionReadingMap = { t1: { model: 'small', version: 1, textHash: narrationHash(NARRATION), reading } };
+  const isMet = metCheck([], null, [], new Set());
+  const mentions = {
+    readingNames: readingNamesFor(true, readings, CAST),
+    memoryNarration: memoryNarrationFor(true, readings, knownNameFor(CAST, isMet, strangersInPlay(CAST, isMet, {}).labels)),
+  };
+  // The unmet stranger's bracket holds her label, never her true name (Q54).
+  const BRACKETED = 'Odile sets the sack down. She [Odile] wipes her [Odile] hands while the hooded woman watches her [Odile], and she [a hooded woman] smiles.';
+  const memory = { memoryDigests: true, characterDiaries: true, entityNames: ['Odile', 'Sabine Thorne'] };
+
+  it('gives an entity the reading alone shows a diary pass', () => {
+    const history = historyOf({ id: 't1', narration: NARRATION, entities: [] });
+    const off = host(history, { ...memory, memoryDigests: false });
+    off.render();
+    expect(off.sent).toHaveLength(0);
+
+    const on = host(history, { ...memory, memoryDigests: false, ...mentions });
+    on.render();
+    expect(on.names()).toEqual(['diary:t1:Odile']);
+  });
+
+  it('feeds the digest and diary the bracketed narration and stores their replies without the tags', async () => {
+    const h = host(historyOf({ id: 't1', narration: NARRATION, entities: ['Odile'] }), { ...memory, ...mentions });
+    h.render();
+    expect(h.names()).toEqual(['summary:t1:Action for t1']);
+    expect(String(h.sent[0].request.messages[0].content)).toBe(`Action for t1 | ${BRACKETED}`);
+    await h.sent[0].answer('She [Odile] put down the sack.');
+    expect(h.summaryOf('t1')).toBe('She put down the sack.');
+
+    const diary = h.sent.find((s) => s.request.type === 'diary')!;
+    expect(diary.request.messages[1].content).toBe(BRACKETED);
+    await diary.answer('I [Odile] wiped my hands.');
+    expect(h.diaryOf('t1', 'Odile')).toBe('I wiped my hands.');
+  });
+
+  it('reads the plain text with no reading, or with the feature off', async () => {
+    const other = host(historyOf({ id: 't2', narration: NARRATION, entities: ['Odile'] }), { ...memory, ...mentions });
+    other.render();
+    expect(String(other.sent[0].request.messages[0].content)).toBe(`Action for t2 | ${NARRATION}`);
+
+    expect(memoryNarrationFor(false, readings, () => 'Odile')).toBeUndefined();
+    const off = host(historyOf({ id: 't1', narration: NARRATION, entities: ['Odile'] }), memory);
+    off.render();
+    expect(String(off.sent[0].request.messages[0].content)).toBe(`Action for t1 | ${NARRATION}`);
+    await off.sent[0].answer('Odile [sighs] and sets the sack down.');
+    expect(off.summaryOf('t1')).toBe('Odile [sighs] and sets the sack down.');
+  });
+
+  it('leaves no bracket in the history and never names the unmet stranger', async () => {
+    const h = host(historyOf({ id: 't1', narration: NARRATION, entities: ['Odile'] }), { ...memory, ...mentions });
+    h.render();
+    for (let i = 0; i < 4 && h.sent[i]; i++) {
+      const reply = h.sent[i].request.type === 'milestoneSelect' ? '1' : 'She [Odile] left; she [a hooded woman] smiled.';
+      await h.sent[i].answer(reply);
+    }
+    expect(h.sent.map((s) => s.request.type)).toEqual(expect.arrayContaining(['summary', 'diary']));
+    // The narration each pass reads; a diary's subject line carries the true name, as a name-based one does.
+    const narrationRead = (s: { request: TransportRequest }) =>
+      String(s.request.messages[s.request.type === 'diary' ? 1 : 0].content);
+    const read = h.sent.filter((s) => s.request.type !== 'milestoneSelect').map(narrationRead).join('\n');
+    expect(read).toContain('[a hooded woman]');
+    expect(read).not.toContain('Sabine');
+    // Display, read-aloud, choices, exports and the Narration Stream read the stored turn.
+    for (const message of h.history()) {
+      if (message.role !== 'assistant') continue;
+      const turn = parseTurnContent(message.content)!;
+      expect(turn.narration).toBe(NARRATION);
+      for (const text of [turn.summary, ...Object.values(turn.diaries ?? {})]) expect(text).not.toMatch(/\[/);
+    }
+    // The narration prompt's history: the digest band, and the verbatim history.
+    const turns = parseTurns(h.history());
+    const band = buildBandedHistory({
+      turns, contextWindow: 100_000, promptTokens: 0, maxTokens: 0, verbatimFloor: 0, keywords: [], actionEntities: [],
+      rehydrateCap: 0, recapPrompt: 'What happened so far?',
+    });
+    expect(band.bandTurnIds).toEqual(['t1']);
+    const verbatim = buildVerbatimHistory(turns, 100_000, 0, 0);
+    for (const message of [...band.messages, ...verbatim.messages]) expect(String(message.content)).not.toMatch(/\[/);
   });
 });

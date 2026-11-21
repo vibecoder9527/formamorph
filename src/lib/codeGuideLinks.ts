@@ -33,9 +33,12 @@ export const STAT_CODE_GUIDE_LINKS: Readonly<Record<string, DocTarget>> = {
   items: scripts('items'),
   currencies: scripts('currencies'),
   options: scripts('world-options'),
+  world: scripts('media'),
   narration: scripts('narration'),
   player: scripts('player'),
   trait: scripts('trait'),
+  args: scripts('args'),
+  instance: scripts('instance'),
 };
 
 /** The Tools doc heading of `args`, which only a Tool's script reads. */
@@ -45,7 +48,7 @@ export const ARGS_GUIDE_LINK: DocTarget = tools('args');
  *  Guide, as a Script's card links them (Q24). */
 export const TOOL_GUIDE_LINKS: Readonly<Record<string, DocTarget>> = {
   args: ARGS_GUIDE_LINK,
-  ...Object.fromEntries((['stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'items', 'currencies', 'options'] as const)
+  ...Object.fromEntries((['stats', 'clock', 'turn', 'locations', 'location', 'memories', 'notes', 'placeholders', 'traits', 'entities', 'persona', 'dictionaries', 'items', 'currencies', 'options', 'world'] as const)
     .map((name) => [name, STAT_CODE_GUIDE_LINKS[name]])),
 };
 

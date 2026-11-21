@@ -1,7 +1,7 @@
 {
   "name": "formamorph",
   "private": true,
-  "version": "3.7.0",
+  "version": "3.8.0",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "main": "electron/main.cjs",
@@ -46,6 +46,7 @@
     "changelog:notes": "node scripts/extractReleaseNotes.mjs",
     "copy:sweep": "node scripts/copySweep.mjs",
     "fingerprints": "vite-node scripts/genBundledFingerprints.ts",
+    "bench:lazy-world": "vite-node --config scripts/lazyWorldBench.vite.mjs scripts/lazyWorldBench.ts",
     "strip-worlds": "node scripts/stripWorldImages.mjs",
     "build:help-vectors": "vite-node scripts/buildHelpVectors.ts",
     "baseline": "node testing/baseline/harness/run.mjs",
@@ -160,6 +161,7 @@
     "lexical": "^0.50.0",
     "lucide-react": "^1.31.0",
     "next-themes": "^0.4.6",
+    "onnxruntime-web": "1.31.1",
     "patch-package": "^8.0.1",
     "playwright": "^1.48.0",
     "postcss": "^8.4.41",
@@ -189,5 +191,8 @@
     "vite-node": "^6.0.0",
     "vitest": "^5.0.5",
     "wasm-webp": "^0.1.0"
+  },
+  "overrides": {
+    "onnxruntime-web": "$onnxruntime-web"
   }
 }

@@ -1,6 +1,7 @@
 # Test Sweep
 
-Status: ready-for-agent
+Status: done
+Status note: Closed 2026-11-18, tickets 01–19, last landing f21e6423d. Review: spec text corrected. Gates green on 2026-11-18: test 37,497 pass in 516 s; lint's 28 errors are all in gitignored `worlds-wip/`.
 Spec session: test-sweep — spec
 
 ## Problem Statement
@@ -87,6 +88,15 @@ The work runs in steps, each with a stop gate. The owner can stop after any step
 | Q63 | The family sweep may speed up a kept test under Q53's conditions, with a coverage pair, and Q5 kills held under Q23. Each ticket lists speed-ups apart from deletions and strengthened tests. |
 | Q64 | A sweep batch covers all four kinds: duplicates, weak assertions, mirrored logic and change detectors. Any kind it didn't scan is listed as unswept. A test that asserts nothing is deleted, even when it prints a report. The deletion list names the lost report. |
 | Q65 | Q6 holds only CPU-heavy runs. A mutation run projected under about 5 minutes may run at any time. |
+| Q66 | At step 8's first stop gate (2026-11-16), the owner chose more sweep batches before step 9. Batch 1 made 9 deletions, 1 merge, 6 strengthened tests and saved about 27 s of body time. |
+| Q67 | A test is weak when its assertions stay green with its named behavior broken. The sweep judges whole tests, not single lines. It leaves `expect(getBy…).toBeTruthy()` lines alone. It finds tests whose only assertions are weak forms with an AST filter over the whole folder, and judges each hit by reading it. A strengthened test goes red under one reinstated bug. |
+| Q68 | Step 8 passed its stop gate on 2026-11-18, after two batches: 20 deletions, 1 merge, 12 strengthened tests and about 58 s of body time saved. The step 8 feature pause ends. The queued Q5 mutation candidates in ticket 18 stay listed as unswept. |
+| Q69 | For the growth rule (Q16), a new test is one in a file added since the merge base with main, or one whose title is absent there. Its budget is its level's per-test p99, rounded: unit 250 ms, script 2 s, scan 2 s, component 1.2 s, view 5 s. Close-spec recomputes the budgets from the final Reference Run. Over budget is a warning that names the test and never changes the exit code. |
+| Q70 | The owner approved ticket 19's `test-bar` section ("Pick the level, then the depth") on 2026-11-18. The global skill names the levels without numbers, because each project sets its own budgets. Formamorph's budgets live in its reporter and Q69. |
+| Q71 | The Q3 gate sample was lost in the history rewrite. The final gate time uses the closest similar sample, timed with the old and new selectors and labeled "similar sample, not the same". A replay miss counts as a flake only when the test fails on the clean tree. A miss on a scan that ticket 14 moved to lint counts as caught only when the lint rule flags that landing. The summary gives the raw and adjusted counts, and the owner judges them at close-spec. |
+| Q72 | Parallelism didn't fall. The Reference Run's 18.9 divided run 2's worker time by run 3's wall time. Same-run ratios are 14.2 to 14.8 in every run. The rise from 330 s to 369 s follows the suite's growth, and wall time per file fell 6%. Perfect scheduling would save at most about 33 s, so the 240 s target can't be met by scheduling alone. |
+| Q73 | The `elementIcons` replay miss counts as caught. The replay reset the landing's test file, not the rule's ledger, and today's rule with the parent's ledger flags both files. The adjusted final count is 0 misses in 36. The replay measures only Vitest selection, so the lint rules that ticket 14 made are outside it. That is a named gap, not fixed in this effort. |
+| Q74 | The owner skipped the node-threads pool split on 2026-11-18. It saves about 5–6 s (1.5%) but adds a third project and a rule for process-wide state. The full-suite idle time is per-file fork overhead, which isolation needs. The 240 s target needs fewer worker-seconds. |
 | Q59 | Ticket 13 adopts no narrowing. Type-only edges and mock closures are already pruned, and barrels save 0 to 1.5%. The remaining reach is real runtime import, and a depth limit would drop tests that load the changed file (Q2). It lands rules for deleted files (import specifiers and `import.meta.glob` matches), the static-model measurement, and the replay at 36 or more bugs (Q48). |
 | Q60 | The zero-miss proof runs on a fresh sample (seed 2), because seed 1 shaped the fix. A seed-1 rescore gives precision before and after on the same cases. The proof has priority when an AFK window can't hold both. |
 | Q57 | Ticket 12 measures before and after with three alternating runs each on a fixed sample, at 4 workers, with CPU recorded. The sample includes the files each change targets. Close-spec's Reference Run gives the whole-suite numbers. |
